@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    allied_control::AlliedControlState, element::EntityId, engine::SeatState,
-    macro_store::MacroStore, profiles::Action,
+    allied_control::AlliedControlState,
+    element::EntityId,
+    engine::SeatState,
+    macro_store::{AutoQueueStore, MacroStore},
+    profiles::Action,
 };
 
 /// Deterministic per-player selection, input-mode, and quick-action state.
@@ -10,6 +13,14 @@ use crate::{
 pub(crate) struct PlayerRuntime {
     pub(crate) seats: Vec<SeatState>,
     pub(crate) macro_store: MacroStore,
+    /// Post-port Shift-click work. Kept separate from Original's three
+    /// manual QA slots so queue advancement can never consume a saved macro.
+    ///
+    /// SAVE53 stored automatic work as `MacroStore` overflow, so defaulting
+    /// this field is only for queue-free structured fixtures, not old-save
+    /// compatibility. This layout starts at SAVE54/NET18/REPLAY12.
+    #[serde(default)]
+    pub(crate) auto_queues: AutoQueueStore,
     pub(crate) user_locked: bool,
     /// Original `RHMessenger::mbLockView`, independently serialized from the
     /// engine's camera-follow locker.
@@ -32,6 +43,7 @@ impl PlayerRuntime {
         Self {
             seats: vec![SeatState::default()],
             macro_store: MacroStore::new(),
+            auto_queues: AutoQueueStore::default(),
             user_locked: false,
             view_locked: false,
             selection_before_user_lock: Vec::new(),
@@ -47,6 +59,8 @@ impl PlayerRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::MapPoint;
+    use crate::macro_store::{QaReplayCommand, QuickActionStep};
 
     #[test]
     fn new_players_has_canonical_seat_zero_and_no_recording() {
@@ -59,5 +73,71 @@ mod tests {
         assert!(players.qa_recording_for.is_empty());
         assert_eq!(players.qa_recording_slot, 0);
         assert_eq!(players.action_before_recording_macro, Action::NoAction);
+    }
+
+    #[test]
+    fn queue_free_structured_fixture_defaults_missing_automatic_queue() {
+        let encoded = serde_json::to_value(PlayerRuntime::new()).expect("serialize players");
+        let mut legacy = encoded
+            .as_object()
+            .expect("PlayerRuntime is a JSON object")
+            .clone();
+        legacy.remove("auto_queues");
+
+        let decoded: PlayerRuntime = serde_json::from_value(legacy.into())
+            .expect("deserialize state without automatic queue");
+
+        assert!(
+            decoded
+                .auto_queues
+                .get(EntityId::Pc(crate::entity_id::PcId(1)))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn automatic_queue_json_and_bincode_roundtrip_and_participates_in_player_state_hash() {
+        let pc = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut queued = PlayerRuntime::new();
+        queued.auto_queues.push(
+            pc,
+            QuickActionStep {
+                action: Action::Bow,
+                position: MapPoint::new(10.0, 20.0),
+                replay: QaReplayCommand::Move {
+                    destination: MapPoint::new(10.0, 20.0),
+                    running: false,
+                    route: None,
+                },
+            },
+        );
+        queued.auto_queue_active.push(pc);
+        let encoded = serde_json::to_string(&queued).expect("serialize queued player runtime");
+        let decoded: PlayerRuntime =
+            serde_json::from_str(&encoded).expect("deserialize queued player runtime");
+
+        assert_eq!(decoded.auto_queues.len(pc), 1);
+        assert_eq!(decoded.auto_queue_active, vec![pc]);
+        assert_eq!(
+            robin_util::state_hash::compute(&decoded),
+            robin_util::state_hash::compute(&queued)
+        );
+        assert_ne!(
+            robin_util::state_hash::compute(&queued),
+            robin_util::state_hash::compute(&PlayerRuntime::new())
+        );
+
+        let bytes = bincode::serde::encode_to_vec(&queued, bincode::config::standard())
+            .expect("encode queued multiplayer snapshot state");
+        let (binary, consumed): (PlayerRuntime, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .expect("decode queued multiplayer snapshot state");
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(binary.auto_queues.len(pc), 1);
+        assert_eq!(binary.auto_queue_active, vec![pc]);
+        assert_eq!(
+            robin_util::state_hash::compute(&binary),
+            robin_util::state_hash::compute(&queued)
+        );
     }
 }

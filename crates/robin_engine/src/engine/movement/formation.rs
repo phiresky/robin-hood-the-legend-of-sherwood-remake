@@ -186,7 +186,6 @@ impl EngineInner {
         if pc_ids.is_empty() {
             return;
         }
-
         // Preemption is handled downstream by `arbitrate_instruct`:
         // every same-sector PC gets a fresh `Command::Move` sequence
         // element launched via `launch_element` below, which reaches
@@ -487,6 +486,24 @@ impl EngineInner {
                     );
                     continue;
                 };
+                if self.players.qa_recording_for.contains(pc_id) {
+                    // Original's QA branch deliberately disables executable
+                    // jump-line construction and records a coordinate SEEK
+                    // against the selected jump's underlying sector.
+                    let (sector, sector_index, layer) = jump_underlying_sector.unwrap_or_else(|| {
+                        panic!(
+                            "recorded jump group move for {pc_id:?} has no underlying goal sector"
+                        )
+                    });
+                    self.record_resolved_group_move_step(
+                        *pc_id,
+                        resolved_jump_dest,
+                        run,
+                        recorded_qa_move_route(sector, sector_index, layer),
+                        assets,
+                    );
+                    continue;
+                }
                 let pc_pos = positions
                     .iter()
                     .find(|(id, _, _, _)| *id == *pc_id)
@@ -722,6 +739,28 @@ impl EngineInner {
                         continue;
                     }
                 };
+                if self.players.qa_recording_for.contains(pc_id) {
+                    self.record_resolved_group_move_step(
+                        *pc_id,
+                        snapped,
+                        run,
+                        recorded_qa_move_route(
+                            pc_goal_sector.unwrap_or_else(|| {
+                                panic!(
+                                    "recorded group move for {pc_id:?} has no resolved goal sector"
+                                )
+                            }),
+                            pc_goal_sector_index.unwrap_or_else(|| {
+                                panic!(
+                                    "recorded group move for {pc_id:?} has no exact goal-sector identity"
+                                )
+                            }),
+                            pc_effective_layer,
+                        ),
+                        assets,
+                    );
+                    continue;
+                }
                 // Launch a Move sequence element.  Going through the
                 // sequence pipeline — rather than a direct
                 // `pathfinder.add_request` shortcut — means the element
@@ -797,6 +836,27 @@ impl EngineInner {
                 };
                 resolved
             };
+
+            if self.players.qa_recording_for.contains(pc_id) {
+                self.record_resolved_group_move_step(
+                    *pc_id,
+                    resolved_dest,
+                    run,
+                    recorded_qa_move_route(
+                        pc_goal_sector.unwrap_or_else(|| {
+                            panic!("recorded group move for {pc_id:?} has no resolved goal sector")
+                        }),
+                        pc_goal_sector_index.unwrap_or_else(|| {
+                            panic!(
+                                "recorded group move for {pc_id:?} has no exact goal-sector identity"
+                            )
+                        }),
+                        pc_effective_layer,
+                    ),
+                    assets,
+                );
+                continue;
+            }
 
             // Cross-sector: try gate A*
             let pc_pos_raw = positions
@@ -1080,5 +1140,17 @@ impl EngineInner {
             }
         }
         None
+    }
+}
+
+fn recorded_qa_move_route(
+    sector: crate::sector::SectorNumber,
+    sector_index: crate::fast_find_grid::SectorIndex,
+    layer: u16,
+) -> crate::macro_store::RecordedQaMoveRoute {
+    crate::macro_store::RecordedQaMoveRoute {
+        goal_sector: sector,
+        goal_sector_index: sector_index,
+        goal_layer: layer,
     }
 }

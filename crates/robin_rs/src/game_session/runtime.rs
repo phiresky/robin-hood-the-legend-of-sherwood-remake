@@ -20,7 +20,7 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
 use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Identity of the next lockstep/history transaction to be admitted.
@@ -327,7 +327,7 @@ pub(super) struct MissionFrame {
     /// Recorded lockstep/history transition for a disk-replay host frame.
     pub(super) replay_timeline_transition: Option<TimelineTransition>,
     pub(super) modal_dismissals: Vec<PlayerCommand>,
-    pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
+    pub(super) replay_modal_dismissals: super::modal_state::ReplayModalDismissals,
     pub(super) recorder_hash: Option<u64>,
     timeline_before: Option<TimelineFrame>,
     timeline_after: Option<TimelineFrame>,
@@ -363,7 +363,7 @@ impl MissionFrame {
             run_post_initialize: true,
             replay_timeline_transition: None,
             modal_dismissals: Vec::new(),
-            replay_modal_dismissals: VecDeque::new(),
+            replay_modal_dismissals: super::modal_state::ReplayModalDismissals::default(),
             recorder_hash: None,
             timeline_before: None,
             timeline_after: None,
@@ -514,6 +514,7 @@ impl MissionFrame {
                 .expect("recorded replay transition was just installed")
                 .before,
         );
+        self.replay_modal_dismissals.strict_replay = true;
         for control in recorded.host_controls {
             match control {
                 robin_engine::replay::ReplayHostControl::ModalDismiss { modal, result } => self

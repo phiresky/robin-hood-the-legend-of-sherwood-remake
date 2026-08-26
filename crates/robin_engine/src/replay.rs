@@ -56,12 +56,14 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 11 replaces the command-only frame
+/// On-disk replay schema version. Version 12 replaces the command-only frame
 /// payload with a complete [`SimulationFrameInput`]. External facts/actions,
 /// pre/post command phases, the hourglass/body gates, and `PostInitialize` are
-/// therefore recorded exactly as admitted. There is deliberately no schema-10
-/// compatibility adapter: incomplete legacy frames are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 11;
+/// therefore recorded exactly as admitted, including automatic quick-action
+/// queue commands and their independent serialized store. There is deliberately
+/// no legacy compatibility adapter: incomplete schema-10 and both incompatible
+/// schema-11 frame layouts are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 12;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -726,6 +728,11 @@ mod tests {
     use super::*;
     use crate::player_command::{PlayerCommand, PlayerInput};
 
+    #[test]
+    fn replay_schema_version_includes_auto_queue_commands() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 12);
+    }
+
     fn unique_replay_path(label: &str) -> String {
         std::env::temp_dir()
             .join(format!(
@@ -859,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_eleven_rejects_command_only_frame_records() {
+    fn schema_twelve_rejects_command_only_frame_records() {
         let header = serde_json::json!({
             "mission_id": "old-command-frame",
             "rng_seed": 7,
@@ -870,7 +877,7 @@ mod tests {
         });
         let input = format!("{header}\n{{\"f\":0,\"c\":[]}}\n");
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("command-only records are not schema eleven frames");
+            .expect_err("command-only records are not schema twelve frames");
         assert!(error.contains("unknown field `c`"), "{error}");
     }
 

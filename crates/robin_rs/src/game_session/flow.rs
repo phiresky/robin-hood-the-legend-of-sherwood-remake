@@ -516,10 +516,11 @@ fn finalize_interactive_recording(
 ) {
     runtime.finish_recording(frame);
     if !frame.replay_modal_dismissals.is_empty() {
-        tracing::warn!(
-            "Replay: {} recorded ModalDismiss command(s) unused this frame",
-            frame.replay_modal_dismissals.len()
-        );
+        let unused = frame.replay_modal_dismissals.len();
+        if frame.replay_modal_dismissals.is_strict_replay() {
+            panic!("replay desync: {unused} recorded modal dismissal(s) were unused this frame");
+        }
+        tracing::warn!("Replay: {unused} recorded ModalDismiss command(s) unused this frame");
     }
 }
 

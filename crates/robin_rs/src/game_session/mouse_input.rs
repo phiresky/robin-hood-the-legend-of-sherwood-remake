@@ -130,8 +130,8 @@ pub(super) fn handle_mouse_input(
                         engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
                     );
                 }
-                GameEvent::MouseDown(mx, my, 3, _) => {
-                    on_right_mouse_down(engine, host, mx, my, shift_held);
+                GameEvent::MouseDown(mx, my, 3, clicks) => {
+                    on_right_mouse_down(engine, host, mx, my, clicks, shift_held);
                 }
                 GameEvent::MouseMove { x, y, .. } => {
                     on_mouse_move(engine, host, assets, frame_cmds, x, y, shift_held);
@@ -288,10 +288,18 @@ fn on_left_mouse_down(
 /// enables it, and only when not in swordfight, not Alt-held, and not
 /// Locker-latched — missing any of these guards caused right-drag to
 /// deselect PCs during swordfight, while an action was armed, etc.
-fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32, shift_held: bool) {
+fn on_right_mouse_down(
+    engine: &mut Engine,
+    host: &mut Host,
+    _mx: i32,
+    _my: i32,
+    clicks: u8,
+    shift_held: bool,
+) {
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = true;
+        host.right_double_click_pending = clicks >= 2;
 
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
@@ -881,116 +889,84 @@ fn on_portrait_click(
             // ── Normal click on non-burned portrait ──
             match hit.area {
                 PortraitHitArea::ActionButton(btn_idx) => {
-                    // After a right-click cancel
-                    // (all buttons deselected),
-                    // clicking a button drops ammo
-                    // instead of arming. Single =
-                    // 1, Several (shift) = 5.
-                    if host.input.portrait_drop_ammo_armed
-                        && engine.selected_action_for_seat(local_seat) == Action::NoAction
-                    {
-                        // Look up the action for this button index
-                        let btn_action = engine
-                            .get_entity(pc_id)
-                            .and_then(|e| e.pc_data())
-                            .and_then(|pc| {
-                                assets
-                                    .profile_manager
-                                    .get_character(pc.profile_index)
-                                    .and_then(|p| p.actions.get(btn_idx as usize).copied())
-                            })
-                            .unwrap_or(Action::NoAction);
-                        if btn_action != Action::NoAction {
-                            let amount: u32 = if shift_held { 5 } else { 1 };
-                            let cmd = PlayerCommand::DropAmmo {
-                                pc_id,
-                                action_id: btn_action as u32,
-                                amount,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            tracing::info!(
-                                "Portrait drop ammo: slot {}, action {:?}, amount {}",
-                                hit.slot,
-                                btn_action,
-                                amount
-                            );
-                        }
-                    } else {
-                        // Normal action select path. Resolve the
-                        // dispatch decision read-only before emitting
-                        // the command, so the live and replay paths
-                        // agree on the fallback-select branch.
-                        let profile_action = engine
-                            .get_entity(pc_id)
-                            .and_then(|entity| entity.pc_data())
-                            .and_then(|pc| {
-                                assets
-                                    .profile_manager
-                                    .get_character(pc.profile_index)
-                                    .and_then(|profile| profile.actions.get(btn_idx as usize))
-                            })
-                            .copied()
-                            .unwrap_or(Action::NoAction);
-                        let dispatched = portrait_action_dispatchable(
-                            shift_held,
-                            profile_action,
-                            engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
+                    // A left click always selects the action. Ammo dropping is
+                    // exclusively a right-click gesture in the original UI.
+                    let Some(profile_action) = engine
+                        .get_entity(pc_id)
+                        .and_then(|entity| entity.pc_data())
+                        .and_then(|pc| {
+                            assets
+                                .profile_manager
+                                .get_character(pc.profile_index)
+                                .and_then(|profile| profile.actions.get(btn_idx as usize))
+                        })
+                        .copied()
+                    else {
+                        tracing::warn!(
+                            "Portrait left-click ignored: missing action {} for {:?}",
+                            btn_idx,
+                            pc_id
                         );
-                        if dispatched {
-                            let planned_action = profile_action;
-                            let cmd = if shift_held {
-                                PlayerCommand::SelectPlannedAction {
-                                    pc_id,
-                                    action: planned_action,
-                                }
-                            } else {
-                                PlayerCommand::SelectAction {
-                                    pc_id,
-                                    action_index: btn_idx as u32,
-                                }
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            host.input.portrait_drop_ammo_armed = false;
-                            host.input.portrait_action_countdown = 5;
-                            host.input.portrait_action_pc =
-                                engine.seat_selection(local_seat).first().copied();
-
-                            // Action-button click only arms
-                            // the action; the fire-on-target step
-                            // happens on the second click of the
-                            // two-click flow.  The armed-then-fire
-                            // branch lives in the
-                            // `portrait_action_handled` path
-                            // above, which pulls the actor from
-                            // the seat selection, uses the
-                            // clicked portrait's PC as the
-                            // target, and emits a trailing
-                            // `CancelAction`.
-                            //
-                            // Shield/BigShield additionally have a
-                            // two-click danger-point + protected
-                            // state machine that a same-click
-                            // shortcut cannot cover; sticking to
-                            // the two-click flow keeps the path
-                            // consistent.
-
-                            tracing::info!(
-                                "Portrait action button {}: dispatched on slot {}",
-                                btn_idx,
-                                hit.slot
-                            );
-                        } else {
-                            let cmd2 = PlayerCommand::SelectPc {
+                        return false;
+                    };
+                    let dispatched = portrait_action_dispatchable(
+                        shift_held,
+                        profile_action,
+                        engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
+                    );
+                    if dispatched {
+                        let planned_action = profile_action;
+                        let cmd = if shift_held {
+                            PlayerCommand::SelectPlannedAction {
                                 pc_id,
-                                append: ctrl_held,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd2);
-                            tracing::info!(
-                                "Portrait action button {} disabled on slot {}; selecting PC",
-                                btn_idx,
-                                hit.slot
-                            );
-                        }
+                                action: planned_action,
+                            }
+                        } else {
+                            PlayerCommand::SelectAction {
+                                pc_id,
+                                action_index: btn_idx as u32,
+                            }
+                        };
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        host.input.portrait_action_countdown = 5;
+                        host.input.portrait_action_pc =
+                            engine.seat_selection(local_seat).first().copied();
+
+                        // Action-button click only arms
+                        // the action; the fire-on-target step
+                        // happens on the second click of the
+                        // two-click flow.  The armed-then-fire
+                        // branch lives in the
+                        // `portrait_action_handled` path
+                        // above, which pulls the actor from
+                        // the seat selection, uses the
+                        // clicked portrait's PC as the
+                        // target, and emits a trailing
+                        // `CancelAction`.
+                        //
+                        // Shield/BigShield additionally have a
+                        // two-click danger-point + protected
+                        // state machine that a same-click
+                        // shortcut cannot cover; sticking to
+                        // the two-click flow keeps the path
+                        // consistent.
+
+                        tracing::info!(
+                            "Portrait action button {}: dispatched on slot {}",
+                            btn_idx,
+                            hit.slot
+                        );
+                    } else {
+                        let cmd2 = PlayerCommand::SelectPc {
+                            pc_id,
+                            append: ctrl_held,
+                        };
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd2);
+                        tracing::info!(
+                            "Portrait action button {} disabled on slot {}; selecting PC",
+                            btn_idx,
+                            hit.slot
+                        );
                     }
                 }
                 PortraitHitArea::TopScroll
@@ -1050,6 +1026,28 @@ fn portrait_action_dispatchable(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortraitActionRightClick {
+    Cancel,
+    DropAmmo(u32),
+}
+
+fn portrait_action_right_click(
+    clicked_action: Action,
+    selected_action: Action,
+    max_ammo: u16,
+    is_double: bool,
+) -> PortraitActionRightClick {
+    // RHWidgetRadioButton sends UnSelect for a selected button. For an
+    // already-unselected finite-ammo button it sends DropSingleAmmo, or
+    // DropSeveralAmmo for the repeated/double right-click event.
+    if clicked_action == selected_action || max_ammo == 0 {
+        PortraitActionRightClick::Cancel
+    } else {
+        PortraitActionRightClick::DropAmmo(if is_double { 5 } else { 1 })
+    }
+}
+
 #[cfg(test)]
 mod shift_planning_tests {
     use super::*;
@@ -1059,6 +1057,38 @@ mod shift_planning_tests {
         assert!(portrait_action_dispatchable(true, Action::Bow, false));
         assert!(!portrait_action_dispatchable(false, Action::Bow, false));
         assert!(!portrait_action_dispatchable(true, Action::NoAction, false));
+    }
+
+    #[test]
+    fn right_click_on_selected_action_only_cancels_it() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::Bow, 15, false),
+            PortraitActionRightClick::Cancel
+        );
+    }
+
+    #[test]
+    fn right_click_on_unselected_ammo_action_drops_one_without_shift() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::NoAction, 15, false),
+            PortraitActionRightClick::DropAmmo(1)
+        );
+    }
+
+    #[test]
+    fn repeated_right_click_on_unselected_ammo_action_drops_several() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::NoAction, 15, true),
+            PortraitActionRightClick::DropAmmo(5)
+        );
+    }
+
+    #[test]
+    fn right_click_on_unselected_unlimited_action_still_cancels() {
+        assert_eq!(
+            portrait_action_right_click(Action::Hit, Action::NoAction, 0, true),
+            PortraitActionRightClick::Cancel
+        );
     }
 }
 
@@ -1158,6 +1188,7 @@ fn on_right_mouse_up(
     shift_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
+    let right_double_click = std::mem::take(&mut host.right_double_click_pending);
     {
         host.input.right_mouse_down = false;
 
@@ -1270,7 +1301,10 @@ fn on_right_mouse_up(
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                     return;
                 }
-                // Right-click on portrait action button → cancel action.
+                // Original radio-button parity: right-clicking the selected
+                // action unselects it. Right-clicking an already-unselected
+                // finite-ammo action drops one; its repeated/double event
+                // requests five. Shift is unrelated to ammo amount.
                 let pc_id = hit.pc_id;
                 let armed_action = engine.selected_action_for_seat(local_seat);
                 let action_armed = matches!(
@@ -1280,12 +1314,57 @@ fn on_right_mouse_up(
                         | robin_engine::profiles::Action::BigShield
                 );
                 if !hit.is_burned
-                    && let PortraitHitArea::ActionButton(_) = hit.area
+                    && let PortraitHitArea::ActionButton(btn_idx) = hit.area
                 {
-                    let cmd = PlayerCommand::CancelAction { pc_id };
-                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                    host.input.portrait_drop_ammo_armed = true;
-                    tracing::info!("Portrait right-click: cancel action on slot {}", hit.slot);
+                    let Some((clicked_action, max_ammo)) = engine
+                        .get_entity(pc_id)
+                        .and_then(|entity| entity.pc_data())
+                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                        .and_then(|profile| {
+                            Some((
+                                *profile.actions.get(btn_idx as usize)?,
+                                *profile.action_max_ammo.get(btn_idx as usize)?,
+                            ))
+                        })
+                    else {
+                        tracing::warn!(
+                            "Portrait right-click ignored: missing action {} for {:?}",
+                            btn_idx,
+                            pc_id
+                        );
+                        host.input.cancel_multi_unselection();
+                        return;
+                    };
+
+                    match portrait_action_right_click(
+                        clicked_action,
+                        armed_action,
+                        max_ammo,
+                        right_double_click,
+                    ) {
+                        PortraitActionRightClick::Cancel => {
+                            let cmd = PlayerCommand::CancelAction { pc_id };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            tracing::info!(
+                                "Portrait right-click: cancel action on slot {}",
+                                hit.slot
+                            );
+                        }
+                        PortraitActionRightClick::DropAmmo(amount) => {
+                            let cmd = PlayerCommand::DropAmmo {
+                                pc_id,
+                                action_id: clicked_action as u32,
+                                amount,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            tracing::info!(
+                                "Portrait right-click: drop {:?} x{} on slot {}",
+                                clicked_action,
+                                amount,
+                                hit.slot
+                            );
+                        }
+                    }
                 } else if !hit.is_burned && action_armed {
                     // When the pointer is inside a non-burned
                     // portrait and a Heal/Shield/BigShield

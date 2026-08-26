@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 16;
+pub const NET_PROTOCOL_VERSION: u32 = 18;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -358,6 +358,11 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, bitcode::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_version_includes_auto_queue_commands() {
+        assert_eq!(NET_PROTOCOL_VERSION, 18);
+    }
 
     #[test]
     fn netmsg_roundtrips() {

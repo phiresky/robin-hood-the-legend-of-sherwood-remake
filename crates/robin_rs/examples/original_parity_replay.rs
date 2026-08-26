@@ -1800,17 +1800,11 @@ impl TraceCommand {
                 danger_point,
                 danger_point_layer,
             } => {
-                // The Original records the ground-projected 3D danger
-                // point; its map projection is the point the player
-                // picked, which is what the command carries.
-                // TODO: the engine flattens the danger point back to
-                // z = 0 when storing it, so the projected elevation is
-                // lost on both the live and replay paths.
                 let danger_point: WorldPoint3D = danger_point.into();
                 PlayerCommand::RaiseShieldWithDanger {
                     actor: entity_map.translate(actor),
                     protected_pc: entity_map.translate(protected_pc),
-                    danger_point: danger_point.to_map(),
+                    danger_point,
                     danger_point_layer,
                 }
             }

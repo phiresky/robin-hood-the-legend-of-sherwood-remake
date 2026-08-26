@@ -1,9 +1,12 @@
 //! Per-PC quick-action macro storage and dotted-chain geometry.
 //!
-//! Two parallel collections per PC:
+//! Manual quick actions and the post-port Shift-click queue deliberately use
+//! different serialized stores.  Original-compatible QA slots must never be
+//! consumed merely because a PC also has automatic work pending.
 //!
-//! * `slots` — the three Original-compatible QA memory slots followed by
-//!   any number of automatic Shift-click queue entries.
+//! Two parallel collections per PC in [`MacroStore`]:
+//!
+//! * `slots` — exactly the three Original-compatible QA memory slots.
 //! * `maul_titbits` — **one
 //!   titbit ID per QA slot**.  The id is produced by an
 //!   `AddTitbit(RHTITBIT_QUICKACTION, …)` call at the input-action site
@@ -24,8 +27,9 @@ use crate::sequence::{Field, Sequence};
 
 /// Number of Original-compatible, portrait-visible quick-action slots.
 ///
-/// Automatic Shift-click queues may grow beyond this count; legacy saves and
-/// the portrait strip deliberately continue to expose exactly these slots.
+/// Automatic Shift-click queues live in [`AutoQueueStore`] and may grow beyond
+/// this count; legacy saves and the portrait strip deliberately continue to
+/// expose exactly these manual slots.
 pub const NUMBER_OF_QA_MEMORY: usize = 3;
 
 /// Map an `Action` to its frame index inside the
@@ -81,6 +85,21 @@ pub fn action_to_qa_frame(action: Action) -> Option<u16> {
 /// Re-exported here for the macro-chain renderer.
 pub use crate::titbit::DISTANCE_DOT;
 
+/// Source-resolved movement geometry retained by a recorded group move.
+///
+/// Original `PerformMove(..., bRecordQA=true)` stores a concrete coordinate
+/// `SEEK` against the already-resolved `RHSector*`, plus a post-seek arrival
+/// speech.  It does not save the common click and run formation placement a
+/// second time when the quick action is played.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+)]
+pub struct RecordedQaMoveRoute {
+    pub goal_sector: crate::sector::SectorNumber,
+    pub goal_sector_index: crate::fast_find_grid::SectorIndex,
+    pub goal_layer: u16,
+}
+
 /// The specific player command captured at a macro step — enough to
 /// rebuild a [`PlayerCommand`](crate::player_command::PlayerCommand) at
 /// playback time.  Replay clones each recorded sequence element and
@@ -94,6 +113,11 @@ pub enum QaReplayCommand {
     Move {
         destination: MapPoint,
         running: bool,
+        /// Absent only in saves written before resolved group-move recording
+        /// was ported. Those legacy Rust saves retain their old spatial
+        /// re-resolution playback behavior.
+        #[serde(default)]
+        route: Option<RecordedQaMoveRoute>,
     },
     /// Interaction with a specific target entity (attack, heal, tie, …).
     ///
@@ -160,6 +184,14 @@ pub enum QaReplayCommand {
         /// Missing legacy macro state retains the strike-specific fallback.
         #[serde(default)]
         seek_distance: Option<f32>,
+    },
+    /// Shield two-click completion. Original records the concrete
+    /// `Seek(protected_pc, 50) -> RaiseShield` sequence and attaches the QA
+    /// titbit to `protected_pc` at the projected danger point.
+    ShieldRaise {
+        protected_pc: EntityId,
+        danger_point: crate::coordinates::WorldPoint3D,
+        danger_point_layer: u16,
     },
     /// Quickitos posture toggle — `CrouchDown` / `StandUp` recorded so
     /// the macro can replay a mid-sequence posture change.  `to_crouch`
@@ -283,11 +315,14 @@ pub struct PcMacroState {
     /// site in the input-action flow.
     maul_titbits: Vec<Option<crate::titbit::TitbitId>>,
     recording_slot: Option<u8>,
-    /// Previous contents of a manually armed slot. The Original does not
-    /// destroy that QA merely by entering recording mode; it is replaced only
-    /// when the first new action is actually captured.
+    /// Whether the armed manual slot still contains its previous QA. Original
+    /// keeps that state live until the first replacement action is captured.
+    ///
+    /// This replaces the old serialized `recording_backup` representation.
+    /// It is not wire-compatible with SAVE53/NET17/REPLAY11; this state layout
+    /// starts at SAVE54/NET18/REPLAY12.
     #[serde(default)]
-    recording_backup: Option<(QuickActionSlot, Option<crate::titbit::TitbitId>)>,
+    recording_replaces_existing: bool,
 }
 
 impl Default for PcMacroState {
@@ -298,7 +333,7 @@ impl Default for PcMacroState {
                 .collect(),
             maul_titbits: vec![None; NUMBER_OF_QA_MEMORY],
             recording_slot: None,
-            recording_backup: None,
+            recording_replaces_existing: false,
         }
     }
 }
@@ -345,45 +380,6 @@ impl PcMacroState {
             .map(|slot| slot as u8)
     }
 
-    /// Return a free slot for an automatic queue entry, extending storage
-    /// beyond Original's three visible slots when necessary.
-    pub fn next_auto_queue_slot(&mut self) -> u8 {
-        if let Some(slot) = self.first_empty_slot() {
-            return slot;
-        }
-        let slot = self.slots.len();
-        let slot_u8 = u8::try_from(slot)
-            .unwrap_or_else(|_| panic!("automatic quick-action queue exceeded 256 entries"));
-        self.slots.push(QuickActionSlot::default());
-        self.maul_titbits.push(None);
-        slot_u8
-    }
-
-    pub fn last_occupied_slot(&self) -> Option<u8> {
-        self.slots
-            .iter()
-            .rposition(|slot| !slot.is_empty())
-            .map(|slot| slot as u8)
-    }
-
-    /// Upgrade the newest queued movement to running. Returns whether a
-    /// pending move was found and changed.
-    pub fn make_last_move_running(&mut self) -> Option<u8> {
-        let Some(slot) = self.last_occupied_slot() else {
-            return None;
-        };
-        let Some(step) = self.slots[slot as usize].steps.last_mut() else {
-            return None;
-        };
-        match &mut step.replay {
-            QaReplayCommand::Move { running, .. } | QaReplayCommand::DropAle { running, .. } => {
-                *running = true;
-                Some(slot)
-            }
-            _ => None,
-        }
-    }
-
     /// Read a slot's titbit id.  Returns `None` for an empty slot.
     pub fn get_slot_titbit(&self, slot: usize) -> Option<crate::titbit::TitbitId> {
         self.maul_titbits.get(slot).copied().flatten()
@@ -404,58 +400,41 @@ impl PcMacroState {
         }
     }
 
-    /// Begin recording into `slot_idx`. Previous contents are held as a
-    /// rollback backup until the first new step is appended, so arming and
-    /// canceling alone does not destroy an existing QA.
+    /// Begin recording into `slot_idx`. Previous contents remain in their
+    /// canonical slot until the first new step is appended, so arming and
+    /// canceling alone does not mutate the active QA or its titbit.
     pub fn begin_recording(&mut self, slot_idx: u8) {
         assert!(
             (slot_idx as usize) < NUMBER_OF_QA_MEMORY,
             "slot_idx {slot_idx} out of range 0..{NUMBER_OF_QA_MEMORY}"
         );
         let slot = usize::from(slot_idx);
-        self.recording_backup = Some((self.slots[slot].clone(), self.maul_titbits[slot]));
-        self.slots[slot] = QuickActionSlot::default();
+        self.recording_replaces_existing = !self.slots[slot].is_empty();
         self.recording_slot = Some(slot_idx);
-    }
-
-    /// Begin an automatically queued recording. Unlike manual QA recording,
-    /// the slot may be in the expandable overflow behind the portrait strip.
-    pub fn begin_auto_queue_recording(&mut self, slot_idx: u8) {
-        let slot = usize::from(slot_idx);
-        assert!(
-            slot < self.slots.len(),
-            "automatic QA slot {slot_idx} was not allocated"
-        );
-        self.slots[slot] = QuickActionSlot::default();
-        self.maul_titbits[slot] = None;
-        self.recording_slot = Some(slot_idx);
-        self.recording_backup = None;
     }
 
     /// Stop recording.  Keeps whatever was appended; the slot is
     /// committed at this point.
     pub fn stop_recording(&mut self) {
-        if let Some(slot) = self.recording_slot.map(usize::from)
-            && self.slots[slot].is_empty()
-            && let Some((previous_slot, previous_titbit)) = self.recording_backup.take()
-        {
-            self.slots[slot] = previous_slot;
-            self.maul_titbits[slot] = previous_titbit;
-        }
-        self.recording_backup = None;
+        self.recording_replaces_existing = false;
         self.recording_slot = None;
     }
 
     pub fn recording_replaces_existing_slot(&self) -> Option<u8> {
         self.recording_slot
-            .filter(|_| self.recording_backup.is_some())
+            .filter(|_| self.recording_replaces_existing)
     }
 
     /// Append a step if currently recording.  No-op otherwise.
     pub fn append_if_recording(&mut self, step: QuickActionStep) {
         if let Some(idx) = self.recording_slot {
-            self.slots[idx as usize].steps.push(step);
-            self.recording_backup = None;
+            let idx = usize::from(idx);
+            if self.recording_replaces_existing {
+                self.slots[idx] = QuickActionSlot::default();
+                self.maul_titbits[idx] = None;
+                self.recording_replaces_existing = false;
+            }
+            self.slots[idx].steps.push(step);
         }
     }
 
@@ -473,7 +452,7 @@ impl PcMacroState {
         }
         if self.recording_slot == Some(slot_idx as u8) {
             self.recording_slot = None;
-            self.recording_backup = None;
+            self.recording_replaces_existing = false;
         }
     }
 
@@ -506,6 +485,95 @@ impl PcMacroState {
             && (rs as usize) >= slot_idx
         {
             self.recording_slot = None;
+            self.recording_replaces_existing = false;
+        }
+    }
+}
+
+/// One automatic Shift-click item. Unlike an Original macro slot, a queue
+/// item always contains exactly one resolved command.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
+pub struct AutoQueueEntry {
+    pub step: QuickActionStep,
+    pub titbit: Option<crate::titbit::TitbitId>,
+}
+
+/// Serialized, PC-keyed automatic queue storage.
+///
+/// This is intentionally not part of [`MacroStore`]. A manual QA in slot 0
+/// and an automatic item at queue position 0 are different state, even when
+/// their commands happen to be identical.
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash,
+)]
+pub struct AutoQueueStore {
+    entries: Vec<(EntityId, Vec<AutoQueueEntry>)>,
+}
+
+impl AutoQueueStore {
+    pub fn get(&self, pc: EntityId) -> Option<&[AutoQueueEntry]> {
+        self.entries
+            .iter()
+            .find(|(id, _)| *id == pc)
+            .map(|(_, queue)| queue.as_slice())
+    }
+
+    pub fn len(&self, pc: EntityId) -> usize {
+        self.get(pc).map_or(0, <[AutoQueueEntry]>::len)
+    }
+
+    pub fn is_empty(&self, pc: EntityId) -> bool {
+        self.len(pc) == 0
+    }
+
+    pub fn push(&mut self, pc: EntityId, step: QuickActionStep) {
+        if let Some((_, queue)) = self.entries.iter_mut().find(|(id, _)| *id == pc) {
+            queue.push(AutoQueueEntry { step, titbit: None });
+        } else {
+            self.entries
+                .push((pc, vec![AutoQueueEntry { step, titbit: None }]));
+        }
+    }
+
+    pub fn set_last_titbit(&mut self, pc: EntityId, titbit: crate::titbit::TitbitId) {
+        let queue = self
+            .entries
+            .iter_mut()
+            .find(|(id, _)| *id == pc)
+            .map(|(_, queue)| queue)
+            .unwrap_or_else(|| panic!("automatic quick-action queue for {pc:?} disappeared"));
+        queue
+            .last_mut()
+            .unwrap_or_else(|| panic!("automatic quick-action queue for {pc:?} is empty"))
+            .titbit = Some(titbit);
+    }
+
+    pub fn pop_front(&mut self, pc: EntityId) -> Option<AutoQueueEntry> {
+        let index = self.entries.iter().position(|(id, _)| *id == pc)?;
+        if self.entries[index].1.is_empty() {
+            panic!("automatic quick-action queue entry for {pc:?} is empty");
+        }
+        let entry = self.entries[index].1.remove(0);
+        if self.entries[index].1.is_empty() {
+            self.entries.remove(index);
+        }
+        Some(entry)
+    }
+
+    /// Upgrade the newest pending movement to running.
+    pub fn make_last_move_running(&mut self, pc: EntityId) -> Option<usize> {
+        let queue = self
+            .entries
+            .iter_mut()
+            .find(|(id, _)| *id == pc)
+            .map(|(_, queue)| queue)?;
+        let index = queue.len().checked_sub(1)?;
+        match &mut queue[index].step.replay {
+            QaReplayCommand::Move { running, .. } | QaReplayCommand::DropAle { running, .. } => {
+                *running = true;
+                Some(index)
+            }
+            _ => None,
         }
     }
 }
@@ -640,6 +708,7 @@ mod tests {
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(x, y),
                 running: false,
+                route: None,
             },
         }
     }
@@ -701,6 +770,173 @@ mod tests {
     }
 
     #[test]
+    fn shield_macro_and_player_command_roundtrip_all_formats_and_hash_geometry() {
+        let protected_pc = EntityId::new(11, crate::element::EntityIdKind::Pc);
+        let step = QuickActionStep {
+            action: Action::Shield,
+            position: MapPoint::new(120.0, 180.0),
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+                danger_point_layer: 6,
+            },
+        };
+
+        let json = serde_json::to_value(step).expect("serialize shield macro as JSON");
+        let from_json: QuickActionStep =
+            serde_json::from_value(json).expect("roundtrip shield macro JSON");
+        assert_eq!(from_json, step);
+
+        let encoded = bitcode::serialize(&step).expect("serialize shield macro as bitcode");
+        let from_bitcode: QuickActionStep =
+            bitcode::deserialize(&encoded).expect("roundtrip shield macro bitcode");
+        assert_eq!(from_bitcode, step);
+        assert_eq!(
+            bitcode::serialize(&from_bitcode).expect("re-encode shield macro bitcode"),
+            encoded
+        );
+
+        let bincode_config = bincode::config::standard();
+        let encoded = bincode::serde::encode_to_vec(step, bincode_config)
+            .expect("serialize shield macro as bincode");
+        let (from_bincode, consumed): (QuickActionStep, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode_config)
+                .expect("roundtrip shield macro bincode");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(from_bincode, step);
+        assert_eq!(
+            bincode::serde::encode_to_vec(from_bincode, bincode_config)
+                .expect("re-encode shield macro bincode"),
+            encoded
+        );
+
+        let command = crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+            actor: EntityId::new(10, crate::element::EntityIdKind::Pc),
+            protected_pc,
+            danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+            danger_point_layer: 6,
+        };
+        let json = serde_json::to_value(&command).expect("serialize shield command as JSON");
+        let from_json: crate::player_command::PlayerCommand =
+            serde_json::from_value(json).expect("roundtrip shield command JSON");
+        assert!(matches!(
+            &from_json,
+            crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc: decoded_protected,
+                danger_point,
+                danger_point_layer: 6,
+            } if *actor == EntityId::new(10, crate::element::EntityIdKind::Pc)
+                && *decoded_protected == protected_pc
+                && *danger_point == crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0)
+        ));
+
+        let encoded = bitcode::serialize(&command).expect("serialize shield command as bitcode");
+        let from_bitcode: crate::player_command::PlayerCommand =
+            bitcode::deserialize(&encoded).expect("roundtrip shield command bitcode");
+        assert_eq!(
+            bitcode::serialize(&from_bitcode).expect("re-encode shield command bitcode"),
+            encoded
+        );
+
+        let encoded = bincode::serde::encode_to_vec(&command, bincode_config)
+            .expect("serialize shield command as bincode");
+        let (from_bincode, consumed): (crate::player_command::PlayerCommand, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode_config)
+                .expect("roundtrip shield command bincode");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            bincode::serde::encode_to_vec(&from_bincode, bincode_config)
+                .expect("re-encode shield command bincode"),
+            encoded
+        );
+
+        let changed_layer = QuickActionStep {
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+                danger_point_layer: 7,
+            },
+            ..step
+        };
+        let changed_height = QuickActionStep {
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 206.0, 26.0),
+                danger_point_layer: 6,
+            },
+            ..step
+        };
+        let baseline_hash = robin_util::state_hash::compute(&step);
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_layer),
+            baseline_hash
+        );
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_height),
+            baseline_hash
+        );
+
+        let changed_command = crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+            actor: EntityId::new(10, crate::element::EntityIdKind::Pc),
+            protected_pc,
+            danger_point: crate::coordinates::WorldPoint3D::new(120.0, 206.0, 26.0),
+            danger_point_layer: 7,
+        };
+        assert_ne!(
+            robin_util::state_hash::compute(&command),
+            robin_util::state_hash::compute(&changed_command)
+        );
+    }
+
+    #[test]
+    fn group_move_route_roundtrips_binary_and_defaults_legacy_json() {
+        let exact = crate::fast_find_grid::SectorIndex::new(37).unwrap();
+        let replay = QaReplayCommand::Move {
+            destination: MapPoint::new(125.0, 250.0),
+            running: true,
+            route: Some(RecordedQaMoveRoute {
+                goal_sector: crate::sector::SectorNumber::new(421),
+                goal_sector_index: exact,
+                goal_layer: 6,
+            }),
+        };
+
+        let json = serde_json::to_value(replay).expect("serialize recorded group move");
+        assert_eq!(
+            serde_json::from_value::<QaReplayCommand>(json.clone())
+                .expect("roundtrip recorded group move JSON"),
+            replay
+        );
+        let bitcode = bitcode::serialize(&replay).expect("serialize recorded group move bitcode");
+        assert_eq!(
+            bitcode::deserialize::<QaReplayCommand>(&bitcode)
+                .expect("roundtrip recorded group move bitcode"),
+            replay
+        );
+        let config = bincode::config::standard();
+        let bincode = bincode::serde::encode_to_vec(replay, config)
+            .expect("serialize recorded group move bincode");
+        let (decoded, consumed): (QaReplayCommand, usize) =
+            bincode::serde::decode_from_slice(&bincode, config)
+                .expect("roundtrip recorded group move bincode");
+        assert_eq!(consumed, bincode.len());
+        assert_eq!(decoded, replay);
+
+        let mut legacy = json;
+        legacy
+            .get_mut("Move")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged group move")
+            .remove("route");
+        assert!(matches!(
+            serde_json::from_value::<QaReplayCommand>(legacy)
+                .expect("deserialize legacy group move"),
+            QaReplayCommand::Move { route: None, .. }
+        ));
+    }
+
+    #[test]
     fn adopted_legacy_sequence_is_a_live_macro_and_clears_atomically() {
         let pc = EntityId::new(7, crate::element::EntityIdKind::Pc);
         let mut sequence = Sequence::new();
@@ -756,31 +992,31 @@ mod tests {
     }
 
     #[test]
-    fn begin_recording_clears_slot() {
+    fn begin_recording_keeps_occupied_slot_live() {
         let mut s = PcMacroState::default();
         s.begin_recording(0);
         s.append_if_recording(step(Action::Bow, 10.0, 10.0));
         assert_eq!(s.slots[0].len(), 1);
 
-        // Re-arming the same slot wipes it (overwrite behaviour).
+        // Re-arming keeps the live slot intact until a new step commits.
         s.stop_recording();
         s.begin_recording(0);
-        assert_eq!(s.slots[0].len(), 0);
+        assert_eq!(s.slots[0].len(), 1);
         assert!(s.is_recording());
-        assert!(s.get_slot_titbit(0).is_none());
     }
 
     #[test]
-    fn stopping_empty_recording_restores_previous_slot() {
+    fn canceling_empty_recording_preserves_previous_slot_and_titbit() {
         let mut state = PcMacroState::default();
-        state.begin_auto_queue_recording(0);
+        state.begin_recording(0);
         state.append_if_recording(step(Action::Bow, 10.0, 10.0));
         state.stop_recording();
         let titbit = crate::titbit::TitbitId::new(42).expect("valid test titbit");
         state.set_slot_titbit(0, titbit);
 
         state.begin_recording(0);
-        assert!(state.slot(0).expect("armed slot").is_empty());
+        assert_eq!(state.slot(0).expect("armed slot").len(), 1);
+        assert_eq!(state.get_slot_titbit(0), Some(titbit));
         state.stop_recording();
 
         assert_eq!(state.slot(0).expect("restored slot").len(), 1);
@@ -788,24 +1024,95 @@ mod tests {
     }
 
     #[test]
-    fn automatic_queue_expands_beyond_portrait_memory() {
+    fn first_captured_step_atomically_replaces_armed_slot() {
         let mut state = PcMacroState::default();
+        state.begin_recording(0);
+        state.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        state.stop_recording();
+        state.set_slot_titbit(
+            0,
+            crate::titbit::TitbitId::new(42).expect("valid test titbit"),
+        );
+
+        state.begin_recording(0);
+        state.append_if_recording(step(Action::Hit, 20.0, 20.0));
+
+        let slot = state.slot(0).expect("replacement slot");
+        assert_eq!(slot.steps.len(), 1);
+        assert_eq!(slot.steps[0].action, Action::Hit);
+        assert!(state.get_slot_titbit(0).is_none());
+    }
+
+    #[test]
+    fn automatic_queue_is_independent_and_expands_beyond_portrait_memory() {
+        let pc = EntityId::new(11, crate::element::EntityIdKind::Pc);
+        let mut queue = AutoQueueStore::default();
         for index in 0..6 {
-            let slot = state.next_auto_queue_slot();
-            assert_eq!(usize::from(slot), index);
-            state.begin_auto_queue_recording(slot);
-            state.append_if_recording(step(Action::Bow, index as f32, 0.0));
-            state.stop_recording();
+            queue.push(pc, step(Action::Bow, index as f32, 0.0));
         }
 
-        assert_eq!(state.slots().len(), 6);
-        assert!(state.slots().iter().all(|slot| !slot.is_empty()));
+        assert_eq!(queue.len(pc), 6);
+        assert_eq!(queue.pop_front(pc).expect("front").step.position.x, 0.0);
+        assert_eq!(queue.len(pc), 5);
+        assert_eq!(queue.get(pc).expect("tail")[0].step.position.x, 1.0);
+    }
 
-        state.do_tetris(0);
-        assert_eq!(state.slots().len(), 5);
+    #[test]
+    fn automatic_queue_serde_roundtrip_preserves_multiple_pcs_items_and_titbits() {
+        let first_pc = EntityId::new(11, crate::element::EntityIdKind::Pc);
+        let second_pc = EntityId::new(12, crate::element::EntityIdKind::Pc);
+        let mut queue = AutoQueueStore::default();
+        queue.push(first_pc, step(Action::Bow, 1.0, 2.0));
+        queue.set_last_titbit(
+            first_pc,
+            crate::titbit::TitbitId::new(41).expect("valid titbit"),
+        );
+        queue.push(first_pc, step(Action::Hit, 3.0, 4.0));
+        queue.set_last_titbit(
+            first_pc,
+            crate::titbit::TitbitId::new(42).expect("valid titbit"),
+        );
+        queue.push(second_pc, step(Action::Stone, 5.0, 6.0));
+        queue.set_last_titbit(
+            second_pc,
+            crate::titbit::TitbitId::new(43).expect("valid titbit"),
+        );
+
+        let json = serde_json::to_string(&queue).expect("serialize automatic queues");
+        let decoded: AutoQueueStore =
+            serde_json::from_str(&json).expect("deserialize automatic queues");
+
+        assert_eq!(decoded, queue);
+        assert_eq!(decoded.len(first_pc), 2);
+        assert_eq!(decoded.len(second_pc), 1);
         assert_eq!(
-            state.slot(0).expect("shifted front").steps[0].position.x,
-            1.0
+            decoded.get(first_pc).expect("first PC queue")[1].titbit,
+            crate::titbit::TitbitId::new(42)
+        );
+        assert_eq!(
+            robin_util::state_hash::compute(&decoded),
+            robin_util::state_hash::compute(&queue),
+            "serialized automatic work must retain deterministic provenance"
+        );
+    }
+
+    #[test]
+    fn automatic_queue_content_and_order_participate_in_state_hash() {
+        let pc = EntityId::new(11, crate::element::EntityIdKind::Pc);
+        let mut bow_then_hit = AutoQueueStore::default();
+        bow_then_hit.push(pc, step(Action::Bow, 1.0, 2.0));
+        bow_then_hit.push(pc, step(Action::Hit, 3.0, 4.0));
+        let mut hit_then_bow = AutoQueueStore::default();
+        hit_then_bow.push(pc, step(Action::Hit, 3.0, 4.0));
+        hit_then_bow.push(pc, step(Action::Bow, 1.0, 2.0));
+
+        assert_ne!(
+            robin_util::state_hash::compute(&bow_then_hit),
+            robin_util::state_hash::compute(&hit_then_bow)
+        );
+        assert_ne!(
+            robin_util::state_hash::compute(&bow_then_hit),
+            robin_util::state_hash::compute(&AutoQueueStore::default())
         );
     }
 

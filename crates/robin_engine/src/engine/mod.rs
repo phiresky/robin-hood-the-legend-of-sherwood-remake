@@ -4668,6 +4668,9 @@ impl EngineInner {
         let slot = self.players.qa_recording_slot as usize;
         let recording = self.players.qa_recording_for.clone();
         for pc_id in recording {
+            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
+                state.stop_recording();
+            }
             let (has_macro, titbit) = self
                 .players
                 .macro_store
@@ -4685,9 +4688,6 @@ impl EngineInner {
             } else {
                 Default::default()
             };
-            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
-                state.stop_recording();
-            }
             let pc = self
                 .get_entity_mut(pc_id)
                 .and_then(|entity| entity.pc_data_mut())

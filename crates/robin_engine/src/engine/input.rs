@@ -175,15 +175,13 @@ impl EngineInner {
     /// then the actor's current position.
     pub fn planned_action_origin(&self, pc_id: EntityId) -> Option<MapPoint> {
         self.players
-            .macro_store
+            .auto_queues
             .get(pc_id)
-            .and_then(|state| {
-                state
-                    .slots()
+            .and_then(|queue| {
+                queue
                     .iter()
                     .rev()
-                    .flat_map(|slot| slot.steps.iter().rev())
-                    .find_map(|step| match step.replay {
+                    .find_map(|entry| match entry.step.replay {
                         crate::macro_store::QaReplayCommand::Move { destination, .. }
                         | crate::macro_store::QaReplayCommand::TargetInteraction {
                             destination,
@@ -192,10 +190,33 @@ impl EngineInner {
                         crate::macro_store::QaReplayCommand::DropAle { target_pos, .. } => {
                             Some(target_pos)
                         }
-                        // Ranged, ground-targeted, and self actions do not
-                        // move their owner. Entity seeks are command-specific;
-                        // the stored target point is an icon anchor, not a
-                        // guaranteed final actor position.
+                        crate::macro_store::QaReplayCommand::Interaction {
+                            target,
+                            command,
+                            ..
+                        } if !matches!(
+                            command,
+                            crate::element::Command::ShootBow
+                                | crate::element::Command::ShootBowOnce
+                                | crate::element::Command::ThrowApple
+                                | crate::element::Command::ThrowStone
+                        ) =>
+                        {
+                            self.get_entity(target)
+                                .map(|entity| entity.element_data().position_map())
+                        }
+                        crate::macro_store::QaReplayCommand::ScrollRead { target, .. }
+                        | crate::macro_store::QaReplayCommand::Swordfight { target, .. }
+                        | crate::macro_store::QaReplayCommand::SwordStrike {
+                            target,
+                            with_seek: true,
+                            ..
+                        } => self
+                            .get_entity(target)
+                            .map(|entity| entity.element_data().position_map()),
+                        // Ranged, ground-targeted, self, and no-seek actions
+                        // do not move their owner. Keep scanning backward for
+                        // the most recent queued action that does.
                         _ => None,
                     })
             })
