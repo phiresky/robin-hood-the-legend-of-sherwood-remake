@@ -2639,11 +2639,10 @@ fn ai_move_goal_door(
 /// 100 frames the element transitions to `Impossible` (and, for PCs,
 /// the "unable to do something" speech line fires).
 ///
-/// This is **not** a retry queue — the path is not re-dispatched during
-/// the 100-frame window.  The element sits waiting (no orders, so the
-/// actor's idle animation drives) until either the pathfinder produces
-/// a result via external state changes, the element is cancelled (halt /
-/// postpone), or the timeout elapses.
+/// This is **not** a retry queue: the path is not re-dispatched during the
+/// 100-frame window. The element sits waiting (no orders, so the actor's idle
+/// animation drives) until it is cancelled (halt / postpone) or the timeout
+/// elapses.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -2673,7 +2672,7 @@ impl FailedPathRequest {
 /// Snapshot of one legacy `RHpathRequest` waiting for A*.
 ///
 /// Direct / straight moves never enter this queue. Requests that do need A*
-/// snapshot their dispatch inputs here, then [`MovementContext`] resolves at
+/// snapshot their dispatch inputs here, then [`PathScheduleContext`] resolves at
 /// most one request at the original `RHEngine::ProcessPathRequests` point per
 /// frame.
 #[derive(
@@ -2894,24 +2893,32 @@ impl PendingPathRequestQueue {
     }
 
     pub(super) fn retain_not_owned_by(&mut self, owner: EntityId) {
-        let removed_ignored_head = self.ignore_next_path
-            && self
-                .in_flight
-                .as_ref()
-                .map(|processed| processed.request.owner)
-                .or_else(|| self.waiting.first().map(|request| request.owner))
-                == Some(owner);
-        self.waiting.retain(|request| request.owner != owner);
-        if self
+        let in_flight_is_owner = self
             .in_flight
             .as_ref()
-            .is_some_and(|processed| processed.request.owner == owner)
-        {
-            self.in_flight = None;
+            .is_some_and(|processed| processed.request.owner == owner);
+        let waiting_head_is_owner = self.in_flight.is_none()
+            && self
+                .waiting
+                .first()
+                .is_some_and(|request| request.owner == owner);
+
+        // Entity teardown follows the same path cancellation timing as an
+        // interrupted movement element: the logical head stays in the queue,
+        // is delivered invalid, and consumes this barrier's result slot.
+        // Only later requests for the removed owner disappear immediately.
+        if in_flight_is_owner || waiting_head_is_owner {
+            self.ignore_next_path = true;
         }
-        if removed_ignored_head {
-            self.ignore_next_path = false;
-        }
+        let first_waiting = usize::from(waiting_head_is_owner);
+        self.waiting = self
+            .waiting
+            .drain(..)
+            .enumerate()
+            .filter_map(|(index, request)| {
+                (index < first_waiting || request.owner != owner).then_some(request)
+            })
+            .collect();
     }
 
     /// Mirror `RHPathFinder::CancelPathRequest`: cancelling the list head
@@ -3093,10 +3100,14 @@ impl PendingPathRequestQueue {
 /// feedback. It only advances the pathfinder queue and classifies expired
 /// failures; the root tick performs the cross-owner consequences (path order
 /// installation and hero speech) immediately after each returned item.
-pub(super) struct MovementContext<'a> {
+pub(super) struct PathScheduleContext<'a> {
     frame_counter: u32,
-    world: &'a mut WorldState,
-    orders: &'a mut OrderRuntime,
+    entities: &'a crate::entities::Entities,
+    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+    pathfinder: &'a mut crate::pathfinder::PathFinder,
+    pending_path_requests: &'a mut PendingPathRequestQueue,
+    failed_path_requests: &'a mut Vec<FailedPathRequest>,
+    sequence_manager: &'a crate::sequence::SequenceManager,
 }
 
 pub(super) enum CompletedPathWork {
@@ -3113,29 +3124,69 @@ pub(super) struct ExpiredPathWork {
     pub(super) age: u32,
 }
 
-impl<'a> MovementContext<'a> {
+impl<'a> PathScheduleContext<'a> {
     pub(super) fn new(
         frame_counter: u32,
-        world: &'a mut WorldState,
-        orders: &'a mut OrderRuntime,
+        entities: &'a crate::entities::Entities,
+        fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+        pathfinder: &'a mut crate::pathfinder::PathFinder,
+        pending_path_requests: &'a mut PendingPathRequestQueue,
+        failed_path_requests: &'a mut Vec<FailedPathRequest>,
+        sequence_manager: &'a crate::sequence::SequenceManager,
     ) -> Self {
         Self {
             frame_counter,
-            world,
-            orders,
+            entities,
+            fast_grid,
+            pathfinder,
+            pending_path_requests,
+            failed_path_requests,
+            sequence_manager,
         }
     }
 
-    /// Take the one result made ready by the previous scheduling call.
-    /// Stale results are discarded exactly where the old root helper discarded
-    /// them; no later request is completed at this barrier.
-    pub(super) fn take_completed(&mut self) -> Option<CompletedPathWork> {
-        let (processed, valid) = self.orders.pending_path_requests.take_completed()?;
+    /// Execute one Original `RHPathFinder::ProcessPathRequests` barrier.
+    ///
+    /// The pathfinder starts its successor before returning a completed head
+    /// to `RHEngine`, including from the recursive synchronous `WAITING` arm
+    /// (`original-code/RHpathfinder.cpp:724-910`). Keep completion
+    /// classification and successor start inside one context borrow so result
+    /// application cannot enqueue, cancel, or otherwise change which request
+    /// becomes in-flight first.
+    pub(super) fn process_requests(
+        &mut self,
+        assets: &LevelAssets,
+        synchronous_pathfinding: bool,
+    ) -> Option<CompletedPathWork> {
+        if self.pending_path_requests.has_in_flight() {
+            let completed = self.take_completed();
+            self.start_next(assets);
+            return completed;
+        }
+
+        self.start_next(assets);
+        if !synchronous_pathfinding {
+            return None;
+        }
+
+        // Original's deterministic WAITING arm computes the first request,
+        // recursively enters READY, starts/computes one successor, and only
+        // then returns the first completion to RHEngine.
+        let completed = self.take_completed();
+        self.start_next(assets);
+        completed
+    }
+
+    /// Take the one result made ready by the previous scheduling operation.
+    /// Stale results are discarded without handing this barrier's completion
+    /// slot to a later request.
+    fn take_completed(&mut self) -> Option<CompletedPathWork> {
+        let (processed, valid) = self.pending_path_requests.take_completed()?;
         let request = processed.request;
         if crate::pathfinder::parity_path_capture_is_active() {
             crate::pathfinder::record_parity_path_event(
                 crate::pathfinder::ParityPathEvent::Completed {
-                    request: parity_path_request_state(&self.world.fast_grid, &request),
+                    request: parity_path_request_state(self.fast_grid, &request),
                     valid,
                     // Original records the raw path even when cancellation
                     // makes the delivery invalid. A failed A* request has an
@@ -3148,7 +3199,6 @@ impl<'a> MovementContext<'a> {
             return None;
         }
         let still_live = self
-            .orders
             .sequence_manager
             .get_element(request.seq_id, request.elem_idx)
             .is_some_and(|elem| {
@@ -3166,10 +3216,10 @@ impl<'a> MovementContext<'a> {
         })
     }
 
-    /// Start at most one queued request after the previous result has been
-    /// applied by the root coordinator. Rust computes A* synchronously, but the
-    /// result remains parked until the next frame's scheduling barrier.
-    pub(super) fn start_next(&mut self, assets: &LevelAssets) {
+    /// Start at most one queued request. Rust computes A* synchronously, but
+    /// the result remains parked until the next scheduling operation consumes
+    /// it (or the recursive deterministic `WAITING` arm above consumes it).
+    fn start_next(&mut self, assets: &LevelAssets) {
         // `RHPathFinder::ProcessPathRequests` never inspects the requesting
         // sequence element (`original-code/RHpathfinder.cpp:806-820,891-901`).
         // Every entry that is still in `mListPathRequests` is started and,
@@ -3180,8 +3230,8 @@ impl<'a> MovementContext<'a> {
         // (`original-code/RHpathfinder.cpp:538-598`). Skipping a request here
         // because its element died would hand the freed result slot to the
         // next queued request a frame early.
-        let retained_cancelled_head = self.orders.pending_path_requests.ignore_next_path;
-        let Some(request) = self.orders.pending_path_requests.pop_to_start() else {
+        let retained_cancelled_head = self.pending_path_requests.ignore_next_path;
+        let Some(request) = self.pending_path_requests.pop_to_start() else {
             return;
         };
         // Original FindPathNodes observes mbIgnoreNextPath and exits before
@@ -3189,9 +3239,9 @@ impl<'a> MovementContext<'a> {
         // invalid completion with an empty raw path; it must not calculate a
         // route merely because Rust runs pathfinding synchronously.
         let waypoints = retained_cancelled_path_result(retained_cancelled_head).or_else(|| {
-            self.world.pathfinder.find_path(
+            self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
-                &self.world.fast_grid,
+                self.fast_grid,
                 request.layer,
                 request.sector,
                 request.half_diagonal_idx,
@@ -3200,21 +3250,20 @@ impl<'a> MovementContext<'a> {
                 request.use_first_point,
             )
         });
-        self.orders
-            .pending_path_requests
-            .set_in_flight(request, waypoints);
+        self.pending_path_requests.set_in_flight(request, waypoints);
     }
 
-    /// Remove stale failures and return expired live entries in their stored
-    /// order. Cross-owner effects are intentionally left to the tick
-    /// coordinator so hero speech still precedes `element_impossible` for each
-    /// request.
-    pub(super) fn take_expired_failures(&mut self) -> Vec<ExpiredPathWork> {
-        let mut still_waiting = Vec::new();
-        let mut expired = Vec::new();
-        for request in std::mem::take(&mut self.orders.failed_path_requests) {
+    /// Remove stale failures and return the next expired live entry.
+    ///
+    /// Returning one item at a time lets the root coordinator close hero
+    /// speech, `element_impossible`, and the owner's synchronous condolation
+    /// boundary before this method inspects the following entry, matching the
+    /// mutable Original list walk at `RHengine.cpp:8487-8509`.
+    pub(super) fn take_next_expired_failure(&mut self) -> Option<ExpiredPathWork> {
+        let mut index = 0;
+        while index < self.failed_path_requests.len() {
+            let request = &self.failed_path_requests[index];
             let still_live = self
-                .orders
                 .sequence_manager
                 .get_element(request.seq_id, request.elem_idx)
                 .is_some_and(|element| {
@@ -3223,28 +3272,33 @@ impl<'a> MovementContext<'a> {
                         && element.command == crate::element::Command::MoveWaiting
                 });
             if !still_live {
+                self.failed_path_requests.remove(index);
                 continue;
             }
 
             let age = self.frame_counter.saturating_sub(request.first_fail_frame);
             if age <= 100 {
-                still_waiting.push(request);
+                index += 1;
                 continue;
             }
 
+            let owner_id = request.owner;
             let owner_is_pc = self
-                .world
                 .entities
-                .get(request.owner)
-                .is_some_and(Entity::is_pc);
-            expired.push(ExpiredPathWork {
+                .get(owner_id)
+                .unwrap_or_else(|| panic!(
+                    "expired path request for {:?} retains a live sequence element but its owner entity is missing",
+                    owner_id
+                ))
+                .is_pc();
+            let request = self.failed_path_requests.remove(index);
+            return Some(ExpiredPathWork {
                 request,
                 owner_is_pc,
                 age,
             });
         }
-        self.orders.failed_path_requests = still_waiting;
-        expired
+        None
     }
 }
 
@@ -4047,55 +4101,35 @@ pub(crate) fn circular_dispatch_destinations(
     result
 }
 
-/// Build the line-jump click-sequence shape:
+/// Build the portion of a line-jump click sequence that follows arrival at
+/// the selected source line.
 ///
-/// 1. move to the selected source jump-line,
-/// 2. execute the jump command from source to associated destination,
-/// 3. move from the landing side to the original clicked point.
+/// Original routes the approach to that line through
+/// `RHSequence::AppendMoveToLineToSequence`; the approach may therefore
+/// contain an `AssertPosition` and a complete gate path.  Keeping only the
+/// post-arrival elements here prevents callers from accidentally replacing
+/// that route with one direct, potentially blocked movement segment.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_line_jump_click_sequence(
+pub(crate) fn build_line_jump_click_tail(
     owner: EntityId,
     action: OrderType,
     source_line_idx: crate::jump_line::JumpLineIndex,
-    source_line: &crate::jump_line::JumpLine,
     destination_line_idx: crate::jump_line::JumpLineIndex,
     click_point: MapPoint,
     click_layer: u16,
     speed_factor: f32,
-) -> crate::sequence::Sequence {
+) -> Vec<crate::sequence::SequenceElement> {
     use crate::element::Command;
-    use crate::sequence::{
-        Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-    };
+    use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
 
-    let mut seq = Sequence::new();
-
-    let mut move_to_line = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
-    move_to_line.data = SequenceElementData::Movement {
-        destination: source_line.get_middle_point(),
-        layer: source_line.layer,
-        sector: None,
-        gate_id: None,
-        line_id: Some(source_line_idx),
-        element: None,
-        flags: MoveFlags::LINE | MoveFlags::TO_JUMP,
-        tolerance: 0.0,
-        direction: 0,
-        action,
-        speed_factor,
-        post_seek_sequence: None,
-    };
-    seq.append_element(move_to_line);
-
-    let mut jump = SequenceElement::new_generic(2, Command::JumpCmd, Some(owner));
+    let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
     jump.set_property(Field::JumplineSource, FieldValue::LineId(source_line_idx));
     jump.set_property(
         Field::JumplineDestination,
         FieldValue::LineId(destination_line_idx),
     );
-    seq.append_element(jump);
 
-    let mut final_move = SequenceElement::new_movement(3, Command::Move, Some(owner), action);
+    let mut final_move = SequenceElement::new_movement(2, Command::Move, Some(owner), action);
     final_move.data = SequenceElementData::Movement {
         destination: click_point,
         layer: click_layer,
@@ -4113,9 +4147,35 @@ pub(crate) fn build_line_jump_click_sequence(
         speed_factor,
         post_seek_sequence: None,
     };
-    seq.append_element(final_move);
+    vec![jump, final_move]
+}
 
-    seq
+/// Actor that owns the routed approach to a selected jump line.
+///
+/// `RHengine.cpp::PerformMove` substitutes the carrier only for
+/// `AppendMoveToLineToSequence`; the explicit jump and post-jump movement
+/// remain owned by the selected PC.
+pub(in crate::engine) fn line_jump_approach_owner(
+    engine: &EngineInner,
+    selected_pc: EntityId,
+) -> EntityId {
+    let selected = engine.expect_entity(selected_pc, "line-jump selected PC");
+    if selected.element_data().posture != crate::element::Posture::OnShoulders {
+        return selected_pc;
+    }
+    let carrier = selected
+        .human_data()
+        .unwrap_or_else(|| panic!("OnShoulders line-jump owner {selected_pc:?} is not human"))
+        .carrier
+        .unwrap_or_else(|| {
+            panic!("OnShoulders line-jump owner {selected_pc:?} has no retained carrier")
+        });
+    let carrier_entity = engine.expect_entity(carrier, "OnShoulders line-jump carrier");
+    assert!(
+        carrier_entity.is_pc(),
+        "OnShoulders line-jump carrier {carrier:?} for {selected_pc:?} is not a PC"
+    );
+    carrier
 }
 
 #[derive(Clone, Copy, Default)]
@@ -6373,8 +6433,8 @@ impl EngineInner {
             post_seek_arrivals,
             post_seek_terminal_state_effects,
             sequence_seek_terminal_state_effects,
-            line_cross_checks,
-            non_elevation_cross_checks,
+            mut line_cross_checks,
+            mut non_elevation_cross_checks,
             transition_seek_refreshes,
             mut order_pops,
             terminal_pc_direction_goal_restores,
@@ -6471,7 +6531,41 @@ impl EngineInner {
             self.launch_sword_movement_termination_provoke(entity_id);
         }
         for entity_id in door_pass_transition_start_effects {
+            // TODO(parity): apply this START reposition and its crossing
+            // callbacks inside the owner's actor slot, as Original does, so
+            // later actor slots can observe the midpoint synchronously.
             self.apply_door_pass_transition_start_side_effects(assets, entity_id);
+            // A stationary ladder-exit START returns before the ordinary
+            // movement tail queues Actor::Hourglass's post-Execute crossing
+            // check.  The START side effect above can nevertheless snap the
+            // actor across a boundary to the door midpoint.  Original tests
+            // that live post-Execute segment before interpreting START, so
+            // recover it from NewMove's outer old-position latch here.  A
+            // non-stationary START already queued its segment in the common
+            // tail and must not dispatch the callbacks twice.
+            if !line_cross_checks
+                .iter()
+                .any(|(queued, _, _)| *queued == entity_id)
+            {
+                let crossing = self.world.entities.get(entity_id).and_then(|entity| {
+                    let old_pos = entity.position_iface().old_map_position();
+                    let new_pos = entity.element_data().position_map();
+                    let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
+                    let eligible = old_pos != new_pos
+                        && actor_line_crossing_eligible(
+                            entity.element_data().posture,
+                            entity
+                                .human_data()
+                                .is_some_and(|human| human.carrier.is_some()),
+                            in_bounds,
+                        );
+                    eligible.then_some((entity_id, old_pos, entity.element_data().layer()))
+                });
+                if let Some(crossing) = crossing {
+                    line_cross_checks.push(crossing);
+                    non_elevation_cross_checks.push(crossing);
+                }
+            }
         }
         for entity_id in door_pass_transition_done_effects {
             self.apply_door_pass_transition_done_side_effects(assets, entity_id);
@@ -11324,11 +11418,9 @@ impl EngineInner {
         let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
             true
         } else {
-            let reachable =
-                self.world
-                    .fast_grid
-                    .is_reachable_thick(source, dest, entity_layer, half_diagonal);
-            reachable
+            self.world
+                .fast_grid
+                .is_reachable_thick(source, dest, entity_layer, half_diagonal)
         };
 
         // Before submitting a path request, check whether the actor's

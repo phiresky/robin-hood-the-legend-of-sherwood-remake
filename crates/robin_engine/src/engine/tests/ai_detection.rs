@@ -199,6 +199,105 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
 }
 
 #[test]
+fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surfacing_completion() {
+    use crate::ai::{AiContext, AiState, GotoFlags, Position, Substate};
+    use crate::element::{Camp, Command, Entity};
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+
+    let mut run_case = |case: &str| {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let position = Position {
+            x: 100.0,
+            y: 100.0,
+            sector: SectorHandle::new(0),
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            position,
+            self_animation: OrderType::WaitingAlerted,
+            self_is_soldier: true,
+            ..AiContext::default()
+        };
+        let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+            unreachable!()
+        };
+        soldier
+            .element
+            .set_position_map(MapPoint::new(position.x, position.y));
+        soldier.element.set_sector(position.sector);
+        let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = owner.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToPhalanx;
+        ai.base.stuck_counter = 2;
+        // An enclosing Think owns this latch. The prefix boundary must not
+        // manufacture its EndThink while materializing the GoTo registration.
+        ai.base.think_recursion_depth = 1;
+        ai.base.completion_latch_inside_think = true;
+        if case == "accepted" {
+            ai.base.open_end_think_frames = 1;
+            ai.base.engine_deferred_end_think_frames = 1;
+            ai.base.engine_completion_verdict_resolved = false;
+        }
+        let destination = match case {
+            "accepted" => Position {
+                x: 140.0,
+                ..position
+            },
+            "already" => position,
+            "denied" => Position {
+                x: 140.0,
+                sector: None,
+                ..position
+            },
+            _ => unreachable!(),
+        };
+        ai.base.go_to(destination, GotoFlags::RUN, &ctx);
+
+        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 0, &ctx);
+        let pending = engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, Command::Null);
+        let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+        (
+            pending,
+            ai.base.stuck_counter,
+            ai.base.completion_latch_inside_think,
+            ai.base.already_on_point,
+            ai.base.couldnt_reachpoint,
+            ai.base.think_recursion_depth,
+            ai.base.open_end_think_frames,
+            ai.base.engine_deferred_end_think_frames,
+            ai.base.engine_completion_verdict_resolved,
+        )
+    };
+
+    assert_eq!(
+        run_case("accepted"),
+        (true, 0, true, false, false, 1, 1, 1, true),
+        "an accepted GoTo must register before the wildcard query, reset the watchdog, and retain the enclosing completion latch"
+    );
+    assert_eq!(
+        run_case("already"),
+        (false, 3, true, true, false, 1, 0, 0, false),
+        "an already-on-point GoTo leaves no manager element, so the selected Wait advances without surfacing completion"
+    );
+    assert_eq!(
+        run_case("denied"),
+        (false, 3, true, false, true, 1, 0, 0, false),
+        "a denied GoTo leaves no manager element, so the selected Wait advances without surfacing completion"
+    );
+}
+
+#[test]
 fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     use crate::element::{Command, ElementData, ElementKind, TargetFilter};
     use crate::movement::{AbilityKind, ActiveAbility};

@@ -1561,7 +1561,7 @@ pub enum ShortcutPreset {
 
 /// State for the keyboard shortcuts configuration screen.
 ///
-/// The actual key bindings are stored in `keyconfig::KeyConfig`; this
+/// The actual key bindings are stored in [`crate::key_config::KeyConfig`]; this
 /// screen manages the editing workflow.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ShortcutsScreen {

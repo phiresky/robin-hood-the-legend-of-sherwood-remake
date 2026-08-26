@@ -3040,7 +3040,7 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
             .get_entity_mut(opponent)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![initiator];
+        human.opponents = vec![initiator].into();
         human.relative_fighting_ability = 42;
     }
 
@@ -3094,20 +3094,20 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
             .get_entity_mut(owner)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![near, far];
+        human.opponents = vec![near, far].into();
         human.relative_fighting_ability = 17;
     }
     engine
         .get_entity_mut(near)
         .and_then(Entity::human_data_mut)
         .unwrap()
-        .opponents = vec![owner];
+        .opponents = vec![owner].into();
     {
         let human = engine
             .get_entity_mut(far)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![owner, far_partner];
+        human.opponents = vec![owner, far_partner].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
@@ -3116,7 +3116,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
             .get_entity_mut(far_partner)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![far];
+        human.opponents = vec![far].into();
         human.smalltalk_initiative = true;
     }
 
@@ -3186,14 +3186,14 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![old_principal, promoted];
+        .opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![owner];
+            .opponents = vec![owner].into();
     }
 
     assert!(
@@ -3284,14 +3284,14 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![old_principal, promoted];
+        .opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![owner];
+            .opponents = vec![owner].into();
     }
 
     engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
@@ -8710,6 +8710,82 @@ fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
             .cross_npc_actions
             .is_empty(),
         "the direct target setter must not escape to the next-frame global batch"
+    );
+}
+
+#[test]
+fn recursive_break_phalanx_borrows_global_think_depth_without_owning_end_think() {
+    use crate::ai::{AiState, CrossNpcAction, StimulusType, Substate};
+    use crate::element::Camp;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
+    let Entity::Soldier(source_soldier) = engine
+        .get_entity_mut(source_id)
+        .expect("phalanx-break source exists")
+    else {
+        panic!("phalanx-break source changed kind")
+    };
+    // Keep BattleDecisions on its active-enemy path; the empty synthetic
+    // patrol fixture otherwise recurses through unrelated patrol setup.
+    source_soldier.soldier.cached_camp = Camp::Royalists;
+    let source = source_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("phalanx-break source has AI");
+    // Rust's typed handler has already performed its controller-local
+    // EndThink by the time the engine drains the direct call. Original's
+    // static byte remains one until BreakPhalanx returns to that EndThink.
+    source.think_recursion_depth = 0;
+    source
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::BreakPhalanx {
+            target: member_id.index(),
+            refresh_them_list: false,
+        });
+    {
+        let member = engine
+            .get_entity_mut(member_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("phalanx-break member has EnemyAi");
+        member.base.current_state = AiState::Attacking;
+        member.base.current_substate = Substate::AttackingPhalanx;
+        member.list_them = vec![source_id.index()];
+        member.base.primary_target = source_id.index();
+        assert_eq!(member.base.think_recursion_depth, 0);
+        // Model a completion candidate already present on the recursively
+        // called object. BreakPhalanx has no matching EndThink of its own,
+        // so its engine prefix must not dispatch the flag.
+        member.base.already_on_point = true;
+        member.base.completion_latch_inside_think = false;
+    }
+
+    engine.process_synchronous_reentrant_actions_for(&sim, source_id, &assets);
+
+    let member = engine
+        .get_entity(member_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx-break member retains EnemyAi");
+    assert_eq!(
+        member.base.think_recursion_depth, 0,
+        "the member's controller-local depth must be restored raw after borrowing the static depth"
+    );
+    assert!(
+        !member.base.completion_latch_inside_think,
+        "the member must not inherit ownership of the source's EndThink"
+    );
+    assert!(
+        !member
+            .base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .iter()
+            .any(|queued| queued.stimulus_type == StimulusType::EventReachPoint),
+        "the recursively called member owns no EndThink completion surface"
     );
 }
 

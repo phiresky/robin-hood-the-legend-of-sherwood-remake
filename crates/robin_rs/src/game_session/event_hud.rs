@@ -411,6 +411,7 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
         &events,
         &keyboard_actions,
         &mut input.translator,
+        frame,
     );
 
     EventHudOutcome::Ready(CollectedFrameInput {

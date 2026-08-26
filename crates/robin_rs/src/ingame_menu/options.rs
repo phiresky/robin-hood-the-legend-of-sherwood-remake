@@ -10,11 +10,11 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
-use robin_assets::keyconfig::KeyConfig;
 use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::hardware::Hardware;
+use crate::key_config::KeyConfig;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;

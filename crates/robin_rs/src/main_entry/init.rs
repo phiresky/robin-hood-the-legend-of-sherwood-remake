@@ -1,7 +1,8 @@
 //! Data-directory, locale, profile, and key-config initialization.
 
+use std::path::Path;
 #[cfg(any(not(target_arch = "wasm32"), target_os = "android"))]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::host::ApplicationContext;
 use crate::key_config_store::KeyConfigStore;
@@ -13,6 +14,103 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile as engine_sbfile;
 use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR, SbFile};
+use thiserror::Error;
+
+/// Coarse startup stage used by launchers to classify initialization failures
+/// without parsing their user-facing messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitErrorCategory {
+    DataDirectory,
+    Content,
+    PlayerProfile,
+    Platform,
+}
+
+/// Failure while preparing the deterministic game data and host services.
+///
+/// The variants deliberately retain the startup stage. Launchers still show
+/// the same messages as before, while diagnostics and tests can distinguish a
+/// bad installation from corrupt content, player-profile state, or host
+/// integration.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum InitError {
+    #[error("Unable to install datadir {path}: SBFile error {status}")]
+    DataDirectoryInstall { path: String, status: i32 },
+
+    #[error(
+        "ERROR: 'Data' directory not found in {cwd}\nSet ROBINHOOD_DATA_DIR=/path/to/game to the directory that\ncontains the game's Data/ folder (with Data/robinhood.bks).\nIf you do not own the game, I recommend buying it on GOG:\n{gog_store_url}"
+    )]
+    DataDirectoryMissing {
+        cwd: String,
+        gog_store_url: &'static str,
+    },
+
+    #[cfg(target_os = "android")]
+    #[error("Unable to chdir to {path}: {source}")]
+    DataDirectoryChange {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(target_os = "android")]
+    #[error(
+        "ERROR: neither APK asset Data/datadir.bin nor a loose Data directory was found in {cwd}"
+    )]
+    DataDirectoryAndroidAssetsMissing { cwd: String },
+
+    #[error("shipping datadir: {source:#}")]
+    ContentShippingDatadir {
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("{message}")]
+    ContentProfilesJson { path: &'static str, message: String },
+
+    #[error("Failed to open {path}: error {status}")]
+    ContentProfilesOpen { path: &'static str, status: i32 },
+
+    #[error("Failed to read profiles from {path}: error {source}")]
+    ContentProfilesRead {
+        path: &'static str,
+        #[source]
+        source: robin_engine::legacy_io::LegacyIoError,
+    },
+
+    #[error("{message}")]
+    PlayerProfileState {
+        save_directory: std::path::PathBuf,
+        message: String,
+    },
+
+    #[error("install shipping datadir: {source:#}")]
+    PlatformShippingDatadirInstall {
+        #[source]
+        source: anyhow::Error,
+    },
+}
+
+impl InitError {
+    pub const fn category(&self) -> InitErrorCategory {
+        match self {
+            Self::DataDirectoryInstall { .. } | Self::DataDirectoryMissing { .. } => {
+                InitErrorCategory::DataDirectory
+            }
+            #[cfg(target_os = "android")]
+            Self::DataDirectoryChange { .. } | Self::DataDirectoryAndroidAssetsMissing { .. } => {
+                InitErrorCategory::DataDirectory
+            }
+            Self::ContentShippingDatadir { .. }
+            | Self::ContentProfilesJson { .. }
+            | Self::ContentProfilesOpen { .. }
+            | Self::ContentProfilesRead { .. } => InitErrorCategory::Content,
+            Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
+            Self::PlatformShippingDatadirInstall { .. } => InitErrorCategory::Platform,
+        }
+    }
+}
 
 /// Locale-specific subfolders the game data may ship with.
 ///
@@ -176,7 +274,7 @@ pub fn register_language_data_paths_for_tool() {
 /// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
 /// over the `ROBINHOOD_DATA_DIR` environment variable.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
+fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
         .or_else(|| {
@@ -188,9 +286,10 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         tracing::info!("using primary datadir {}", data_dir);
         let status = SbFile::set_primary_path(&data_dir);
         if status != SBFILE_NO_ERROR {
-            return Err(format!(
-                "Unable to install datadir {data_dir}: SBFile error {status}"
-            ));
+            return Err(InitError::DataDirectoryInstall {
+                path: data_dir,
+                status,
+            });
         }
     } else {
         // No override and no env var: reuse the remembered datadir, or
@@ -209,10 +308,10 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         tracing::info!("using primary datadir {}", chosen.display());
         let status = SbFile::set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
-            return Err(format!(
-                "Unable to install datadir {}: SBFile error {status}",
-                chosen.display()
-            ));
+            return Err(InitError::DataDirectoryInstall {
+                path: chosen.display().to_string(),
+                status,
+            });
         }
     }
 
@@ -221,15 +320,10 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "?".into());
-        return Err(format!(
-            "ERROR: 'Data' directory not found in {}\n\
-             Set ROBINHOOD_DATA_DIR=/path/to/game to the directory that\n\
-             contains the game's Data/ folder (with Data/robinhood.bks).\n\
-             If you do not own the game, I recommend buying it on GOG:\n\
-             {}",
+        return Err(InitError::DataDirectoryMissing {
             cwd,
-            crate::datadir_locator::GOG_STORE_URL
-        ));
+            gog_store_url: crate::datadir_locator::GOG_STORE_URL,
+        });
     }
 
     add_overlay_data_dirs();
@@ -243,7 +337,7 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
 /// up the same way as desktop; otherwise rely on the installed
 /// `ShippingDatadir` / `asset_fs` bundle.
 #[cfg(target_os = "android")]
-fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
+fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
         .or_else(|| {
@@ -253,8 +347,10 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         });
     if let Some(data_dir) = data_dir {
         tracing::info!("changing working directory to datadir {}", data_dir);
-        std::env::set_current_dir(&data_dir)
-            .map_err(|e| format!("Unable to chdir to {}: {}", data_dir, e))?;
+        std::env::set_current_dir(&data_dir).map_err(|source| InitError::DataDirectoryChange {
+            path: data_dir,
+            source,
+        })?;
     }
 
     if robin_engine::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
@@ -263,9 +359,7 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "?".into());
-        return Err(format!(
-            "ERROR: neither APK asset Data/datadir.bin nor a loose Data directory was found in {cwd}"
-        ));
+        return Err(InitError::DataDirectoryAndroidAssetsMissing { cwd });
     }
 
     add_language_folder();
@@ -277,7 +371,7 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
 /// `robin_util::asset_fs` consults for every read.  All we do here is
 /// bootstrap language-folder detection.
 #[cfg(target_arch = "wasm32")]
-fn setup_data_dir(_data_dir_override: Option<&Path>) -> Result<(), String> {
+fn setup_data_dir(_data_dir_override: Option<&Path>) -> Result<(), InitError> {
     add_language_folder();
     Ok(())
 }
@@ -293,13 +387,13 @@ pub type RustInit = (
 );
 
 /// Pure-Rust initialization: logging, data dir, profiles, campaign.
-pub fn rust_init() -> Result<RustInit, String> {
+pub fn rust_init() -> Result<RustInit, InitError> {
     rust_init_with_data_dir(None)
 }
 
 /// [`rust_init`] with an explicit primary datadir (e.g. from a tool's
 /// `--data-dir` flag), taking priority over `ROBINHOOD_DATA_DIR`.
-pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, String> {
+pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, InitError> {
     crate::init_tracing();
     setup_data_dir(data_dir)?;
     tracing::info!("Robin Hood — Rust entry point");
@@ -307,11 +401,11 @@ pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, Stri
     // Load the shipping datadir if one exists. When present, subsystem
     // loaders prefer it over legacy disk I/O.
     let shipping = assets_shipping_datadir::try_load(std::path::Path::new("Data"))
-        .map_err(|e| format!("shipping datadir: {e:#}"))?
+        .map_err(|source| InitError::ContentShippingDatadir { source })?
         .map(std::sync::Arc::new);
     if let Some(ref dd) = shipping {
         assets_shipping_datadir::install_global(dd.clone())
-            .map_err(|error| format!("install shipping datadir: {error:#}"))?;
+            .map_err(|source| InitError::PlatformShippingDatadirInstall { source })?;
     }
 
     rust_init_finish(shipping)
@@ -322,7 +416,7 @@ pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, Stri
 /// the filesystem-backed [`assets_shipping_datadir::try_load`] path.
 pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
-) -> Result<RustInit, String> {
+) -> Result<RustInit, InitError> {
     crate::init_tracing();
     setup_data_dir(None)?;
     tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
@@ -331,7 +425,7 @@ pub fn rust_init_with_shipping(
 
 fn rust_init_finish(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
-) -> Result<RustInit, String> {
+) -> Result<RustInit, InitError> {
     let options = engine_api::GlobalOptions::default();
     let profiles = std::sync::Arc::new(load_profiles(shipping.as_deref(), &options)?);
     tracing::info!(
@@ -341,11 +435,18 @@ fn rust_init_finish(
         profiles.missions.len(),
         profiles.hth_weapons.len()
     );
-    let player_profiles = load_player_profile_manager();
-    let key_configs = load_key_config_store();
+    let player_profile_directory = crate::save_file::default_save_directory();
+    let (player_profiles, player_profiles_regenerated) =
+        load_player_profile_manager(&player_profile_directory);
+    let key_configs = load_key_config_store(&player_profile_directory, player_profiles_regenerated);
 
     let application_context =
-        ApplicationContext::complete(options, player_profiles, key_configs, shipping)?;
+        ApplicationContext::complete(options, player_profiles, key_configs, shipping).map_err(
+            |message| InitError::PlayerProfileState {
+                save_directory: player_profile_directory,
+                message,
+            },
+        )?;
 
     let campaign = Campaign::create(&profiles, application_context.sim_config().difficulty);
 
@@ -360,10 +461,16 @@ fn rust_init_finish(
 ///      the `cpf_to_json` example).
 ///   3. Binary `.cpf` at `Data/Configuration/profile.cpf` parsed via the
 ///      legacy CPF reader.
+///
+/// TODO(content-loading): `RHProfileManager::RHProfileManager(char*)` in the
+/// Original imports the authored CSV directory and writes `profile.cpf` when
+/// the compiled file is absent. The Rust runtime does not yet implement that
+/// development fallback, so absence of all three supported representations
+/// remains a fatal required-content error.
 fn load_profiles(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     options: &engine_api::GlobalOptions,
-) -> Result<ProfileManager, String> {
+) -> Result<ProfileManager, InitError> {
     if let Some(dd) = shipping
         && let Some(p) = &dd.profiles
     {
@@ -386,46 +493,122 @@ fn load_profiles(
     let json_path = "Data/Configuration/profile.cpf.json";
     if engine_sbfile::SbFile::exists(json_path) {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        let mut mgr = ProfileManager::load_json(json_path)?;
+        // TODO(typed-errors): make `ProfileManager::load_json` return a typed
+        // error. Its current String boundary has already discarded the
+        // underlying UTF-8 / serde_json source before startup sees it.
+        let mut mgr = ProfileManager::load_json(json_path).map_err(|message| {
+            InitError::ContentProfilesJson {
+                path: json_path,
+                message,
+            }
+        })?;
         mgr.import_beam_mes(level_dir);
         return Ok(mgr);
     }
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
-    let mut file = engine_sbfile::SbFile::open(cpf_path, engine_sbfile::SB_FILE_READ)
-        .map_err(|e| format!("Failed to open {cpf_path}: error {e}"))?;
+    let mut file =
+        engine_sbfile::SbFile::open(cpf_path, engine_sbfile::SB_FILE_READ).map_err(|status| {
+            InitError::ContentProfilesOpen {
+                path: cpf_path,
+                status,
+            }
+        })?;
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
-        .map_err(|e| format!("Failed to read profiles from {cpf_path}: error {e}"))?;
+        .map_err(|source| InitError::ContentProfilesRead {
+            path: cpf_path,
+            source,
+        })?;
     mgr.import_beam_mes(level_dir);
     Ok(mgr)
 }
 
 /// Load the player-profile service owned by [`ApplicationContext`].
-fn load_player_profile_manager() -> PlayerProfileManager {
-    let save_dir = crate::save_file::default_save_directory();
+///
+/// The boolean reports regeneration so the parallel Rust key-config store can
+/// be reset with the profile-owned key bindings that the Original recreated.
+fn load_player_profile_manager(save_dir: &Path) -> (PlayerProfileManager, bool) {
     let save_dir_str = save_dir.to_string_lossy().into_owned();
 
+    // Original behavior: `RHPlayerProfileManager::Load` in
+    // `original-code/RHplayerprofilemanager.cpp` recreates the default Robin
+    // profile when the player archive is absent or invalid. This recovery is
+    // player-state compatibility, not a fallback for required game content.
     match PlayerProfileManager::load(&save_dir_str) {
-        Ok(mgr) => mgr,
-        Err(err) => {
-            tracing::warn!(
-                "Failed to load player profiles from {save_dir_str} ({err}); creating defaults"
-            );
-            let mut mgr = PlayerProfileManager::new(save_dir_str);
-            let idx = mgr.create_profile("Robin".to_owned(), DifficultyLevel::Medium);
-            mgr.set_active(idx);
-            mgr
+        Ok(mgr)
+            if mgr
+                .active_index
+                .and_then(|index| mgr.profiles.get(index))
+                .is_some() =>
+        {
+            (mgr, false)
         }
+        Ok(mgr) => (
+            regenerate_default_player_profiles(
+                save_dir_str,
+                format!(
+                    "archive has {} profiles and active index {:?}",
+                    mgr.profiles.len(),
+                    mgr.active_index
+                ),
+            ),
+            true,
+        ),
+        Err(error) => (
+            regenerate_default_player_profiles(save_dir_str, error.to_string()),
+            true,
+        ),
     }
+}
+
+/// Recreate the Original's first-launch profile after an absent or invalid
+/// archive. `RHPlayerProfileManager::CreateDefaultProfiles` marks the manager
+/// as default-backed and immediately saves it; keeping both details here
+/// prevents a corrupt archive from failing on every launch or skipping the
+/// new-player prompt.
+fn regenerate_default_player_profiles(
+    save_directory: String,
+    reason: String,
+) -> PlayerProfileManager {
+    tracing::warn!(
+        "Failed to load player profiles from {save_directory} ({reason}); creating defaults"
+    );
+    let mut manager = PlayerProfileManager::new(save_directory);
+    let index = manager.create_profile("Robin".to_owned(), DifficultyLevel::Medium);
+    manager.set_active(index);
+    manager.default_profiles = true;
+    if let Err(error) = manager.save() {
+        // The Original launcher also keeps running after CreateDefaultProfiles
+        // reports a save failure. Retain the usable in-memory profile, but do
+        // not hide that persistence is unavailable.
+        tracing::warn!(
+            "Failed to persist regenerated player profiles to {}: {error}",
+            manager.save_directory
+        );
+    }
+    manager
 }
 
 /// Load the key-config service owned by [`ApplicationContext`]. First-run
 /// stores are intentionally empty; `ApplicationContext::complete` creates
 /// the active profile's original-compatible default entry.
-fn load_key_config_store() -> KeyConfigStore {
-    let save_dir = crate::save_file::default_save_directory();
+fn load_key_config_store(save_dir: &Path, player_profiles_regenerated: bool) -> KeyConfigStore {
     let save_dir_str = save_dir.to_string_lossy().into_owned();
+
+    if player_profiles_regenerated {
+        tracing::warn!(
+            "Ignoring key configs in {save_dir_str} because player profiles were regenerated"
+        );
+        let store = KeyConfigStore::new(save_dir_str);
+        if let Err(error) = store.save() {
+            tracing::warn!(
+                "Failed to persist reset key configs to {}: {error}",
+                store.save_directory
+            );
+        }
+        return store;
+    }
 
     KeyConfigStore::load(&save_dir_str).unwrap_or_else(|err| {
         tracing::warn!(
@@ -433,4 +616,138 @@ fn load_key_config_store() -> KeyConfigStore {
         );
         KeyConfigStore::new(save_dir_str)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn initialization_errors_retain_their_startup_category() {
+        let cases = [
+            (
+                InitError::DataDirectoryInstall {
+                    path: "/game".to_owned(),
+                    status: -1,
+                },
+                InitErrorCategory::DataDirectory,
+            ),
+            (
+                InitError::ContentShippingDatadir {
+                    source: anyhow::anyhow!("decode failed"),
+                },
+                InitErrorCategory::Content,
+            ),
+            (
+                InitError::ContentProfilesOpen {
+                    path: "Data/Configuration/profile.cpf",
+                    status: -2,
+                },
+                InitErrorCategory::Content,
+            ),
+            (
+                InitError::PlayerProfileState {
+                    save_directory: "/saves".into(),
+                    message: "no active player profile".to_owned(),
+                },
+                InitErrorCategory::PlayerProfile,
+            ),
+            (
+                InitError::PlatformShippingDatadirInstall {
+                    source: anyhow::anyhow!("mount failed"),
+                },
+                InitErrorCategory::Platform,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.category(), expected);
+        }
+    }
+
+    #[test]
+    fn initialization_error_display_preserves_launcher_messages() {
+        let missing = InitError::DataDirectoryMissing {
+            cwd: "/missing".to_owned(),
+            gog_store_url: "https://example.invalid/game",
+        };
+        assert_eq!(
+            missing.to_string(),
+            "ERROR: 'Data' directory not found in /missing\n\
+             Set ROBINHOOD_DATA_DIR=/path/to/game to the directory that\n\
+             contains the game's Data/ folder (with Data/robinhood.bks).\n\
+             If you do not own the game, I recommend buying it on GOG:\n\
+             https://example.invalid/game"
+        );
+
+        let profile = InitError::ContentProfilesOpen {
+            path: "Data/Configuration/profile.cpf",
+            status: -7,
+        };
+        assert_eq!(
+            profile.to_string(),
+            "Failed to open Data/Configuration/profile.cpf: error -7"
+        );
+    }
+
+    #[test]
+    fn initialization_error_exposes_underlying_source() {
+        let error = InitError::ContentShippingDatadir {
+            source: anyhow::anyhow!("invalid shipping payload"),
+        };
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("invalid shipping payload")
+        );
+        assert_eq!(
+            error.to_string(),
+            "shipping datadir: invalid shipping payload"
+        );
+    }
+
+    #[test]
+    fn semantically_invalid_player_archive_is_regenerated_and_persisted() {
+        let directory = tempfile::tempdir().expect("temporary player-profile directory");
+        let directory_string = directory.path().to_string_lossy().into_owned();
+        let mut invalid = PlayerProfileManager::new(directory_string.clone());
+        invalid.create_profile("orphan".to_owned(), DifficultyLevel::Hard);
+        invalid.active_index = Some(99);
+        invalid
+            .save()
+            .expect("write invalid player-profile fixture");
+        let mut stale_key_configs = KeyConfigStore::new(directory_string.clone());
+        stale_key_configs.entry_or_default(0);
+        stale_key_configs
+            .save()
+            .expect("write stale key-config fixture");
+
+        let (recovered, regenerated) = load_player_profile_manager(directory.path());
+        assert!(regenerated);
+        assert_eq!(recovered.profiles.len(), 1);
+        assert_eq!(
+            recovered.get_active().map(|profile| profile.name.as_str()),
+            Some("Robin")
+        );
+        assert!(recovered.default_profiles);
+
+        let persisted = PlayerProfileManager::load(&directory_string)
+            .expect("reload regenerated player-profile archive");
+        assert_eq!(
+            persisted.get_active().map(|profile| profile.name.as_str()),
+            Some("Robin")
+        );
+        assert!(persisted.default_profiles);
+
+        let key_configs = load_key_config_store(directory.path(), regenerated);
+        assert!(key_configs.configs.is_empty());
+        assert!(
+            KeyConfigStore::load(&directory_string)
+                .expect("reload reset key configs")
+                .configs
+                .is_empty()
+        );
+    }
 }

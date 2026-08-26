@@ -1298,6 +1298,9 @@ impl EngineInner {
                 );
                 self.control.sim_config.amount_of_speaking = *amount;
             }
+            SetFixHardReactionTimes { enabled } => {
+                self.control.sim_config.fix_hard_reaction_times = *enabled;
+            }
 
             HeroSpeak { pc_id, expression } => {
                 self.hero_speaking(assets, *pc_id, *expression);

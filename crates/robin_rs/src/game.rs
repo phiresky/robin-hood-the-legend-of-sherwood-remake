@@ -511,20 +511,21 @@ impl Game {
         assets: &LevelAssets,
         engine: &mut Engine,
         dev: &mut engine_api::DevState,
+        mut frame: engine_api::SimulationFrameInput,
         console_displayed: bool,
         dummy_pause: bool,
     ) -> Option<GameCode> {
         let mission_transitioning = !self.operation.is(GameCode::LevelInProgress);
-
-        if !self.should_run_hourglass(console_displayed, mission_transitioning, dummy_pause) {
-            return None;
-        }
+        frame.run_hourglass &=
+            self.should_run_hourglass(console_displayed, mission_transitioning, dummy_pause);
 
         // Start/quit-mission widget disable-temp state driven by PC
         // guarded status.
-        let pc_guarded = engine.is_pc_guarded();
-        self.disable_start_mission_temp(pc_guarded);
-        self.disable_quit_mission_temp(pc_guarded);
+        if frame.run_hourglass {
+            let pc_guarded = engine.is_pc_guarded();
+            self.disable_start_mission_temp(pc_guarded);
+            self.disable_quit_mission_temp(pc_guarded);
+        }
 
         // Advance host-side animation phases.  Gated on the same
         // `should_run_hourglass` check above so pause / console freeze
@@ -537,7 +538,9 @@ impl Game {
         // ticking while in a building / flying / nothing selected,
         // and re-selecting after an idle period would jump to a
         // different visible frame.
-        if engine.any_selection_drawing_selection_mark(host.transport.local_seat) {
+        if frame.run_hourglass
+            && engine.any_selection_drawing_selection_mark(host.transport.local_seat)
+        {
             host.selection_mark.tick();
         }
         let viewport = &host.frontend.viewport;
@@ -545,15 +548,22 @@ impl Game {
         let zoom_factor = viewport.zoom_factor;
         let screen_width = viewport.screen_size.x as i32;
         let screen_height = viewport.screen_size.y as i32;
-        host.frontend.trajectory_ground_mark.tick(
-            view_position,
-            zoom_factor,
-            screen_width,
-            screen_height,
-            engine.frame_counter(),
-        );
+        if frame.run_hourglass {
+            host.frontend.trajectory_ground_mark.tick(
+                view_position,
+                zoom_factor,
+                screen_width,
+                screen_height,
+                engine.frame_counter(),
+            );
+        }
 
-        let result = crate::sim_timeline::run_engine_tick_core(host, display, assets, engine, dev);
+        let output =
+            crate::sim_timeline::run_engine_frame_core(host, display, assets, engine, dev, frame);
+        if !output.hourglass_ran {
+            return None;
+        }
+        let result = output.game_code();
 
         // The messenger reset path consumes the FPS-cheat flag and
         // promotes it into the debug-info overlay, so toggling the FPS
@@ -639,15 +649,21 @@ impl Game {
         // ownership invariant.
         let mut input = engine_api::InputState::default();
         let mut display = engine_api::HostDisplayState::default();
-        engine.apply_command(
-            &mut display,
-            &mut input,
-            assets,
-            &engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
-                exit_code: self.operation.get_current(),
-                difficulty: self.global_options.sim_config().difficulty,
-            },
-        );
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                assets,
+                &mut engine_api::DevState::default(),
+                engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
+                    engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
+                        exit_code: self.operation.get_current(),
+                        difficulty: self.global_options.sim_config().difficulty,
+                    },
+                )])
+                .with_hourglass(false),
+            )
+            .expect("finalize-mission command admission");
         let mut campaign = engine.into_campaign();
         let result = self.process_operation(&mut campaign, &assets.profile_manager, callbacks);
         (result, campaign)
@@ -1101,6 +1117,7 @@ mod tests {
             &assets,
             &mut engine,
             &mut dev,
+            engine_api::SimulationFrameInput::default(),
             false,
             false,
         );
@@ -1124,6 +1141,7 @@ mod tests {
             &assets,
             &mut engine,
             &mut dev,
+            engine_api::SimulationFrameInput::default(),
             false,
             true,
         );
@@ -1146,6 +1164,7 @@ mod tests {
             &assets,
             &mut engine,
             &mut dev,
+            engine_api::SimulationFrameInput::default(),
             true,
             false,
         );
@@ -1168,6 +1187,7 @@ mod tests {
             &assets,
             &mut engine,
             &mut dev,
+            engine_api::SimulationFrameInput::default(),
             false,
             false,
         );
@@ -1190,6 +1210,7 @@ mod tests {
             &assets,
             &mut engine,
             &mut dev,
+            engine_api::SimulationFrameInput::default(),
             false,
             false,
         );

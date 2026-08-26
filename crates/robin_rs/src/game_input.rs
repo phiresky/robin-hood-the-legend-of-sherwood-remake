@@ -2058,7 +2058,16 @@ mod tests {
     fn apply(engine: &mut Engine, assets: &LevelAssets, cmd: PlayerCommand) {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
-        engine.apply_command(&mut display, &mut input, assets, &cmd);
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                assets,
+                &mut robin_engine::engine::DevState::default(),
+                robin_engine::engine::SimulationFrameInput::new(vec![cmd.into()])
+                    .with_hourglass(false),
+            )
+            .expect("test command admission");
     }
 
     fn select(engine: &mut Engine, assets: &LevelAssets, pc_id: EntityId) {
@@ -2089,7 +2098,7 @@ mod tests {
             element,
             actor: ActorData::default(),
             human: HumanData {
-                opponents: vec![opponent],
+                opponents: vec![opponent].into(),
                 ..Default::default()
             },
             npc: NpcData {

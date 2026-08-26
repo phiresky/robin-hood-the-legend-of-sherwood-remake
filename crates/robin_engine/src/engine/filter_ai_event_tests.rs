@@ -4251,13 +4251,13 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![opponent];
+        .opponents = vec![opponent].into();
     engine
         .get_entity_mut(opponent)
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![weak];
+        .opponents = vec![weak].into();
     engine
         .get_entity_mut(weak)
         .unwrap()
@@ -4314,7 +4314,7 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
             .unwrap()
             .human_data_mut()
             .unwrap();
-        human.opponents = vec![opponent];
+        human.opponents = vec![opponent].into();
         human.smalltalk_initiative = true;
     }
     engine
@@ -4322,7 +4322,7 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![stunned];
+        .opponents = vec![stunned].into();
     engine.set_actors_frozen(true);
 
     engine.tick_actor_animation_action_change_slots(
@@ -4372,12 +4372,12 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![opponent];
+        .opponents = vec![opponent].into();
     {
         let Entity::Soldier(soldier) = engine.get_entity_mut(opponent).unwrap() else {
             unreachable!()
         };
-        soldier.human.opponents = vec![stunned];
+        soldier.human.opponents = vec![stunned].into();
         soldier.npc.view_radius = 400;
         let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
         ai.base.me = opponent.index();
@@ -4728,13 +4728,13 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
             .get_entity_mut(pruner)
             .and_then(|entity| entity.human_data_mut())
             .expect("pruner is human")
-            .opponents = vec![mutated];
+            .opponents = vec![mutated].into();
         {
             let human = engine
                 .get_entity_mut(mutated)
                 .and_then(|entity| entity.human_data_mut())
                 .expect("mutated fighter is human");
-            human.opponents = vec![pruner];
+            human.opponents = vec![pruner].into();
             human.smalltalk_initiative = true;
             human.received_smalltalk_initiative = true;
         }

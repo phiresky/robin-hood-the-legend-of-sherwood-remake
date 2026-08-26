@@ -8305,12 +8305,10 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
     ));
 
     if let Some(human) = engine.get_entity_mut(pc).unwrap().human_data_mut() {
-        human.opponents = vec![current, clicked];
-        human.opponent_jump_lines = vec![None, None];
+        human.opponents = vec![current, clicked].into();
     }
     if let Some(human) = engine.get_entity_mut(clicked).unwrap().human_data_mut() {
-        human.opponents = vec![current, pc];
-        human.opponent_jump_lines = vec![None, None];
+        human.opponents = vec![current, pc].into();
     }
     engine
         .get_entity_mut(pc)
@@ -8710,12 +8708,10 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
         actor.action_state = ActionState::WaitingSword;
     }
     if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
-        human.opponents = vec![opponent];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![opponent].into();
     }
     if let Some(human) = engine.get_entity_mut(opponent).unwrap().human_data_mut() {
-        human.opponents = vec![owner];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![owner].into();
     }
 
     let mut element =
@@ -8785,12 +8781,10 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
     ));
 
     if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
-        human.opponents = vec![old_primary, replacement];
-        human.opponent_jump_lines = vec![None, None];
+        human.opponents = vec![old_primary, replacement].into();
     }
     if let Some(human) = engine.get_entity_mut(replacement).unwrap().human_data_mut() {
-        human.opponents = vec![owner];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![owner].into();
     }
     let replacement_handle = (0..3)
         .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(replacement))
@@ -8870,8 +8864,7 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
     ));
 
     if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
-        human.opponents = vec![old_primary];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![old_primary].into();
     }
     if let Some(human) = engine.get_entity_mut(replacement).unwrap().human_data_mut() {
         human.unconscious = true;
@@ -8939,16 +8932,14 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     attacker_soldier.soldier.cached_camp = crate::element::Camp::Royalists;
 
     if let Some(human) = engine.get_entity_mut(victim).unwrap().human_data_mut() {
-        human.opponents = vec![existing_opponent];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![existing_opponent].into();
     }
     if let Some(human) = engine
         .get_entity_mut(existing_opponent)
         .unwrap()
         .human_data_mut()
     {
-        human.opponents = vec![victim];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![victim].into();
     }
 
     let mut strike_element =
@@ -9304,15 +9295,13 @@ fn quit_swordfight_resets_moving_survivor_smalltalk_initiative() {
             .unwrap()
             .human_data_mut()
             .unwrap();
-        human.opponents = vec![survivor];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![survivor].into();
     }
     {
         let survivor_entity = engine.get_entity_mut(survivor).unwrap();
         survivor_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
         let human = survivor_entity.human_data_mut().unwrap();
-        human.opponents = vec![quitter, principal];
-        human.opponent_jump_lines = vec![None, None];
+        human.opponents = vec![quitter, principal].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
@@ -9322,8 +9311,7 @@ fn quit_swordfight_resets_moving_survivor_smalltalk_initiative() {
             .unwrap()
             .human_data_mut()
             .unwrap();
-        human.opponents = vec![survivor];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![survivor].into();
         human.smalltalk_initiative = true;
     }
 
@@ -9360,15 +9348,13 @@ fn quit_swordfight_does_not_reset_initiative_without_surviving_opponents() {
             .unwrap()
             .human_data_mut()
             .unwrap();
-        human.opponents = vec![survivor];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![survivor].into();
     }
     {
         let survivor_entity = engine.get_entity_mut(survivor).unwrap();
         survivor_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
         let human = survivor_entity.human_data_mut().unwrap();
-        human.opponents = vec![quitter];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![quitter].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
@@ -9595,8 +9581,7 @@ fn deleting_final_opponent_synchronously_quits_soldier_ai() {
     ));
 
     if let Some(human) = engine.get_entity_mut(soldier).unwrap().human_data_mut() {
-        human.opponents = vec![opponent];
-        human.opponent_jump_lines = vec![None];
+        human.opponents = vec![opponent].into();
     }
     let Entity::Soldier(soldier_entity) = engine.get_entity_mut(soldier).unwrap() else {
         unreachable!()

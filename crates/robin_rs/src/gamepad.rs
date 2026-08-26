@@ -742,9 +742,8 @@ impl GamePadState {
 /// One frame's worth of gamepad dispatch output.
 #[derive(Debug, Default)]
 pub struct GamepadFrame {
-    /// Sim-affecting commands produced this frame. Apply to the engine
-    /// via `engine.apply_command(...)` and also push onto the replay
-    /// recorder.
+    /// Sim-affecting commands produced this frame. Admit through the frame
+    /// transaction so replay/rollback capture the same ordered input.
     pub cmds: Vec<engine_player_command::PlayerCommand>,
     pub viewport: Vec<ViewportCommand>,
     /// QA macro event, if any.  The host decides how to route these —
@@ -984,7 +983,7 @@ fn choose_opponent(
 ) -> Option<engine_element::EntityId> {
     let pc_entity = engine.get_entity(pc_id)?;
     let pc_pos = pc_entity.element_data().position_map();
-    let opponents = pc_entity.human_data().map(|h| h.opponents.clone())?;
+    let opponents = pc_entity.human_data().map(|h| h.opponents.ids())?;
     if opponents.len() < 2 {
         return None;
     }

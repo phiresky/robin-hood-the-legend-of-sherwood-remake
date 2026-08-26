@@ -11,9 +11,9 @@ set -euo pipefail
 # NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER=1 fixture escape hatch is set. The
 # default is a globally quiet host, two jobs (up to eight when explicitly
 # requested and admitted by the per-job memory gate), and a separate
-# 7200-second conversion watchdog. NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 is
-# corpus-safe but requires one idle-priority job; target admission/import locks
-# are always held.
+# 7200-second conversion watchdog. NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 keeps
+# every worker at idle priority while the same bounded job and memory gates
+# remain in force; target admission/import locks are always held.
 
 if (( $# != 5 )); then
     printf 'usage: %s WORKSPACE CORPUS PINNED_RUNNER_OR_BUNDLE TRUST_SHA256 AUDIT_DIR\n' "$0" >&2
@@ -242,11 +242,23 @@ if (( runner_is_bundle == 0 )) && file -b -- "$runner" | grep -q '^ELF '; then
 fi
 
 global_outer_lock=none
+concurrent_campaign_lock=none
 if (( allow_other_corpora == 1 )); then
-    (( jobs == 1 )) || fail 'concurrent-campaign mode requires NATIVE_CONVERT_JOBS=1'
+    (( jobs <= 3 )) || fail 'concurrent-campaign mode permits at most three jobs'
     nice_level=19
     ionice_class=3
     ionice_level=
+    concurrent_campaign_lock=${NATIVE_CONVERT_CONCURRENT_CAMPAIGN_LOCK:-$workspace/.git/native-concurrent-campaign.lock}
+    concurrent_campaign_lock=$(realpath -m -- "$concurrent_campaign_lock") \
+        || fail 'cannot resolve concurrent-campaign lock'
+    [[ "$concurrent_campaign_lock" == "$workspace"/* ]] \
+        || fail 'concurrent-campaign lock must be below workspace'
+    mkdir -p -- "${concurrent_campaign_lock%/*}" \
+        || fail 'cannot create concurrent-campaign lock directory'
+    exec {concurrent_campaign_lock_fd}>"$concurrent_campaign_lock" \
+        || fail 'cannot open concurrent-campaign lock'
+    flock -n "$concurrent_campaign_lock_fd" \
+        || fail 'another concurrent-campaign conversion is active'
 else
     nice_level=10
     ionice_class=2
@@ -457,6 +469,7 @@ metadata="$work_dir/provenance.env"
     printf 'GLOBAL_DRAIN_GUARD=observational-process-snapshot\n'
     printf 'TARGET_DRAIN_GUARD=locked-admission-and-collector\n'
     printf 'GLOBAL_OUTER_LOCK=%q\n' "$global_outer_lock"
+    printf 'CONCURRENT_CAMPAIGN_LOCK=%q\n' "$concurrent_campaign_lock"
     printf 'NICE=%s\n' "$nice_level"
     printf 'IONICE_CLASS=%s\n' "$ionice_class"
     printf 'IONICE_LEVEL=%s\n' "$ionice_level"

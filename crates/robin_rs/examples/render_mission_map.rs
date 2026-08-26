@@ -16,6 +16,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyhow::Context as _;
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -68,13 +69,13 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(err) => {
             robin_rs::init_tracing();
-            tracing::error!("{err}");
+            tracing::error!("{err:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run() -> Result<i32, String> {
+fn run() -> anyhow::Result<i32> {
     let args = Args::parse();
     let window_visible = !args.headless;
     let fog_tint_all_sprites = if args.fog_tint_all_sprites {
@@ -84,8 +85,8 @@ fn run() -> Result<i32, String> {
     } else {
         None
     };
-    let invocation_dir = std::env::current_dir()
-        .map_err(|err| format!("failed to determine current directory: {err}"))?;
+    let invocation_dir =
+        std::env::current_dir().context("failed to determine current directory")?;
     let output = absolute_path(
         &invocation_dir,
         args.output
@@ -110,8 +111,7 @@ fn run() -> Result<i32, String> {
         launcher_args.push(OsString::from("--proto"));
         launcher_args.push(OsString::from(proto));
     }
-    let mut game_args =
-        robin_rs::main_entry::try_parse_cli_from(launcher_args).map_err(|err| err.to_string())?;
+    let mut game_args = robin_rs::main_entry::try_parse_cli_from(launcher_args)?;
     game_args.mission_start_map_output = Some(output.clone());
     game_args.mission_start_map_frame = args.frame;
     game_args.mission_start_reveal_all = args.reveal_all;
@@ -125,7 +125,7 @@ fn run() -> Result<i32, String> {
             .as_mut()
             .and_then(|manager| manager.get_active_mut())
             .ok_or_else(|| {
-                "--fog-tint-all-sprites requires an active player profile".to_string()
+                anyhow::anyhow!("--fog-tint-all-sprites requires an active player profile")
             })?;
         active.graphic_config.apply_fog_to_all_sprites = enabled;
     }
@@ -152,6 +152,7 @@ fn run() -> Result<i32, String> {
             }
         },
     )
+    .map_err(anyhow::Error::msg)
 }
 
 fn absolute_path(base: &Path, path: PathBuf) -> PathBuf {

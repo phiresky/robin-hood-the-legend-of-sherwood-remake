@@ -534,26 +534,114 @@ impl EngineInner {
                         );
                     }
 
-                    let mut seq = build_line_jump_click_sequence(
+                    let source_line_sector_idx = source_line.sector_index.unwrap_or_else(|| {
+                        panic!("line-jump source line {source_line_idx} has no home sector")
+                    });
+                    let source_line_sector = self
+                        .world
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(source_line_sector_idx))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "line-jump source line {source_line_idx} references missing sector index {}",
+                                u32::from(source_line_sector_idx)
+                            )
+                        });
+                    let source_line_sector_number = source_line_sector.sector_number;
+                    let source_line_midpoint = source_line.get_middle_point();
+                    let approach_owner = line_jump_approach_owner(self, *pc_id);
+                    let mut tail_sequence = crate::sequence::Sequence::new();
+                    for element in build_line_jump_click_tail(
                         *pc_id,
                         player_group_move_action(run),
                         source_line_idx,
-                        &source_line,
                         destination_line_idx,
                         resolved_jump_dest,
                         pc_effective_layer,
                         1.0,
-                    );
-                    if owner_is_pc {
-                        let speak = crate::sequence::SequenceElement::new(
-                            4,
-                            crate::element::Command::SpeakHeroReachDestination,
-                            Some(*pc_id),
-                        );
-                        seq.append_element(speak);
+                    ) {
+                        tail_sequence.append_element(element);
                     }
-                    self.append_posture_recovery(*pc_id, &mut seq);
-                    self.launch_sequence(seq);
+                    // AppendPostureRecovery remains owned by the selected PC
+                    // even when Original substitutes its carrier solely for
+                    // the routed source-line approach.
+                    self.append_posture_recovery(*pc_id, &mut tail_sequence);
+                    let tail = tail_sequence.elements;
+
+                    // Original PerformMove delegates the source-line approach
+                    // to AppendMoveToLineToSequence.  A cross-sector approach
+                    // must therefore run FindPathGates and emit the complete
+                    // AssertPosition/gate route before the explicit jump and
+                    // post-jump click tail.  The old Rust path emitted one
+                    // direct LINE|TO_JUMP move here, which crossed active
+                    // motion blockers and queued an A* request absent from the
+                    // Original lifecycle.
+                    let source_and_line_are_same_sector =
+                        src_sector.arena_index() == Some(source_line_sector_idx);
+                    let gate_path = if source_and_line_are_same_sector {
+                        Some(Vec::new())
+                    } else {
+                        let approach_auth = self
+                            .get_entity(approach_owner)
+                            .map(|entity| entity.actor_auth_info());
+                        let level = self.world.fast_grid.level.clone();
+                        self.scripts.mission.as_ref().and_then(|_| {
+                            find_group_move_gate_path(
+                                &self.script_domains.interactables.doors,
+                                approach_owner,
+                                pc_pos,
+                                *src_sector,
+                                source_line_midpoint,
+                                source_line_sector_number,
+                                Some(source_line_sector_idx),
+                                source_line.layer,
+                                approach_auth.as_ref(),
+                                &|sector| self.building_sector_is_authorized(sector),
+                                &|sector| {
+                                    level
+                                        .sectors
+                                        .iter()
+                                        .find(|candidate| candidate.sector_number == sector)
+                                        .and_then(|candidate| candidate.lift_type)
+                                },
+                            )
+                        })
+                    };
+                    let Some(gate_path) = gate_path else {
+                        self.hero_speaking(
+                            assets,
+                            approach_owner,
+                            crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                        );
+                        continue;
+                    };
+                    self.build_gate_movement_sequence(
+                        sim,
+                        approach_owner,
+                        (!source_and_line_are_same_sector).then_some(*src_sector),
+                        gate_path,
+                        GoalShape::Line {
+                            line_index: source_line_idx,
+                            midpoint: source_line_midpoint,
+                            tolerance: 0.0,
+                        },
+                        source_line.layer,
+                        player_group_move_action(run),
+                        true,
+                        1.0,
+                        crate::sequence::MoveFlags::empty(),
+                        Vec::new(),
+                        tail,
+                        false,
+                        false,
+                    )
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "line-jump route for {pc_id:?} could not build its movement sequence"
+                        )
+                    });
                     if show_marker && !is_door_click {
                         self.feedback.ground_mark.add_mark(
                             resolved_jump_dest.x,

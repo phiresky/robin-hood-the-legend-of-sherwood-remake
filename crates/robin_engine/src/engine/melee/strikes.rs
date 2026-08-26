@@ -4339,13 +4339,13 @@ mod tests {
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![opponent];
+            .opponents = vec![opponent].into();
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![victim];
+            .opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.tick_push_flight_for_owner(&sim, &assets, victim);
@@ -4402,13 +4402,13 @@ mod tests {
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![opponent];
+            .opponents = vec![opponent].into();
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![victim];
+            .opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.tick_push_flight_for_owner(&sim, &assets, victim);

@@ -634,6 +634,7 @@ pub fn update_mouse(
     host: &mut Host,
     assets: &LevelAssets,
     dev: &DevState,
+    external_actions: &mut Vec<robin_engine::engine::ExternalAction>,
     mouse_map: MapPoint,
     alt_held: bool,
     shift_held: bool,
@@ -824,7 +825,10 @@ pub fn update_mouse(
             // Non-cheat path is pure host UI state —
             // `selected_view_element` lives on Host, not Engine, so
             // the rollback hash doesn't see it.
-            if !engine.try_ezekiel_instakill(id) {
+            if engine.can_ezekiel_instakill(id) {
+                external_actions
+                    .push(robin_engine::engine::ExternalAction::EzekielInstakill { target: id });
+            } else {
                 host.selected_view_element = Some(id);
             }
         }
@@ -1680,15 +1684,22 @@ mod tests {
         }));
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
-        engine.apply_command(
-            &mut display,
-            &mut input,
-            assets,
-            &PlayerCommand::SelectPc {
-                pc_id: pc,
-                append: false,
-            },
-        );
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                assets,
+                &mut robin_engine::engine::DevState::default(),
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SelectPc {
+                        pc_id: pc,
+                        append: false,
+                    }
+                    .into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("selection command admission");
         pc
     }
 
@@ -1755,12 +1766,18 @@ mod tests {
         ] {
             let mut display = HostDisplayState::default();
             let mut input = InputState::default();
-            engine.apply_command(
-                &mut display,
-                &mut input,
-                &assets,
-                &PlayerCommand::SelectResolvedAction { pc_id: pc, action },
-            );
+            engine
+                .advance_frame(
+                    &mut display,
+                    &mut input,
+                    &assets,
+                    &mut robin_engine::engine::DevState::default(),
+                    robin_engine::engine::SimulationFrameInput::new(vec![
+                        PlayerCommand::SelectResolvedAction { pc_id: pc, action }.into(),
+                    ])
+                    .with_hourglass(false),
+                )
+                .expect("action selection admission");
             let cursor = cursor_for_shield(
                 &mut engine,
                 &mut host,

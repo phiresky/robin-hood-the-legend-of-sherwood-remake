@@ -1994,6 +1994,7 @@ mod tests {
             patrol_chief: None,
             antagonist: 0,
             detected_body: 0,
+            blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,

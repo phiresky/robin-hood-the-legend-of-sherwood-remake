@@ -11,10 +11,10 @@ use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
+use crate::key_config::{KeyConfig, REAL_KEY_COUNT};
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
-use robin_assets::keyconfig::{KeyConfig, REAL_KEY_COUNT};
 use winit::keyboard::KeyCode;
 
 use super::layout::{

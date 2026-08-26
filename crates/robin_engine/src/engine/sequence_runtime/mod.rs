@@ -1792,10 +1792,18 @@ impl StealthCommandContext<'_> {
                 | Command::EnterHelpingClimb
                 | Command::LeaveHelpingClimb
         ) {
-            let id = crate::order::alloc_order_id(self.next_order_id);
-            let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
-            order.compute_direction = false;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            let has_carried = entity.pc_data().is_some_and(|pc| pc.carried.is_some());
+            let animations: &[crate::order::OrderType] = if command == Command::LeaveHelpingClimb {
+                crate::stealth::leave_helping_climb_orders(live_posture, has_carried)
+            } else {
+                std::slice::from_ref(&transition.animation)
+            };
+            for &animation in animations {
+                let id = crate::order::alloc_order_id(self.next_order_id);
+                let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
+                order.compute_direction = false;
+                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            }
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }

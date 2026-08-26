@@ -3,6 +3,18 @@ mod suite {
     use super::super::*;
     use crate::entity_id::{PcId, SoldierId};
 
+    fn test_pc() -> Entity {
+        Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        })
+    }
+
     #[test]
     fn line_goal_still_uses_pathfinder_when_thick_route_is_blocked() {
         use crate::sequence::MoveFlags;
@@ -131,6 +143,51 @@ mod suite {
     }
 
     #[test]
+    fn entity_teardown_retains_in_flight_head_until_invalid_completion() {
+        let removed = EntityId::Pc(PcId(3));
+        let successor = EntityId::Soldier(SoldierId(4));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(removed, crate::pathfinder::PathFinderSpeed::Fast));
+        queue.enqueue(request(
+            successor,
+            crate::pathfinder::PathFinderSpeed::Medium,
+        ));
+        let first = queue.pop_to_start().expect("removed owner starts");
+        queue.set_in_flight(first, Some(vec![MapPoint::new(20.0, 20.0)]));
+
+        queue.retain_not_owned_by(removed);
+
+        assert!(queue.ignore_next_path);
+        assert!(queue.in_flight.is_some(), "logical head remains in flight");
+        assert_eq!(queue.waiting.len(), 1);
+        assert_eq!(queue.waiting[0].owner, successor);
+        let (completed, valid) = queue
+            .take_completed()
+            .expect("removed head consumes its completion slot");
+        assert_eq!(completed.request.owner, removed);
+        assert!(!valid);
+    }
+
+    #[test]
+    fn entity_teardown_retains_waiting_logical_head() {
+        let removed = EntityId::Pc(PcId(3));
+        let successor = EntityId::Soldier(SoldierId(4));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(removed, crate::pathfinder::PathFinderSpeed::Fast));
+        queue.enqueue(request(
+            successor,
+            crate::pathfinder::PathFinderSpeed::Medium,
+        ));
+
+        queue.retain_not_owned_by(removed);
+
+        assert!(queue.ignore_next_path);
+        assert_eq!(queue.waiting.len(), 2);
+        assert_eq!(queue.waiting[0].owner, removed);
+        assert_eq!(queue.waiting[1].owner, successor);
+    }
+
+    #[test]
     fn cancelled_waiting_head_starts_even_after_its_element_dies() {
         let cancelled = EntityId::Soldier(SoldierId(3));
         let mut queue = PendingPathRequestQueue::default();
@@ -205,9 +262,10 @@ mod suite {
     }
 
     #[test]
-    fn movement_context_expires_live_failure_only_after_100_frames() {
-        let owner = EntityId::Pc(PcId(7));
+    fn path_schedule_context_expires_live_failure_without_mutating_sequence_state() {
+        let owner = EntityId::Pc(PcId(0));
         let mut world = WorldState::new();
+        world.entities.push(Some(test_pc()));
         let mut orders = OrderRuntime::new();
         let mut element = crate::sequence::SequenceElement::new(
             1,
@@ -229,20 +287,172 @@ mod suite {
                 10,
             ));
 
-        let at_boundary =
-            MovementContext::new(110, &mut world, &mut orders).take_expired_failures();
-        assert!(at_boundary.is_empty());
+        let at_boundary = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                110,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_next_expired_failure()
+        };
+        assert!(at_boundary.is_none());
         assert_eq!(orders.failed_path_requests.len(), 1);
 
-        let after_boundary =
-            MovementContext::new(111, &mut world, &mut orders).take_expired_failures();
-        assert_eq!(after_boundary.len(), 1);
-        assert_eq!(after_boundary[0].request.owner, owner);
-        assert_eq!(after_boundary[0].age, 101);
-        assert!(
-            !after_boundary[0].owner_is_pc,
-            "missing entity is not fabricated"
-        );
+        let after_boundary = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                111,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_next_expired_failure()
+        };
+        let after_boundary = after_boundary.expect("failure expires at age 101");
+        assert_eq!(after_boundary.request.owner, owner);
+        assert_eq!(after_boundary.age, 101);
+        assert!(after_boundary.owner_is_pc);
         assert!(orders.failed_path_requests.is_empty());
+        assert_eq!(
+            orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("path context retains the live movement element")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "sequence mutation remains a root-coordinator consequence"
+        );
+    }
+
+    #[test]
+    fn expired_failure_scan_rechecks_liveness_after_each_owner_boundary() {
+        let first_owner = EntityId::Pc(PcId(0));
+        let later_owner = EntityId::Pc(PcId(1));
+        let mut world = WorldState::new();
+        world.entities.push(Some(test_pc()));
+        world.entities.push(Some(test_pc()));
+        let mut orders = OrderRuntime::new();
+
+        let mut launch_waiting = |owner| {
+            let mut element = crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::MoveWaiting,
+                Some(owner),
+            );
+            element.state = crate::sequence::SequenceState::InProgress;
+            let sequence = orders.sequence_manager.launch_element(element);
+            let element = orders
+                .sequence_manager
+                .get_element_mut(sequence, 0)
+                .expect("launched movement element");
+            element.state = crate::sequence::SequenceState::InProgress;
+            element.command = crate::element::Command::MoveWaiting;
+            sequence
+        };
+        let first_sequence = launch_waiting(first_owner);
+        let later_sequence = launch_waiting(later_owner);
+        orders.failed_path_requests.extend([
+            FailedPathRequest::from_pending(
+                PendingPathRequest::test_request(first_owner, first_sequence, 0),
+                0,
+            ),
+            FailedPathRequest::from_pending(
+                PendingPathRequest::test_request(later_owner, later_sequence, 0),
+                0,
+            ),
+        ]);
+
+        let first = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                101,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_next_expired_failure()
+        }
+        .expect("first failure expires");
+        assert_eq!(first.request.owner, first_owner);
+
+        // Model a synchronous consequence of the first owner's condolation
+        // invalidating the later request before the Original list walk reaches
+        // it. A pre-batched scan would already have committed both outcomes.
+        orders
+            .sequence_manager
+            .get_element_mut(later_sequence, 0)
+            .expect("later movement remains registered")
+            .state = crate::sequence::SequenceState::Interrupted;
+
+        let later = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                101,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_next_expired_failure()
+        };
+        assert!(later.is_none());
+        assert!(orders.failed_path_requests.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "retains a live sequence element but its owner entity is missing")]
+    fn path_schedule_context_rejects_missing_owner_for_live_expired_failure() {
+        let owner = EntityId::Pc(PcId(0));
+        let mut world = WorldState::new();
+        let mut orders = OrderRuntime::new();
+        let mut element = crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::MoveWaiting,
+            Some(owner),
+        );
+        element.state = crate::sequence::SequenceState::InProgress;
+        let sequence_id = orders.sequence_manager.launch_element(element);
+        let element = orders
+            .sequence_manager
+            .get_element_mut(sequence_id, 0)
+            .expect("launched movement element");
+        element.state = crate::sequence::SequenceState::InProgress;
+        element.command = crate::element::Command::MoveWaiting;
+        orders
+            .failed_path_requests
+            .push(FailedPathRequest::from_pending(
+                PendingPathRequest::test_request(owner, sequence_id, 0),
+                0,
+            ));
+
+        let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+        let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+        let _ = PathScheduleContext::new(
+            101,
+            entities,
+            fast_grid,
+            pathfinder,
+            pending,
+            failed,
+            sequence_manager,
+        )
+        .take_next_expired_failure();
     }
 }

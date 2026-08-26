@@ -8,9 +8,7 @@ use crate::renderer::Renderer;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Entity, ListenPhase};
-use robin_engine::engine as engine_api;
-use robin_engine::engine::{Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::engine::{Engine, MULTI_SELECTION_THRESHOLD};
 
 // ─── Combat status bars (red life / blue stamina) ────────────────
 
@@ -169,26 +167,6 @@ fn draw_status_bar(
             renderer.render_gpu_rect(sx, sy + h_top, w_val, h_body, r >> 1, g >> 1, b >> 1, 255);
         }
     }
-}
-
-/// Clear the one-shot `display_double_status_bar` flag on every NPC.
-///
-/// The flag is one-shot and must be reset right after rendering bars.
-/// Since the bar renderer is a separate pass and takes `&Engine`, we
-/// clear the flag here in a tiny `&mut Engine` post-pass, routed
-/// through the single `apply_command` entry point.
-pub(crate) fn clear_status_bar_flags(
-    engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
-    input: &mut engine_api::InputState,
-    assets: &LevelAssets,
-) {
-    engine.apply_command(
-        display,
-        input,
-        assets,
-        &PlayerCommand::ClearNpcDoubleStatusBarFlags,
-    );
 }
 
 // ─── Trajectory preview ──────────────────────────────────────────────

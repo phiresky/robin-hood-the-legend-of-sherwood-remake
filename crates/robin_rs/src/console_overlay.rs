@@ -1,7 +1,8 @@
 //! In-game console overlay — keyboard-driven debug + cheat console
 //! drawn over the live game.
 //!
-//! This is the player-facing UI for [`robin_engine::engine::Engine::run_console_command`].
+//! This is the player-facing UI for console actions admitted through
+//! [`robin_engine::engine::Engine::advance_frame`].
 //! Toggling the overlay (default key: `~`) resets IME state, captures
 //! keystrokes, and dispatches Enter-terminated lines to the engine.
 //!
@@ -30,7 +31,10 @@ use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::render_text_screen;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
-use robin_engine::engine::{ConsoleResponse, DevState, Engine, LevelAssets};
+use robin_engine::engine::{
+    DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, LevelAssets,
+    SimulationFrameInput,
+};
 
 /// Maximum characters in the input line.
 const MAX_INPUT_LEN: usize = 128;
@@ -239,6 +243,7 @@ impl ConsoleOverlay {
         assets: &LevelAssets,
         host: &mut Host,
         dev: &mut DevState,
+        admitted_actions: &mut Vec<ExternalAction>,
     ) -> bool {
         if !self.visible {
             return false;
@@ -272,7 +277,7 @@ impl ConsoleOverlay {
                 GameEvent::KeyDown { keycode, .. } => match keycode {
                     Keycode::Return | Keycode::KpEnter => {
                         consumed_any = true;
-                        self.submit(host, engine, assets, dev);
+                        self.submit(host, engine, assets, dev, admitted_actions);
                     }
                     Keycode::Backspace => {
                         consumed_any = true;
@@ -442,6 +447,7 @@ impl ConsoleOverlay {
         engine: &mut Engine,
         assets: &LevelAssets,
         dev: &mut DevState,
+        admitted_actions: &mut Vec<ExternalAction>,
     ) {
         let line = std::mem::take(&mut self.input);
         let trimmed = line.trim();
@@ -455,8 +461,30 @@ impl ConsoleOverlay {
         }
         // Push to UI history and dispatch.
         self.push_output(OutputLine::Echo(line.clone()));
-        let response =
-            engine.run_console_command(assets, dev, &mut host.selected_view_element, trimmed);
+        let action = ExternalAction::ConsoleCommand {
+            input: trimmed.to_owned(),
+            selected_view_element: host.selected_view_element,
+        };
+        let output = engine
+            .advance_frame(
+                &mut host.frontend.engine_display,
+                &mut host.frontend.input,
+                assets,
+                dev,
+                SimulationFrameInput::no_hourglass().with_external_actions(vec![action.clone()]),
+            )
+            .expect("console action frame admission");
+        let response = match output.external_action_results.into_iter().next() {
+            Some(ExternalActionResult::ConsoleCommand {
+                response,
+                selected_view_element,
+            }) => {
+                host.frontend.selected_view_element = selected_view_element;
+                response
+            }
+            _ => panic!("console action admission returned no console result"),
+        };
+        admitted_actions.push(action);
         // Drain any lines the cheat pushed to the engine-side output
         // queue during dispatch (STATUS PC, STATUS HARDWARE, etc.).
         // Doing this *before* we process the response means the queued
@@ -469,7 +497,7 @@ impl ConsoleOverlay {
             self.cmd_history.push(line.clone());
         }
         match response {
-            ConsoleResponse::Ok(text) => {
+            FrameConsoleResponse::Ok(text) => {
                 if !text.is_empty() {
                     for chunk in text.lines() {
                         self.push_output(OutputLine::Response(chunk.to_string()));
@@ -483,23 +511,23 @@ impl ConsoleOverlay {
                     self.pending_close = true;
                 }
             }
-            ConsoleResponse::Unknown => {
+            FrameConsoleResponse::Unknown => {
                 self.push_output(OutputLine::Error(format!("Unknown command: {trimmed}")));
             }
-            ConsoleResponse::NotImplemented(name) => {
+            FrameConsoleResponse::NotImplemented(name) => {
                 self.push_output(OutputLine::Error(format!("{name}: not implemented")));
             }
-            ConsoleResponse::LoadCampaignRequested(path) => {
+            FrameConsoleResponse::LoadCampaignRequested(path) => {
                 // Engine can't reach the save-file parser; stash the
                 // request on the overlay so the host game loop picks it
                 // up on the next frame via `take_pending_load_campaign`.
                 self.push_output(OutputLine::Response(format!(
                     "Loading campaign from {}...",
-                    path.display()
+                    path
                 )));
-                self.pending_load_campaign = Some(path);
+                self.pending_load_campaign = Some(path.into());
             }
-            ConsoleResponse::DeityInvoked => {
+            FrameConsoleResponse::DeityInvoked => {
                 // The "Praised be His Name." line was pushed via
                 // `Console::push_output` and already drained above; the
                 // host applies the input-translator rebind on the next

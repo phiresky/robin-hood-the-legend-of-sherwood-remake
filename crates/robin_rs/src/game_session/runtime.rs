@@ -97,6 +97,15 @@ impl MissionControl {
 pub(super) struct MissionFrame {
     pub(super) started_at_ms: u32,
     pub(super) commands: FrameCommands,
+    pub(super) external_actions: Vec<robin_engine::engine::ExternalAction>,
+    external_actions_applied: usize,
+    pub(super) post_commands: FrameCommands,
+    pub(super) post_external_actions: Vec<robin_engine::engine::ExternalAction>,
+    post_external_actions_applied: usize,
+    pub(super) external_facts: Vec<robin_engine::engine::ExternalFact>,
+    pub(super) run_hourglass: bool,
+    pub(super) simulation_body_allowed: bool,
+    pub(super) run_post_initialize: bool,
     pub(super) modal_dismissals: Vec<PlayerCommand>,
     pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
     pub(super) recorder_hash: Option<u64>,
@@ -120,6 +129,15 @@ impl MissionFrame {
         Self {
             started_at_ms,
             commands: FrameCommands::new(),
+            external_actions: Vec::new(),
+            external_actions_applied: 0,
+            post_commands: FrameCommands::new(),
+            post_external_actions: Vec::new(),
+            post_external_actions_applied: 0,
+            external_facts: Vec::new(),
+            run_hourglass: true,
+            simulation_body_allowed: true,
+            run_post_initialize: true,
             modal_dismissals: Vec::new(),
             replay_modal_dismissals: VecDeque::new(),
             recorder_hash: None,
@@ -127,15 +145,97 @@ impl MissionFrame {
         }
     }
 
-    /// Split one admitted replay frame into simulation commands and modal
-    /// acknowledgements, then apply only the simulation commands.
-    pub(super) fn inject_replay_commands(
+    pub(super) fn authoritative_input(&self) -> robin_engine::engine::SimulationFrameInput {
+        self.hourglass_input()
+            .with_external_actions(self.external_actions.clone())
+            .with_post_external_actions(self.post_external_actions.clone())
+            .with_post_commands(
+                self.post_commands
+                    .commands
+                    .iter()
+                    .cloned()
+                    .map(robin_engine::engine::SimCommand::from)
+                    .collect(),
+            )
+            .with_post_initialize(self.run_post_initialize)
+    }
+
+    /// Authoritative input for the pre-refresh simulation phase. Late host
+    /// commands remain staged until the explicit post-initialize admission.
+    pub(super) fn hourglass_input(&self) -> robin_engine::engine::SimulationFrameInput {
+        robin_engine::engine::SimulationFrameInput::from_player_inputs(
+            self.commands.commands.clone(),
+        )
+        .with_external_facts(self.external_facts.clone())
+        .with_external_actions(self.unapplied_external_actions().to_vec())
+        .with_simulation_body_allowed(self.simulation_body_allowed)
+        .with_hourglass(self.run_hourglass)
+    }
+
+    /// Replace the authoritative portion of this host frame with a recorded
+    /// transaction. Presentation-only modal acknowledgements remain owned by
+    /// the live/replay adapter around the transaction.
+    pub(super) fn adopt_authoritative_input(
         &mut self,
-        player: &mut ReplayPlayer,
-        host: &mut Host,
-        manager: &mut EngineManager,
-        assets: &LevelAssets,
+        input: robin_engine::engine::SimulationFrameInput,
     ) {
+        self.commands.commands = input.player_inputs();
+        self.post_commands.commands = input.post_player_inputs();
+        self.external_actions = input.external_actions;
+        self.external_actions_applied = 0;
+        self.post_external_actions = input.post_external_actions;
+        self.post_external_actions_applied = 0;
+        self.external_facts = input.external_facts;
+        self.run_hourglass = input.run_hourglass;
+        self.simulation_body_allowed = input.simulation_body_allowed;
+        self.run_post_initialize = input.run_post_initialize;
+    }
+
+    pub(super) fn record_applied_external_action(
+        &mut self,
+        action: robin_engine::engine::ExternalAction,
+    ) {
+        assert_eq!(
+            self.external_actions_applied,
+            self.external_actions.len(),
+            "new synchronous console action recorded before replayed actions were applied",
+        );
+        self.external_actions_applied += 1;
+        self.external_actions.push(action);
+    }
+
+    fn unapplied_external_actions(&self) -> &[robin_engine::engine::ExternalAction] {
+        &self.external_actions[self.external_actions_applied..]
+    }
+
+    pub(super) fn record_applied_post_external_actions(
+        &mut self,
+        actions: Vec<robin_engine::engine::ExternalAction>,
+    ) {
+        if !actions.is_empty() {
+            assert_eq!(
+                self.post_external_actions_applied,
+                self.post_external_actions.len(),
+                "new synchronous RPC action recorded before replayed actions were applied",
+            );
+            self.post_external_actions_applied += actions.len();
+            self.post_external_actions.extend(actions);
+        }
+    }
+
+    pub(super) fn mark_post_external_actions_applied(&mut self) {
+        self.post_external_actions_applied = self.post_external_actions.len();
+    }
+
+    pub(super) fn unapplied_post_external_actions(
+        &self,
+    ) -> &[robin_engine::engine::ExternalAction] {
+        &self.post_external_actions[self.post_external_actions_applied..]
+    }
+
+    /// Split one admitted replay frame into staged simulation commands and
+    /// presentation-only modal acknowledgements.
+    pub(super) fn inject_replay_commands(&mut self, player: &mut ReplayPlayer) {
         assert!(
             !player.is_finished(),
             "replay injection requested after the replay finished"
@@ -150,12 +250,6 @@ impl MissionFrame {
                 simulation_commands.push(command.clone());
             }
         }
-        manager.engine.apply_commands(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
-            assets,
-            &simulation_commands,
-        );
         self.commands = FrameCommands::new();
         self.commands.commands = simulation_commands;
     }
@@ -254,33 +348,42 @@ impl MissionRuntime {
         let Some(player) = self.timeline.replay_player.as_mut() else {
             return Ok(());
         };
-        frame.inject_replay_commands(
-            player,
-            &mut self.world.host,
-            &mut self.world.manager,
-            &self.world.assets,
-        );
+        frame.inject_replay_commands(player);
         Ok(())
     }
 
     /// Advance the common simulation phase while preserving each driver's
     /// explicit pause/rewind policy.
-    pub(super) fn run_tick(&mut self, policy: TickPolicy) -> Option<GameCode> {
+    pub(super) fn run_tick(
+        &mut self,
+        policy: TickPolicy,
+        mission_frame: &mut MissionFrame,
+    ) -> Option<GameCode> {
         if policy.skip_tick || policy.paused {
             self.timeline.trace(FrameContractStage::PausedOrRewind);
         }
         self.timeline.trace(FrameContractStage::Simulation);
         self.timeline.run_simulation(|| {
-            if policy.skip_tick {
-                return None;
-            }
             let mut display = std::mem::take(&mut self.world.host.engine_display);
+            let mission_transitioning = !self
+                .world
+                .game
+                .operation
+                .is(robin_engine::game_operation::GameCode::LevelInProgress);
+            mission_frame.run_hourglass &= !policy.skip_tick
+                && self.world.game.should_run_hourglass(
+                    false,
+                    mission_transitioning,
+                    policy.paused,
+                );
+            let frame = mission_frame.hourglass_input();
             let result = self.world.game.run_engine_tick(
                 &mut self.world.host,
                 &mut display,
                 self.world.assets.as_ref(),
                 &mut self.world.manager.engine,
                 &mut self.world.dev,
+                frame,
                 false,
                 policy.paused,
             );
@@ -290,14 +393,30 @@ impl MissionRuntime {
     }
 
     /// Drain host RPC requests at the shared post-tick boundary.
-    pub(super) fn drain_host_rpc(&mut self) {
+    pub(super) fn drain_host_rpc(&mut self, frame: &mut MissionFrame) {
+        let pending_actions = frame.unapplied_post_external_actions().to_vec();
+        if !pending_actions.is_empty() {
+            let mut display = std::mem::take(&mut self.world.host.engine_display);
+            crate::sim_timeline::run_post_external_action_stage(
+                &mut self.world.host,
+                &mut display,
+                &self.world.assets,
+                &mut self.world.manager.engine,
+                &mut self.world.dev,
+                &pending_actions,
+            );
+            self.world.host.engine_display = display;
+            frame.mark_post_external_actions_applied();
+        }
         let net = self.world.host.transport.net.take();
-        crate::http_server::drain_global(
+        let actions = crate::http_server::drain_global(
             &mut self.world.manager,
             &mut self.world.host,
             &self.world.assets,
             net.as_ref(),
+            &mut frame.post_commands,
         );
+        frame.record_applied_post_external_actions(actions);
         self.world.host.transport.net = net;
         self.timeline
             .trace(FrameContractStage::HostRpcAndTimelineCommit);
@@ -307,18 +426,21 @@ impl MissionRuntime {
     ///
     /// Drivers intentionally choose when to call this: headless does so
     /// before frame-zero recorder commit, graphical does so after refresh.
-    pub(super) fn run_post_initialize(&mut self) -> bool {
+    pub(super) fn run_post_initialize(&mut self, frame: &MissionFrame) -> bool {
         let Self {
             world, timeline, ..
         } = self;
         timeline.cross_post_initialize(|| {
             let mut display = std::mem::take(&mut world.host.engine_display);
-            let initialized = crate::sim_timeline::run_post_initialize_stage(
+            let initialized = crate::sim_timeline::run_post_initialize_stage_with_actions(
                 &mut world.host,
                 &mut display,
                 &world.assets,
                 &mut world.manager.engine,
                 &mut world.dev,
+                frame.unapplied_post_external_actions(),
+                &frame.post_commands.commands,
+                frame.run_post_initialize,
             );
             world.host.engine_display = display;
             initialized
@@ -475,6 +597,7 @@ pub(super) struct TimelineRuntime {
     phase: MissionPhase,
     clock: FrameClock,
     execution_trace: FrameExecutionTrace,
+    pending_external_facts: Vec<robin_engine::engine::ExternalFact>,
 
     pub(super) replay_recorder: Option<ReplayRecorder>,
     pub(super) replay_player: Option<ReplayPlayer>,
@@ -533,6 +656,7 @@ impl TimelineRuntime {
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
             execution_trace: FrameExecutionTrace::default(),
+            pending_external_facts: Vec::new(),
             replay_recorder: replay.recorder,
             replay_player: replay.player,
             rollback_checker: replay.rollback_checker,
@@ -564,6 +688,36 @@ impl TimelineRuntime {
 
     pub(super) fn initially_paused(&self) -> bool {
         self.start_paused
+    }
+
+    /// Reset every in-memory reconstruction of the current deterministic
+    /// future after a whole-state discontinuity such as save-load adoption.
+    ///
+    /// Original `RHGame::Serialize` follows a load with
+    /// `ResynchronizeAfterLoad`; the original has no command journal. The Rust
+    /// equivalent must additionally invalidate all journals and checkpoints
+    /// whose future was derived from the replaced state.
+    fn reset_reconstruction_history(
+        &mut self,
+        sim_frame: u32,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
+        self.rewind_buffer = RewindBuffer::new();
+        self.recent_timeline_history.clear();
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.reset();
+        }
+
+        // Save/load processing and normal replay injection both happen after
+        // `open_frame`. Replacing history discards that old-state pending
+        // capture, so reopen the same pre-tick frame against the adopted
+        // state. The Original likewise loads before this loop iteration's
+        // `PerformHourglass` (`original-code/RHgame.cpp:1664-1880`).
+        self.rewind_buffer.begin_frame(sim_frame, engine, assets);
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.begin_frame(sim_frame, engine);
+        }
     }
 
     pub(super) fn apply_multiplayer_admission_events(
@@ -667,8 +821,15 @@ impl TimelineRuntime {
         engine: &Engine,
         assets: &LevelAssets,
     ) {
+        frame
+            .external_facts
+            .append(&mut self.pending_external_facts);
         frame.recorder_hash = self.begin_frame(frame.started_at_ms, sim_frame, engine, assets);
         self.trace(FrameContractStage::TimelineBegin);
+    }
+
+    pub(super) fn queue_external_fact(&mut self, fact: robin_engine::engine::ExternalFact) {
+        self.pending_external_facts.push(fact);
     }
 
     /// Start the input phase and capture the shared pre-command snapshots.
@@ -744,17 +905,19 @@ impl TimelineRuntime {
         frame: &MissionFrame,
         policy: FrameCommitPolicy,
     ) {
-        assert_eq!(
-            self.phase,
-            MissionPhase::Bookkeeping,
-            "simulation commit requested outside bookkeeping phase"
+        assert!(
+            matches!(
+                self.phase,
+                MissionPhase::Bookkeeping | MissionPhase::Presentation
+            ),
+            "simulation commit requested outside bookkeeping/presentation phase"
         );
         if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
+            checker.end_frame_input(host, frame.authoritative_input(), &manager.engine);
         }
         if policy.store_rewind_commands {
             self.rewind_buffer
-                .end_frame(frame.commands.commands.clone());
+                .end_frame_input(frame.authoritative_input());
         }
     }
 
@@ -800,7 +963,9 @@ impl TimelineRuntime {
         &mut self,
         event: crate::main_entry::SaveLoadEvent,
         frame: &mut MissionFrame,
+        sim_frame: u32,
         engine: &Engine,
+        assets: &LevelAssets,
     ) {
         match event {
             crate::main_entry::SaveLoadEvent::SaveWritten { identity } => {
@@ -837,7 +1002,7 @@ impl TimelineRuntime {
             } => {
                 // The engine state jumped; buffered rewind history no longer
                 // describes this timeline's future.
-                self.rewind_buffer = RewindBuffer::new();
+                self.reset_reconstruction_history(sim_frame, engine, assets);
                 if !frame.commands.commands.is_empty() {
                     tracing::debug!(
                         dropped = frame.commands.commands.len(),
@@ -916,7 +1081,7 @@ impl TimelineRuntime {
         if player.is_finished() {
             return Ok(());
         }
-        apply_replay_timeline_events_at_boundary(
+        let load_applied = apply_replay_timeline_events_at_boundary(
             player,
             &mut self.playback_pinned_saves,
             &mut self.rewind_buffer,
@@ -924,7 +1089,14 @@ impl TimelineRuntime {
             game,
             manager,
             assets,
-        )
+        )?;
+        if load_applied {
+            // The boundary helper resets rewind itself because debugger-step
+            // callers use it directly. TimelineRuntime additionally rebases
+            // every reconstruction consumer on the adopted pre-tick state.
+            self.reset_reconstruction_history(manager.sim_frame, &manager.engine, assets);
+        }
+        Ok(())
     }
 
     pub(super) fn record_commands(&mut self, frame: &mut MissionFrame, enabled: bool) {
@@ -980,8 +1152,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     game: &mut Game,
     manager: &mut EngineManager,
     assets: &LevelAssets,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let frame = player.current_frame();
+    let mut load_applied = false;
     if let Some(expected) = player.save_marker_for_frame(frame) {
         let actual = robin_engine::replay::state_hash(&manager.engine);
         if actual != expected {
@@ -1019,13 +1192,14 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         game.apply_post_load_sync(load_back.is_continue);
         game.post_load_resolution_resync();
         *rewind_buffer = RewindBuffer::new();
+        load_applied = true;
         tracing::info!(
             frame,
             to_frame = load_back.to_frame,
             "replay playback: jumped back to saved state"
         );
     }
-    Ok(())
+    Ok(load_applied)
 }
 
 fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: MissionPhase) {
@@ -1098,12 +1272,18 @@ mod tests {
         game.persistent.campaign_map_active = false;
         {
             let frontend = &mut host.frontend;
-            engine.apply_command(
-                &mut frontend.engine_display,
-                &mut frontend.input,
-                &assets,
-                &PlayerCommand::SetFastForward,
-            );
+            engine
+                .advance_frame(
+                    &mut frontend.engine_display,
+                    &mut frontend.input,
+                    &assets,
+                    &mut robin_engine::engine::DevState::default(),
+                    robin_engine::engine::SimulationFrameInput::new(vec![
+                        PlayerCommand::SetFastForward.into(),
+                    ])
+                    .with_hourglass(false),
+                )
+                .expect("fast-forward command admission");
         }
         assert!(engine.is_fast_forward());
         let marker_engine = engine.clone();
@@ -1142,7 +1322,9 @@ mod tests {
         live.note_save_load_event(
             crate::main_entry::SaveLoadEvent::SaveWritten { identity },
             &mut frame,
+            0,
             &engine,
+            &assets,
         );
         for _ in 0..5 {
             live.replay_recorder.as_mut().unwrap().end_frame();
@@ -1152,12 +1334,18 @@ mod tests {
         // payload hash. Identity matching must still find the frame-0 save.
         {
             let frontend = &mut host.frontend;
-            engine.apply_command(
-                &mut frontend.engine_display,
-                &mut frontend.input,
-                &assets,
-                &PlayerCommand::SetAmountOfSpeaking { amount: 3 },
-            );
+            engine
+                .advance_frame(
+                    &mut frontend.engine_display,
+                    &mut frontend.input,
+                    &assets,
+                    &mut robin_engine::engine::DevState::default(),
+                    robin_engine::engine::SimulationFrameInput::new(vec![
+                        PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
+                    ])
+                    .with_hourglass(false),
+                )
+                .expect("speech command admission");
         }
         host.input.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
@@ -1175,7 +1363,9 @@ mod tests {
                 is_continue: true,
             },
             &mut frame,
+            5,
             &engine,
+            &assets,
         );
         live.replay_recorder.as_mut().unwrap().end_frame();
         drop(live);
@@ -1226,12 +1416,19 @@ mod tests {
         // Diverge the playback engine, then let the load-back restore it.
         {
             let frontend = &mut playback_host.frontend;
-            manager.engine.apply_command(
-                &mut frontend.engine_display,
-                &mut frontend.input,
-                &assets,
-                &PlayerCommand::SetAmountOfSpeaking { amount: 3 },
-            );
+            manager
+                .engine
+                .advance_frame(
+                    &mut frontend.engine_display,
+                    &mut frontend.input,
+                    &assets,
+                    &mut robin_engine::engine::DevState::default(),
+                    robin_engine::engine::SimulationFrameInput::new(vec![
+                        PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
+                    ])
+                    .with_hourglass(false),
+                )
+                .expect("speech command admission");
         }
         playback_host.input.draw_hidden = false;
         playback_game.persistent.campaign_map_displayed = false;
@@ -1310,6 +1507,49 @@ mod tests {
 
         assert!(error.contains("save-marker desync"), "{error}");
         assert!(pinned_saves.is_empty());
+    }
+
+    #[test]
+    fn whole_state_discontinuity_reopens_the_current_frame_before_commit() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        let mut manager = EngineManager::new(engine, robin_engine::player_command::PlayerId::HOST);
+        manager.set_sim_frame(crate::rewind::SNAPSHOT_INTERVAL);
+        let mut host = Host::scratch(640.0, 480.0);
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        let mut frame = MissionFrame::new(0);
+
+        timeline.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
+        // Save-load/replay adoption replaces the state after open_frame but
+        // before this loop iteration's tick and history commit.
+        timeline.reset_reconstruction_history(manager.sim_frame, &manager.engine, &assets);
+        timeline.begin_simulation();
+        timeline.begin_bookkeeping();
+        timeline.commit_simulation_history(
+            &mut host,
+            &mut manager,
+            &frame,
+            FrameCommitPolicy {
+                store_rewind_commands: true,
+            },
+        );
+
+        assert_eq!(
+            timeline.rewind_buffer.next_record_frame(),
+            crate::rewind::SNAPSHOT_INTERVAL + 1
+        );
+        assert!(
+            timeline
+                .rewind_buffer
+                .commands_for(crate::rewind::SNAPSHOT_INTERVAL)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1422,6 +1662,21 @@ mod tests {
         assert_eq!(decoded.recorder_hash, Some(0x55aa));
         assert!(decoded.modal_dismissals.is_empty());
         assert!(decoded.replay_modal_dismissals.is_empty());
+    }
+
+    #[test]
+    fn mission_frame_preserves_recorded_transaction_gates() {
+        let mut frame = MissionFrame::new(777);
+        frame.adopt_authoritative_input(
+            robin_engine::engine::SimulationFrameInput::no_hourglass()
+                .with_simulation_body_allowed(false)
+                .with_post_initialize(false),
+        );
+
+        let recorded = frame.authoritative_input();
+        assert!(!recorded.run_hourglass);
+        assert!(!recorded.simulation_body_allowed);
+        assert!(!recorded.run_post_initialize);
     }
 
     #[test]

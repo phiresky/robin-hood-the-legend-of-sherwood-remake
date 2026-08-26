@@ -413,6 +413,18 @@ fn append_phalanx_member_enemies(
     }
 }
 
+/// Original narrows combat-neighbour `SquareDistance` to `ULONG` before
+/// ranking. Reject corrupt/out-of-domain geometry explicitly instead of using
+/// Rust's saturating float-to-integer cast, which could turn NaN into a
+/// nearest-candidate distance of zero.
+fn combat_neighbour_distance_ulong(distance: f32) -> u32 {
+    assert!(
+        distance.is_finite() && distance >= 0.0 && distance < 4_294_967_296.0_f32,
+        "combat-neighbour SquareDistance {distance:?} is outside the Original ULONG domain"
+    );
+    distance as u32
+}
+
 impl EnemyAi {
     /// Original `ReconsiderSwordfightObservation` uses `Panic` when its
     /// defensive step-back has no goal. This is intentionally not `Flee`,
@@ -561,7 +573,7 @@ impl EnemyAi {
                 }
             }
             let mut best: HumanHandle = 0;
-            let mut best_sq = f32::MAX;
+            let mut best_sq = u32::MAX;
             for handle in &self.base.list_us {
                 if *handle == self.base.me {
                     continue;
@@ -582,12 +594,15 @@ impl EnemyAi {
                 // that literal body point for ranking neighbours; `position`
                 // is the door-aware AI Position() and may already be snapped
                 // to a gate endpoint.
-                let sq = ai_square_distance(
+                // Original stores `SquareDistance` in an ULONG before the
+                // strict comparison. Candidates within the same integer
+                // bucket therefore tie and retain fighter-registry order.
+                let sq = combat_neighbour_distance_ulong(ai_square_distance(
                     &snap.raw_position,
                     snap.elevation as f32,
                     &me_pos,
                     ctx.elevation,
-                );
+                ));
                 if sq < best_sq {
                     best_sq = sq;
                     best = *handle;
@@ -4695,6 +4710,97 @@ mod tests {
     }
 
     #[test]
+    fn combat_neighbour_ranking_truncates_distance_before_tie_breaking() {
+        // Schema-16 seed 3,000,000, linux2/Profile_002/Savegame_029,
+        // replay-009 frame 5282. Soldier 64 is closer than Soldier 55 by less
+        // than one squared-distance unit (151.55 versus 151.99), but Original
+        // narrows both results to ULONG 151 and keeps Soldier 55 because it
+        // appears first in mlistUs.
+        let mut ai = EnemyAi::new(113);
+        ai.base.list_us = vec![113, 55, 64];
+
+        let soldier_55 = FighterSnapshot {
+            handle: 55,
+            position: position(420.24728, 1758.1467),
+            raw_position: position(420.24728, 1758.1467),
+            elevation: 4.1862102,
+            direction: 12,
+            is_soldier: true,
+            rank: ProfileRank::Soldier,
+            ..FighterSnapshot::default()
+        };
+        let soldier_64 = FighterSnapshot {
+            handle: 64,
+            position: position(420.18027, 1757.8624),
+            raw_position: position(420.18027, 1757.8624),
+            elevation: 4.382771,
+            direction: 12,
+            is_soldier: true,
+            rank: ProfileRank::Soldier,
+            ..FighterSnapshot::default()
+        };
+        let ctx = AiContext {
+            position: position(431.41672, 1755.0808),
+            elevation: 4.6533546,
+            direction: 13,
+            ..AiContext::default()
+        };
+        let distance_55 = ai_square_distance(
+            &soldier_55.raw_position,
+            soldier_55.elevation,
+            &ctx.position,
+            ctx.elevation,
+        );
+        let distance_64 = ai_square_distance(
+            &soldier_64.raw_position,
+            soldier_64.elevation,
+            &ctx.position,
+            ctx.elevation,
+        );
+        assert!(distance_64 < distance_55);
+        assert_eq!(distance_55 as u32, distance_64 as u32);
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.extend([soldier_55, soldier_64]);
+
+        assert_eq!(ai.propose_left_and_right_neighbour(&ctx, &tick), (55, 0));
+    }
+
+    #[test]
+    fn combat_neighbour_distance_ulong_truncates_valid_geometry() {
+        assert_eq!(combat_neighbour_distance_ulong(151.99), 151);
+        let largest_below_two_to_32 = f32::from_bits(0x4f7f_ffff);
+        assert_eq!(
+            combat_neighbour_distance_ulong(largest_below_two_to_32),
+            4_294_967_040
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_invalid_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_negative_geometry() {
+        let _ = combat_neighbour_distance_ulong(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_infinite_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::INFINITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_two_to_32() {
+        let _ = combat_neighbour_distance_ulong(4_294_967_296.0_f32);
+    }
+
+    #[test]
     fn phalanx_nearest_enemy_truncates_distance_before_tie_breaking() {
         assert_eq!(
             nearest_phalanx_enemy_index([(0, 120.9), (1, 120.1), (2, 121.0)]),
@@ -5130,8 +5236,10 @@ mod tests {
     fn phalanx_night_detection_orders_light_rays_before_target_los() {
         let mut target = enemy(9, 600.0);
         target.position.y = 500.0;
+        target.world_position = crate::coordinates::WorldPoint3D::new(600.0, 500.0, 0.0);
         let mut member = member(2, 500.0, Vec::new(), vec![target]);
         member.position = position(500.0, 500.0);
+        member.world_position = crate::coordinates::WorldPoint3D::new(500.0, 500.0, 0.0);
 
         let mut ctx = AiContext {
             is_night_or_fog: true,
@@ -5404,8 +5512,7 @@ mod tests {
         };
         target_view.active = true;
         target_view.camp = crate::element::Camp::Royalists;
-        target_view.detection_position =
-            crate::coordinates::MapPoint::new(target_view.position.x, target_view.position.y);
+        target_view.detection_position = crate::coordinates::MapPoint::new(640.0, 1520.0);
         target_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
             target_view.position.x,
             target_view.position.y,
@@ -5440,6 +5547,7 @@ mod tests {
         };
 
         let resolved = live_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((resolved.x, resolved.y), (650.92444, 1537.1555));
         assert_eq!(resolved.sector, Some(exact_sector));
         assert_eq!(resolved.level, 2);
         assert_eq!(
@@ -5452,6 +5560,9 @@ mod tests {
             crate::position_interface::SectorHandle::new(88),
             "legacy number-only live views remain number-only; this boundary must not guess an arena slot"
         );
+        let literal = literal_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((literal.x, literal.y), (640.0, 1520.0));
+        assert_eq!(literal.sector, Some(exact_sector));
 
         let number_only_target = Position {
             x: 650.92444,

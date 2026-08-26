@@ -76,7 +76,7 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::natives as engine_natives;
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::player_command::{FrameCommands, PlayerCommand};
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::replay as engine_replay;
@@ -787,9 +787,13 @@ pub fn drain_global(
     host: &mut crate::host::Host,
     assets: &LevelAssets,
     net: Option<&crate::multiplayer::NetChannels>,
-) {
+    post_commands: &mut FrameCommands,
+) -> Vec<engine_api::ExternalAction> {
+    let mut external_actions = Vec::new();
     let engine = &mut manager.engine;
-    let Some(server) = GLOBAL.get() else { return };
+    let Some(server) = GLOBAL.get() else {
+        return external_actions;
+    };
     let pending: Vec<HttpRequest> = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
         q.drain(..).collect()
@@ -860,11 +864,14 @@ pub fn drain_global(
                     &mut host.frontend.input,
                     &mut host.frontend.selected_view_element,
                     net,
+                    post_commands,
+                    &mut external_actions,
                 );
                 req.response_tx.send(reply);
             }
         }
     }
+    external_actions
 }
 
 /// Drain requests for a headless tool that owns an [`Engine`] directly.
@@ -879,8 +886,12 @@ pub fn drain_global_headless(
     assets: &LevelAssets,
     input: &mut engine_api::InputState,
     selected_view_element: &mut Option<engine_element::EntityId>,
-) {
-    let Some(server) = GLOBAL.get() else { return };
+) -> FrameCommands {
+    let mut commands = FrameCommands::new();
+    let mut external_actions = Vec::new();
+    let Some(server) = GLOBAL.get() else {
+        return commands;
+    };
     let pending: Vec<HttpRequest> = {
         let mut queue = server.queue.lock().expect("queue mutex poisoned");
         queue.drain(..).collect()
@@ -948,11 +959,36 @@ pub fn drain_global_headless(
                     input,
                     selected_view_element,
                     None,
+                    &mut commands,
+                    &mut external_actions,
                 );
                 req.response_tx.send(reply);
             }
         }
     }
+    commands
+}
+
+fn admit_external_actions(
+    engine: &mut Engine,
+    display: &mut engine_api::HostDisplayState,
+    input: &mut engine_api::InputState,
+    assets: &LevelAssets,
+    actions: Vec<engine_api::ExternalAction>,
+    journal: &mut Vec<engine_api::ExternalAction>,
+) -> Result<Vec<engine_api::ExternalActionResult>, String> {
+    let output = engine
+        .advance_frame(
+            display,
+            input,
+            assets,
+            &mut engine_api::DevState::default(),
+            engine_api::SimulationFrameInput::no_hourglass()
+                .with_post_external_actions(actions.clone()),
+        )
+        .map_err(|error| format!("developer action frame admission failed: {error}"))?;
+    journal.extend(actions);
+    Ok(output.external_action_results)
 }
 
 fn dispatch_in_engine(
@@ -963,20 +999,52 @@ fn dispatch_in_engine(
     input: &mut engine_api::InputState,
     selected_view_element: &mut Option<engine_element::EntityId>,
     net: Option<&crate::multiplayer::NetChannels>,
+    frame_commands: &mut FrameCommands,
+    external_actions: &mut Vec<engine_api::ExternalAction>,
 ) -> Reply {
     match payload {
-        HttpPayload::Native { name, args, this } => engine
-            .call_external_native_with_this(assets, &name, &args, this)
-            .map(|v| ReplyBody::Json(serde_json::json!({"return": v}))),
-        HttpPayload::Batch(calls) => {
-            let mut results = Vec::with_capacity(calls.len());
-            for c in calls {
-                let r = engine.call_external_native_with_this(assets, &c.op, &c.args, c.this);
-                results.push(match r {
-                    Ok(v) => serde_json::json!({"return": v}),
-                    Err(e) => serde_json::json!({"error": e}),
-                });
+        HttpPayload::Native { name, args, this } => {
+            let results = admit_external_actions(
+                engine,
+                display,
+                input,
+                assets,
+                vec![engine_api::ExternalAction::Native {
+                    name,
+                    args,
+                    this_actor: this,
+                }],
+                external_actions,
+            )?;
+            match results.into_iter().next() {
+                Some(engine_api::ExternalActionResult::Native(result)) => {
+                    result.map(|value| ReplyBody::Json(serde_json::json!({"return": value})))
+                }
+                _ => Err("native frame admission returned no native result".into()),
             }
+        }
+        HttpPayload::Batch(calls) => {
+            let actions = calls
+                .into_iter()
+                .map(|call| engine_api::ExternalAction::Native {
+                    name: call.op,
+                    args: call.args,
+                    this_actor: call.this,
+                })
+                .collect();
+            let results =
+                admit_external_actions(engine, display, input, assets, actions, external_actions)?
+                    .into_iter()
+                    .map(|result| match result {
+                        engine_api::ExternalActionResult::Native(Ok(value)) => {
+                            serde_json::json!({"return": value})
+                        }
+                        engine_api::ExternalActionResult::Native(Err(error)) => {
+                            serde_json::json!({"error": error})
+                        }
+                        _ => serde_json::json!({"error": "non-native batch result"}),
+                    })
+                    .collect::<Vec<_>>();
             Ok(ReplyBody::Json(serde_json::json!({"results": results})))
         }
         HttpPayload::Console(cmd) => {
@@ -991,9 +1059,27 @@ fn dispatch_in_engine(
             // Route through `run_cheat_string` — the HTTP caller is
             // treated as the "WASM GUI" entry point, which always wants
             // the full dev cheat set regardless of `use_final`.
-            let mut dev = engine_api::DevState::default();
-            let resp = engine.run_cheat_string(assets, &mut dev, selected_view_element, &cmd);
-            Ok(ReplyBody::Json(console_response_to_json(resp)))
+            let results = admit_external_actions(
+                engine,
+                display,
+                input,
+                assets,
+                vec![engine_api::ExternalAction::CheatString {
+                    input: cmd,
+                    selected_view_element: *selected_view_element,
+                }],
+                external_actions,
+            )?;
+            match results.into_iter().next() {
+                Some(engine_api::ExternalActionResult::CheatString {
+                    response,
+                    selected_view_element: selected,
+                }) => {
+                    *selected_view_element = selected;
+                    Ok(ReplyBody::Json(frame_console_response_to_json(response)))
+                }
+                _ => Err("console frame admission returned no console result".into()),
+            }
         }
         HttpPayload::Command(cmd) => {
             // In multiplayer, route the command over the wire so every
@@ -1003,7 +1089,7 @@ fn dispatch_in_engine(
             if let Some(net) = net {
                 net.send_input(cmd);
             } else {
-                engine.apply_command(display, input, assets, &cmd);
+                frame_commands.push(cmd);
             }
             Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
         }
@@ -2065,19 +2151,24 @@ mod tests {
     }
 }
 
-fn console_response_to_json(resp: engine_api::ConsoleResponse) -> serde_json::Value {
-    use engine_api::ConsoleResponse as R;
+fn frame_console_response_to_json(response: engine_api::FrameConsoleResponse) -> serde_json::Value {
+    use engine_api::FrameConsoleResponse as R;
 
-    match resp {
-        R::Ok(msg) => serde_json::json!({"kind": "ok", "message": msg}),
+    match response {
+        R::Ok(message) => serde_json::json!({"kind": "ok", "message": message}),
         R::Unknown => serde_json::json!({"kind": "unknown"}),
-        R::NotImplemented(name) => {
-            serde_json::json!({"kind": "not_implemented", "command": name})
+        R::NotImplemented(command) => {
+            serde_json::json!({"kind": "not_implemented", "command": command})
         }
-        // Anything host-driven (CAMPAIGN load, ARES advance with side-effects, …)
-        // falls into this catch-all.  We surface the variant name as a
-        // hint — the actual host-side dispatch isn't reachable from here.
-        other => serde_json::json!({"kind": "host_followup", "variant": format!("{other:?}")}),
+        R::LoadCampaignRequested(path) => serde_json::json!({
+            "kind": "host_followup",
+            "variant": "LoadCampaignRequested",
+            "path": path,
+        }),
+        R::DeityInvoked => serde_json::json!({
+            "kind": "host_followup",
+            "variant": "DeityInvoked",
+        }),
     }
 }
 

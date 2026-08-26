@@ -3369,6 +3369,53 @@ fn deferred_attentive_then_forget_preserves_launch_but_clears_local_flags() {
 }
 
 #[test]
+fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    for (current_command, expected_quits) in
+        [(Command::QuitSwordfight, 1), (Command::EnterSwordfight, 1)]
+    {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut entity = make_test_soldier(Posture::Upright);
+        let Entity::Soldier(soldier) = &mut entity else {
+            unreachable!();
+        };
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .unwrap()
+            .base
+            .outbox
+            .actor
+            .retry_quit_swordfight = true;
+        let owner = engine.add_entity(entity);
+        let selected = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, current_command, Some(owner)));
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(selected, 0);
+
+        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+
+        let quit_count = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .filter(|element| element.command == Command::QuitSwordfight)
+            .count();
+        assert_eq!(quit_count, expected_quits);
+    }
+}
+
+#[test]
 fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -5144,6 +5191,76 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         .expect("fresh recovery Wait should be current");
     assert_eq!(current_order, OrderType::StandingUp);
     assert_ne!(fresh_wait, stale_wait);
+}
+
+#[test]
+fn waking_up_done_publishes_transient_lying_corpse_intersection() {
+    use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
+    use crate::combat::CONCUSSION_THRESHOLD;
+    use crate::element::Posture;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    let neighbour = engine.add_entity(make_test_soldier(Posture::Tied));
+
+    {
+        let target_entity = engine.get_entity_mut(target).expect("target present");
+        let human = target_entity.human_data_mut().expect("target is human");
+        human.unconscious = true;
+        human.concussion_of_the_brain = CONCUSSION_THRESHOLD;
+        human.last_is_lying_for_corpse_intersection = Some(false);
+        target_entity
+            .npc_data_mut()
+            .expect("target is NPC")
+            .life_points = 30;
+    }
+    engine
+        .get_entity_mut(neighbour)
+        .expect("neighbour present")
+        .human_data_mut()
+        .expect("neighbour is human")
+        .last_is_lying_for_corpse_intersection = Some(true);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .resize_with(1, crate::profiles::SoldierProfile::default);
+
+    engine.process_anim_completion_outcomes(
+        &sim,
+        AnimCompletionOutcomes {
+            execute_sides: ExecuteSideOutcomes {
+                waking_up_done: vec![(rescuer, target)],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        &assets,
+    );
+
+    for id in [target, neighbour] {
+        assert!(
+            engine
+                .get_entity(id)
+                .expect("human remains present")
+                .human_data()
+                .expect("entity remains human")
+                .small_repulsive_radius,
+            "WakingUp's synchronous SetPosture(Lying) must publish the overlap for {id:?}"
+        );
+    }
+    assert_eq!(
+        engine
+            .get_entity(target)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection,
+        Some(true)
+    );
 }
 
 /// `Point` → `Pointing` animation.

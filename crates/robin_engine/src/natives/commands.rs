@@ -55,9 +55,11 @@ pub enum EngineCommand {
     /// Teleport actor to a new position (called by SetActorLocation
     /// and RecordEnterGame).  When `dest_layer_sector` is `Some`, the
     /// engine-side handler will also reconcile the projection-area
-    /// obstacle + footstep material for the actor's new floor/sector
-    /// after the layer/sector update.  `None` leaves them untouched
-    /// (computed locations don't carry the destination's layer/sector).
+    /// obstacle + footstep material for an ordinary SetActorLocation.
+    /// RecordEnterGame (`spawn_elevation_probe.is_some()`) preserves the
+    /// actor's existing obstacle, plane, and material, matching Original's
+    /// outside-spawn path. A `None` destination topology also leaves them
+    /// untouched (computed locations don't carry layer/sector metadata).
     ///
     /// `spawn_elevation_probe`: when set, the engine-side handler
     /// evaluates the destination sector's projection-area top plane at

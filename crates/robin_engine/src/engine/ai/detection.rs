@@ -3018,6 +3018,7 @@ impl EngineInner {
                 };
                 // ── Populate combat context from engine ──────
                 let mut tick_data = AiPerTickData {
+                    fix_hard_reaction_times: self.control.sim_config.fix_hard_reaction_times,
                     profile_manager: Some(assets.profile_manager.clone()),
                     owner_live_position: Some(viewer.position),
                     // Prepared without RNG only after this scan produces an
@@ -3390,6 +3391,7 @@ impl EngineInner {
                             patrol_chief: ss.patrol_chief,
                             antagonist: ss.antagonist,
                             detected_body: ss.detected_body,
+                            blood_alcohol: ss.blood_alcohol,
                             duty_flag: ss.duty_flag,
                             is_tower_guard: ss.is_tower_guard,
                             company_number: ss.company_number,

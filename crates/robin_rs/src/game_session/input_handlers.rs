@@ -232,6 +232,7 @@ pub(super) fn handle_console_overlay_events(
     events: &[GameEvent],
     kb_actions: &[GameAction],
     input_translator: &mut InputTranslator,
+    frame: &mut super::runtime::MissionFrame,
 ) {
     // ── In-game console overlay event handling ──
     // When visible, the console captures keyboard events so they
@@ -239,7 +240,11 @@ pub(super) fn handle_console_overlay_events(
     // selection / movement actions).  Mouse events still pass
     // through so the player can pan/click while the console is
     // up — the game keeps running underneath.
-    console_overlay.handle_events(events, engine, assets, host, dev);
+    let mut admitted_actions = Vec::new();
+    console_overlay.handle_events(events, engine, assets, host, dev, &mut admitted_actions);
+    for action in admitted_actions {
+        frame.record_applied_external_action(action);
+    }
     // Auto-close after WIN / WINCAMPAIGN / LOSE — same as the cheat
     // `mbCommandTerminateConsole`.  Drains the pending flag so
     // we only act once.
@@ -262,7 +267,22 @@ pub(super) fn handle_console_overlay_events(
     if let Some(path) = console_overlay.take_pending_load_campaign() {
         match GameSaveFile::read_from(&path) {
             Ok(loaded) => {
-                engine.replace_campaign_from_console(loaded.engine.campaign().clone());
+                let action = robin_engine::engine::ExternalAction::ReplaceCampaign {
+                    campaign: loaded.engine.campaign().clone(),
+                };
+                let mut display = std::mem::take(&mut host.engine_display);
+                engine
+                    .advance_frame(
+                        &mut display,
+                        &mut host.input,
+                        assets,
+                        dev,
+                        robin_engine::engine::SimulationFrameInput::no_hourglass()
+                            .with_external_actions(vec![action.clone()]),
+                    )
+                    .unwrap_or_else(|error| panic!("console campaign admission failed: {error}"));
+                host.engine_display = display;
+                frame.record_applied_external_action(action);
                 tracing::info!("Loaded campaign values from {}", path.display());
                 host.pending_console_output
                     .push("Campaign values loaded !".to_string());
@@ -301,7 +321,11 @@ pub(super) fn handle_console_overlay_events(
             // Route through the engine messenger so the drain handler
             // applies the reset symmetrically for any future
             // open→close path.
-            engine.send_simple_message(engine_messenger::SimpleMessage::HideConsole);
+            frame
+                .external_actions
+                .push(robin_engine::engine::ExternalAction::SimpleMessage {
+                    message: engine_messenger::SimpleMessage::HideConsole,
+                });
         }
     }
 }

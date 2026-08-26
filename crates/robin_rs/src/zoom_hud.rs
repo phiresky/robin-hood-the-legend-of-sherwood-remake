@@ -430,12 +430,18 @@ mod tests {
         // false for the duration. The active direction stays enabled
         // + latched to selected; the inactive direction disables.
         let mut input = InputState::default();
-        engine.apply_command(
-            &mut display,
-            &mut input,
-            &assets,
-            &PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp),
-        );
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut engine_api::DevState::default(),
+                engine_api::SimulationFrameInput::new(vec![
+                    PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp).into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("zoom command admission");
         let mask = ZoomButtonEnable::from_engine(&engine, &display);
         assert!(mask.zoom_up);
         assert!(mask.selected_up);

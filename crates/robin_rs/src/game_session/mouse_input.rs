@@ -269,10 +269,7 @@ fn on_left_mouse_down(
                     if !shift_held =>
                 {
                     let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
-                    for cmd in &cmds {
-                        frame_cmds.push(cmd.clone());
-                    }
-                    dispatch_local_commands(host, engine, assets, &cmds);
+                    dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                 }
                 _ => {
                     // Other actions (Bow, Net, Purse,
@@ -406,10 +403,7 @@ fn on_mouse_move(
                     | robin_engine::profiles::Action::Strangle
             ) {
                 let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
-                for cmd in &cmds {
-                    frame_cmds.push(cmd.clone());
-                }
-                dispatch_local_commands(host, engine, assets, &cmds);
+                dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
             }
         }
     }
@@ -1143,10 +1137,7 @@ fn on_world_click(
             Action::NoAction
         };
         cmds = crate::game_input::queue_shift_click_commands(cmds, queued_action, shift_held);
-        for cmd in &cmds {
-            frame_cmds.push(cmd.clone());
-        }
-        dispatch_local_commands(host, engine, assets, &cmds);
+        dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
     }
 }
 
@@ -1334,10 +1325,7 @@ fn on_right_mouse_up(
                 // the click (don't fall through to map).
             } else {
                 let cmds = crate::game_input::resolve_right_click(engine, local_seat);
-                for cmd in &cmds {
-                    frame_cmds.push(cmd.clone());
-                }
-                dispatch_local_commands(host, engine, assets, &cmds);
+                dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
             }
         }
 
@@ -1450,6 +1438,8 @@ pub(super) async fn handle_pause_menu_events(
                     )) = profile_settings
                     {
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
+                        let profile_fix_hard_reaction_times =
+                            gameplay_config.fix_hard_reaction_times;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1509,6 +1499,14 @@ pub(super) async fn handle_pause_menu_events(
                         if sound_config.amount_of_speaking != profile_amount_of_speaking {
                             let cmd = PlayerCommand::SetAmountOfSpeaking {
                                 amount: sound_config.amount_of_speaking,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.fix_hard_reaction_times
+                            != profile_fix_hard_reaction_times
+                        {
+                            let cmd = PlayerCommand::SetFixHardReactionTimes {
+                                enabled: gameplay_config.fix_hard_reaction_times,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

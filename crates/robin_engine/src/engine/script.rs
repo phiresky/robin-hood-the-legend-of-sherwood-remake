@@ -3470,6 +3470,25 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_ai_owner_work_for_boundary_mode(
+            sim,
+            assets,
+            owner,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    pub(super) fn drain_ai_owner_work_for_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
             Enemy,
@@ -4236,13 +4255,23 @@ impl EngineInner {
                     } else {
                         // Ordinary ReturnToDuty resumes on the same call stack
                         // and recursively closes its completion callbacks.
-                        self.drain_direct_ai_owner_boundary_mode(
-                            sim,
-                            owner,
-                            assets,
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        );
+                        if surface_completion {
+                            self.drain_direct_ai_owner_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        } else {
+                            self.drain_direct_ai_owner_prefix_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        }
                     }
                     continue;
                 }
@@ -5635,15 +5664,17 @@ impl EngineInner {
                     sprite.display_order_ref = None;
                     sprite.behind_display_order_ref = false;
 
-                    // Projection-area refresh: if the native told us the
-                    // destination's layer/sector, look up the new
-                    // projection area and stamp its obstacle + material
-                    // on the actor.  Computed (non-static) locations
-                    // don't carry layer/sector so the refresh is
-                    // skipped — the obstacle only gets rebound when
-                    // the destination was a real script point or
-                    // script sector.
-                    if let Some((layer, sector)) = dest_layer_sector {
+                    // Ordinary SetActorLocation refreshes the projection
+                    // obstacle from the destination point. RecordEnterGame
+                    // deliberately does not: Original sets its outside 3D
+                    // spawn, layer, and sector without calling SetObstacle,
+                    // retaining the actor's existing plane while it walks
+                    // back onto the map (`RHScript.cpp:5822-5837`).
+                    // Computed (non-static) locations likewise carry no
+                    // destination topology and skip the refresh.
+                    if let Some((layer, sector)) = dest_layer_sector
+                        && spawn_elevation_probe.is_none()
+                    {
                         let new_obstacle =
                             self.get_projection_area_index(assets, sector.get(), layer, pt);
                         let new_material = new_obstacle.and_then(|oi| {
@@ -6418,6 +6449,157 @@ mod script_context_tests {
                 .custom_minimap_dot,
             crate::minimap::CustomDot::NotCustomized as u16
         );
+    }
+
+    #[test]
+    fn record_enter_game_preserves_projection_plane_while_set_actor_location_refreshes_it() {
+        let sim = crate::sim_rng::test_context();
+        let obstacle = crate::position_interface::ObstacleHandle::new(86)
+            .expect("test obstacle handle is valid");
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.0,
+            bz: 0.0,
+            dz: 90.00101,
+        };
+
+        for (spawn_elevation_probe, expected_obstacle, expected_plane, expected_material) in [
+            (
+                Some((20.0, 30.0)),
+                Some(obstacle),
+                plane,
+                crate::element::GameMaterial::Stone,
+            ),
+            (
+                None,
+                crate::position_interface::ObstacleHandle::new(0),
+                crate::position_interface::PlaneZCoeffs {
+                    az: 0.0,
+                    bz: 0.0,
+                    dz: 10.0,
+                },
+                crate::element::GameMaterial::Wood,
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            engine.world.fast_grid_mut().size_map(8, 8);
+            engine.world.fast_grid_mut().allocate_layers(1);
+            let sector_number = crate::sector::SectorNumber::new(0);
+            let sector_index = engine.world.fast_grid_mut().add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: Vec::new(),
+                    bounding_box: crate::coordinates::MapBBox::new(),
+                    sector_type: crate::sector::SectorType::MOTION
+                        | crate::sector::SectorType::AREA,
+                    layer: 0,
+                    sector_number,
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+            let sector = crate::position_interface::SectorHandle::new(0)
+                .expect("test sector handle is valid")
+                .with_arena_index(
+                    crate::fast_find_grid::SectorIndex::new(sector_index)
+                        .expect("test arena sector index is valid"),
+                );
+            let mut replacement = crate::sight_obstacle::SightObstacle::new(
+                1,
+                crate::sight_obstacle::SIGHTOBSTACLE_SOLID
+                    | crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+            );
+            replacement.obstacle_points = vec![
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 0.0,
+                    y: 0.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 2000.0,
+                    y: 0.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 2000.0,
+                    y: 3000.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 0.0,
+                    y: 3000.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+            ];
+            replacement.top_plane_points = [
+                [0.0, 0.0, 10.0],
+                [2000.0, 0.0, 10.0],
+                [2000.0, 3000.0, 10.0],
+            ];
+            replacement.layer = 0;
+            replacement.sector = 0;
+            replacement.material = crate::element::GameMaterial::Wood as u8;
+            replacement.rebuild_geometry();
+            let assets = LevelAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![replacement]),
+                ..LevelAssets::default()
+            };
+            let mut element = crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            };
+            element.set_obstacle_index(Some(obstacle), Some(plane));
+            element.set_material(crate::element::GameMaterial::Stone);
+            engine
+                .world
+                .entities
+                .push(Some(crate::element::Entity::Soldier(
+                    crate::element::ActorSoldier {
+                        element,
+                        actor: Default::default(),
+                        human: Default::default(),
+                        npc: Default::default(),
+                        soldier: Default::default(),
+                    },
+                )));
+            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
+
+            engine.apply_host_commands(
+                &sim,
+                &assets,
+                vec![crate::natives::EngineCommand::SetActorLocation {
+                    actor_handle,
+                    x: 1000.0,
+                    y: 2000.0,
+                    dest_layer_sector: Some((0, sector)),
+                    spawn_elevation_probe,
+                }],
+            );
+
+            let entity = engine
+                .get_entity(engine.entity_id_for_index(0).expect("test actor entity"))
+                .expect("test actor survives location command");
+            assert_eq!(entity.position_iface().get_obstacle(), expected_obstacle);
+            assert_eq!(entity.position_iface().get_plane(), Some(&expected_plane));
+            assert_eq!(entity.position_iface().get_material(), expected_material);
+            if spawn_elevation_probe.is_some() {
+                assert_eq!(entity.position_iface().get_position().z, 10.0);
+                assert_eq!(entity.position_iface().map_position().y, 2000.0);
+            }
+        }
     }
 
     #[test]

@@ -4341,9 +4341,18 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        // DeleteAllDetectables(DETECTABLE_BEGGAR) — queue the scrub so a
-        // `BECAUSE_COULDNT_REACHPOINT`-triggered return out of
-        // beggar-handling doesn't leave a stale beggar detectable.
+        // DeleteAllDetectables(DETECTABLE_BEGGAR) is synchronous in
+        // Original. In particular, SeekNextPoint can call ReturnToDuty after
+        // SeekArea queued beggars earlier in the same borrowed AI dispatch;
+        // erase those earlier additions before queuing the bucket scrub so
+        // the later outbox drain cannot replay them after the delete.
+        self.base
+            .outbox
+            .actor
+            .add_detectables
+            .retain(|(_, detectable_type)| {
+                *detectable_type != crate::element::DetectableType::Beggar
+            });
         self.base
             .outbox
             .actor
@@ -4683,7 +4692,7 @@ impl EnemyAi {
     // Port of RHArtificialMalignity::React
     // -----------------------------------------------------------------------
 
-    pub fn react(&mut self, max_reactiontime: u16, ctx: &AiContext, _tick: &AiPerTickData) {
+    pub fn react(&mut self, max_reactiontime: u16, ctx: &AiContext, tick: &AiPerTickData) {
         if self.is_merry_man_forest(ctx) {
             self.base.launch_timer(3, ctx.frame);
             return;
@@ -4692,11 +4701,15 @@ impl EnemyAi {
         // The slowdown only
         // applies when the NPC is Lacklandist *and* difficulty is Easy or Hard.
         // Royalist soldiers (also EnemyAi-driven) and Medium difficulty leave
-        // the modifier at 1.0. The Easy==Hard copy-paste bug is preserved.
+        // the modifier at 1.0. The original's Easy==Hard copy-paste bug is
+        // optional: the gameplay tweak selects the intended Hard constant.
         let modifier = if ctx.camp == crate::element::Camp::Lacklandists {
             match ctx.difficulty {
-                crate::player_profile::DifficultyLevel::Easy
-                | crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
+                crate::player_profile::DifficultyLevel::Easy => difficulty::EASY_REACTIONTIME,
+                crate::player_profile::DifficultyLevel::Hard if tick.fix_hard_reaction_times => {
+                    difficulty::HARD_REACTIONTIME
+                }
+                crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
                 crate::player_profile::DifficultyLevel::Medium => 1.0,
             }
         } else {
@@ -5083,7 +5096,7 @@ mod tests {
     use crate::ai::{DoorSeekInfo, House, cache_npc_villain_authorized_direct};
     use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
     use crate::coordinates::MapPoint;
-    use crate::element::{Camp, EyeStatus, Posture};
+    use crate::element::{Camp, DetectableType, EyeStatus, Posture};
     use crate::entity_id::{EntityId, SoldierId};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
@@ -5188,6 +5201,7 @@ mod tests {
             patrol_chief: None,
             antagonist: 0,
             detected_body: 0,
+            blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -5683,6 +5697,7 @@ mod tests {
             patrol_chief: None,
             antagonist: 0,
             detected_body: 0,
+            blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -6644,6 +6659,42 @@ mod tests {
     }
 
     #[test]
+    fn return_to_duty_deletes_beggars_added_earlier_in_same_dispatch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let target = EntityId::Pc(PcId(171));
+        ai.base
+            .outbox
+            .actor
+            .add_detectables
+            .push((target, DetectableType::Beggar));
+        ai.base
+            .outbox
+            .actor
+            .add_detectables
+            .push((target, DetectableType::Enemy));
+
+        ai.return_to_duty(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(
+            ai.base.outbox.actor.add_detectables,
+            vec![(target, DetectableType::Enemy)]
+        );
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .delete_detectables
+                .contains(&DetectableType::Beggar)
+        );
+    }
+
+    #[test]
     fn return_to_duty_virtual_timer_reset_precedes_common_bored_timer_launch() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
@@ -7199,6 +7250,7 @@ mod tests {
             patrol_chief: None,
             antagonist: 0,
             detected_body: 0,
+            blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -7415,6 +7467,38 @@ mod tests {
     }
 
     #[test]
+    fn periodic_post_refresh_queued_goto_suppresses_stuck_counter() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToPhalanx;
+        ai.base.stuck_counter = 2;
+
+        // RefreshArrowProtection has already launched a direct GoTo. At this
+        // exact Original statement boundary the movement element is on the
+        // manager's to-go list, so SequenceElementIsAboutToBeLaunched(owner,
+        // RHCOMMAND_NULL) is true and the watchdog resets rather than
+        // counting the actor's still-selected Wait command.
+        ai.the_16th_frame_after_refresh(0, &AiContext::default(), true, true);
+
+        assert_eq!(ai.base.stuck_counter, 0);
+    }
+
+    #[test]
+    fn periodic_post_refresh_without_queued_element_keeps_idle_increment() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToPhalanx;
+        ai.base.stuck_counter = 2;
+
+        // An already-on-point GoTo returns before LaunchSequence, while a
+        // denied route deletes its candidate sequence. Neither case leaves a
+        // manager element to suppress the live Wait/smalltalk arm.
+        ai.the_16th_frame_after_refresh(0, &AiContext::default(), true, false);
+
+        assert_eq!(ai.base.stuck_counter, 3);
+    }
+
+    #[test]
     fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
         // schema14 seed1000000, linux2/P002/Savegame_032/replay-008,
         // frame 17254. RefreshArrowProtection changes the soldier from
@@ -7488,7 +7572,7 @@ mod tests {
             None,
             true,
             false,
-            false,
+            true,
             false,
         );
 
@@ -7500,6 +7584,93 @@ mod tests {
         assert_eq!(
             ai.base.stuck_counter, 3,
             "the deferred phalanx GoTo does not hide the current idle actor"
+        );
+    }
+
+    #[test]
+    fn periodic_phalanx_goto_does_not_fake_wait_during_attentive_transition() {
+        // Seed3 linux2/P002/Savegame_030/replay-007 frame 6887. The shield
+        // refresh queues a phalanx GoTo while EnterAttentive remains the
+        // selected command. Original's subsequent GetCommand switch does not
+        // enter the Wait/smalltalk stuck-counter arm.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.stuck_counter = 0;
+        ai.list_them.push(2);
+
+        let exact_position = |x, y| Position {
+            sector: SectorHandle::new(0),
+            ..test_position(x, y)
+        };
+        let owner_position = exact_position(500.0, 500.0);
+        let enemy_position = exact_position(1_500.0, 500.0);
+        let mut owner_view = soldier_view(owner_position);
+        owner_view.camp = Camp::Royalists;
+        let mut enemy_view = soldier_view(enemy_position);
+        enemy_view.camp = Camp::Lacklandists;
+        enemy_view.action_state = crate::element::ActionState::AimingWithBow;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner_view);
+        views.insert(2, enemy_view);
+        let ctx = AiContext {
+            position: owner_position,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.seen_last_frame_enemies.push(2);
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 1,
+            position: owner_position,
+            raw_position: owner_position,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 2,
+            position: enemy_position,
+            raw_position: enemy_position,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 3,
+            position: exact_position(600.0, 500.0),
+            raw_position: exact_position(600.0, 500.0),
+            direction: 0,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingPhalanx as u32,
+            ..FighterSnapshot::default()
+        });
+
+        ai.the_16th_frame(
+            &sim,
+            0,
+            &ctx,
+            &AiGlobalState::default(),
+            &tick,
+            None,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunningToPhalanx
+        );
+        assert!(!ai.base.outbox.actor.orders.is_empty());
+        assert_eq!(
+            ai.base.stuck_counter, 0,
+            "a shield action must not substitute for Original's selected-command switch"
         );
     }
 
@@ -7577,7 +7748,7 @@ mod tests {
             None,
             true,
             false,
-            false,
+            true,
             false,
         );
 
@@ -7863,16 +8034,25 @@ mod tests {
     }
 
     #[test]
-    fn react_computes_timer() {
-        let mut ai = EnemyAi::new(1);
-        ai.soldier_profile_iq = 50;
-        let ctx = AiContext::default();
-        let tick = AiPerTickData::stub();
-        ai.react(100, &ctx, &tick);
-        // Timer should have been launched: (100-50)*0.01*100*2.0+1 = 101
-        assert!(
-            ai.base.timer_is_running || ai.base.substate_at_last_timer_launch != Substate::None
-        );
+    fn hard_reaction_time_fix_selects_the_intended_multiplier() {
+        let ctx = AiContext {
+            difficulty: crate::player_profile::DifficultyLevel::Hard,
+            camp: crate::element::Camp::Lacklandists,
+            frame: 10,
+            ..AiContext::default()
+        };
+
+        let mut original = EnemyAi::new(1);
+        original.soldier_profile_iq = 50;
+        original.react(100, &ctx, &AiPerTickData::stub());
+        assert_eq!(original.base.when_does_timer_ring, 111);
+
+        let mut fixed_tick = AiPerTickData::stub();
+        fixed_tick.fix_hard_reaction_times = true;
+        let mut fixed = EnemyAi::new(1);
+        fixed.soldier_profile_iq = 50;
+        fixed.react(100, &ctx, &fixed_tick);
+        assert_eq!(fixed.base.when_does_timer_ring, 36);
     }
 
     #[test]

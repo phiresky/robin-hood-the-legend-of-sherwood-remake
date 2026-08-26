@@ -841,8 +841,14 @@ fn apply_human(human: &mut HumanData, saved: ConvertedHuman) {
     human.sword_strike_boredom = saved.sword_strike_boredom;
     human.stuck_under_nets_counter = saved.stuck_under_nets_counter;
     human.hollow_man = saved.hollow_man;
-    human.opponents = saved.opponents;
-    human.opponent_jump_lines = saved.opponent_jump_lines;
+    assert_eq!(
+        saved.opponents.len(),
+        saved.opponent_jump_lines.len(),
+        "converted legacy opponents must retain their jump-line records"
+    );
+    human.opponents = crate::element::SwordfightOpponents::from_pairs(
+        saved.opponents.into_iter().zip(saved.opponent_jump_lines),
+    );
     human.smalltalk_initiative = saved.smalltalk_initiative;
     human.received_smalltalk_initiative = saved.received_smalltalk_initiative;
     human.smalltalk_hint = saved.smalltalk_hint;

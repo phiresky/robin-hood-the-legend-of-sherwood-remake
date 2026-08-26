@@ -19,6 +19,7 @@ pub(super) struct FramePresentationHandoff {
     pub(super) consumed_buffered: bool,
     pub(super) shift_held: bool,
     pub(super) modal_rendered: bool,
+    pub(super) history_commit_pending: bool,
 }
 
 pub(super) enum FrameSimulationOutcome {
@@ -55,6 +56,7 @@ struct SimulationModalState {
     modal_rendered_this_frame: bool,
     auto_dismiss_modals: bool,
     tick_exit_code: Option<GameCode>,
+    history_commit_pending: bool,
 }
 
 /// Host-only visual state which must be refreshed immediately after the
@@ -300,8 +302,13 @@ fn drive_leave_mission_prompt(
     if host.effects.take_signal(HostSignal::MissionStatePopup) {
         if mode == ScriptedModalMode::AutoDismiss {
             let cmd = PlayerCommand::QuitMissionRequested;
-            dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
-            frame.commands.push(cmd);
+            dispatch_local_command(
+                host,
+                &mut manager.engine,
+                &mut frame.post_commands,
+                assets,
+                &cmd,
+            );
         } else if let Some(menu_resources) = resources.menu.as_ref() {
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
@@ -343,7 +350,13 @@ fn drive_leave_mission_prompt(
     let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
     if outcome == ActiveModalOutcome::QuitMissionRequested {
         let cmd = PlayerCommand::QuitMissionRequested;
-        dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
+        dispatch_local_command(
+            host,
+            &mut manager.engine,
+            &mut frame.post_commands,
+            assets,
+            &cmd,
+        );
     }
     true
 }
@@ -454,6 +467,7 @@ impl InteractiveFrameSimulation {
             paused,
             consumed_buffered,
         );
+        let history_commit_pending = !paused && !rewind_active;
         Self::drive_manual_steps(
             runtime,
             host,
@@ -485,6 +499,7 @@ impl InteractiveFrameSimulation {
             modal_rendered_this_frame,
             auto_dismiss_modals,
             tick_exit_code,
+            history_commit_pending,
         }
     }
 
@@ -507,7 +522,7 @@ impl InteractiveFrameSimulation {
             game,
             manager,
             assets,
-            ..
+            dev,
         } = world;
         let input = &mut frontend.input;
         let audio = &mut frontend.audio;
@@ -522,6 +537,7 @@ impl InteractiveFrameSimulation {
             mut modal_rendered_this_frame,
             auto_dismiss_modals,
             tick_exit_code,
+            history_commit_pending,
         } = state;
 
         let modal_mode = if auto_dismiss_modals {
@@ -603,6 +619,30 @@ impl InteractiveFrameSimulation {
         })
         .await
         {
+            let mut display = std::mem::take(&mut host.engine_display);
+            runtime.cross_post_initialize(|| {
+                crate::sim_timeline::run_post_initialize_stage_with_actions(
+                    host,
+                    &mut display,
+                    assets,
+                    &mut manager.engine,
+                    dev,
+                    frame.unapplied_post_external_actions(),
+                    &frame.post_commands.commands,
+                    frame.run_post_initialize,
+                )
+            });
+            host.engine_display = display;
+            if history_commit_pending {
+                runtime.commit_simulation_history(
+                    host,
+                    manager,
+                    &frame,
+                    FrameCommitPolicy {
+                        store_rewind_commands: !consumed_buffered,
+                    },
+                );
+            }
             runtime.finish_recording(&mut frame);
             runtime.trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
@@ -617,6 +657,7 @@ impl InteractiveFrameSimulation {
             consumed_buffered,
             shift_held,
             modal_rendered: modal_rendered_this_frame,
+            history_commit_pending,
         }))
     }
 
@@ -657,12 +698,18 @@ impl InteractiveFrameSimulation {
                 return None;
             }
             let mut display = std::mem::take(&mut host.engine_display);
+            let mission_transitioning = !game
+                .operation
+                .is(robin_engine::game_operation::GameCode::LevelInProgress);
+            frame.run_hourglass &= game.should_run_hourglass(false, mission_transitioning, paused);
+            let simulation_frame = frame.hourglass_input();
             let result = game.run_engine_tick(
                 host,
                 &mut display,
                 assets.as_ref(),
                 &mut manager.engine,
                 dev,
+                simulation_frame,
                 false,
                 paused,
             );
@@ -678,8 +725,29 @@ impl InteractiveFrameSimulation {
         // that just finished.  No-op when the HTTP server is disabled
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
+        let pending_actions = frame.unapplied_post_external_actions().to_vec();
+        if !pending_actions.is_empty() {
+            let mut display = std::mem::take(&mut host.engine_display);
+            crate::sim_timeline::run_post_external_action_stage(
+                host,
+                &mut display,
+                assets,
+                &mut manager.engine,
+                dev,
+                &pending_actions,
+            );
+            host.engine_display = display;
+            frame.mark_post_external_actions_applied();
+        }
         let net = host.transport.net.take();
-        crate::http_server::drain_global(manager, host, &assets, net.as_ref());
+        let actions = crate::http_server::drain_global(
+            manager,
+            host,
+            &assets,
+            net.as_ref(),
+            &mut frame.post_commands,
+        );
+        frame.record_applied_post_external_actions(actions);
         host.transport.net = net;
 
         // ── Rollback check + rewind buffer commit ──
@@ -688,14 +756,6 @@ impl InteractiveFrameSimulation {
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
         if !paused && !rewind_active {
-            runtime.commit_simulation_history(
-                host,
-                manager,
-                &frame,
-                FrameCommitPolicy {
-                    store_rewind_commands: !consumed_buffered,
-                },
-            );
             manager.sim_frame += 1;
             if let Some(net) = host.transport.net.as_ref()
                 && host.transport.local_seat == engine_player_command::PlayerId::HOST
@@ -776,15 +836,15 @@ impl InteractiveFrameSimulation {
                 .apply_playback_timeline_events(host, game, manager, assets)
                 .unwrap_or_else(|error| panic!("replay step boundary failed: {error}"));
             let step_frame = manager.sim_frame;
-            let buffered_cmds = if step_frame < runtime.rewind_buffer.next_record_frame() {
-                runtime
-                    .rewind_buffer
-                    .commands_for(step_frame)
-                    .map(<[PlayerInput]>::to_vec)
+            let buffered_frame = if step_frame < runtime.rewind_buffer.next_record_frame() {
+                runtime.rewind_buffer.frame_for(step_frame).cloned()
             } else {
-                Some(Vec::new())
+                Some(
+                    robin_engine::engine::SimulationFrameInput::default()
+                        .with_post_initialize(true),
+                )
             };
-            if let Some(buffered_cmds) = buffered_cmds {
+            if let Some(buffered_frame) = buffered_frame {
                 let reusing_recorded_frame = step_frame < runtime.rewind_buffer.next_record_frame();
                 runtime
                     .rewind_buffer
@@ -805,16 +865,13 @@ impl InteractiveFrameSimulation {
                         }
                         step_frame_cmds.push(cmd.clone());
                     }
-                } else if reusing_recorded_frame {
-                    step_frame_cmds = buffered_cmds;
                 }
-                manager.engine.apply_commands(
-                    &mut host.frontend.engine_display,
-                    &mut host.frontend.input,
-                    &assets,
-                    &step_frame_cmds,
-                );
-
+                let simulation_frame = if reusing_recorded_frame {
+                    buffered_frame
+                } else {
+                    robin_engine::engine::SimulationFrameInput::from_player_inputs(step_frame_cmds)
+                        .with_post_initialize(true)
+                };
                 let mut display = std::mem::take(&mut host.engine_display);
                 game.run_engine_tick(
                     host,
@@ -822,19 +879,13 @@ impl InteractiveFrameSimulation {
                     assets.as_ref(),
                     &mut manager.engine,
                     dev,
+                    simulation_frame.clone(),
                     false,
                     false,
-                );
-                crate::sim_timeline::run_post_initialize_stage(
-                    host,
-                    &mut display,
-                    &assets,
-                    &mut manager.engine,
-                    dev,
                 );
                 host.engine_display = display;
                 if !reusing_recorded_frame {
-                    runtime.rewind_buffer.end_frame(step_frame_cmds);
+                    runtime.rewind_buffer.end_frame_input(simulation_frame);
                 }
                 manager.sim_frame += 1;
                 // Stepping bypasses the checker's begin_frame/end_frame

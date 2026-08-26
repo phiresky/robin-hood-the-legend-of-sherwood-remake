@@ -222,14 +222,34 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_pending_for_npc_boundary_mode(
+            sim,
+            npc_id,
+            assets,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    pub(in crate::engine) fn drain_pending_for_npc_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for_mode(
+        self.drain_ai_owner_work_for_boundary_mode(
             sim,
             assets,
             npc_id,
             owner_local_no_forecast,
             defer_turn_instruction,
+            surface_completion,
         );
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
@@ -338,7 +358,14 @@ impl EngineInner {
         // not tear down the relationship directly here: the command owns
         // both that teardown and the visible lowering-sword transition, and
         // LaunchSequenceElement arbitrates it synchronously in the Original.
-        if effects.quit_swordfight {
+        let retry_quit_swordfight = effects.retry_quit_swordfight
+            && self
+                .current_sequence_element_for_actor(npc_id)
+                .and_then(|(sequence, index)| {
+                    self.orders.sequence_manager.get_element(sequence, index)
+                })
+                .is_none_or(|element| element.command != crate::element::Command::QuitSwordfight);
+        if effects.quit_swordfight || retry_quit_swordfight {
             self.launch_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,

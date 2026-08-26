@@ -234,9 +234,13 @@ fn dispatch_gameplay_action(
                 &PlayerCommand::KeyReleaseControl,
             );
         }
-        GameAction::SwitchTask => manager
-            .engine
-            .send_simple_message(engine_messenger::SimpleMessage::SwitchTask),
+        GameAction::SwitchTask => {
+            frame
+                .external_actions
+                .push(robin_engine::engine::ExternalAction::SimpleMessage {
+                    message: engine_messenger::SimpleMessage::SwitchTask,
+                });
+        }
         GameAction::Teleport => {
             let mouse_screen = input.threaded.position();
             if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {

@@ -98,9 +98,9 @@ run_prepass() {
             "$workspace" "$corpus" "$selected_runner" "$selected_sha" "$audit"
 }
 
-# Eight jobs are allowed only in globally drained mode, are all admitted at
-# once for independent traces, and still charge the configured memory reserve
-# once per worker. Nine jobs and multi-corpus parallel conversion are rejected.
+# Eight jobs are allowed, are all admitted at once for independent traces, and
+# still charge the configured memory reserve once per worker. Concurrent-corpus
+# mode uses the same bounded parallelism at idle CPU/I/O priority.
 parallel_corpus="$test_root/corpus-parallel-eight"
 parallel_audit="$test_root/audit-parallel-eight"
 parallel_barrier="$test_root/parallel-eight-barrier"
@@ -156,12 +156,51 @@ then
     printf 'test failure: accepted over-limit conversion jobs hidden by leading zeroes\n' >&2
     exit 1
 fi
-if run_prepass "$limit_corpus" "$test_root/audit-other-corpora-parallel" \
-    NATIVE_CONVERT_JOBS=8 NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1
+other_corpus="$test_root/corpus-other-corpora-parallel"
+other_audit="$test_root/audit-other-corpora-parallel"
+other_barrier="$test_root/other-corpora-parallel-barrier"
+make_corpus "$other_corpus"
+mkdir -p "$other_barrier/active"
+for index in {01..04}; do add_source "$other_corpus" "$index-other"; done
+FAKE_CONVERT_BARRIER_DIR="$other_barrier" run_prepass "$other_corpus" "$other_audit" \
+    NATIVE_CONVERT_JOBS=3 NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 &
+parallel_pid=$!
+parallel_count=0
+for _ in {1..200}; do
+    parallel_count=$(find "$other_barrier/active" -type f 2>/dev/null | wc -l)
+    (( parallel_count == 3 )) && break
+    sleep 0.05
+done
+[[ "$parallel_count" == 3 ]]
+other_second_corpus="$test_root/corpus-other-corpora-second"
+make_corpus "$other_second_corpus"
+add_source "$other_second_corpus" 01-second
+if run_prepass "$other_second_corpus" "$test_root/audit-other-corpora-second" \
+    NATIVE_CONVERT_JOBS=1 NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1
 then
-    printf 'test failure: accepted parallel conversion in multi-corpus mode\n' >&2
+    printf 'test failure: concurrent-campaign singleton admitted a second corpus\n' >&2
     exit 1
 fi
+: >"$other_barrier/release"
+wait "$parallel_pid"
+parallel_pid=
+grep -Fxq 'JOBS=3' "$other_audit/provenance.env"
+grep -Fxq 'ALLOW_OTHER_CORPORA=1' "$other_audit/provenance.env"
+grep -Fxq 'NICE=19' "$other_audit/provenance.env"
+grep -Fxq 'IONICE_CLASS=3' "$other_audit/provenance.env"
+before=$(wc -l <"$invocations")
+for concurrent_jobs in 4 8; do
+    rejected_corpus="$test_root/corpus-other-rejected-$concurrent_jobs"
+    make_corpus "$rejected_corpus"
+    add_source "$rejected_corpus" 01-rejected
+    if run_prepass "$rejected_corpus" "$test_root/audit-other-rejected-$concurrent_jobs" \
+        NATIVE_CONVERT_JOBS="$concurrent_jobs" NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1
+    then
+        printf 'test failure: accepted %s jobs in concurrent-campaign mode\n' \
+            "$concurrent_jobs" >&2
+        exit 1
+    fi
+done
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 
 test_meminfo="$test_root/meminfo"

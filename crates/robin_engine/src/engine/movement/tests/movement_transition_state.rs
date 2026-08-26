@@ -264,7 +264,7 @@ mod suite {
                 ..ActorData::default()
             },
             human: HumanData {
-                opponents: vec![opponent],
+                opponents: vec![opponent].into(),
                 ..HumanData::default()
             },
             pc: PcData::default(),
@@ -476,7 +476,7 @@ mod suite {
                 ..ActorData::default()
             },
             human: HumanData {
-                opponents: vec![opponent],
+                opponents: vec![opponent].into(),
                 ..HumanData::default()
             },
             pc: PcData::default(),

@@ -15,10 +15,25 @@ use serde::{Deserialize, Serialize};
     robin_state_hash_derive::StateHash,
 )]
 pub struct GameplayConfig {
+    /// Use the intended Hard-difficulty reaction-time multiplier instead of
+    /// the Easy multiplier selected by the original game's copy-paste bug.
+    #[serde(default)]
+    pub fix_hard_reaction_times: bool,
+
     /// Allow direct selection and command of Royalist soldier NPCs.
     ///
     /// This defaults off so existing profiles and original-parity sessions
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default)]
     pub control_allied_soldiers: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GameplayConfig;
+
+    #[test]
+    fn original_reaction_time_bug_is_the_default() {
+        assert!(!GameplayConfig::default().fix_hard_reaction_times);
+    }
 }

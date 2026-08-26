@@ -30,6 +30,8 @@
 //! - **[`EntityId`]**: Cross-entity references use IDs, not pointers.
 
 use std::collections::VecDeque;
+use std::fmt;
+use std::hash::Hasher;
 
 use serde::{Deserialize, Serialize};
 
@@ -1013,8 +1015,303 @@ pub struct HumanSwordSweepState {
     pub final_angle: f32,
 }
 
+/// One entry in the Original's ordered `RHSwordfightOpponent` list.
+///
+/// The jump line belongs to this human's side of a table swordfight. Keeping
+/// it in the same record as the opponent prevents principal promotion,
+/// removal, and insertion from desynchronizing the two values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwordfightOpponent {
+    opponent: EntityId,
+    jump_line: Option<JumpLineIndex>,
+}
+
+impl SwordfightOpponent {
+    /// Build one paired opponent record.
+    ///
+    /// The jump line is the line on this human's side of the fight, matching
+    /// Original `RHSwordfightOpponent::pJumpLine`.
+    pub fn new(opponent: EntityId, jump_line: Option<JumpLineIndex>) -> Self {
+        Self {
+            opponent,
+            jump_line,
+        }
+    }
+
+    pub fn opponent(self) -> EntityId {
+        self.opponent
+    }
+
+    pub fn jump_line(self) -> Option<JumpLineIndex> {
+        self.jump_line
+    }
+}
+
+/// Ordered swordfight opponents; the first entry is the principal opponent.
+///
+/// The Original stores a single `SBList<RHSwordfightOpponent>`. Older Rust
+/// snapshots exposed the two record fields as parallel `opponents` and
+/// `opponent_jump_lines` vectors. [`HumanData`]'s compatibility view and this
+/// type's `StateHash` implementation retain that wire shape and hash byte
+/// order while the live representation enforces the Original's one-record
+/// invariant.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SwordfightOpponents {
+    entries: Vec<SwordfightOpponent>,
+}
+
+impl SwordfightOpponents {
+    /// Construct opponents without table jump lines, primarily for level
+    /// loading and focused simulation fixtures.
+    pub fn from_ids(ids: impl IntoIterator<Item = EntityId>) -> Self {
+        Self {
+            entries: ids
+                .into_iter()
+                .map(|opponent| SwordfightOpponent::new(opponent, None))
+                .collect(),
+        }
+    }
+
+    /// Construct an ordered list from already-paired records.
+    pub fn from_entries(entries: impl IntoIterator<Item = SwordfightOpponent>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn from_pairs(
+        pairs: impl IntoIterator<Item = (EntityId, Option<JumpLineIndex>)>,
+    ) -> Self {
+        Self::from_entries(
+            pairs
+                .into_iter()
+                .map(|(opponent, jump_line)| SwordfightOpponent::new(opponent, jump_line)),
+        )
+    }
+
+    fn try_from_parts(
+        opponents: Vec<EntityId>,
+        mut jump_lines: Vec<Option<JumpLineIndex>>,
+    ) -> Result<Self, String> {
+        if jump_lines.len() > opponents.len() {
+            return Err(format!(
+                "opponent_jump_lines has {} entries for {} opponents",
+                jump_lines.len(),
+                opponents.len()
+            ));
+        }
+
+        // Historical Rust snapshots could have a short parallel vector. Its
+        // read behavior was `get(index).flatten()`, i.e. missing meant no
+        // jump line; normalize that representation at the boundary.
+        jump_lines.resize(opponents.len(), None);
+        Ok(Self::from_pairs(opponents.into_iter().zip(jump_lines)))
+    }
+
+    fn into_parts(self) -> (Vec<EntityId>, Vec<Option<JumpLineIndex>>) {
+        let mut opponents = Vec::with_capacity(self.entries.len());
+        let mut jump_lines = Vec::with_capacity(self.entries.len());
+        for entry in self.entries {
+            opponents.push(entry.opponent);
+            jump_lines.push(entry.jump_line);
+        }
+        (opponents, jump_lines)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn first(&self) -> Option<&EntityId> {
+        self.entries.first().map(|entry| &entry.opponent)
+    }
+
+    pub fn get(&self, index: usize) -> Option<&EntityId> {
+        self.entries.get(index).map(|entry| &entry.opponent)
+    }
+
+    pub fn contains(&self, opponent: &EntityId) -> bool {
+        self.entries.iter().any(|entry| entry.opponent == *opponent)
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &EntityId> {
+        self.entries.iter().map(|entry| &entry.opponent)
+    }
+
+    pub fn iter_with_jump_lines(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (EntityId, Option<JumpLineIndex>)> + '_ {
+        self.entries
+            .iter()
+            .map(|entry| (entry.opponent, entry.jump_line))
+    }
+
+    pub fn jump_line(&self, index: usize) -> Option<JumpLineIndex> {
+        self.entries.get(index).and_then(|entry| entry.jump_line)
+    }
+
+    pub fn ids(&self) -> Vec<EntityId> {
+        self.iter().copied().collect()
+    }
+
+    /// Match the Original's `AddOpponent`: insert a new principal entry, or
+    /// promote an existing non-principal entry and replace its jump line.
+    pub(crate) fn add_principal(
+        &mut self,
+        opponent: EntityId,
+        jump_line: Option<JumpLineIndex>,
+    ) -> bool {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.opponent == opponent)
+        {
+            if index != 0 {
+                self.entries.swap(0, index);
+                self.entries[0].jump_line = jump_line;
+            }
+            return false;
+        }
+
+        self.entries
+            .insert(0, SwordfightOpponent::new(opponent, jump_line));
+        true
+    }
+
+    pub(crate) fn remove(&mut self, opponent: EntityId) -> bool {
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.opponent == opponent)
+        else {
+            return false;
+        };
+        self.entries.remove(index);
+        true
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(crate) fn promote(&mut self, index: usize) -> bool {
+        if index >= self.entries.len() {
+            return false;
+        }
+        self.entries.swap(0, index);
+        true
+    }
+
+    pub(crate) fn update_jump_line_at(
+        &mut self,
+        index: usize,
+        jump_line: Option<JumpLineIndex>,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return false;
+        };
+        entry.jump_line = jump_line;
+        true
+    }
+
+    pub(crate) fn update_jump_line(
+        &mut self,
+        opponent: EntityId,
+        jump_line: Option<JumpLineIndex>,
+    ) -> bool {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.opponent == opponent)
+        else {
+            return false;
+        };
+        entry.jump_line = jump_line;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push(&mut self, opponent: EntityId) {
+        self.entries.push(SwordfightOpponent::new(opponent, None));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn extend(&mut self, opponents: impl IntoIterator<Item = EntityId>) {
+        self.entries.extend(
+            opponents
+                .into_iter()
+                .map(|opponent| SwordfightOpponent::new(opponent, None)),
+        );
+    }
+}
+
+impl From<Vec<EntityId>> for SwordfightOpponents {
+    fn from(opponents: Vec<EntityId>) -> Self {
+        Self::from_ids(opponents)
+    }
+}
+
+impl fmt::Debug for SwordfightOpponents {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<'a> IntoIterator for &'a SwordfightOpponents {
+    type Item = &'a EntityId;
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, SwordfightOpponent>,
+        fn(&'a SwordfightOpponent) -> &'a EntityId,
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        fn opponent(entry: &SwordfightOpponent) -> &EntityId {
+            &entry.opponent
+        }
+        self.entries.iter().map(opponent)
+    }
+}
+
+impl std::ops::Index<usize> for SwordfightOpponents {
+    type Output = EntityId;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.entries[index].opponent
+    }
+}
+
+impl PartialEq<Vec<EntityId>> for SwordfightOpponents {
+    fn eq(&self, other: &Vec<EntityId>) -> bool {
+        self.iter().copied().eq(other.iter().copied())
+    }
+}
+
+impl PartialEq<SwordfightOpponents> for Vec<EntityId> {
+    fn eq(&self, other: &SwordfightOpponents) -> bool {
+        other == self
+    }
+}
+
+impl robin_util::state_hash::StateHash for SwordfightOpponents {
+    fn state_hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.entries.len() as u64);
+        for entry in &self.entries {
+            robin_util::state_hash::StateHash::state_hash(&entry.opponent, state);
+        }
+        state.write_u64(self.entries.len() as u64);
+        for entry in &self.entries {
+            robin_util::state_hash::StateHash::state_hash(&entry.jump_line, state);
+        }
+    }
+}
+
 /// Human-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Debug, Clone, robin_state_hash_derive::StateHash)]
 pub struct HumanData {
     pub carrier: Option<EntityId>,
 
@@ -1035,20 +1332,8 @@ pub struct HumanData {
     // Visibility
     pub hollow_man: bool,
 
-    // Swordfight — opponent list
-    /// Active swordfight opponents. The first entry is the principal opponent.
-    pub opponents: Vec<EntityId>,
-
-    /// Per-opponent jump line for table-swordfights, kept in lockstep
-    /// with [`Self::opponents`]: `opponent_jump_lines[i]` is the jump
-    /// line paired with `opponents[i]`, or `None` for opponents not
-    /// separated by a table.
-    ///
-    /// Mutators that touch `opponents` (push / swap / clear / positional
-    /// remove) must touch this vector at the same indices so the two
-    /// stay aligned.  Updated in place by
-    /// [`crate::engine::EngineInner::update_opponent_jump_line`].
-    pub opponent_jump_lines: Vec<Option<JumpLineIndex>>,
+    // Swordfight — the Original's ordered opponent records.
+    pub opponents: SwordfightOpponents,
 
     pub smalltalk_initiative: bool,
     pub received_smalltalk_initiative: bool,
@@ -1092,6 +1377,261 @@ pub struct HumanData {
     pub pending_shoots: Vec<crate::sequence::SequenceElementRef>,
 }
 
+/// Compatibility view of [`HumanData`]. The two opponent vectors deliberately
+/// remain adjacent and in their historical order for JSON saves and bincode
+/// multiplayer snapshots.
+#[derive(Serialize, Deserialize)]
+struct HumanDataWire {
+    carrier: Option<EntityId>,
+    concussion_of_the_brain: u16,
+    concussion_healing_timeout: u16,
+    tiredness: u16,
+    unconscious: bool,
+    already_detectable_body: bool,
+    detectable_list_index: u16,
+    sword_strike_boredom: Vec<u16>,
+    stuck_under_nets_counter: u16,
+    hollow_man: bool,
+    opponents: Vec<EntityId>,
+    #[serde(default)]
+    opponent_jump_lines: Vec<Option<JumpLineIndex>>,
+    smalltalk_initiative: bool,
+    received_smalltalk_initiative: bool,
+    smalltalk_hint: SmalltalkHint,
+    smalltalk_hint_opponent: Option<EntityId>,
+    relative_fighting_ability: u16,
+    small_repulsive_radius: bool,
+    last_is_lying_for_corpse_intersection: Option<bool>,
+    killed_by_accident: bool,
+    parry_counter: u16,
+    invulnerable: bool,
+    last_motion_was_step_back_in_combat: bool,
+    running_hulk: u32,
+    time_hulk: u32,
+    hulk_level: u16,
+    hulk_direction: bool,
+    hulk_speed: f32,
+    repulsive_point: HumanRepulsivePointState,
+    building_sector: Option<SectorHandle>,
+    produced_noise_first_word: f32,
+    shield: HumanShieldState,
+    sword_sweep: HumanSwordSweepState,
+    pending_shoots: Vec<crate::sequence::SequenceElementRef>,
+}
+
+struct SerializedOpponentIds<'a>(&'a SwordfightOpponents);
+
+impl Serialize for SerializedOpponentIds<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for opponent in self.0.iter() {
+            sequence.serialize_element(opponent)?;
+        }
+        sequence.end()
+    }
+}
+
+struct SerializedOpponentJumpLines<'a>(&'a SwordfightOpponents);
+
+impl Serialize for SerializedOpponentJumpLines<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for entry in &self.0.entries {
+            sequence.serialize_element(&entry.jump_line)?;
+        }
+        sequence.end()
+    }
+}
+
+#[derive(Serialize)]
+struct HumanDataWireRef<'a> {
+    carrier: &'a Option<EntityId>,
+    concussion_of_the_brain: &'a u16,
+    concussion_healing_timeout: &'a u16,
+    tiredness: &'a u16,
+    unconscious: &'a bool,
+    already_detectable_body: &'a bool,
+    detectable_list_index: &'a u16,
+    sword_strike_boredom: &'a [u16],
+    stuck_under_nets_counter: &'a u16,
+    hollow_man: &'a bool,
+    opponents: SerializedOpponentIds<'a>,
+    opponent_jump_lines: SerializedOpponentJumpLines<'a>,
+    smalltalk_initiative: &'a bool,
+    received_smalltalk_initiative: &'a bool,
+    smalltalk_hint: &'a SmalltalkHint,
+    smalltalk_hint_opponent: &'a Option<EntityId>,
+    relative_fighting_ability: &'a u16,
+    small_repulsive_radius: &'a bool,
+    last_is_lying_for_corpse_intersection: &'a Option<bool>,
+    killed_by_accident: &'a bool,
+    parry_counter: &'a u16,
+    invulnerable: &'a bool,
+    last_motion_was_step_back_in_combat: &'a bool,
+    running_hulk: &'a u32,
+    time_hulk: &'a u32,
+    hulk_level: &'a u16,
+    hulk_direction: &'a bool,
+    hulk_speed: &'a f32,
+    repulsive_point: &'a HumanRepulsivePointState,
+    building_sector: &'a Option<SectorHandle>,
+    produced_noise_first_word: &'a f32,
+    shield: &'a HumanShieldState,
+    sword_sweep: &'a HumanSwordSweepState,
+    pending_shoots: &'a [crate::sequence::SequenceElementRef],
+}
+
+impl Serialize for HumanData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        HumanDataWireRef {
+            carrier: &self.carrier,
+            concussion_of_the_brain: &self.concussion_of_the_brain,
+            concussion_healing_timeout: &self.concussion_healing_timeout,
+            tiredness: &self.tiredness,
+            unconscious: &self.unconscious,
+            already_detectable_body: &self.already_detectable_body,
+            detectable_list_index: &self.detectable_list_index,
+            sword_strike_boredom: &self.sword_strike_boredom,
+            stuck_under_nets_counter: &self.stuck_under_nets_counter,
+            hollow_man: &self.hollow_man,
+            opponents: SerializedOpponentIds(&self.opponents),
+            opponent_jump_lines: SerializedOpponentJumpLines(&self.opponents),
+            smalltalk_initiative: &self.smalltalk_initiative,
+            received_smalltalk_initiative: &self.received_smalltalk_initiative,
+            smalltalk_hint: &self.smalltalk_hint,
+            smalltalk_hint_opponent: &self.smalltalk_hint_opponent,
+            relative_fighting_ability: &self.relative_fighting_ability,
+            small_repulsive_radius: &self.small_repulsive_radius,
+            last_is_lying_for_corpse_intersection: &self.last_is_lying_for_corpse_intersection,
+            killed_by_accident: &self.killed_by_accident,
+            parry_counter: &self.parry_counter,
+            invulnerable: &self.invulnerable,
+            last_motion_was_step_back_in_combat: &self.last_motion_was_step_back_in_combat,
+            running_hulk: &self.running_hulk,
+            time_hulk: &self.time_hulk,
+            hulk_level: &self.hulk_level,
+            hulk_direction: &self.hulk_direction,
+            hulk_speed: &self.hulk_speed,
+            repulsive_point: &self.repulsive_point,
+            building_sector: &self.building_sector,
+            produced_noise_first_word: &self.produced_noise_first_word,
+            shield: &self.shield,
+            sword_sweep: &self.sword_sweep,
+            pending_shoots: &self.pending_shoots,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for HumanData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        HumanData::try_from(HumanDataWire::deserialize(deserializer)?)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<HumanDataWire> for HumanData {
+    type Error = String;
+
+    fn try_from(wire: HumanDataWire) -> Result<Self, Self::Error> {
+        let opponents =
+            SwordfightOpponents::try_from_parts(wire.opponents, wire.opponent_jump_lines)?;
+        Ok(Self {
+            carrier: wire.carrier,
+            concussion_of_the_brain: wire.concussion_of_the_brain,
+            concussion_healing_timeout: wire.concussion_healing_timeout,
+            tiredness: wire.tiredness,
+            unconscious: wire.unconscious,
+            already_detectable_body: wire.already_detectable_body,
+            detectable_list_index: wire.detectable_list_index,
+            sword_strike_boredom: wire.sword_strike_boredom,
+            stuck_under_nets_counter: wire.stuck_under_nets_counter,
+            hollow_man: wire.hollow_man,
+            opponents,
+            smalltalk_initiative: wire.smalltalk_initiative,
+            received_smalltalk_initiative: wire.received_smalltalk_initiative,
+            smalltalk_hint: wire.smalltalk_hint,
+            smalltalk_hint_opponent: wire.smalltalk_hint_opponent,
+            relative_fighting_ability: wire.relative_fighting_ability,
+            small_repulsive_radius: wire.small_repulsive_radius,
+            last_is_lying_for_corpse_intersection: wire.last_is_lying_for_corpse_intersection,
+            killed_by_accident: wire.killed_by_accident,
+            parry_counter: wire.parry_counter,
+            invulnerable: wire.invulnerable,
+            last_motion_was_step_back_in_combat: wire.last_motion_was_step_back_in_combat,
+            running_hulk: wire.running_hulk,
+            time_hulk: wire.time_hulk,
+            hulk_level: wire.hulk_level,
+            hulk_direction: wire.hulk_direction,
+            hulk_speed: wire.hulk_speed,
+            repulsive_point: wire.repulsive_point,
+            building_sector: wire.building_sector,
+            produced_noise_first_word: wire.produced_noise_first_word,
+            shield: wire.shield,
+            sword_sweep: wire.sword_sweep,
+            pending_shoots: wire.pending_shoots,
+        })
+    }
+}
+
+impl From<HumanData> for HumanDataWire {
+    fn from(human: HumanData) -> Self {
+        let (opponents, opponent_jump_lines) = human.opponents.into_parts();
+        Self {
+            carrier: human.carrier,
+            concussion_of_the_brain: human.concussion_of_the_brain,
+            concussion_healing_timeout: human.concussion_healing_timeout,
+            tiredness: human.tiredness,
+            unconscious: human.unconscious,
+            already_detectable_body: human.already_detectable_body,
+            detectable_list_index: human.detectable_list_index,
+            sword_strike_boredom: human.sword_strike_boredom,
+            stuck_under_nets_counter: human.stuck_under_nets_counter,
+            hollow_man: human.hollow_man,
+            opponents,
+            opponent_jump_lines,
+            smalltalk_initiative: human.smalltalk_initiative,
+            received_smalltalk_initiative: human.received_smalltalk_initiative,
+            smalltalk_hint: human.smalltalk_hint,
+            smalltalk_hint_opponent: human.smalltalk_hint_opponent,
+            relative_fighting_ability: human.relative_fighting_ability,
+            small_repulsive_radius: human.small_repulsive_radius,
+            last_is_lying_for_corpse_intersection: human.last_is_lying_for_corpse_intersection,
+            killed_by_accident: human.killed_by_accident,
+            parry_counter: human.parry_counter,
+            invulnerable: human.invulnerable,
+            last_motion_was_step_back_in_combat: human.last_motion_was_step_back_in_combat,
+            running_hulk: human.running_hulk,
+            time_hulk: human.time_hulk,
+            hulk_level: human.hulk_level,
+            hulk_direction: human.hulk_direction,
+            hulk_speed: human.hulk_speed,
+            repulsive_point: human.repulsive_point,
+            building_sector: human.building_sector,
+            produced_noise_first_word: human.produced_noise_first_word,
+            shield: human.shield,
+            sword_sweep: human.sword_sweep,
+            pending_shoots: human.pending_shoots,
+        }
+    }
+}
+
 impl Default for HumanData {
     fn default() -> Self {
         Self {
@@ -1105,8 +1645,7 @@ impl Default for HumanData {
             sword_strike_boredom: Vec::new(),
             stuck_under_nets_counter: 0,
             hollow_man: false,
-            opponents: Vec::new(),
-            opponent_jump_lines: Vec::new(),
+            opponents: SwordfightOpponents::default(),
             smalltalk_initiative: false,
             received_smalltalk_initiative: false,
             smalltalk_hint: SmalltalkHint::None,
@@ -5372,6 +5911,180 @@ mod tests {
         assert_eq!(back.ai_state(), Some(AiTopState::Seeking));
         // Sprite is now serialised (no serde-skip), so it survives round-trip.
         assert_eq!(back.sprite().current_frame, 0);
+    }
+
+    #[test]
+    fn swordfight_opponents_preserve_record_pairing_during_mutation() {
+        let first = EntityId::Pc(crate::entity_id::PcId(11));
+        let second = EntityId::Soldier(crate::entity_id::SoldierId(12));
+        let first_line = JumpLineIndex::new(21).unwrap();
+        let second_line = JumpLineIndex::new(22).unwrap();
+        let promoted_line = JumpLineIndex::new(23).unwrap();
+        let ignored_line = JumpLineIndex::new(24).unwrap();
+        let mut opponents = SwordfightOpponents::from_pairs([
+            (first, Some(first_line)),
+            (second, Some(second_line)),
+        ]);
+
+        assert!(!opponents.add_principal(second, Some(promoted_line)));
+        assert_eq!(opponents.ids(), vec![second, first]);
+        assert_eq!(opponents.jump_line(0), Some(promoted_line));
+        assert_eq!(opponents.jump_line(1), Some(first_line));
+
+        // Original AddOpponent leaves the existing principal's line alone.
+        assert!(!opponents.add_principal(second, Some(ignored_line)));
+        assert_eq!(opponents.jump_line(0), Some(promoted_line));
+
+        assert!(opponents.remove(first));
+        assert_eq!(opponents.ids(), vec![second]);
+        assert_eq!(opponents.jump_line(0), Some(promoted_line));
+    }
+
+    #[test]
+    fn swordfight_opponents_standalone_serde_is_an_ordered_record_sequence() {
+        let first = SwordfightOpponent::new(
+            EntityId::Pc(crate::entity_id::PcId(25)),
+            Some(JumpLineIndex::new(35).unwrap()),
+        );
+        let second =
+            SwordfightOpponent::new(EntityId::Soldier(crate::entity_id::SoldierId(26)), None);
+        let entries = vec![first, second];
+        let opponents = SwordfightOpponents::from_entries(entries.clone());
+
+        let json = serde_json::to_value(&opponents).unwrap();
+        assert!(json.is_array(), "private aggregate storage must not leak");
+        assert_eq!(json, serde_json::to_value(&entries).unwrap());
+        assert_eq!(
+            serde_json::from_value::<SwordfightOpponents>(json).unwrap(),
+            opponents
+        );
+
+        let config = bincode::config::standard();
+        let binary = bincode::serde::encode_to_vec(&opponents, config).unwrap();
+        assert_eq!(
+            binary,
+            bincode::serde::encode_to_vec(&entries, config).unwrap(),
+            "transparent aggregate must keep standalone record-sequence bytes"
+        );
+        let (decoded, consumed): (SwordfightOpponents, usize) =
+            bincode::serde::decode_from_slice(&binary, config).unwrap();
+        assert_eq!(consumed, binary.len());
+        assert_eq!(decoded, opponents);
+    }
+
+    #[test]
+    fn human_opponents_serde_retains_legacy_fields_and_normalizes_short_lines() {
+        let first = EntityId::Pc(crate::entity_id::PcId(31));
+        let second = EntityId::Soldier(crate::entity_id::SoldierId(32));
+        let line = JumpLineIndex::new(41).unwrap();
+        let human = HumanData {
+            opponents: SwordfightOpponents::from_pairs([(first, Some(line)), (second, None)]),
+            ..HumanData::default()
+        };
+
+        let mut value = serde_json::to_value(&human).unwrap();
+        assert_eq!(
+            value.get("opponents"),
+            Some(&serde_json::to_value(vec![first, second]).unwrap())
+        );
+        assert_eq!(
+            value.get("opponent_jump_lines"),
+            Some(&serde_json::to_value(vec![Some(line), None]).unwrap())
+        );
+        assert!(value.get("entries").is_none());
+
+        let json = serde_json::to_string(&human).unwrap();
+        let hollow = json.find("\"hollow_man\"").unwrap();
+        let opponents = json.find("\"opponents\"").unwrap();
+        let jump_lines = json.find("\"opponent_jump_lines\"").unwrap();
+        let smalltalk = json.find("\"smalltalk_initiative\"").unwrap();
+        assert!(hollow < opponents && opponents < jump_lines && jump_lines < smalltalk);
+
+        let round_trip: HumanData = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(round_trip.opponents, human.opponents);
+
+        let mut predating_jump_lines = value.clone();
+        predating_jump_lines
+            .as_object_mut()
+            .unwrap()
+            .remove("opponent_jump_lines");
+        let normalized: HumanData = serde_json::from_value(predating_jump_lines).unwrap();
+        assert_eq!(normalized.opponents.ids(), vec![first, second]);
+        assert_eq!(
+            normalized
+                .opponents
+                .iter_with_jump_lines()
+                .collect::<Vec<_>>(),
+            vec![(first, None), (second, None)]
+        );
+
+        let config = bincode::config::standard();
+        let binary = bincode::serde::encode_to_vec(&human, config).unwrap();
+        let legacy_binary =
+            bincode::serde::encode_to_vec(HumanDataWire::from(human.clone()), config).unwrap();
+        assert_eq!(binary, legacy_binary);
+        let (binary_round_trip, consumed): (HumanData, usize) =
+            bincode::serde::decode_from_slice(&binary, config).unwrap();
+        assert_eq!(consumed, binary.len());
+        assert_eq!(binary_round_trip.opponents, human.opponents);
+
+        let mut short_binary_wire = HumanDataWire::from(human.clone());
+        short_binary_wire.opponent_jump_lines.truncate(1);
+        let short_binary = bincode::serde::encode_to_vec(short_binary_wire, config).unwrap();
+        let (normalized, consumed): (HumanData, usize) =
+            bincode::serde::decode_from_slice(&short_binary, config).unwrap();
+        assert_eq!(consumed, short_binary.len());
+        assert_eq!(
+            normalized
+                .opponents
+                .iter_with_jump_lines()
+                .collect::<Vec<_>>(),
+            vec![(first, Some(line)), (second, None)]
+        );
+
+        value["opponent_jump_lines"] = serde_json::json!([]);
+        let normalized: HumanData = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(normalized.opponents.ids(), vec![first, second]);
+        assert_eq!(
+            normalized
+                .opponents
+                .iter_with_jump_lines()
+                .collect::<Vec<_>>(),
+            vec![(first, None), (second, None)]
+        );
+
+        value["opponent_jump_lines"] =
+            serde_json::to_value(vec![None::<JumpLineIndex>, None, None]).unwrap();
+        let error = serde_json::from_value::<HumanData>(value).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("opponent_jump_lines has 3 entries for 2 opponents")
+        );
+    }
+
+    #[test]
+    fn swordfight_opponents_state_hash_matches_legacy_parallel_vectors() {
+        use robin_util::state_hash::StateHash;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher as _;
+
+        let opponents = vec![
+            EntityId::Pc(crate::entity_id::PcId(51)),
+            EntityId::Soldier(crate::entity_id::SoldierId(52)),
+        ];
+        let jump_lines = vec![Some(JumpLineIndex::new(61).unwrap()), None];
+        let aggregate = SwordfightOpponents::from_pairs(
+            opponents.iter().copied().zip(jump_lines.iter().copied()),
+        );
+
+        let mut legacy_hasher = DefaultHasher::new();
+        opponents.state_hash(&mut legacy_hasher);
+        jump_lines.state_hash(&mut legacy_hasher);
+        let mut aggregate_hasher = DefaultHasher::new();
+        aggregate.state_hash(&mut aggregate_hasher);
+
+        assert_eq!(legacy_hasher.finish(), aggregate_hasher.finish());
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::hud_text::HudFonts;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::input::ThreadedInput;
 use crate::input_translator::InputTranslator;
+use crate::key_config::KeyConfig;
 use crate::menu::CampaignMapState;
 use crate::renderer::Renderer;
 use crate::sherwood_hud::{
@@ -54,12 +55,7 @@ impl MissionInput {
         }
     }
 
-    pub(super) fn resize(
-        &mut self,
-        width: u32,
-        height: u32,
-        key_config: &robin_assets::keyconfig::KeyConfig,
-    ) {
+    pub(super) fn resize(&mut self, width: u32, height: u32, key_config: &KeyConfig) {
         let width = width as f32;
         let height = height as f32;
         self.threaded
@@ -101,9 +97,13 @@ impl MissionAudio {
         }
     }
 
-    pub(super) fn tick(&mut self, manager: &mut EngineManager, host: &mut Host) {
+    pub(super) fn tick(
+        &mut self,
+        manager: &mut EngineManager,
+        host: &mut Host,
+    ) -> Option<robin_engine::engine::ExternalFact> {
         if let Some(backend) = self.backend.as_mut() {
-            tick_audio(
+            return tick_audio(
                 manager,
                 host,
                 backend,
@@ -111,6 +111,7 @@ impl MissionAudio {
                 &mut self.sound_rng,
             );
         }
+        None
     }
 }
 

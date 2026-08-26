@@ -7,28 +7,35 @@
 //! `&mut EngineInner`, so the only way to mutate simulation state from
 //! outside `robin_engine` is through an explicit method on this type.
 //!
-//! Each exposed mutator is either:
+//! [`Engine::advance_frame`] is the canonical runtime transaction. Remaining
+//! exposed mutators are compatibility/setup seams and fall into one of these
+//! categories:
 //!
-//! * a tick call (`apply_command(sim, s)`, `perform_hourglass`) — the normal
-//!   per-frame sim-state mutation point,
+//! * legacy command/hourglass calls retained for engine fixtures and migration,
 //! * a one-shot setup / level-load / lifecycle hook, or
 //! * a drain of a side-effect queue filled during the tick and consumed
 //!   host-side.
 //!
 //! Anything that doesn't fit one of those buckets should be pushed into
-//! the sim via `PlayerCommand` / a dedicated tick path, not added here.
+//! the sim via `SimulationFrameInput`, not added here.
 
 use std::ops::Deref;
 
+#[cfg(test)]
+use super::DirectorCompletion;
 use super::SimConfig;
 use super::{
-    ConsoleResponse, DevState, DirectorCompletion, EngineError, EngineInner, InputState,
-    LevelAssets, LevelLoadStaging, SideEffects, SimulationRng,
+    ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
+    ExternalFact, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
+    LevelLoadStaging, SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput,
+    SimulationRng,
 };
 use crate::campaign::Campaign;
 use crate::element::EntityId;
 use crate::minimap::HitMask;
-use crate::player_command::{PlayerCommand, PlayerInput};
+#[cfg(test)]
+use crate::player_command::PlayerCommand;
+use crate::player_command::PlayerInput;
 
 /// Canonical gameplay-authoritative engine scalars emitted by schema-13
 /// Original parity traces. Presentation camera/surface/backend state is
@@ -945,16 +952,9 @@ impl Engine {
             })
         });
         let human_structure = entity.human_data().map(|human| {
-            assert_eq!(
-                human.opponents.len(),
-                human.opponent_jump_lines.len(),
-                "parity human opponent and jump-line arrays differ in length"
-            );
             let opponents = human
                 .opponents
-                .iter()
-                .copied()
-                .zip(human.opponent_jump_lines.iter().copied())
+                .iter_with_jump_lines()
                 .map(|(opponent, line)| json!({
                     "entity": entity_ref(opponent), "jump_line": jump_line(line.map(u32::from)),
                 }))
@@ -2987,50 +2987,215 @@ impl Engine {
 
     // ── Tick ────────────────────────────────────────────────────────
 
+    fn apply_external_action(
+        &mut self,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        action: ExternalAction,
+    ) -> ExternalActionResult {
+        match action {
+            ExternalAction::Native {
+                name,
+                args,
+                this_actor,
+            } => ExternalActionResult::Native(
+                self.call_external_native_with_this(assets, &name, &args, this_actor),
+            ),
+            ExternalAction::CheatString {
+                input,
+                mut selected_view_element,
+            } => {
+                let response =
+                    self.run_cheat_string(assets, dev, &mut selected_view_element, &input);
+                ExternalActionResult::CheatString {
+                    response: FrameConsoleResponse::from(response),
+                    selected_view_element,
+                }
+            }
+            ExternalAction::ConsoleCommand {
+                input,
+                mut selected_view_element,
+            } => {
+                let response =
+                    self.run_console_command(assets, dev, &mut selected_view_element, &input);
+                ExternalActionResult::ConsoleCommand {
+                    response: FrameConsoleResponse::from(response),
+                    selected_view_element,
+                }
+            }
+            ExternalAction::SimpleMessage { message } => {
+                self.inner.send_simple_message(message);
+                ExternalActionResult::SimpleMessage
+            }
+            ExternalAction::EzekielInstakill { target } => {
+                ExternalActionResult::EzekielInstakill(self.inner.try_ezekiel_instakill(target))
+            }
+            ExternalAction::ReplaceCampaign { campaign } => {
+                self.inner.replace_campaign(campaign);
+                ExternalActionResult::ReplaceCampaign
+            }
+        }
+    }
+
+    /// Advance one authoritative host-admitted engine frame.
+    ///
+    /// This is the migration target for drivers that currently call external
+    /// replay hooks, `apply_commands`, and `perform_hourglass` separately. It
+    /// preserves the Original's boundary ordering:
+    ///
+    /// 1. between-frame director/sound facts,
+    /// 2. admitted pre-hourglass host actions,
+    /// 3. resolved player commands in recorded order,
+    /// 4. the explicitly gated `PerformHourglass`,
+    /// 5. admitted post-hourglass developer/native actions,
+    /// 6. post-hourglass commands,
+    /// 7. the optional one-shot `PostInitialize` stage,
+    /// 8. side-effect drain and post-frame state hash.
+    ///
+    /// `display`, `input`, and `dev` remain explicit host-owned adapter state
+    /// while command handlers are incrementally disentangled from UI scratch;
+    /// none of them is part of [`SimulationFrameInput`]. Rendering, widgets,
+    /// audio playback remain outside this call at their Original boundaries.
+    /// Graphical play can cross `PostInitialize` with a second no-hourglass
+    /// admission after presentation without exposing a separate mutation API.
+    pub fn advance_frame(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        frame: SimulationFrameInput,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.require_live_campaign("advancing a simulation frame");
+
+        let frame_before = self.inner.control.frame_counter;
+        let SimulationFrameInput {
+            external_facts,
+            external_actions,
+            commands,
+            post_external_actions,
+            post_commands,
+            run_hourglass,
+            simulation_body_allowed,
+            run_post_initialize,
+        } = frame;
+
+        // Director facts are fallible replay inputs. Stage the entire fact
+        // boundary when one is present so a corrupt later fact cannot leave
+        // earlier sound/director facts partially committed. Engine cloning is
+        // already the rollback primitive and this path is parity-replay-only.
+        if external_facts
+            .iter()
+            .any(|fact| matches!(fact, ExternalFact::DirectorCompletion(_)))
+        {
+            let mut staged_inner = self.inner.clone();
+            let mut staged_display = display.clone();
+            Self::apply_frame_external_facts(
+                &mut staged_inner,
+                &mut staged_display,
+                assets,
+                external_facts,
+            )?;
+            self.inner = staged_inner;
+            *display = staged_display;
+        } else {
+            Self::apply_frame_external_facts(&mut self.inner, display, assets, external_facts)?;
+        }
+
+        let mut external_action_results = external_actions
+            .into_iter()
+            .map(|action| self.apply_external_action(assets, dev, action))
+            .collect::<Vec<_>>();
+
+        let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
+        let sim = self.inner.control.simulation_context();
+        self.inner
+            .apply_commands(&sim, display, input, assets, &commands);
+
+        let side_effects = if run_hourglass {
+            self.inner.perform_hourglass_with_body_gate(
+                display,
+                assets,
+                dev,
+                simulation_body_allowed,
+            )
+        } else {
+            let mut effects = SideEffects::default();
+            effects.code = crate::game_operation::GameCode::LevelInProgress;
+            effects
+        };
+
+        external_action_results.extend(
+            post_external_actions
+                .into_iter()
+                .map(|action| self.apply_external_action(assets, dev, action)),
+        );
+
+        let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
+        let sim = self.inner.control.simulation_context();
+        self.inner
+            .apply_commands(&sim, display, input, assets, &post_commands);
+
+        let post_initialize_events = run_post_initialize
+            .then(|| self.inner.perform_post_initialize(display, assets))
+            .flatten()
+            .map(SimEvents::from);
+        let frame_after = self.inner.control.frame_counter;
+        let state_hash = crate::replay::state_hash(&self.inner);
+
+        Ok(SimulationFrameOutput {
+            frame_before,
+            frame_after,
+            hourglass_ran: run_hourglass,
+            events: SimEvents::from(side_effects),
+            post_initialize_events,
+            external_action_results,
+            state_hash,
+        })
+    }
+
+    fn apply_frame_external_facts(
+        inner: &mut EngineInner,
+        display: &mut super::HostDisplayState,
+        assets: &LevelAssets,
+        external_facts: Vec<ExternalFact>,
+    ) -> Result<(), FrameAdvanceError> {
+        for (index, fact) in external_facts.into_iter().enumerate() {
+            match fact {
+                ExternalFact::DirectorCompletion(completion) => inner
+                    .apply_external_director_completion(completion, display, assets)
+                    .map_err(|reason| FrameAdvanceError::DirectorCompletionRejected {
+                        index,
+                        completion,
+                        reason,
+                    })?,
+                ExternalFact::LiveSoundBoundary(resolutions) => {
+                    inner.queue_resolved_exclamations(resolutions);
+                    let sim = inner.control.simulation_context();
+                    inner.hourglass_phase_sound_boundary(&sim, assets);
+                }
+                ExternalFact::ReplaySoundBoundary(resolutions) => {
+                    inner.queue_replay_resolved_exclamations(resolutions);
+                    let sim = inner.control.simulation_context();
+                    inner.hourglass_phase_sound_boundary(&sim, assets);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Select whether recorded between-frame director events own completion
     /// timing for camera sequence elements.
     pub fn set_external_director_completion_replay(&mut self, enabled: bool) {
         self.inner.set_external_director_completion_replay(enabled);
     }
 
-    /// Queue concrete speech samples resolved by the between-frame logical
-    /// sound-manager update. They are consumed by the next engine tick.
-    pub fn queue_resolved_exclamations(
-        &mut self,
-        resolutions: Vec<crate::sound::ResolvedExclamation>,
-    ) {
-        self.inner.queue_resolved_exclamations(resolutions);
-    }
-
-    /// Queue authoritative Original-host speech resolutions from a parity
-    /// trace. This is deliberately separate from live host resolutions so
-    /// only replay injection may tolerate a missing Rust logical request.
-    #[doc(hidden)]
-    pub fn queue_replay_resolved_exclamations(
-        &mut self,
-        resolutions: Vec<crate::sound::ResolvedExclamation>,
-    ) {
-        self.inner.queue_replay_resolved_exclamations(resolutions);
-    }
-
-    /// Consume the authoritative between-frame Original sound update before
-    /// replay applies the following frame's input commands.
-    ///
-    /// The normal tick also enters this boundary first; calling it here is
-    /// intentionally idempotent once the queued resolutions and matured
-    /// callbacks have been drained.
-    #[doc(hidden)]
-    pub fn apply_replay_sound_boundary(&mut self, assets: &LevelAssets) {
-        self.require_live_campaign("applying a replay sound boundary");
-        let sim = self.inner.control.simulation_context();
-        self.inner.hourglass_phase_sound_boundary(&sim, assets);
-    }
-
     /// Apply one recorded director completion at the pre-Hourglass boundary.
     ///
     /// This validates the currently latched sequence command, terminates it,
     /// and synchronously runs immediate successors before returning.
-    pub fn apply_external_director_completion(
+    #[cfg(test)]
+    pub(crate) fn apply_external_director_completion(
         &mut self,
         completion: DirectorCompletion,
         display: &mut super::HostDisplayState,
@@ -3044,7 +3209,8 @@ impl Engine {
     /// The per-frame simulation tick. The ONLY per-frame sim-state
     /// mutation point; rollback replay re-runs this on a cloned engine
     /// and must see bit-identical results.
-    pub fn perform_hourglass(
+    #[cfg(test)]
+    pub(crate) fn perform_hourglass(
         &mut self,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
@@ -3054,52 +3220,10 @@ impl Engine {
         self.inner.perform_hourglass(display, assets, dev)
     }
 
-    /// Run a simulation tick while optionally forcing the actor/world body
-    /// gate closed after the mission-script phase.
-    ///
-    /// This does not alter the engine's persistent lock state.
-    pub fn perform_hourglass_with_body_gate(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        assets: &LevelAssets,
-        dev: &mut DevState,
-        simulation_body_allowed: bool,
-    ) -> SideEffects {
-        self.require_live_campaign("performing a gated engine tick");
-        self.inner
-            .perform_hourglass_with_body_gate(display, assets, dev, simulation_body_allowed)
-    }
-
-    /// One-shot lifecycle stage matching `RHGame::GameLoop`: dispatch
-    /// mission `PostInitialize` after the first host refresh and sound
-    /// hourglass.  Replay drivers must run this after reconstructing
-    /// frame zero as well.
-    pub fn perform_post_initialize(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        assets: &LevelAssets,
-    ) -> Option<SideEffects> {
-        self.require_live_campaign("performing mission PostInitialize");
-        self.inner.perform_post_initialize(display, assets)
-    }
-
-    /// Apply one player command.  Commands are the only host → sim
-    /// channel that mutates serialised state outside `perform_hourglass`.
-    pub fn apply_command(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
-        self.require_live_campaign("applying a player command");
-        let sim = self.inner.control.simulation_context();
-        self.inner.apply_command(&sim, display, input, assets, cmd);
-    }
-
     /// Apply a batch of player commands, as used by the replay driver
     /// and the rollback checker.
-    pub fn apply_commands(
+    #[cfg(test)]
+    pub(crate) fn apply_commands(
         &mut self,
         display: &mut super::HostDisplayState,
         input: &mut InputState,
@@ -3112,47 +3236,13 @@ impl Engine {
             .apply_commands(&sim, display, input, assets, cmds);
     }
 
-    /// Apply a batch of locally-sourced commands (live single-player
-    /// host pipeline). See [`EngineInner::apply_local_commands`].
-    pub fn apply_local_commands(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        cmds: &[PlayerCommand],
-    ) {
-        self.require_live_campaign("applying local commands");
-        self.inner
-            .apply_local_commands(display, input, assets, cmds);
-    }
-
-    /// Fire the `DIES IRAE` (`EZEKIEL_2517`) cheat if active: instakill
-    /// the target when the host's alt-hover gesture lands on a live
-    /// human.  Returns `true` when the cheat consumed the gesture (the
-    /// host should NOT then set `host.selected_view_element`).
-    ///
-    /// This is a cheat shortcut — the instakill is a sim-state mutation
-    /// that bypasses the normal command recording.  Rollback replay of
-    /// frames spanning the cheat activation may desync for one
-    /// window; acceptable since EZEKIEL is a dev-only toggle rarely
-    /// triggered during normal play.
-    pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
-        self.inner.try_ezekiel_instakill(id)
-    }
-
-    /// Host-side entry point for injecting a `SimpleMessage` onto the
-    /// engine messenger.  Used by UI sites that forward messages (console
-    /// hide, switch-task, …); the drain handler in
-    /// `perform_hourglass_inner` is the sole consumer.
-    pub fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
-        self.inner.send_simple_message(msg);
+    /// Read-only predicate used by the host to choose between its view-cone
+    /// selection and an admitted `EzekielInstakill` frame action.
+    pub fn can_ezekiel_instakill(&self, id: EntityId) -> bool {
+        self.inner.can_ezekiel_instakill(id)
     }
 
     // ── Setup / lifecycle ──────────────────────────────────────────
-
-    pub fn replace_campaign_from_console(&mut self, campaign: Campaign) {
-        self.inner.replace_campaign(campaign);
-    }
 
     /// Run a host-side mission-script extension against live script effects
     /// while the Engine-owned simulation RNG is installed.
@@ -3221,7 +3311,7 @@ impl Engine {
     /// `selected_view_element` is the host's alt-hover UI selection —
     /// cheats that operate on "the NPC you're currently viewing" read
     /// (and sometimes clear) it.
-    pub fn run_console_command(
+    pub(crate) fn run_console_command(
         &mut self,
         assets: &LevelAssets,
         dev: &mut DevState,
@@ -3237,7 +3327,7 @@ impl Engine {
     /// if the console is currently in `use_final` mode.  Intended for
     /// out-of-band cheat entry points (HTTP RPC, debug overlays) whose
     /// caller contract is "always reach the full dev command table".
-    pub fn run_cheat_string(
+    pub(crate) fn run_cheat_string(
         &mut self,
         assets: &LevelAssets,
         dev: &mut DevState,
@@ -3265,26 +3355,9 @@ impl Engine {
         )
     }
 
-    /// Invoke a script `NativeFn` from outside the VM (HTTP-RPC, debug
-    /// tooling).  See [`EngineInner::call_external_native`] for the full
-    /// contract — runs through the same script-session boundary as engine
-    /// callbacks, so any
-    /// queued side-effects (camera, dialog, sequences, sound, deferred
-    /// game-logic) are drained as if a script had made the call.
-    pub fn call_external_native(
-        &mut self,
-        assets: &LevelAssets,
-        native_name: &str,
-        args: &[i32],
-    ) -> Result<i32, String> {
-        let sim = self.inner.control.simulation_context();
-        self.inner
-            .call_external_native(&sim, assets, native_name, args)
-    }
-
-    /// Like [`Self::call_external_native`], but with an explicit transient
-    /// `ThisActor` receiver.
-    pub fn call_external_native_with_this(
+    /// Invoke a script native with an explicit transient `ThisActor` receiver.
+    /// Runtime callers reach this only through [`Self::advance_frame`].
+    pub(crate) fn call_external_native_with_this(
         &mut self,
         assets: &LevelAssets,
         native_name: &str,
@@ -3674,6 +3747,319 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::SimCommand;
+
+    fn frame_api_fixture() -> (Engine, LevelAssets) {
+        let mut assets = LevelAssets::new();
+        let mut sim_config = SimConfig::default();
+        sim_config.script_enabled = false;
+        sim_config.ignore_default_loose = true;
+        let engine = Engine::new_for_test_with_simulation(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+            0xF4A6_E001,
+            sim_config,
+        )
+        .expect("construct frame API fixture");
+        (engine, assets)
+    }
+
+    #[test]
+    fn frame_api_matches_legacy_command_then_hourglass_boundary() {
+        let (engine, assets) = frame_api_fixture();
+        let mut legacy = engine.clone();
+        let mut framed = engine;
+        let commands = vec![PlayerInput::host(
+            PlayerCommand::SetMenToBlazonConversionMode { on: true },
+        )];
+
+        let mut legacy_display = super::super::HostDisplayState::default();
+        let mut legacy_input = InputState::default();
+        let mut legacy_dev = DevState::default();
+        legacy.apply_commands(&mut legacy_display, &mut legacy_input, &assets, &commands);
+        let legacy_events = legacy.perform_hourglass(&mut legacy_display, &assets, &mut legacy_dev);
+        let legacy_hash = crate::replay::state_hash(&legacy);
+
+        let mut framed_display = super::super::HostDisplayState::default();
+        let mut framed_input = InputState::default();
+        let mut framed_dev = DevState::default();
+        let output = framed
+            .advance_frame(
+                &mut framed_display,
+                &mut framed_input,
+                &assets,
+                &mut framed_dev,
+                SimulationFrameInput::from_player_inputs(commands),
+            )
+            .expect("advance frame");
+
+        assert_eq!(output.frame_before, 0);
+        assert_eq!(output.frame_after, 1);
+        assert_eq!(output.state_hash, legacy_hash);
+        assert_eq!(crate::replay::state_hash(&framed), legacy_hash);
+        assert_eq!(
+            serde_json::to_value(output.events.side_effects()).expect("serialize frame events"),
+            serde_json::to_value(&legacy_events).expect("serialize legacy side effects"),
+        );
+        assert_eq!(
+            output.events.side_effects().pending_minimap_position,
+            legacy_events.pending_minimap_position,
+            "this host-local effect is serde-skipped and must be compared explicitly"
+        );
+        assert_eq!(
+            serde_json::to_value(&framed_display).expect("serialize framed display"),
+            serde_json::to_value(&legacy_display).expect("serialize legacy display"),
+        );
+        assert!(framed.is_men_to_blazon_conversion_mode());
+    }
+
+    #[test]
+    fn frame_api_applies_sound_external_fact_at_pre_hourglass_boundary() {
+        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+        let (mut framed, assets) = frame_api_fixture();
+        let profile_id = 0x4651_0000;
+        framed
+            .inner
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .push(PendingExclamation {
+                actor_id: 191,
+                group: ExclamationGroup::Civilian,
+                profile_id,
+                exclamation_id: 62,
+                variant: -1,
+            });
+        let resolution = ResolvedExclamation {
+            actor_id: 191,
+            identifier: profile_id | 62,
+            exclamation_id: 62,
+            duration_frames: 24,
+        };
+
+        let mut display = super::super::HostDisplayState::default();
+        let mut input = InputState::default();
+        let mut dev = DevState::default();
+        framed
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::new(vec![SimCommand::from(PlayerCommand::Noop)])
+                    .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
+            )
+            .expect("advance frame with sound fact");
+
+        assert!(framed.sound_sim().resolved_exclamations.is_empty());
+        assert_eq!(framed.sound_sim().playing_exclamations.len(), 1);
+        assert_eq!(framed.sound_sim().playing_exclamations[0].actor_id, 191);
+        assert_eq!(
+            framed.sound_sim().playing_exclamations[0].finish_frame,
+            24,
+            "the fact is resolved at the frame-0 boundary before the hourglass increments the clock"
+        );
+    }
+
+    #[test]
+    fn rejected_external_fact_prevents_command_and_hourglass() {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+        let (mut engine, assets) = frame_api_fixture();
+        engine.set_external_director_completion_replay(true);
+
+        // Launch a real camera command. The first completion therefore mutates
+        // the Engine before the second, invalid completion is rejected.
+        let mut camera = SequenceElement::new_generic(1, Command::CameraGoto, None);
+        camera.set_property(
+            Field::CameraPoint,
+            FieldValue::GeoPoint2D { x: 100.0, y: 100.0 },
+        );
+        camera.set_property(Field::CameraSpeed, FieldValue::Integer(0));
+        let mut sequence = Sequence::new();
+        sequence.append_element(camera);
+        let sequence_id = engine
+            .inner
+            .orders
+            .sequence_manager
+            .launch_sequence(sequence);
+        engine
+            .inner
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        let mut display = super::super::HostDisplayState::default();
+        engine.inner.feedback.cutscene_camera.sequence_element =
+            Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
+        assert!(
+            engine
+                .inner
+                .feedback
+                .cutscene_camera
+                .sequence_element
+                .is_some(),
+            "fixture must have an active CameraGoto"
+        );
+
+        let engine_hash_before = crate::replay::state_hash(&engine);
+        let display_before =
+            serde_json::to_value(&display).expect("serialize display before rejected frame");
+        let mut accepted_engine = engine.clone();
+        let mut accepted_display = display.clone();
+        accepted_engine
+            .apply_external_director_completion(
+                DirectorCompletion::CameraGoto,
+                &mut accepted_display,
+                &assets,
+            )
+            .expect("the first director fact must be independently valid");
+        assert_ne!(
+            crate::replay::state_hash(&accepted_engine),
+            engine_hash_before,
+            "the accepted prefix must mutate the staged engine"
+        );
+        let mut input = InputState::default();
+        input.right_mouse_down = true;
+        let mut dev = DevState::default();
+        dev.projectile_cheat_rain = 7;
+
+        let error = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::new(vec![
+                    SimCommand::from(PlayerCommand::SetMenToBlazonConversionMode { on: true }),
+                    SimCommand::from(PlayerCommand::MouseRightUp),
+                ])
+                .with_external_facts(vec![
+                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
+                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
+                ]),
+            )
+            .expect_err("the second completion has no active camera command");
+
+        assert!(matches!(
+            error,
+            FrameAdvanceError::DirectorCompletionRejected {
+                index: 1,
+                completion: DirectorCompletion::CameraGoto,
+                ..
+            }
+        ));
+        assert_eq!(crate::replay::state_hash(&engine), engine_hash_before);
+        assert_eq!(engine.frame_counter(), 0);
+        assert!(!engine.is_men_to_blazon_conversion_mode());
+        assert_eq!(
+            serde_json::to_value(&display).expect("serialize display after rejected frame"),
+            display_before,
+        );
+        assert!(input.right_mouse_down, "commands must not have run");
+        assert_eq!(
+            dev.projectile_cheat_rain, 7,
+            "the hourglass must not have run"
+        );
+    }
+
+    #[test]
+    fn external_facts_are_part_of_the_authoritative_frame_journal() {
+        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+        let (mut initial, assets) = frame_api_fixture();
+        let profile_id = 0x4651_0000;
+        initial
+            .inner
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .push(PendingExclamation {
+                actor_id: 191,
+                group: ExclamationGroup::Civilian,
+                profile_id,
+                exclamation_id: 62,
+                variant: -1,
+            });
+        let mut complete_journal = initial.clone();
+        let mut command_only_journal = initial;
+        let command = SimCommand::from(PlayerCommand::Noop);
+        let resolution = ResolvedExclamation {
+            actor_id: 191,
+            identifier: profile_id | 62,
+            exclamation_id: 62,
+            duration_frames: 24,
+        };
+
+        let mut complete_display = super::super::HostDisplayState::default();
+        let mut complete_input = InputState::default();
+        let mut complete_dev = DevState::default();
+        let complete_output = complete_journal
+            .advance_frame(
+                &mut complete_display,
+                &mut complete_input,
+                &assets,
+                &mut complete_dev,
+                SimulationFrameInput::new(vec![command.clone()])
+                    .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
+            )
+            .expect("advance complete frame journal");
+
+        let mut command_only_display = super::super::HostDisplayState::default();
+        let mut command_only_input = InputState::default();
+        let mut command_only_dev = DevState::default();
+        let command_only_output = command_only_journal
+            .advance_frame(
+                &mut command_only_display,
+                &mut command_only_input,
+                &assets,
+                &mut command_only_dev,
+                SimulationFrameInput::new(vec![command]),
+            )
+            .expect("advance command-only frame journal");
+
+        assert_ne!(
+            complete_output.state_hash, command_only_output.state_hash,
+            "replaying commands without the recorded host sound fact must not be treated as equivalent"
+        );
+        assert_eq!(complete_journal.sound_sim().playing_exclamations.len(), 1);
+        assert!(complete_journal.sound_sim().pending_exclamations.is_empty());
+        assert!(
+            command_only_journal
+                .sound_sim()
+                .playing_exclamations
+                .is_empty()
+        );
+        assert_eq!(
+            command_only_journal.sound_sim().pending_exclamations.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn closed_body_gate_is_not_a_paused_presentation_boundary() {
+        let (mut engine, assets) = frame_api_fixture();
+        let mut display = super::super::HostDisplayState::default();
+        let mut input = InputState::default();
+        let mut dev = DevState::default();
+
+        let output = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::default().with_simulation_body_allowed(false),
+            )
+            .expect("advance with only the actor/world body gated");
+
+        assert_eq!(output.frame_before, 0);
+        assert_eq!(output.frame_after, 1);
+        assert_eq!(engine.frame_counter(), 1);
+    }
 
     #[test]
     fn parity_engine_state_preserves_next_original_creation_order() {

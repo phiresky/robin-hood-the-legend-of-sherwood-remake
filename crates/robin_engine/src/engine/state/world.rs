@@ -112,6 +112,21 @@ impl WorldState {
         }
     }
 
+    /// Split the exact world-owned leaves used by the path scheduling barrier.
+    ///
+    /// Keeping this split on the aggregate owner prevents the scheduler from
+    /// receiving authority over weather, shields, sight-obstacle overlays, or
+    /// mobile elements merely to advance the pathfinder queue.
+    pub(in crate::engine) fn path_schedule_parts(
+        &mut self,
+    ) -> (&Entities, &FastFindGrid, &mut PathFinder) {
+        (
+            &self.entities,
+            self.fast_grid.as_ref(),
+            &mut self.pathfinder,
+        )
+    }
+
     /// Copy-on-write mutable access to the spatial grid.
     ///
     /// The grid is `Arc`-shared into per-NPC `AiContext`s and rollback

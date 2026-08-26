@@ -123,13 +123,13 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         *victim_entity.human_and_life_points_mut().unwrap().1 = 20;
-        victim_entity.human_data_mut().unwrap().opponents = vec![opponent];
+        victim_entity.human_data_mut().unwrap().opponents = vec![opponent].into();
     }
     engine
         .get_entity_mut(opponent)
         .and_then(Entity::human_data_mut)
         .unwrap()
-        .opponents = vec![victim];
+        .opponents = vec![victim].into();
 
     let damage = SequenceElement::new_damage(
         1,
@@ -8003,14 +8003,14 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
         let survivor_entity = engine.get_entity_mut(survivor).unwrap();
         survivor_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
-        survivor_entity.human_data_mut().unwrap().opponents = vec![victim];
+        survivor_entity.human_data_mut().unwrap().opponents = vec![victim].into();
         survivor_entity.pc_data_mut().unwrap().melee_target = Some(victim);
     }
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
-        victim_entity.human_data_mut().unwrap().opponents = vec![survivor];
+        victim_entity.human_data_mut().unwrap().opponents = vec![survivor].into();
         *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
     }
 
@@ -8082,14 +8082,14 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         owner_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
-        owner_entity.human_data_mut().unwrap().opponents = vec![opponent];
+        owner_entity.human_data_mut().unwrap().opponents = vec![opponent].into();
     }
     engine
         .get_entity_mut(opponent)
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![owner];
+        .opponents = vec![owner].into();
 
     let sequence = engine
         .orders

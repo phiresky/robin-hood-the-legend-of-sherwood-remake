@@ -3,6 +3,9 @@
 // GUI subsystem so Windows/Wine doesn't pop up a console window for the game.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(target_arch = "wasm32")]
+use anyhow::Context as _;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     // The GUI subsystem detaches us from any console; re-attach to the
@@ -218,7 +221,7 @@ pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
 
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = wasm_main(dd).await {
-            tracing::error!("wasm boot failed: {e}");
+            tracing::error!("wasm boot failed: {e:#}");
         }
     });
     Ok(())
@@ -237,7 +240,7 @@ pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::
 #[cfg(target_arch = "wasm32")]
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let args = robin_rs::main_entry::parse_cli();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
@@ -266,5 +269,6 @@ async fn wasm_main(
         },
     )
     .map(|_| ())
-    .map_err(|e| format!("Window/event-loop init failed: {e}"))
+    .map_err(anyhow::Error::msg)
+    .context("Window/event-loop init failed")
 }

@@ -35,60 +35,34 @@ mod suite {
     }
 
     #[test]
-    fn line_jump_click_sequence_moves_to_line_then_jumps_then_moves_to_click() {
+    fn line_jump_click_tail_jumps_then_moves_to_click_without_route_flags() {
         let owner = EntityId::Pc(crate::entity_id::PcId(7));
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
-        let mut source_line = crate::jump_line::JumpLine::new(
-            crate::coordinates::map_pt(10.0, 20.0),
-            crate::coordinates::map_pt(30.0, 20.0),
-            0.0,
-            0.0,
-        );
-        source_line.layer = 4;
 
-        let seq = build_line_jump_click_sequence(
+        let tail = build_line_jump_click_tail(
             owner,
             OrderType::RunningUpright,
             source_idx,
-            &source_line,
             dest_idx,
             crate::coordinates::map_pt(90.0, 120.0),
             5,
             1.0,
         );
 
-        assert_eq!(seq.elements.len(), 3);
-        assert_eq!(seq.elements[0].command, Command::Move);
-        match &seq.elements[0].data {
-            SequenceElementData::Movement {
-                destination,
-                layer,
-                line_id,
-                flags,
-                ..
-            } => {
-                assert_eq!((destination.x, destination.y), (20.0, 20.0));
-                assert_eq!(*layer, 4);
-                assert_eq!(*line_id, Some(source_idx));
-                assert!(flags.contains(MoveFlags::LINE));
-                assert!(flags.contains(MoveFlags::TO_JUMP));
-            }
-            other => panic!("expected movement element, got {other:?}"),
-        }
-
-        assert_eq!(seq.elements[1].command, Command::JumpCmd);
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].command, Command::JumpCmd);
         assert!(matches!(
-            seq.elements[1].get_property(Field::JumplineSource),
+            tail[0].get_property(Field::JumplineSource),
             Some(FieldValue::LineId(idx)) if *idx == source_idx
         ));
         assert!(matches!(
-            seq.elements[1].get_property(Field::JumplineDestination),
+            tail[0].get_property(Field::JumplineDestination),
             Some(FieldValue::LineId(idx)) if *idx == dest_idx
         ));
 
-        assert_eq!(seq.elements[2].command, Command::Move);
-        match &seq.elements[2].data {
+        assert_eq!(tail[1].command, Command::Move);
+        match &tail[1].data {
             SequenceElementData::Movement {
                 destination,
                 layer,
@@ -103,6 +77,32 @@ mod suite {
             }
             other => panic!("expected final movement element, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn shoulder_line_jump_routes_only_the_approach_on_the_carrier() {
+        let mut engine = EngineInner::new();
+        let carrier = engine.add_entity(extraction_test_pc(Posture::CarryingOnShoulders));
+        let mut rider = extraction_test_pc(Posture::OnShoulders);
+        rider.human_data_mut().expect("test rider is human").carrier = Some(carrier);
+        let rider = engine.add_entity(rider);
+
+        assert_eq!(line_jump_approach_owner(&engine, rider), carrier);
+        assert_eq!(
+            line_jump_approach_owner(&engine, carrier),
+            carrier,
+            "a selected carrier remains the owner of its own line approach"
+        );
+        let tail = build_line_jump_click_tail(
+            rider,
+            OrderType::WalkingUpright,
+            crate::jump_line::JumpLineIndex::new(1).unwrap(),
+            crate::jump_line::JumpLineIndex::new(2).unwrap(),
+            crate::coordinates::MapPoint::ZERO,
+            0,
+            1.0,
+        );
+        assert!(tail.iter().all(|element| element.owner == Some(rider)));
     }
 
     #[test]
