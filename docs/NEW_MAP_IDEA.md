@@ -171,3 +171,67 @@ space with a fortified summit, a river, a mill and bridge hamlet, a church villa
 On first glance this looks pretty good and i think it's good for inspiration, but if you look closer it does not work at all. The river flow along the windmill makes no sense, some of the fences and paths just end unexplicably, and so on. Also, the perspective does not work: It's a semi-perspective render, but we need a orthographic / isometric render - the top of the map must have the same scale as the bottom, so that the fixed-size 2D characters can be placed anywhere and have the same relative size.
 
 I tried a few different approaches - starting with a layout SVG or a sketch, generating the image in tiles (this map is too detailed to generate one shot at full resolution), etc, but it's clear that it's not possible right now to create a new map for this game with only low-effort AI.
+
+
+## Existing 3D Models
+
+Random links to try:
+
+https://sketchfab.com/3d-models/cite-medievale-de-carcassonne-9c6a844f8a5d4398a89bdfd6f8b45db5
+
+
+https://sketchfab.com/tags/fortress
+
+mont  saint michele
+
+https://sketchfab.com/3d-models/sacra-di-san-michele-saint-michaels-abbey-928f6cd16f0e4caab99f7edb0a7bce4b
+
+https://www.360images.fr/3dgs/mont-saint-michel/index.html?ml=1
+
+https://superspl.at/scene/7e1bd643
+
+https://superspl.at/scene/4a742991
+
+https://superspl.at/scene/37375a9e
+
+https://superspl.at/scene/251b52bb
+
+https://superspl.at/scene/300ab774
+
+https://superspl.at/scene/38635b8d
+
+https://superspl.at/scene/1ddb9398
+
+https://superspl.at/scene/1b816f74
+
+https://www.youtube.com/watch?v=KjD3nsMZzRQ
+
+
+https://superspl.at/scene/edab0b3a
+
+https://superspl.at/scene/0f5e0540
+
+https://superspl.at/scene/df5bc124
+
+https://superspl.at/scene/7a364a43
+
+https://superspl.at/scene/6f58cde2
+
+https://superspl.at/scene/ed42855a
+
+https://superspl.at/scene/9bde3c7d
+
+https://superspl.at/scene/e3c9812e
+
+https://superspl.at/scene/0df7f21e
+
+Dover Castle:
+
+https://sketchfab.com/models/ab6ce5e3e14749cb8f8b20519189442c/embed
+
+
+https://www.youtube.com/watch?v=pdljmr2okzw
+
+https://www.youtube.com/watch?v=stje6jtfQOc
+
+https://www.youtube.com/watch?v=2NKpH-UDiDY

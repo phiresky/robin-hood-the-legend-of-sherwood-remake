@@ -123,6 +123,64 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
 }
 
 #[test]
+fn set_actor_location_preserves_authored_sparse_sector_identity() {
+    let (mut engine, receiver, handle) = engine_with_receiver();
+    let mut assets = LevelAssets::new();
+    assets.scripts.location_count = 1;
+    assets.scripts.point_count = 1;
+    assets.scripts.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+    assets.scripts.location_layers = std::sync::Arc::new(vec![1]);
+    assets.scripts.location_sectors = std::sync::Arc::new(vec![7]);
+    let exact_index = crate::fast_find_grid::SectorIndex::new(1).unwrap();
+    let exact_sector = crate::position_interface::SectorHandle::new(7)
+        .unwrap()
+        .with_arena_index(exact_index);
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![Some(exact_sector)]);
+    engine.attach_script_bindings(&assets);
+
+    let sector = crate::fast_find_grid::GridSector {
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+        layer: 1,
+        sector_number: crate::sector::SectorNumber::new(7),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+    let mut level = crate::fast_find_grid::LevelGrid::default();
+    level.sectors.push(sector.clone());
+    level.sectors.push(sector);
+    engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
+
+    let point_location = ScriptHandleCodec::location_handle_from_index(0);
+    assert_eq!(
+        engine
+            .call_external_native(
+                &crate::sim_rng::test_context(),
+                &assets,
+                "SetActorLocation",
+                &[handle, point_location]
+            )
+            .expect("valid authored point succeeds"),
+        1
+    );
+    assert_eq!(
+        engine.get_entity(receiver).unwrap().element_data().sector(),
+        Some(exact_sector),
+        "the following RecordMove must see the same RHsector pointer as its authored goal"
+    );
+}
+
+#[test]
 fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callback() {
     let (mut engine, receiver, handle) = engine_with_receiver();
     let mut assets = LevelAssets::new();

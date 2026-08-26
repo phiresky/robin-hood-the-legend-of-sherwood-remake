@@ -222,14 +222,34 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_pending_for_npc_boundary_mode(
+            sim,
+            npc_id,
+            assets,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    pub(in crate::engine) fn drain_pending_for_npc_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for_mode(
+        self.drain_ai_owner_work_for_boundary_mode(
             sim,
             assets,
             npc_id,
             owner_local_no_forecast,
             defer_turn_instruction,
+            surface_completion,
         );
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
@@ -338,7 +358,14 @@ impl EngineInner {
         // not tear down the relationship directly here: the command owns
         // both that teardown and the visible lowering-sword transition, and
         // LaunchSequenceElement arbitrates it synchronously in the Original.
-        if effects.quit_swordfight {
+        let retry_quit_swordfight = effects.retry_quit_swordfight
+            && self
+                .current_sequence_element_for_actor(npc_id)
+                .and_then(|(sequence, index)| {
+                    self.orders.sequence_manager.get_element(sequence, index)
+                })
+                .is_none_or(|element| element.command != crate::element::Command::QuitSwordfight);
+        if effects.quit_swordfight || retry_quit_swordfight {
             self.launch_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
@@ -1697,6 +1724,12 @@ impl EngineInner {
         // pushes a `PanicRequest` (e.g. from the fleeing arm of
         // `think_alerting_event(sim, EVENT_VIEW)` outdoors) stays wedged
         // in `FleeingPanic` with no door picked.
+        let observe_after_panic = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .is_some_and(|ai| std::mem::take(&mut ai.outbox.actor.observe_after_panic));
         let has_begin_panic = self
             .world
             .entities
@@ -1728,6 +1761,51 @@ impl EngineInner {
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
+        }
+
+        if observe_after_panic {
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} disappeared"));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
+            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            let grid = &self.world.fast_grid;
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .and_then(|npc| npc.ai_brain.enemy_mut())
+                .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} has no enemy AI"))
+                .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
+            // The resumed source tail contains SetState/Focus/GoTo calls.
+            // Close their owner-local callbacks and actor effects before the
+            // enclosing synchronous Panic continuation returns.
+            self.drain_pending_for_npc_mode(
+                sim,
+                npc_id,
+                assets,
+                owner_local_no_forecast,
+                defer_turn_instruction,
+            );
         }
 
         let has_panic_seek_fallback = self

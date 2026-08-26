@@ -396,21 +396,6 @@ impl EngineInner {
         // translation further down routes them to
         // `translate_ladder_wall_fall`.  Push strikes reach the same
         // helper through `apply_push_effect`.
-        let pre_drop_posture = self
-            .expect_entity(victim_id, "apply_sword_damage victim")
-            .element_data()
-            .posture;
-
-        // CarryingCorpse arm — drop the corpse instantly (the
-        // carrier then falls through to the base-class sword-damage
-        // path which runs damage application + push handling + hit
-        // reaction below). Done up-front so the carrier's posture is
-        // already Upright by the time `apply_push_effect` and the
-        // hit-reaction animation pick run.
-        if pre_drop_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(victim_id);
-        }
-
         if super::strikes::sword_damage_debug_enabled() {
             eprintln!(
                 "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
@@ -744,6 +729,25 @@ impl EngineInner {
                         position: victim_pos,
                     });
             }
+        }
+
+        // PC::TranslateSwordDamage / TranslatePushDamage tests the *live*
+        // posture after virtual GetWounded and the impact-sound prefix have
+        // returned. Usually that is still CarryingCorpse and the override
+        // drops the body before falling through to Human translation. A
+        // lethal hit saved by an amulet is different: PC::GetWounded
+        // establishes the coma and calls SetPosture(LYING) inside that
+        // virtual boundary, so the later PC posture switch takes its grounded
+        // default arm and deliberately leaves the body attached. Checking
+        // before the coma boundary made Rust eagerly drop the body one
+        // callback too soon.
+        if self
+            .expect_entity(victim_id, "apply_sword_damage pre-translation victim")
+            .element_data()
+            .posture
+            == Posture::CarryingCorpse
+        {
+            self.force_drop_carried_corpse_instant(victim_id);
         }
 
         // SetLifePoints invokes virtual Kill synchronously before
@@ -2119,7 +2123,17 @@ impl EngineInner {
         // nothing to animate.
         let anim = match select_hit_fall_animation(victim_posture, victim_action, is_harder_hit) {
             Some(a) => a,
-            None => return,
+            None => {
+                // TranslateHitDamage calls SetState(TERMINATED) for these
+                // postures. Transition orders may already have been authored
+                // before command translation; leaving the element live would
+                // mistake one of those stale orders for a hit reaction and
+                // run Actor::Instruct's IN_PROGRESS epilogue.
+                self.orders
+                    .sequence_manager
+                    .element_terminated(damage_element.0, damage_element.1);
+                return;
+            }
         };
 
         self.push_translated_damage_order(damage_element, anim);

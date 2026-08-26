@@ -655,11 +655,10 @@ impl EngineInner {
                     );
                 }
 
-                crate::ai::CrossNpcAction::BreakPhalanx {
-                    target,
-                    refresh_them_list,
-                } => {
-                    self.process_synchronous_break_phalanx(sim, target, refresh_them_list, assets);
+                crate::ai::CrossNpcAction::BreakPhalanx { target, .. } => {
+                    panic!(
+                        "synchronous break-phalanx target {target} escaped its source-owner boundary"
+                    )
                 }
 
                 crate::ai::CrossNpcAction::SendStimulus {
@@ -1421,12 +1420,39 @@ impl EngineInner {
                     crate::ai::CrossNpcAction::BreakPhalanx {
                         target,
                         refresh_them_list,
-                    } => self.process_synchronous_break_phalanx(
-                        sim,
-                        target,
-                        refresh_them_list,
-                        assets,
-                    ),
+                    } => {
+                        // Original stores Think recursion depth in one static
+                        // RHArtificialIntelligence byte, not on each NPC.
+                        // A direct recursive BreakPhalanx call on a neighbour
+                        // therefore observes the still-live source Think. The
+                        // typed Rust handler has already returned through its
+                        // controller-local EndThink before the engine can
+                        // drain this action, so zero here still represents
+                        // the one logical frame which emitted BreakPhalanx.
+                        // A nonzero value represents an explicitly suspended
+                        // outer frame and is already the global logical depth.
+                        let logical_think_depth = self
+                            .world
+                            .entities
+                            .get(source_id)
+                            .and_then(Entity::ai_controller)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "break-phalanx source {} lost its AI controller",
+                                    source_id.index()
+                                )
+                            })
+                            .think_recursion_depth
+                            .max(1);
+                        self.process_synchronous_break_phalanx(
+                            sim,
+                            target,
+                            refresh_them_list,
+                            logical_think_depth,
+                            target == source_id.index(),
+                            assets,
+                        )
+                    }
                     crate::ai::CrossNpcAction::ConsiderReport {
                         target,
                         report,
@@ -1756,6 +1782,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         target: u32,
         refresh_them_list: bool,
+        logical_think_depth: u8,
+        owns_end_think: bool,
         assets: &LevelAssets,
     ) {
         let target_id = EntityId::Soldier(SoldierId(target));
@@ -1790,6 +1818,25 @@ impl EngineInner {
         // cache handoff as the Think wrapper.
         ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+        let previous_target_depth = self.replace_cross_npc_logical_think_depth(
+            target_id,
+            logical_think_depth,
+            "break-phalanx target",
+        );
+        let previous_target_completion_ownership = self
+            .world
+            .entities
+            .get(target_id)
+            .and_then(Entity::ai_controller)
+            .expect("break-phalanx target lost its AI after depth projection")
+            .completion_latch_inside_think;
+
+        // Keep the borrowed static depth installed through the immediate
+        // engine-side prefix. BattleDecisions can recursively break another
+        // member while its orders settle, and that member must inherit the
+        // same Original-global depth. BreakPhalanx itself owns no EndThink,
+        // so restore the target's controller-local approximation raw after
+        // the statement boundary instead of calling an EndThink helper.
         {
             let ai_global = &mut self.ai.global;
             let grid = &self.world.fast_grid;
@@ -1814,7 +1861,51 @@ impl EngineInner {
             );
         }
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-        self.drain_direct_ai_owner_boundary(sim, target_id, assets);
+        if owns_end_think {
+            // The flattened BreakPhalanx batch ends with the initiating
+            // member itself. Its BattleDecisions tail is still part of the
+            // initiating Think and therefore closes that owner's EndThink.
+            self.drain_direct_ai_owner_boundary_mode(sim, target_id, assets, true, false);
+        } else {
+            // Recursive neighbours execute under the same static depth but
+            // own no EndThink of their own.
+            self.drain_direct_ai_owner_prefix_boundary_mode(sim, target_id, assets, true, false);
+        }
+        self.replace_cross_npc_logical_think_depth(
+            target_id,
+            previous_target_depth,
+            "break-phalanx target after prefix",
+        );
+        self.world
+            .entities
+            .get_mut(target_id)
+            .and_then(Entity::ai_controller_mut)
+            .expect("break-phalanx target lost its AI after prefix")
+            .completion_latch_inside_think = previous_target_completion_ownership;
+    }
+
+    /// Temporarily project Original's static Think recursion byte onto the
+    /// controller currently entered through a deferred direct C++ call.
+    /// Returns the controller-local approximation so the caller can restore
+    /// it raw; the direct method does not necessarily own an `EndThink`.
+    pub(in crate::engine) fn replace_cross_npc_logical_think_depth(
+        &mut self,
+        target_id: EntityId,
+        logical_think_depth: u8,
+        operation: &str,
+    ) -> u8 {
+        let ai = self
+            .world
+            .entities
+            .get_mut(target_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "cross-NPC {operation} {} lost its AI controller",
+                    target_id.index()
+                )
+            });
+        std::mem::replace(&mut ai.think_recursion_depth, logical_think_depth)
     }
 
     /// Resume the statement immediately following Original

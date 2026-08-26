@@ -831,6 +831,116 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
 }
 
 #[test]
+fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::fast_find_grid::GridSector;
+    use crate::position_interface::SectorHandle;
+    use crate::sector::{SectorNumber, SectorType};
+    use crate::sequence::{RecordingSession, SequenceElementData};
+
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
+    host.fast_grid.size_map(8, 8);
+    host.fast_grid.allocate_layers(1);
+    let arena = host.fast_grid.add_sector(
+        GridSector {
+            points: vec![
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(100.0, 0.0),
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(0.0, 100.0),
+            ],
+            bounding_box: MapBBox::from_coords(0.0, 0.0, 100.0, 100.0),
+            sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+            layer: 0,
+            sector_number: SectorNumber::new(0),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        },
+        0,
+    );
+    host.state.sequence_recorder.recording = Some(RecordingSession::new());
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let source = SectorHandle::new(0).unwrap();
+    let goal = source.with_arena_index(
+        crate::fast_find_grid::SectorIndex::new(arena).expect("test arena index is valid"),
+    );
+
+    {
+        let capabilities = NativeSessionCapabilities::new(
+            &host.simulation,
+            &mut host.entities,
+            &mut host.ai_global,
+            &mut host.fast_grid,
+        );
+        let mut context = NativeContext::with_bindings(
+            &mut host.host,
+            &mut host.state,
+            &mut host.script_domains,
+            &host.bindings,
+            &capabilities,
+        );
+        assert!(context.append_move_to_sequence(
+            actor,
+            crate::order::OrderType::RunningUpright,
+            (10.0, 10.0),
+            source,
+            0,
+            (20.0, 20.0),
+            goal,
+            0,
+            None,
+            0.0,
+            MoveFlags::CALLED_BY_SCRIPT,
+            1.0,
+        ));
+        assert!(context.append_move_to_sequence(
+            actor,
+            crate::order::OrderType::RunningUpright,
+            (20.0, 20.0),
+            goal,
+            0,
+            (30.0, 30.0),
+            source,
+            0,
+            None,
+            0.0,
+            MoveFlags::CALLED_BY_SCRIPT,
+            1.0,
+        ));
+    }
+
+    let elements = &host
+        .state
+        .sequence_recorder
+        .recording
+        .as_ref()
+        .expect("recording remains open")
+        .sequence
+        .elements;
+    assert_eq!(elements.len(), 2);
+    assert_eq!(elements[0].command, crate::element::Command::Move);
+    let SequenceElementData::Movement { destination, .. } = &elements[0].data else {
+        panic!("recorded Move must retain movement data")
+    };
+    assert_eq!(*destination, MapPoint::new(20.0, 20.0));
+    assert_eq!(elements[1].command, crate::element::Command::Move);
+    let SequenceElementData::Movement { destination, .. } = &elements[1].data else {
+        panic!("second recorded Move must retain movement data")
+    };
+    assert_eq!(*destination, MapPoint::new(30.0, 30.0));
+}
+
+#[test]
 fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_control() {
     use crate::coordinates::MapPoint;
     use crate::fast_find_grid::SectorIndex;

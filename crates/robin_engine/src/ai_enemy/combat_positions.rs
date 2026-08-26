@@ -192,30 +192,30 @@ fn is_facing_swordfight_target(
     matches!(facing_delta, 15 | 0 | 1)
 }
 
-fn swordfight_facing_target_position<'a>(
-    primary: &'a FighterSnapshot,
-    tick: &'a AiPerTickData,
-) -> &'a Position {
-    // ReconsiderSwordfight uses GetPositionGround() for this guard, not the
-    // AI Position() helper used by the fighter snapshots. The distinction is
-    // observable while the opponent passes a door: Position() forecasts the
-    // committed gate side, whereas GetPositionGround() remains at the live
-    // actor position until movement advances it.
-    // The target can change synchronously after this tick snapshot was built
-    // (notably when the principal opponent is refreshed above). Never pair a
-    // replacement target with the preceding target's literal position.
-    if tick.primary_target_snapshot_handle == primary.handle {
-        tick.primary_target_live_position
-            .as_ref()
-            .unwrap_or(&primary.position)
-    } else {
-        &primary.position
-    }
-}
-
 fn live_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
     ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target")
         .position
+}
+
+fn literal_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
+    let view = ctx.expect_entity_view(primary_target, "ReconsiderSwordfight facing target");
+    let mut position = view.position;
+    position.x = view.detection_position.x;
+    position.y = view.detection_position.y;
+    position
+}
+
+fn swordfight_facing_target_position(
+    primary: &FighterSnapshot,
+    tick: &AiPerTickData,
+    refreshed_live_position: impl FnOnce(HumanHandle) -> Position,
+) -> Position {
+    if tick.primary_target_snapshot_handle == primary.handle {
+        tick.primary_target_live_position
+            .unwrap_or(primary.position)
+    } else {
+        refreshed_live_position(primary.handle)
+    }
 }
 
 #[track_caller]
@@ -228,32 +228,29 @@ fn phalanx_member_detects_360(
         return false;
     }
 
-    let viewer_eye_z = member.elevation
+    let viewer_eye_z = member.world_position.z
         + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, member.is_rider);
-    let target_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+    let target_detection = crate::stealth::detection_point_world(
+        target.world_position,
         target.posture,
         target.direction as i16,
+        target.is_rider,
     );
-    let target_z =
-        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let viewer_ground = crate::coordinates::GroundPoint::from_map_and_z(
-        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
-        member.elevation,
-    );
-    let target_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_z - viewer_eye_z;
+    let dx = target_detection.x - member.world_position.x;
+    let dy = (target_detection.y - member.world_position.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_detection.z - viewer_eye_z;
     if dx * dx + dy * dy + dz * dz > member.sq_view_radius {
         return false;
     }
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_eye_z],
-        [target_ground.x, target_ground.y, target_z],
+        [
+            member.world_position.x,
+            member.world_position.y,
+            viewer_eye_z,
+        ],
+        [target_detection.x, target_detection.y, target_detection.z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
@@ -268,27 +265,27 @@ fn phalanx_member_detects_180(
         return false;
     }
 
+    let viewer_anchor = crate::coordinates::MapPoint::new(member.position.x, member.position.y);
     let viewer_xy = crate::stealth::eye_point_xy(
-        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
+        viewer_anchor,
         member.posture,
         member.direction as i16,
         false,
     );
-    let viewer_z =
-        member.elevation + crate::stealth::eye_z_for_posture(member.posture, member.is_rider);
-    let target_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+    let viewer_world = crate::coordinates::WorldPoint3D::new(
+        member.world_position.x + (viewer_xy.x - viewer_anchor.x),
+        member.world_position.y + (viewer_xy.y - viewer_anchor.y),
+        member.world_position.z
+            + crate::stealth::eye_z_for_posture(member.posture, member.is_rider),
+    );
+    let target_world = crate::stealth::detection_point_world(
+        target.world_position,
         target.posture,
         target.direction as i16,
+        target.is_rider,
     );
-    let target_z =
-        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let viewer_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(viewer_xy, member.elevation);
-    let target_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
+    let dx = target_world.x - viewer_world.x;
+    let dy = (target_world.y - viewer_world.y) * INVERSE_ASPECT_RATIO;
     let sq_distance = dx * dx + dy * dy;
     if sq_distance > member.sq_view_radius {
         return false;
@@ -334,7 +331,7 @@ fn phalanx_member_detects_180(
     let effective_view_radius =
         ctx.compute_view_radius_cached(member.entity, target.obstacle, || {
             crate::ai_vision::compute_view_radius(
-                crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+                viewer_world,
                 member.view_radius,
                 (member.view_direction[0], member.view_direction[1]),
                 member.real_half_aperture,
@@ -350,8 +347,8 @@ fn phalanx_member_detects_180(
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_z],
-        [target_ground.x, target_ground.y, target_z],
+        [viewer_world.x, viewer_world.y, viewer_world.z],
+        [target_world.x, target_world.y, target_world.z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
@@ -414,6 +411,18 @@ fn append_phalanx_member_enemies(
             merged.push(target.handle);
         }
     }
+}
+
+/// Original narrows combat-neighbour `SquareDistance` to `ULONG` before
+/// ranking. Reject corrupt/out-of-domain geometry explicitly instead of using
+/// Rust's saturating float-to-integer cast, which could turn NaN into a
+/// nearest-candidate distance of zero.
+fn combat_neighbour_distance_ulong(distance: f32) -> u32 {
+    assert!(
+        distance.is_finite() && distance >= 0.0 && distance < 4_294_967_296.0_f32,
+        "combat-neighbour SquareDistance {distance:?} is outside the Original ULONG domain"
+    );
+    distance as u32
 }
 
 impl EnemyAi {
@@ -564,7 +573,7 @@ impl EnemyAi {
                 }
             }
             let mut best: HumanHandle = 0;
-            let mut best_sq = f32::MAX;
+            let mut best_sq = u32::MAX;
             for handle in &self.base.list_us {
                 if *handle == self.base.me {
                     continue;
@@ -585,12 +594,15 @@ impl EnemyAi {
                 // that literal body point for ranking neighbours; `position`
                 // is the door-aware AI Position() and may already be snapped
                 // to a gate endpoint.
-                let sq = ai_square_distance(
+                // Original stores `SquareDistance` in an ULONG before the
+                // strict comparison. Candidates within the same integer
+                // bucket therefore tie and retain fighter-registry order.
+                let sq = combat_neighbour_distance_ulong(ai_square_distance(
                     &snap.raw_position,
                     snap.elevation as f32,
                     &me_pos,
                     ctx.elevation,
-                );
+                ));
                 if sq < best_sq {
                     best_sq = sq;
                     best = *handle;
@@ -3114,12 +3126,20 @@ impl EnemyAi {
         };
 
         // Are we facing the primary opponent?
-        let facing_target_position = swordfight_facing_target_position(&primary, tick);
+        // Original reads the refreshed principal opponent's literal
+        // `GetPositionGround()` here (`RHartificialmalignity.cpp:13822-13832`).
+        // `FighterSnapshot::position` is the AI `Position()` result and may
+        // forecast movement or a door endpoint. It is especially stale when
+        // `mpPrimaryTarget` changes immediately above, because the tick's
+        // owner-local live position still belongs to the preceding target.
+        let facing_target_position = swordfight_facing_target_position(&primary, tick, |target| {
+            literal_swordfight_target_position(target, ctx)
+        });
         let facing_primary = is_facing_swordfight_target(
             &ctx.position,
             ctx.elevation,
             ctx.direction,
-            facing_target_position,
+            &facing_target_position,
             primary.elevation,
         );
         if reconsider_debug {
@@ -3965,14 +3985,16 @@ impl EnemyAi {
             }
         }
 
-        // (10) Repositioning + fallback stay-in-place.
-        self.observe_and_step(sim, ctx, tick, grid);
-        if self.base.current_state == AiState::Fleeing
-            && self.base.current_substate == Substate::FleeingPanic
-            && let Some(request) = deferred_defensive_panic
-        {
+        // (10) Repositioning + fallback stay-in-place. Original's Panic call
+        // above is synchronous, including its recursive reach-point Think and
+        // actor commands. When that engine-facing half is deferred, resume
+        // this source tail only after the Panic boundary has closed.
+        if let Some(request) = deferred_defensive_panic {
             debug_assert!(self.base.outbox.actor.begin_panic.is_none());
             self.base.outbox.actor.begin_panic = Some(request);
+            self.base.outbox.actor.observe_after_panic = true;
+        } else {
+            self.observe_and_step(sim, ctx, tick, grid);
         }
     }
 
@@ -4113,6 +4135,16 @@ impl EnemyAi {
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);
         }
+    }
+
+    pub(crate) fn observe_after_synchronous_panic(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) {
+        self.observe_and_step(sim, ctx, tick, grid);
     }
 
     // -----------------------------------------------------------------------
@@ -4678,6 +4710,97 @@ mod tests {
     }
 
     #[test]
+    fn combat_neighbour_ranking_truncates_distance_before_tie_breaking() {
+        // Schema-16 seed 3,000,000, linux2/Profile_002/Savegame_029,
+        // replay-009 frame 5282. Soldier 64 is closer than Soldier 55 by less
+        // than one squared-distance unit (151.55 versus 151.99), but Original
+        // narrows both results to ULONG 151 and keeps Soldier 55 because it
+        // appears first in mlistUs.
+        let mut ai = EnemyAi::new(113);
+        ai.base.list_us = vec![113, 55, 64];
+
+        let soldier_55 = FighterSnapshot {
+            handle: 55,
+            position: position(420.24728, 1758.1467),
+            raw_position: position(420.24728, 1758.1467),
+            elevation: 4.1862102,
+            direction: 12,
+            is_soldier: true,
+            rank: ProfileRank::Soldier,
+            ..FighterSnapshot::default()
+        };
+        let soldier_64 = FighterSnapshot {
+            handle: 64,
+            position: position(420.18027, 1757.8624),
+            raw_position: position(420.18027, 1757.8624),
+            elevation: 4.382771,
+            direction: 12,
+            is_soldier: true,
+            rank: ProfileRank::Soldier,
+            ..FighterSnapshot::default()
+        };
+        let ctx = AiContext {
+            position: position(431.41672, 1755.0808),
+            elevation: 4.6533546,
+            direction: 13,
+            ..AiContext::default()
+        };
+        let distance_55 = ai_square_distance(
+            &soldier_55.raw_position,
+            soldier_55.elevation,
+            &ctx.position,
+            ctx.elevation,
+        );
+        let distance_64 = ai_square_distance(
+            &soldier_64.raw_position,
+            soldier_64.elevation,
+            &ctx.position,
+            ctx.elevation,
+        );
+        assert!(distance_64 < distance_55);
+        assert_eq!(distance_55 as u32, distance_64 as u32);
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.extend([soldier_55, soldier_64]);
+
+        assert_eq!(ai.propose_left_and_right_neighbour(&ctx, &tick), (55, 0));
+    }
+
+    #[test]
+    fn combat_neighbour_distance_ulong_truncates_valid_geometry() {
+        assert_eq!(combat_neighbour_distance_ulong(151.99), 151);
+        let largest_below_two_to_32 = f32::from_bits(0x4f7f_ffff);
+        assert_eq!(
+            combat_neighbour_distance_ulong(largest_below_two_to_32),
+            4_294_967_040
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_invalid_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_negative_geometry() {
+        let _ = combat_neighbour_distance_ulong(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_infinite_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::INFINITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_two_to_32() {
+        let _ = combat_neighbour_distance_ulong(4_294_967_296.0_f32);
+    }
+
+    #[test]
     fn phalanx_nearest_enemy_truncates_distance_before_tie_breaking() {
         assert_eq!(
             nearest_phalanx_enemy_index([(0, 120.9), (1, 120.1), (2, 121.0)]),
@@ -4943,6 +5066,7 @@ mod tests {
         PhalanxEnemySnapshot {
             handle,
             position: position(x, 0.0),
+            world_position: crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0),
             direction: 4,
             posture: Posture::Upright,
             elevation: 0.0,
@@ -4969,6 +5093,7 @@ mod tests {
             current_them_list,
             detectable_enemies,
             position: position(0.0, 0.0),
+            world_position: crate::coordinates::WorldPoint3D::ZERO,
             direction: 4,
             posture: Posture::Upright,
             elevation: 0.0,
@@ -5037,6 +5162,35 @@ mod tests {
     }
 
     #[test]
+    fn phalanx_los_uses_stored_3d_target_before_detection_offset() {
+        // Seed3 Savegame_024 replay-032: this leaning target's stored world Y
+        // differs by one ULP from `map_y + elevation`. Original
+        // ComputeDetectionPoint starts from the stored 3D point.
+        let mut target = enemy(30, 1029.8252);
+        target.position.y = 1846.1154;
+        target.world_position =
+            crate::coordinates::WorldPoint3D::new(1029.8252, 1982.2124, 136.09698);
+        target.elevation = 136.09698;
+        target.posture = Posture::LeaningOut;
+        target.direction = 11;
+
+        let mut viewer = member(2, 1000.0, Vec::new(), Vec::new());
+        viewer.position = position(931.252, 1726.3948);
+        viewer.world_position = crate::coordinates::WorldPoint3D::new(931.252, 1726.3948, 0.0);
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(phalanx_member_detects_360(
+            &viewer,
+            &target,
+            crate::sight_obstacle::ObstacleList::empty(),
+        ));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].destination[1].to_bits(), 1_157_160_897);
+    }
+
+    #[test]
     fn inactive_phalanx_member_is_traversed_without_detecting_enemies() {
         let target = enemy(9, 40.0);
         let mut inactive = member(2, 300.0, vec![target.clone()], vec![target]);
@@ -5082,8 +5236,10 @@ mod tests {
     fn phalanx_night_detection_orders_light_rays_before_target_los() {
         let mut target = enemy(9, 600.0);
         target.position.y = 500.0;
+        target.world_position = crate::coordinates::WorldPoint3D::new(600.0, 500.0, 0.0);
         let mut member = member(2, 500.0, Vec::new(), vec![target]);
         member.position = position(500.0, 500.0);
+        member.world_position = crate::coordinates::WorldPoint3D::new(500.0, 500.0, 0.0);
 
         let mut ctx = AiContext {
             is_night_or_fog: true,
@@ -5276,27 +5432,50 @@ mod tests {
             &soldier,
             elevation,
             12,
-            swordfight_facing_target_position(&primary, &tick),
+            &swordfight_facing_target_position(&primary, &tick, |_| {
+                panic!("stable principal must use the tick-captured literal position")
+            }),
             primary.elevation,
         ));
     }
 
     #[test]
-    fn swordfight_facing_guard_rejects_stale_live_position_after_target_refresh() {
+    fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
+        // SuN1Sh1nE Savegame_024 replay-037 frame 922: Position(45)
+        // forecast movement north far enough to fail this guard, while the
+        // literal GetPositionGround(45) remained due east and entered RNG.
+        let soldier = position(972.98877, 2075.3225);
+        let forecast = position(1019.0, 2089.0);
+        let live = position(1022.0, 2069.0);
+        let target_elevation = 6.0522804;
         let refreshed_primary = FighterSnapshot {
-            handle: 131,
-            position: position(1400.0, 2100.0),
+            handle: 45,
+            position: forecast,
+            elevation: target_elevation,
             ..FighterSnapshot::default()
         };
         let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 252;
-        tick.primary_target_live_position = Some(position(1307.6046, 2248.1819));
+        tick.primary_target_snapshot_handle = 152;
+        tick.primary_target_live_position = Some(position(1031.0, 2089.0));
+        let resolved = swordfight_facing_target_position(&refreshed_primary, &tick, |target| {
+            assert_eq!(target, refreshed_primary.handle);
+            live
+        });
 
-        assert_eq!(
-            swordfight_facing_target_position(&refreshed_primary, &tick),
-            &refreshed_primary.position,
-            "a refreshed principal opponent must not inherit the old target's live geometry"
-        );
+        assert!(!is_facing_swordfight_target(
+            &soldier,
+            0.0,
+            4,
+            &forecast,
+            target_elevation,
+        ));
+        assert!(is_facing_swordfight_target(
+            &soldier,
+            0.0,
+            4,
+            &resolved,
+            target_elevation,
+        ));
     }
 
     #[test]
@@ -5333,8 +5512,7 @@ mod tests {
         };
         target_view.active = true;
         target_view.camp = crate::element::Camp::Royalists;
-        target_view.detection_position =
-            crate::coordinates::MapPoint::new(target_view.position.x, target_view.position.y);
+        target_view.detection_position = crate::coordinates::MapPoint::new(640.0, 1520.0);
         target_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
             target_view.position.x,
             target_view.position.y,
@@ -5369,6 +5547,7 @@ mod tests {
         };
 
         let resolved = live_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((resolved.x, resolved.y), (650.92444, 1537.1555));
         assert_eq!(resolved.sector, Some(exact_sector));
         assert_eq!(resolved.level, 2);
         assert_eq!(
@@ -5381,6 +5560,9 @@ mod tests {
             crate::position_interface::SectorHandle::new(88),
             "legacy number-only live views remain number-only; this boundary must not guess an arena slot"
         );
+        let literal = literal_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((literal.x, literal.y), (640.0, 1520.0));
+        assert_eq!(literal.sector, Some(exact_sector));
 
         let number_only_target = Position {
             x: 650.92444,

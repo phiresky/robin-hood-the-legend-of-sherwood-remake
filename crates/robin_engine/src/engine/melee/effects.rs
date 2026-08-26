@@ -76,6 +76,15 @@ fn push_flight_facing(flight_x: f32, flight_y: f32) -> i16 {
     (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) % 16
 }
 
+#[inline]
+fn ready_for_takeoff_increment(delta: f32, frames: u16) -> f32 {
+    // `SBGeoVector3D::operator/` is implemented as `(1 / k) * vector`, not
+    // component-wise division. Preserve the reciprocal's f32 rounding before
+    // the multiply; direct `delta / frames` differs by one ULP for captured
+    // pushed-flight vectors.
+    delta * (1.0_f32 / f32::from(frames))
+}
+
 /// Select the animation queued by `TranslatePushDamage`.
 ///
 /// The dead-rider arm precedes the posture switch in the original, so even a
@@ -1199,13 +1208,13 @@ impl EngineInner {
         // falsely remain clear.
         actor.active_flight = Some(crate::element::ActiveFlight {
             geometry: crate::element::FlightGeometry::World3d,
-            increment_x: dx / frames as f32,
-            increment_y: dy_world / frames as f32,
+            increment_x: ready_for_takeoff_increment(dx, frames),
+            increment_y: ready_for_takeoff_increment(dy_world, frames),
             goal_x: goal.x,
             goal_y: goal.y,
             frames_remaining: frames,
             antagonist: Some(attacker_id),
-            increment_z: dz / frames as f32,
+            increment_z: ready_for_takeoff_increment(dz, frames),
             goal_z,
             goal_layer: layer,
             goal_sector: sector,
@@ -1611,6 +1620,19 @@ mod tests {
                 "{kind:?} moves radially but uses the attacker-direction projection"
             );
         }
+    }
+
+    #[test]
+    fn ready_for_takeoff_uses_vector_reciprocal_multiplication_rounding() {
+        // Seed3 Savegame_036 replay-040: direct division produces c0636d00,
+        // while Original's SBGeoVector3D operator produces c0636d01. The
+        // difference becomes observable in map Y on the second flight tick.
+        let delta = f32::from_bits(0xc246_ff60);
+        assert_eq!(
+            ready_for_takeoff_increment(delta, 14).to_bits(),
+            0xc063_6d01
+        );
+        assert_eq!((delta / 14.0).to_bits(), 0xc063_6d00);
     }
 
     #[test]

@@ -396,6 +396,141 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
 }
 
 #[test]
+fn line_jump_approach_routes_cross_sector_before_jump_tail() {
+    use crate::engine::movement::{
+        GoalShape, build_line_jump_click_tail, line_jump_approach_owner,
+    };
+    use crate::gate::{Door, DoorIndex, GatePathStep};
+    use crate::jump_line::JumpLineIndex;
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+    use crate::sector::SectorNumber;
+    use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(minimal_movement_test_mission());
+    let carrier = engine.add_entity(make_test_pc(crate::element::Posture::CarryingOnShoulders));
+    let mut rider_entity = make_test_pc(crate::element::Posture::OnShoulders);
+    rider_entity
+        .human_data_mut()
+        .expect("test rider is human")
+        .carrier = Some(carrier);
+    let rider = engine.add_entity(rider_entity);
+    let owner = line_jump_approach_owner(&engine, rider);
+    engine.script_domains.interactables.doors.push(Door {
+        point_out: MapPoint::new(20.0, 10.0),
+        point_in: MapPoint::new(30.0, 10.0),
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        ..Door::default()
+    });
+
+    let source_line = JumpLineIndex::new(4).unwrap();
+    let destination_line = JumpLineIndex::new(5).unwrap();
+    let tail = build_line_jump_click_tail(
+        rider,
+        OrderType::RunningUpright,
+        source_line,
+        destination_line,
+        MapPoint::new(80.0, 90.0),
+        3,
+        1.0,
+    );
+    let sequence_id = engine
+        .build_gate_movement_sequence(
+            &crate::sim_rng::test_context(),
+            owner,
+            SectorHandle::new(1),
+            vec![GatePathStep {
+                door_index: DoorIndex(0),
+                direct: true,
+            }],
+            GoalShape::Line {
+                line_index: source_line,
+                midpoint: MapPoint::new(60.0, 70.0),
+                tolerance: 0.0,
+            },
+            2,
+            OrderType::RunningUpright,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            tail,
+            false,
+            false,
+        )
+        .expect("cross-sector line-jump route");
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(sequence_id)
+        .expect("registered line-jump route");
+    let commands = sequence
+        .elements
+        .iter()
+        .map(|element| element.command)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        [
+            Command::AssertPosition,
+            Command::Move,
+            Command::AssertPosition,
+            Command::PassDoor,
+            Command::AssertPosition,
+            Command::Move,
+            Command::JumpCmd,
+            Command::Move,
+        ]
+    );
+    assert_eq!(
+        sequence
+            .elements
+            .iter()
+            .map(|element| element.command_level)
+            .collect::<Vec<_>>(),
+        (1..=8).collect::<Vec<_>>(),
+        "the selected JumpCmd must not share the terminal LINE move's command level"
+    );
+    assert!(
+        sequence.elements[..6]
+            .iter()
+            .all(|element| element.owner == Some(carrier)),
+        "the carrier owns every routed source-line approach element"
+    );
+    assert!(
+        sequence.elements[6..]
+            .iter()
+            .all(|element| element.owner == Some(rider)),
+        "the selected rider retains the explicit JumpCmd and click-tail Move"
+    );
+
+    let approach = &sequence.elements[5];
+    let SequenceElementData::Movement {
+        line_id,
+        flags,
+        destination,
+        ..
+    } = &approach.data
+    else {
+        panic!("line approach changed element kind")
+    };
+    assert_eq!(*line_id, Some(source_line));
+    assert_eq!(*flags, MoveFlags::LINE);
+    assert_eq!(*destination, MapPoint::new(60.0, 70.0));
+    assert!(matches!(
+        sequence.elements[6].get_property(Field::JumplineDestination),
+        Some(FieldValue::LineId(line)) if *line == destination_line
+    ));
+    let SequenceElementData::Movement { flags, line_id, .. } = &sequence.elements[7].data else {
+        panic!("post-jump click tail changed element kind")
+    };
+    assert!(flags.is_empty());
+    assert_eq!(*line_id, None);
+}
+
+#[test]
 fn completed_step_back_publishes_history_at_motion_terminal() {
     use crate::element::{ActionState, Camp};
     use crate::movement::ActiveMovement;

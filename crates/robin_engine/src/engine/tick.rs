@@ -778,6 +778,91 @@ mod generic_actor_line_crossing_tests {
         let (stale, retained, _) = dying_find_place_increment_after_crossing(2, true);
         assert_eq!(retained, stale);
     }
+
+    #[test]
+    fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        for (offset, patch_index) in [(131.0, 0), (132.0, 1)] {
+            engine.world.fast_grid_mut().add_line(
+                GridLine::new_patch(
+                    MapPoint::new(100.0, offset),
+                    MapPoint::new(160.0, offset),
+                    crate::patch::PatchIndex::new(patch_index)
+                        .expect("test patch index is representable"),
+                ),
+                0,
+            );
+        }
+
+        let stale = MapVec::new(1.0, 0.0);
+        let destination = MapPoint::new(130.0, 134.0);
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Tied,
+            ..ElementData::default()
+        };
+        element.set_position_map(MapPoint::new(130.0, 130.0));
+        element.sprite.position_iface.set_map_increment(stale);
+        // The outgoing movement condolence writes the zero idle goal and
+        // invalidates the cached increment before corpse placement commits.
+        element.sprite.position_iface.set_map_goal(MapPoint::ZERO);
+        element.set_position_map_delayed(destination);
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData {
+                unconscious: true,
+                ..HumanData::default()
+            },
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        }));
+
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        let mut order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
+        order.compute_direction = false;
+        wait.orders.push_back(order);
+        let sequence_id = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        let crossing_count = engine
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(0, MapPoint::new(130.0, 130.0), destination)
+            .len();
+        let elevation_count = engine
+            .world
+            .fast_grid
+            .get_crossing_elevation_line_indices(0, MapPoint::new(130.0, 130.0), destination)
+            .len();
+        assert_eq!(crossing_count, 2);
+        assert_eq!(elevation_count, 0);
+
+        engine.apply_delayed_actor_position(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+        );
+
+        let position = engine
+            .get_entity(owner)
+            .expect("delayed-position owner remains live")
+            .position_iface();
+        let recomputed = position.get_increment_map();
+        let dx = -destination.x;
+        let dy = -destination.y;
+        let norm = (dx * dx + dy * dy).sqrt();
+        let expected = MapVec::new(dx / norm, dy / norm);
+        assert_ne!(recomputed, stale);
+        assert!((recomputed.x - expected.x).abs() < 1.0e-6);
+        assert!((recomputed.y - expected.y).abs() < 1.0e-6);
+    }
 }
 
 #[cfg(test)]
@@ -6184,6 +6269,11 @@ impl EngineInner {
         // cleared at their owning actor slots above and are skipped here.
         self.tick_melee_combat(sim, assets);
 
+        // Preserve only the terminal shoulder-climb sprite synchronization
+        // before the motion latch is consumed. Carried transforms remain in
+        // their established post-propagation phase below.
+        abilities::sync_terminal_shoulder_animations(&mut self.world.entities);
+
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
         // (movement, jumps, animations, bow shots, melee, abilities),
@@ -6195,15 +6285,9 @@ impl EngineInner {
         // `EngineInner::engine_postpone`.
         self.propagate_done_to_current_orders();
 
-        // ── Carried entity position sync ───────────────────────
-        // Keep bodies carried by Little John positioned on the carrier
-        // and drive their sprite animation (BeingLifted/BeingCarried/
-        // BeingDropped) synchronized with the carrier.  Needs the
-        // campaign profile manager to look up LittleJohnCarry contextual
-        // actions on the carrier.
-        if true {
-            abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
-        }
+        // Keep bodies carried by Little John positioned on the carrier and
+        // drive their sprite animation synchronized with the carrier.
+        abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
 
         // TODO(original-parity): move further gameplay maintenance into the
         // ordered pass only when a concrete observable discrepancy is proven.
@@ -6962,6 +7046,149 @@ impl EngineInner {
         }
     }
 
+    fn apply_helper_driven_shoulder_dismount(
+        &mut self,
+        dismount: super::animation::ShoulderHelperDismount,
+    ) {
+        use crate::element::{ActionState, Posture};
+        use crate::order::OrderType;
+        use crate::sprite::MotionState;
+
+        let helper_direction = self
+            .get_entity(dismount.helper_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "shoulder-dismount helper {:?} vanished during Execute",
+                    dismount.helper_id
+                )
+            })
+            .element_data()
+            .direction();
+        let carried_direction = (helper_direction + 8) & 15;
+
+        if dismount.initialising {
+            // FreezeExecution interrupts the rider's selected sequence. Its
+            // cached installed order is the Rust mirror of Original's
+            // detached mpOrder and must disappear at the same owner boundary.
+            self.actor_freeze_execution(dismount.carried_id);
+            if let Some(carried) = self.get_entity_mut(dismount.carried_id)
+                && let Some(actor) = carried.actor_data_mut()
+            {
+                actor.installed_order = None;
+            }
+        }
+
+        let Some(carried) = self.get_entity_mut(dismount.carried_id) else {
+            // Original permits mpCarried to become null while the transition
+            // runs and simply finishes the helper animation in that case.
+            return;
+        };
+        carried
+            .element_data_mut()
+            .set_direction_goal(carried_direction);
+        let carried_sprite_direction = u16::try_from(carried.element_data().direction())
+            .expect("PC shoulder rider has a negative direction");
+        let sprite = &mut carried.element_data_mut().sprite;
+        sprite.force_sprite_row(
+            OrderType::ClimbingDownFromShoulders,
+            carried_sprite_direction,
+        );
+        sprite.synchronize_anim(dismount.helper_frame, dismount.helper_frame_count);
+        sprite.display_order_ref = Some(dismount.helper_id);
+        sprite.behind_display_order_ref = false;
+
+        if dismount.motion == MotionState::Done {
+            carried.set_posture(Posture::Upright);
+            carried
+                .actor_data_mut()
+                .expect("PC has actor data")
+                .action_state = ActionState::Waiting;
+        }
+        if dismount.motion != MotionState::Terminated {
+            return;
+        }
+
+        let helper_position = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before termination")
+            .element_data()
+            .position_map();
+        let helper_current_point = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before landing search")
+            .cxx_current_point_map()
+            .unwrap_or_else(|| {
+                panic!(
+                    "shoulder-dismount helper {:?} has no current action point",
+                    dismount.helper_id
+                )
+            });
+        let helper_layer = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before termination")
+            .element_data()
+            .layer();
+        let landing_position = {
+            let carried_box = self
+                .get_entity(dismount.carried_id)
+                .expect("shoulder rider vanished before landing search")
+                .position_iface()
+                .get_move_box()
+                .to_owned();
+            if carried_box.is_somewhere() {
+                // Original translates the upright rider box from the
+                // helper's live animation hotspot (`GetCurrentPointMap`),
+                // while using the helper's map origin as the directional
+                // reference for the three-argument authorization search.
+                let mut box_at_helper = carried_box.translated(helper_current_point);
+                if self.world.fast_grid.find_authorized_position_toward(
+                    &mut box_at_helper,
+                    helper_position,
+                    helper_layer,
+                ) {
+                    box_at_helper.center()
+                } else {
+                    helper_position
+                }
+            } else {
+                helper_position
+            }
+        };
+
+        if let Some(carried) = self.get_entity_mut(dismount.carried_id) {
+            carried
+                .element_data_mut()
+                .set_position_map_delayed(landing_position);
+            carried.set_posture(Posture::Upright);
+            // RHElementActorHuman::SetCarrier(NULL) restores the old
+            // carrier's heading as the released rider's direction goal
+            // before clearing the back-reference
+            // (RHelementactorhuman.cpp:5990-6017).
+            carried
+                .element_data_mut()
+                .set_direction_goal(helper_direction);
+            if let Some(human) = carried.human_data_mut() {
+                human.carrier = None;
+            }
+            if let Some(actor) = carried.actor_data_mut() {
+                actor.execution_frozen = false;
+                actor.action_state = ActionState::Waiting;
+            }
+            let sprite = &mut carried.element_data_mut().sprite;
+            sprite.display_order_ref = None;
+            sprite.behind_display_order_ref = false;
+        }
+        if let Some(helper) = self.get_entity_mut(dismount.helper_id)
+            && let Some(pc) = helper.pc_data_mut()
+        {
+            pc.carried = None;
+            pc.set_live_carried_posture(Posture::Lying);
+        }
+        // Original invokes mpCarried->Wait(), not helper->Wait(), before
+        // releasing the final carrier/carried references.
+        self.actor_wait(dismount.carried_id);
+    }
+
     /// Post-animation hook that drains outcomes collected by
     /// [`EngineInner::tick_actor_animation_for`] for non-`EventDone`
     /// completion variants.
@@ -6993,6 +7220,7 @@ impl EngineInner {
             play_anim_frozen,
             corpse_drop_done,
             shoulder_carried_waits,
+            shoulder_helper_dismounts,
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
@@ -7028,6 +7256,9 @@ impl EngineInner {
         self.drain_corpse_drop_done(assets, corpse_drop_done);
         for carried_id in shoulder_carried_waits {
             self.actor_wait(carried_id);
+        }
+        for dismount in shoulder_helper_dismounts {
+            self.apply_helper_driven_shoulder_dismount(dismount);
         }
         self.drain_seq_advance(seq_advance);
         self.drain_wasp_next_cycle(wasp_next_cycle);

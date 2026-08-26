@@ -871,8 +871,8 @@ fn append_door_constructor(
 mod legacy_grid_topology_tests {
     use super::*;
     use crate::level_data::{
-        ProtoGridChunk, RawBuildingEntry, RawDoor, RawJumpLine, RawJumpLinePair, RawJumpZone,
-        RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
+        ProtoGridChunk, RawArcheryPoint, RawArcherySector, RawBuildingEntry, RawDoor, RawJumpLine,
+        RawJumpLinePair, RawJumpZone, RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
     };
 
     fn door(has_click_sector: bool) -> RawDoor {
@@ -1206,6 +1206,67 @@ mod legacy_grid_topology_tests {
         let installed = &engine.ai.global.seek_points[0].position;
         assert_eq!((installed.x, installed.y), (658.0, 2905.0));
         assert_eq!(installed.sector, Some(tactic_position));
+    }
+
+    #[test]
+    fn archery_waypoint_resolves_to_exact_motion_sector_after_loading() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.tactic_data = Some(RawTacticData {
+            reinforcement_points: Vec::new(),
+            ambush_points: Vec::new(),
+            seek_points: Vec::new(),
+            archery_sectors: vec![RawArcherySector {
+                sector_ref: 25,
+                polygon: SectorPolygon::default(),
+                points: vec![RawArcheryPoint {
+                    x: 983,
+                    y: 1518,
+                    sector: 25,
+                    is_shooting_point: false,
+                    direction: 0,
+                }],
+            }],
+        });
+        let mut engine = EngineInner::new();
+        engine.ai.global.archery_sectors = vec![crate::ai::SectorArchery {
+            points: vec![crate::ai::PointArchery {
+                position: crate::ai::Position {
+                    x: 983.0,
+                    y: 1518.0,
+                    sector: crate::position_interface::SectorHandle::new(25),
+                    level: 0,
+                },
+                direction: 0,
+                is_shooting_point: false,
+                sector_index: crate::sector::SectorNumber::new(25),
+                owner: None,
+            }],
+            polygon: Vec::new(),
+            layer: 0,
+            index_first_shooting_point: None,
+            index_last_shooting_point: None,
+            num_shooting_points: 0,
+            num_owners: 0,
+        }];
+        let mut motion_sector = runtime_position_sector(
+            25,
+            crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+        );
+        motion_sector.layer = 2;
+        let arena = engine.world.fast_grid_mut().add_sector(motion_sector, 2);
+
+        engine
+            .resolve_archery_topology_after_motion(&loaded)
+            .expect("authored archery topology resolves after motion loading");
+
+        let point = &engine.ai.global.archery_sectors[0].points[0].position;
+        assert_eq!(point.level, 2);
+        assert_eq!(point.sector.expect("archery point sector").get(), 25);
+        assert_eq!(
+            point.sector.and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(arena),
+            "AI GoTo must not mix an exact actor source with a number-only archery destination"
+        );
     }
 
     #[test]
@@ -1707,8 +1768,8 @@ mod mission_level_builder_tests {
     use super::MissionLevelBuilder;
     use crate::coordinates::MapPoint;
     use crate::element::{
-        ActorCivilian, ActorData, CivilianData, ElementData, ElementKind, Entity, HumanData,
-        NpcData,
+        ActorCivilian, ActorData, ActorPc, CivilianData, ElementData, ElementKind, Entity,
+        HumanData, NpcData, PcData,
     };
     use crate::engine::{
         EngineInner, JumpGateAttachment, LegacyGridSectorAsset, LegacyGridTopologyAssets,
@@ -2193,13 +2254,35 @@ mod mission_level_builder_tests {
             },
         ];
         loaded.mission.building_tenants = vec![RawBuildingTenants {
-            tenant_element_indices: vec![0],
+            tenant_element_indices: vec![1],
             arrow_reserve: false,
         }];
         let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
         let assets = door_assets(2, 1);
         let mut engine = EngineInner::new();
-        engine.world.entities.push(Some(civilian()));
+        let carried_id = engine.add_entity(civilian());
+        {
+            let carried = engine
+                .get_entity_mut(carried_id)
+                .expect("carried fixture exists")
+                .element_data_mut();
+            carried.set_layer(2);
+            carried.set_sector(crate::position_interface::SectorHandle::new(12));
+            carried.set_position_map(MapPoint::new(80.0, 90.0));
+        }
+        engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                carried: Some(carried_id),
+                ..Default::default()
+            },
+        }));
 
         let plan = builder
             .preflight(&engine, &assets, &loaded)
@@ -2212,6 +2295,10 @@ mod mission_level_builder_tests {
             .build_mission_level_stages(&assets, &loaded, &plan)
             .expect("construct canonical trap door");
         let adapted_point = engine.script_domains.interactables.doors[1].point_in;
+        let adapted_sector = engine.script_domains.interactables.doors[1].sector_in;
+        let adapted_sector_index = engine.script_domains.interactables.doors[1]
+            .sector_in_index
+            .expect("canonical building door retains its interior arena identity");
         assert_ne!(adapted_point, MapPoint::new(30.0, 40.0));
 
         engine
@@ -2221,13 +2308,42 @@ mod mission_level_builder_tests {
         let (_, tenant) = engine
             .world
             .entities
-            .get_legacy_slot(0)
+            .get_legacy_slot(1)
             .expect("tenant remains in authored slot");
         assert_eq!(
             tenant.element_data().sprite.position_iface.map_position(),
             adapted_point
         );
+        let tenant_sector = tenant
+            .element_data()
+            .sector()
+            .expect("attached building tenant has a sector");
+        assert_eq!(tenant_sector.get(), u16::from(adapted_sector));
+        assert_eq!(tenant_sector.arena_index(), Some(adapted_sector_index));
         assert!(!tenant.element_data().active);
+
+        let carried = engine
+            .get_entity(carried_id)
+            .expect("carried tenant fixture remains live");
+        assert!(
+            carried.element_data().active,
+            "InitOccupant changes the tenant's active state, not its carried actor's"
+        );
+        let carried_sector = carried
+            .element_data()
+            .sector()
+            .expect("ChangeLayerAndSector propagates the building sector to carried actors");
+        assert_eq!(carried_sector.get(), u16::from(adapted_sector));
+        assert_eq!(carried_sector.arena_index(), Some(adapted_sector_index));
+        assert_eq!(
+            carried.element_data().layer(),
+            tenant.element_data().layer()
+        );
+        assert_eq!(
+            carried.element_data().position_map(),
+            MapPoint::new(80.0, 90.0),
+            "InitOccupant changes only the tenant's position after propagated topology"
+        );
     }
 }
 
@@ -5590,6 +5706,12 @@ impl EngineInner {
             // point rather than the raw proto point staged before construction.
             let first_door_point_in = first_door.point_in;
             let first_door_sector_in = u16::from(first_door.sector_in);
+            let first_door_sector_in_index = first_door.sector_in_index.unwrap_or_else(|| {
+                panic!(
+                    "building {} first door has no exact interior sector identity",
+                    building.building_index
+                )
+            });
             for &element_index in &building.tenant_element_indices {
                 let entity_id = self
                     .world
@@ -5599,28 +5721,54 @@ impl EngineInner {
                         building_index: building.building_index,
                         element_index,
                     })?;
-                let entity = self.world.entities.get_mut(entity_id).ok_or(
-                    MissionLevelBuildError::MissingBuildingTenant {
-                        building_index: building.building_index,
-                        element_index,
-                    },
-                )?;
-                if !entity.is_human() {
-                    return Err(MissionLevelBuildError::NonHumanBuildingTenant {
-                        building_index: building.building_index,
-                        element_index,
+                let carried = {
+                    let entity = self.world.entities.get_mut(entity_id).ok_or(
+                        MissionLevelBuildError::MissingBuildingTenant {
+                            building_index: building.building_index,
+                            element_index,
+                        },
+                    )?;
+                    if !entity.is_human() {
+                        return Err(MissionLevelBuildError::NonHumanBuildingTenant {
+                            building_index: building.building_index,
+                            element_index,
+                        });
+                    }
+                    let carried = entity.pc_data().and_then(|pc| pc.carried);
+                    let elem = entity.element_data_mut();
+                    elem.active = false;
+                    let pi = &mut elem.sprite.position_iface;
+                    pi.set_map_position(first_door_point_in);
+                    pi.set_layer(
+                        crate::position_interface::Layer::new(lift_layer)
+                            .expect("building lift layer equals the null sentinel"),
+                    );
+                    pi.set_sector_topology(
+                        crate::position_interface::SectorHandle::new(first_door_sector_in),
+                        Some(first_door_sector_in_index),
+                    );
+                    carried
+                };
+                // `RHElementActorHuman::ChangeLayerAndSector` copies the
+                // building pointer and lift layer to a PC's carried actor.
+                // `InitOccupant` then changes only the tenant's position.
+                if let Some(carried_id) = carried {
+                    let carried = self.world.entities.get_mut(carried_id).unwrap_or_else(|| {
+                        panic!(
+                            "building {} tenant {element_index} references missing carried actor {carried_id:?}",
+                            building.building_index
+                        )
                     });
+                    let pi = &mut carried.element_data_mut().sprite.position_iface;
+                    pi.set_layer(
+                        crate::position_interface::Layer::new(lift_layer)
+                            .expect("building lift layer equals the null sentinel"),
+                    );
+                    pi.set_sector_topology(
+                        crate::position_interface::SectorHandle::new(first_door_sector_in),
+                        Some(first_door_sector_in_index),
+                    );
                 }
-                let elem = entity.element_data_mut();
-                elem.active = false;
-                let pi = &mut elem.sprite.position_iface;
-                pi.set_map_position(first_door_point_in);
-                if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
-                    pi.set_layer(layer);
-                }
-                pi.set_sector(crate::position_interface::SectorHandle::new(
-                    first_door_sector_in,
-                ));
             }
         }
         Ok(())

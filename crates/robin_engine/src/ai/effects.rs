@@ -448,6 +448,11 @@ impl AttentiveModeEffect {
 pub struct AiActorOutbox {
     pub orders: Vec<AiOrderIntent>,
     pub quit_swordfight: bool,
+    /// Timer-driven retry from `SUBSTATE_ATTACKING_QUITTING_SWORDFIGHT`.
+    /// Original suppresses this retry while the actor's selected command is
+    /// already `QUIT_SWORDFIGHT`; the engine owns that live command check.
+    #[serde(default)]
+    pub retry_quit_swordfight: bool,
     /// Complete the lost-enemy battle-overview continuation only after an
     /// explicit QUIT_SWORDFIGHT launch has delivered interruption
     /// condolations from the command it replaced.
@@ -526,6 +531,11 @@ pub struct AiActorOutbox {
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
     pub begin_panic: Option<PanicRequest>,
+    /// Resume `ReconsiderSwordfightObservation` after the synchronous Panic
+    /// boundary has closed. The AI-side caller cannot run this continuation
+    /// before the engine has applied Panic's commands and recursive Think.
+    #[serde(default)]
+    pub observe_after_panic: bool,
     pub panic_seek_fallback: bool,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
     pub archery_reservation_release: ArcheryReservationRelease,
@@ -648,6 +658,7 @@ pub(crate) struct AiActorPreemptionEffects {
 #[derive(Debug, Default)]
 pub(crate) struct AiActorCoreEffects {
     pub quit_swordfight: bool,
+    pub retry_quit_swordfight: bool,
     pub enter_swordfight: Option<EnterSwordfightRequest>,
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<HumanHandle>,
@@ -683,6 +694,7 @@ impl AiActorOutbox {
     pub(crate) fn has_boundary_work(&self) -> bool {
         !self.orders.is_empty()
             || self.quit_swordfight
+            || self.retry_quit_swordfight
             || self.lost_enemy_overview_after_quit
             || self.stop_menace
             || self.lower_shield
@@ -722,6 +734,7 @@ impl AiActorOutbox {
             || self.look_sidewards.is_some()
             || self.posture.is_some()
             || self.begin_panic.is_some()
+            || self.observe_after_panic
             || self.panic_seek_fallback
             || self.script_seek_area.is_some()
             || self.archery_reservation_release != ArcheryReservationRelease::default()
@@ -766,6 +779,7 @@ impl AiActorOutbox {
     pub(crate) fn take_core(&mut self) -> AiActorCoreEffects {
         AiActorCoreEffects {
             quit_swordfight: std::mem::take(&mut self.quit_swordfight),
+            retry_quit_swordfight: std::mem::take(&mut self.retry_quit_swordfight),
             enter_swordfight: self.enter_swordfight.take(),
             enter_swordfight_jump_line: self.enter_swordfight_jump_line.take(),
             stop_target: self.stop_target.take(),

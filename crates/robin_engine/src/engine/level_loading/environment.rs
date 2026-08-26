@@ -673,13 +673,15 @@ impl EngineInner {
         }
     }
 
-    /// Resolve tactic archery layers after motion-sector numbers exist.
+    /// Resolve tactic archery topology after motion-sector numbers exist.
     ///
     /// The mission metadata pass preserves the raw archery topology before
     /// motion loading, but cannot resolve a sector number to its authored
-    /// layer at that point. Leaving its temporary zero values in place made
-    /// every elevated archery way behave as layer 0.
-    fn resolve_archery_layers_after_motion(
+    /// layer or exact arena identity at that point. Leaving those temporary
+    /// values in place made every elevated archery way behave as layer 0 and
+    /// made cross-sector AI routes mix an exact source with a number-only
+    /// destination, which can never match in the identity-aware gate graph.
+    pub(super) fn resolve_archery_topology_after_motion(
         &mut self,
         loaded: &crate::level_data::LoadedLevel,
     ) -> Result<(), EngineError> {
@@ -697,7 +699,10 @@ impl EngineInner {
             });
         }
 
-        let resolve_layer = |sector_number: u16| -> Result<u16, EngineError> {
+        let resolve_topology = |sector_number: u16| -> Result<
+            (crate::fast_find_grid::SectorIndex, u16),
+            EngineError,
+        > {
             let number = crate::sector::SectorNumber::new(sector_number as i16);
             let sector_idx = self
                 .world
@@ -712,7 +717,8 @@ impl EngineInner {
                         "authored archery point references missing motion sector {sector_number}"
                     ),
                 })?;
-            self.world
+            let layer = self
+                .world
                 .fast_grid
                 .level
                 .sectors
@@ -723,7 +729,15 @@ impl EngineInner {
                     reason: format!(
                         "motion sector {sector_number} maps to missing grid index {sector_idx}"
                     ),
-                })
+                })?;
+            let sector_idx = crate::fast_find_grid::SectorIndex::new(sector_idx as u32)
+                .ok_or_else(|| EngineError::MissionLevelStage {
+                    stage: "archery tactic layers",
+                    reason: format!(
+                        "motion sector {sector_number} maps to invalid grid index {sector_idx}"
+                    ),
+                })?;
+            Ok((sector_idx, layer))
         };
 
         for (runtime, raw) in self
@@ -744,9 +758,19 @@ impl EngineInner {
                     ),
                 });
             }
-            runtime.layer = resolve_layer(raw.sector_ref)?;
+            runtime.layer = resolve_topology(raw.sector_ref)?.1;
             for (point, raw_point) in runtime.points.iter_mut().zip(&raw.points) {
-                point.position.level = resolve_layer(raw_point.sector)?;
+                let (sector_idx, layer) = resolve_topology(raw_point.sector)?;
+                let sector = crate::position_interface::SectorHandle::new(raw_point.sector)
+                    .ok_or_else(|| EngineError::MissionLevelStage {
+                        stage: "archery tactic layers",
+                        reason: format!(
+                            "authored archery point has invalid motion sector {}",
+                            raw_point.sector
+                        ),
+                    })?;
+                point.position.sector = Some(sector.with_arena_index(sector_idx));
+                point.position.level = layer;
             }
         }
         Ok(())
@@ -952,7 +976,7 @@ impl EngineInner {
         self.build_motion_stage(assets, staging);
         self.register_sound_material_lines(assets, loaded);
         self.register_script_zone_geometry(assets, loaded);
-        self.resolve_archery_layers_after_motion(loaded)?;
+        self.resolve_archery_topology_after_motion(loaded)?;
 
         // Set forest_level from proto misc — must happen before entity
         // spawning uses it to decide CHARACTER vs CHARACTER_BLIPPED.

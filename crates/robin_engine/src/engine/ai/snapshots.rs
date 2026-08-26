@@ -248,6 +248,8 @@ pub(super) struct SoldierSnapshot {
     pub(super) antagonist: u32,
     /// Body currently selected by the soldier's AI brain.
     pub(super) detected_body: u32,
+    /// Current blood-alcohol debility used by alert eligibility.
+    pub(super) blood_alcohol: u8,
     /// Soldier profile duty flag — part of the
     /// "shall I stay on my post" decision.
     pub(super) duty_flag: bool,
@@ -994,6 +996,7 @@ impl EngineInner {
                 patrol_chief,
                 antagonist,
                 detected_body,
+                blood_alcohol: enemy_ai.base.blood_alcohol,
                 duty_flag: soldier_profile.duty,
                 in_building,
                 forecast_destination,

@@ -677,7 +677,7 @@ mod group_move_authorization_tests {
     fn recorded_ordinary_route_keeps_door_placement_but_uses_ordinary_path() {
         assert_eq!(
             group_move_door_selection(Some(86), true, Some(false)),
-            (None, false, true)
+            (None, false, false)
         );
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
@@ -699,7 +699,7 @@ mod group_move_authorization_tests {
         let exact = crate::fast_find_grid::SectorIndex::new(12);
 
         assert!(group_move_uses_simple_route(
-            true, true, sector, exact, 0, 50, exact, 0,
+            false, true, true, sector, exact, 0, 50, exact, 0,
         ));
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
@@ -711,6 +711,7 @@ mod group_move_authorization_tests {
     #[test]
     fn distinct_goal_door_overlay_keeps_gate_route() {
         assert!(!group_move_uses_simple_route(
+            false,
             true,
             true,
             Some(crate::sector::SectorNumber::new(51)),
@@ -725,6 +726,7 @@ mod group_move_authorization_tests {
     #[test]
     fn duplicate_public_sector_with_distinct_exact_identity_keeps_gate_route() {
         assert!(!group_move_uses_simple_route(
+            false,
             true,
             true,
             Some(crate::sector::SectorNumber::new(50)),
@@ -733,6 +735,16 @@ mod group_move_authorization_tests {
             50,
             crate::fast_find_grid::SectorIndex::new(12),
             0,
+        ));
+    }
+
+    #[test]
+    fn recorded_gate_route_overrides_reconstructed_same_topology() {
+        let sector = Some(crate::sector::SectorNumber::new(319));
+        let exact = crate::fast_find_grid::SectorIndex::new(153);
+
+        assert!(!group_move_uses_simple_route(
+            true, false, true, sector, exact, 0, 319, exact, 0,
         ));
     }
 
@@ -3754,17 +3766,24 @@ fn group_move_door_selection(
         None => (spatial_clicked_door_index, spatial_is_door_click),
     };
 
-    // Original keeps two independent identities in PerformGroupMove:
-    // `mpSelectedSector` supplies `bDoor`, which bypasses formation-point
-    // authorization, while the patch-aware `pSectorGoal` selects ordinary
-    // FindPathGates versus FindPathIntoDoor. A schema-16 replay can therefore
-    // author an ordinary route over a coincident door overlay without losing
-    // the overlay's placement semantics (RHengine.cpp:5322-5337, 5447-5468).
-    (route_door_index, route_is_door, spatial_is_door_click)
+    // Schema-16's reconstructed route kind is authoritative for the selected
+    // door identity too. Rust's spatial query can land on a coincident door
+    // polygon even when Original selected the ordinary area underneath; using
+    // that reconstructed hit would incorrectly skip FindAutorizedPosition.
+    // Live commands have no override and continue to use the spatial result.
+    let bypass_formation_authorization = recorded_door_route
+        .map(|_| route_is_door)
+        .unwrap_or(spatial_is_door_click);
+    (
+        route_door_index,
+        route_is_door,
+        bypass_formation_authorization,
+    )
 }
 
 #[inline]
 fn group_move_uses_simple_route(
+    has_recorded_route_outcome: bool,
     is_door_click: bool,
     is_valid: bool,
     goal_sector: Option<crate::sector::SectorNumber>,
@@ -3774,6 +3793,14 @@ fn group_move_uses_simple_route(
     source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     source_layer: u16,
 ) -> bool {
+    // A schema-16 route-construction event proves that Original entered
+    // AppendMoveToSequence's cross-sector branch. Reconstructed source/goal
+    // handles can nevertheless compare equal when overlapping Original
+    // sectors collapse onto one Rust identity. The recorded outcome wins over
+    // that apparent same-sector result, for both success and failure.
+    if has_recorded_route_outcome {
+        return false;
+    }
     // PerformMove passes the patch-aware pSectorGoal to AppendMoveToSequence.
     // A coincident mpSelectedSector door only controls formation authorization;
     // it cannot turn an equal source/goal sector into a door traversal.
@@ -4074,55 +4101,35 @@ pub(crate) fn circular_dispatch_destinations(
     result
 }
 
-/// Build the line-jump click-sequence shape:
+/// Build the portion of a line-jump click sequence that follows arrival at
+/// the selected source line.
 ///
-/// 1. move to the selected source jump-line,
-/// 2. execute the jump command from source to associated destination,
-/// 3. move from the landing side to the original clicked point.
+/// Original routes the approach to that line through
+/// `RHSequence::AppendMoveToLineToSequence`; the approach may therefore
+/// contain an `AssertPosition` and a complete gate path.  Keeping only the
+/// post-arrival elements here prevents callers from accidentally replacing
+/// that route with one direct, potentially blocked movement segment.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_line_jump_click_sequence(
+pub(crate) fn build_line_jump_click_tail(
     owner: EntityId,
     action: OrderType,
     source_line_idx: crate::jump_line::JumpLineIndex,
-    source_line: &crate::jump_line::JumpLine,
     destination_line_idx: crate::jump_line::JumpLineIndex,
     click_point: MapPoint,
     click_layer: u16,
     speed_factor: f32,
-) -> crate::sequence::Sequence {
+) -> Vec<crate::sequence::SequenceElement> {
     use crate::element::Command;
-    use crate::sequence::{
-        Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-    };
+    use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
 
-    let mut seq = Sequence::new();
-
-    let mut move_to_line = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
-    move_to_line.data = SequenceElementData::Movement {
-        destination: source_line.get_middle_point(),
-        layer: source_line.layer,
-        sector: None,
-        gate_id: None,
-        line_id: Some(source_line_idx),
-        element: None,
-        flags: MoveFlags::LINE | MoveFlags::TO_JUMP,
-        tolerance: 0.0,
-        direction: 0,
-        action,
-        speed_factor,
-        post_seek_sequence: None,
-    };
-    seq.append_element(move_to_line);
-
-    let mut jump = SequenceElement::new_generic(2, Command::JumpCmd, Some(owner));
+    let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
     jump.set_property(Field::JumplineSource, FieldValue::LineId(source_line_idx));
     jump.set_property(
         Field::JumplineDestination,
         FieldValue::LineId(destination_line_idx),
     );
-    seq.append_element(jump);
 
-    let mut final_move = SequenceElement::new_movement(3, Command::Move, Some(owner), action);
+    let mut final_move = SequenceElement::new_movement(2, Command::Move, Some(owner), action);
     final_move.data = SequenceElementData::Movement {
         destination: click_point,
         layer: click_layer,
@@ -4140,9 +4147,35 @@ pub(crate) fn build_line_jump_click_sequence(
         speed_factor,
         post_seek_sequence: None,
     };
-    seq.append_element(final_move);
+    vec![jump, final_move]
+}
 
-    seq
+/// Actor that owns the routed approach to a selected jump line.
+///
+/// `RHengine.cpp::PerformMove` substitutes the carrier only for
+/// `AppendMoveToLineToSequence`; the explicit jump and post-jump movement
+/// remain owned by the selected PC.
+pub(in crate::engine) fn line_jump_approach_owner(
+    engine: &EngineInner,
+    selected_pc: EntityId,
+) -> EntityId {
+    let selected = engine.expect_entity(selected_pc, "line-jump selected PC");
+    if selected.element_data().posture != crate::element::Posture::OnShoulders {
+        return selected_pc;
+    }
+    let carrier = selected
+        .human_data()
+        .unwrap_or_else(|| panic!("OnShoulders line-jump owner {selected_pc:?} is not human"))
+        .carrier
+        .unwrap_or_else(|| {
+            panic!("OnShoulders line-jump owner {selected_pc:?} has no retained carrier")
+        });
+    let carrier_entity = engine.expect_entity(carrier, "OnShoulders line-jump carrier");
+    assert!(
+        carrier_entity.is_pc(),
+        "OnShoulders line-jump carrier {carrier:?} for {selected_pc:?} is not a PC"
+    );
+    carrier
 }
 
 #[derive(Clone, Copy, Default)]
@@ -4625,8 +4658,39 @@ impl EngineInner {
             return;
         }
 
-        let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
-        if crossed {
+        // Original queries one unified LINE_CROSS list here.  Its multi-line
+        // arm runs the shared UpdateRoll/ComputeIncrementAll tail even when
+        // every crossed line is non-elevation.  Keep the candidate count
+        // intact across the elevation and callback dispatches; splitting the
+        // queries first loses that observable `count > 1` branch.
+        let crossing_indices = self
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(layer, old_pos, new_pos);
+        let crossing_count = crossing_indices.len();
+        let elevation_indices = crossing_indices
+            .iter()
+            .copied()
+            .filter(|&line_index| {
+                self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+        let callback_indices = crossing_indices
+            .into_iter()
+            .filter(|&line_index| {
+                crossing_count == 1
+                    || !self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+        let crossed_elevation = self.check_for_elevation_line_crossing_indices(
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            layer,
+            elevation_indices,
+        );
+        if crossed_elevation || crossing_count > 1 {
             if is_human {
                 self.update_roll_after_crossing(assets, entity_id);
             }
@@ -4644,7 +4708,14 @@ impl EngineInner {
             }
         }
         let _ = is_pc;
-        self.check_for_non_elevation_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
+        self.check_for_non_elevation_line_crossing_indices(
+            sim,
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            callback_indices,
+        );
     }
 
     /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
@@ -6362,8 +6433,8 @@ impl EngineInner {
             post_seek_arrivals,
             post_seek_terminal_state_effects,
             sequence_seek_terminal_state_effects,
-            line_cross_checks,
-            non_elevation_cross_checks,
+            mut line_cross_checks,
+            mut non_elevation_cross_checks,
             transition_seek_refreshes,
             mut order_pops,
             terminal_pc_direction_goal_restores,
@@ -6460,7 +6531,41 @@ impl EngineInner {
             self.launch_sword_movement_termination_provoke(entity_id);
         }
         for entity_id in door_pass_transition_start_effects {
+            // TODO(parity): apply this START reposition and its crossing
+            // callbacks inside the owner's actor slot, as Original does, so
+            // later actor slots can observe the midpoint synchronously.
             self.apply_door_pass_transition_start_side_effects(assets, entity_id);
+            // A stationary ladder-exit START returns before the ordinary
+            // movement tail queues Actor::Hourglass's post-Execute crossing
+            // check.  The START side effect above can nevertheless snap the
+            // actor across a boundary to the door midpoint.  Original tests
+            // that live post-Execute segment before interpreting START, so
+            // recover it from NewMove's outer old-position latch here.  A
+            // non-stationary START already queued its segment in the common
+            // tail and must not dispatch the callbacks twice.
+            if !line_cross_checks
+                .iter()
+                .any(|(queued, _, _)| *queued == entity_id)
+            {
+                let crossing = self.world.entities.get(entity_id).and_then(|entity| {
+                    let old_pos = entity.position_iface().old_map_position();
+                    let new_pos = entity.element_data().position_map();
+                    let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
+                    let eligible = old_pos != new_pos
+                        && actor_line_crossing_eligible(
+                            entity.element_data().posture,
+                            entity
+                                .human_data()
+                                .is_some_and(|human| human.carrier.is_some()),
+                            in_bounds,
+                        );
+                    eligible.then_some((entity_id, old_pos, entity.element_data().layer()))
+                });
+                if let Some(crossing) = crossing {
+                    line_cross_checks.push(crossing);
+                    non_elevation_cross_checks.push(crossing);
+                }
+            }
         }
         for entity_id in door_pass_transition_done_effects {
             self.apply_door_pass_transition_done_side_effects(assets, entity_id);
@@ -11313,11 +11418,9 @@ impl EngineInner {
         let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
             true
         } else {
-            let reachable =
-                self.world
-                    .fast_grid
-                    .is_reachable_thick(source, dest, entity_layer, half_diagonal);
-            reachable
+            self.world
+                .fast_grid
+                .is_reachable_thick(source, dest, entity_layer, half_diagonal)
         };
 
         // Before submitting a path request, check whether the actor's

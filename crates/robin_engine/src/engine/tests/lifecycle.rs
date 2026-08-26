@@ -5558,7 +5558,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[action as usize] = 0;
         engine.get_entity_mut(id).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(vec![script; 16]),
             std::sync::Arc::new(conversion),
         );
     }
@@ -5677,6 +5677,30 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             .current_frame
             > 0,
         "victim virgin increment must occur during initial attacker Done setup"
+    );
+    // Once DONE has latched, a TurnFast short-circuit still executes the
+    // Original Strangle tail exactly once.  tick_ability performs that
+    // increment itself; the engine wrapper must not add a second one.
+    {
+        let attacker_entity = engine.get_entity_mut(attacker).unwrap();
+        attacker_entity
+            .element_data_mut()
+            .set_direction_instantly(0);
+        attacker_entity.element_data_mut().set_direction_goal(1);
+        let victim_sprite = &mut engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .sprite;
+        victim_sprite.current_frame = 0;
+        victim_sprite.frame_count = 0;
+    }
+    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    let victim_sprite = &engine.get_entity(victim).unwrap().element_data().sprite;
+    assert_eq!(
+        (victim_sprite.current_frame, victim_sprite.frame_count),
+        (1, 0),
+        "the pre-action TurnFast path and normal Strangle tail must not both advance the victim"
     );
     engine.dispatch_ai_stimulus(
         victim,

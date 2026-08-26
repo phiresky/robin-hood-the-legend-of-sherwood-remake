@@ -116,12 +116,18 @@ enum RecordedInteractionIdentityError {
 /// sector, the route is a direct Move and must not gain a leading
 /// AssertPosition merely because the actor's raw sector differed earlier.
 fn target_interaction_assert_source_sector(
-    adapted_source_sector: u16,
+    adapted_source_sector: crate::position_interface::SectorHandle,
     target_sector: crate::position_interface::SectorHandle,
-) -> Result<Option<crate::position_interface::SectorHandle>, u16> {
-    let source_sector = crate::position_interface::SectorHandle::new(adapted_source_sector)
-        .ok_or(adapted_source_sector)?;
-    Ok((source_sector != target_sector).then_some(source_sector))
+) -> Option<crate::position_interface::SectorHandle> {
+    let same_sector = match (
+        adapted_source_sector.arena_index(),
+        target_sector.arena_index(),
+    ) {
+        (Some(source), Some(target)) => source == target,
+        (None, None) => adapted_source_sector == target_sector,
+        (Some(_), None) | (None, Some(_)) => false,
+    };
+    (!same_sector).then_some(adapted_source_sector)
 }
 
 impl EngineInner {
@@ -784,6 +790,7 @@ impl EngineInner {
                 running,
                 already_authorized,
                 goal_override,
+                goal_sector_index_override,
             } => {
                 self.apply_drop_ale_at(
                     *actor,
@@ -791,6 +798,7 @@ impl EngineInner {
                     *running,
                     *already_authorized,
                     *goal_override,
+                    *goal_sector_index_override,
                 );
             }
             ShieldSelectProtected {
@@ -1532,6 +1540,7 @@ impl EngineInner {
                 running,
                 already_authorized: _,
                 goal_override: _,
+                goal_sector_index_override: _,
             } => {
                 if *actor != recording_pc {
                     return;
@@ -1971,6 +1980,7 @@ impl EngineInner {
                     running,
                     already_authorized: false,
                     goal_override: None,
+                    goal_sector_index_override: None,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
                     // See Interaction arm — whole-sequence abort on
@@ -2080,6 +2090,7 @@ impl EngineInner {
                     running,
                     already_authorized,
                     goal_override,
+                    goal_sector_index_override,
                 } = &cmd
             {
                 self.apply_drop_ale_at_with_recovery(
@@ -2089,6 +2100,7 @@ impl EngineInner {
                     true,
                     *already_authorized,
                     *goal_override,
+                    *goal_sector_index_override,
                 );
                 posture_recovery_embedded = true;
             } else {
@@ -2955,9 +2967,7 @@ impl EngineInner {
             let (door, door_direction) = super::movement::current_door_for_route_source(entity);
             (
                 entity.element_data().position_map(),
-                entity
-                    .element_data()
-                    .sector()
+                super::ai::ai_view_position_sector(self, entity.element_data())
                     .unwrap_or_else(|| panic!("target interaction actor {actor:?} has no sector")),
                 entity.element_data().posture,
                 entity.actor_auth_info(),
@@ -2971,9 +2981,9 @@ impl EngineInner {
                 .unwrap_or_else(|| panic!("target interaction requires missing target {target:?}"));
             (
                 entity.element_data().position_map(),
-                entity.element_data().sector().unwrap_or_else(|| {
-                    panic!("target interaction target {target:?} has no sector")
-                }),
+                super::ai::ai_view_position_sector(self, entity.element_data()).unwrap_or_else(
+                    || panic!("target interaction target {target:?} has no sector"),
+                ),
                 entity.element_data().layer(),
                 entity.cxx_current_point_map().unwrap_or_else(|| {
                     panic!("target interaction target {target:?} has no current point")
@@ -2989,23 +2999,31 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright
         };
 
-        let (gate_path, gate_source_sector) = if actor_sector == target_sector {
+        let same_sector = match (actor_sector.arena_index(), target_sector.arena_index()) {
+            (Some(actor), Some(target)) => actor == target,
+            (None, None) => actor_sector == target_sector,
+            (Some(_), None) | (None, Some(_)) => false,
+        };
+        let (gate_path, gate_source_sector) = if same_sector {
             (Vec::new(), None)
         } else {
-            let (source_pos, source_sector) = super::movement::adapt_source_to_current_door(
-                &self.script_domains.interactables.doors,
-                door,
-                door_direction,
-            )
-            .map(|(position, sector, _)| (position, sector))
-            .unwrap_or((actor_pos, u16::from(actor_sector)));
+            let (source_pos, source_sector) =
+                super::movement::adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door,
+                    door_direction,
+                )
+                .map(|(position, sector, _)| (position, sector))
+                .unwrap_or((actor_pos, actor_sector));
             let level = self.world.fast_grid.level.clone();
-            let Some(path) = crate::gate::find_path_gates(
+            let Some(path) = crate::gate::find_path_gates_with_sector_indices(
                 &self.script_domains.interactables.doors,
                 (source_pos.x, source_pos.y),
-                source_sector,
+                source_sector.get(),
+                source_sector.arena_index(),
                 (target_pos.x, target_pos.y),
-                u16::from(target_sector),
+                target_sector.get(),
+                target_sector.arena_index(),
                 Some(&actor_auth),
                 false,
                 &|sector| self.building_sector_is_authorized(sector),
@@ -3027,12 +3045,7 @@ impl EngineInner {
             };
             (
                 path,
-                target_interaction_assert_source_sector(source_sector, target_sector)
-                    .unwrap_or_else(|source_sector| {
-                        panic!(
-                            "target interaction for {actor:?} adapted to invalid source sector {source_sector}"
-                        )
-                    }),
+                target_interaction_assert_source_sector(source_sector, target_sector),
             )
         };
 
@@ -3994,6 +4007,7 @@ impl EngineInner {
         running: bool,
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
     ) {
         self.apply_drop_ale_at_with_recovery(
             actor,
@@ -4002,6 +4016,7 @@ impl EngineInner {
             false,
             already_authorized,
             goal_override,
+            goal_sector_index_override,
         );
     }
 
@@ -4015,6 +4030,7 @@ impl EngineInner {
         append_posture_recovery: bool,
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
     ) {
         use crate::order::OrderType;
 
@@ -4067,11 +4083,36 @@ impl EngineInner {
             goal_override.is_some(),
             "resolved DropAle commands must carry both already_authorized and goal_override"
         );
+        assert!(
+            goal_sector_index_override.is_none() || goal_override.is_some(),
+            "DropAle exact goal-sector identity requires a goal_override"
+        );
         let (goal_sector, goal_layer) = if let Some((goal_sector, goal_layer)) = goal_override {
-            (
-                crate::position_interface::SectorHandle::new(u16::from(goal_sector)),
-                goal_layer,
-            )
+            let public_sector = u16::from(goal_sector);
+            let mut sector = crate::position_interface::SectorHandle::new(public_sector)
+                .unwrap_or_else(|| {
+                    panic!("DropAle goal_override has invalid public sector {public_sector}")
+                });
+            if let Some(index) = goal_sector_index_override {
+                let indexed_sector = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "DropAle exact goal-sector arena {index} is outside the FastFindGrid sector table"
+                        )
+                    });
+                assert_eq!(
+                    indexed_sector.sector_number, goal_sector,
+                    "DropAle exact goal-sector arena {index} has public sector {}, expected {goal_sector}",
+                    indexed_sector.sector_number,
+                );
+                sector = sector.with_arena_index(index);
+            }
+            (Some(sector), goal_layer)
         } else {
             let reference = self
                 .get_entity(actor)
@@ -4901,17 +4942,83 @@ mod tests {
 
     #[test]
     fn target_interaction_door_adaptation_omits_redundant_sector_assertion() {
+        use crate::coordinates::{MapBBox, MapPoint};
+        use crate::fast_find_grid::GridSector;
+        use crate::sector::{SectorNumber, SectorType};
+
         let target_sector = crate::position_interface::SectorHandle::new(51).unwrap();
 
         assert_eq!(
-            target_interaction_assert_source_sector(51, target_sector),
-            Ok(None),
+            target_interaction_assert_source_sector(
+                crate::position_interface::SectorHandle::new(51).unwrap(),
+                target_sector,
+            ),
+            None,
             "adapting door 10 from sector 48 onto its sector-51 far side must produce the Original's direct interaction Move"
         );
         assert_eq!(
-            target_interaction_assert_source_sector(48, target_sector),
-            Ok(crate::position_interface::SectorHandle::new(48)),
+            target_interaction_assert_source_sector(
+                crate::position_interface::SectorHandle::new(48).unwrap(),
+                target_sector,
+            ),
+            crate::position_interface::SectorHandle::new(48),
             "a genuinely distinct adapted source must retain AppendMoveToSequence's leading AssertPosition"
+        );
+
+        let source_index = crate::fast_find_grid::SectorIndex::new(17).unwrap();
+        let target_index = crate::fast_find_grid::SectorIndex::new(18).unwrap();
+        let exact_source = target_sector.with_arena_index(source_index);
+        let exact_target = target_sector.with_arena_index(target_index);
+        assert_eq!(
+            target_interaction_assert_source_sector(exact_source, exact_target),
+            Some(exact_source),
+            "overlapping public sector numbers are distinct Original RHSector pointers"
+        );
+
+        let mut engine = EngineInner::new();
+        let recovered_index = engine.world.fast_grid_mut().add_sector(
+            GridSector {
+                points: vec![
+                    MapPoint::new(0.0, 0.0),
+                    MapPoint::new(400.0, 0.0),
+                    MapPoint::new(400.0, 400.0),
+                    MapPoint::new(0.0, 400.0),
+                ],
+                bounding_box: MapBBox::from_coords(0.0, 0.0, 400.0, 400.0),
+                sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+                layer: 0,
+                sector_number: SectorNumber::new(51),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            0,
+        );
+        let mut actor = ElementData::default();
+        actor.set_position_map(MapPoint::new(100.0, 100.0));
+        actor.set_sector(Some(target_sector));
+        let recovered_source = crate::engine::ai::ai_view_position_sector(&engine, &actor)
+            .expect("number-only actor sector is recoverable from its position");
+        let exact_target = target_sector.with_arena_index(
+            crate::fast_find_grid::SectorIndex::new(recovered_index)
+                .expect("test arena index is valid"),
+        );
+        assert_eq!(
+            recovered_source, exact_target,
+            "loaded actors that retained only a public number recover Original's exact sector pointer"
+        );
+        assert_eq!(
+            target_interaction_assert_source_sector(recovered_source, exact_target),
+            None,
+            "same-sector target interactions must emit Move directly instead of AssertPosition then losing Move at the building tail"
         );
     }
 
@@ -5593,7 +5700,7 @@ mod tests {
         let (mut engine, assets, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
         assert_eq!(layer, 0);
@@ -5641,7 +5748,7 @@ mod tests {
         let (mut engine, _, pc_id, source, alias) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(180.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle target must resolve to a sector");
@@ -5685,7 +5792,7 @@ mod tests {
             0,
         );
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle patch target resolves through its underlying sector");
@@ -5728,6 +5835,7 @@ mod tests {
                 running: false,
                 already_authorized: false,
                 goal_override: None,
+                goal_sector_index_override: None,
             },
         );
 
@@ -5738,12 +5846,7 @@ mod tests {
 
     #[test]
     fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
-        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
-        engine
-            .players
-            .macro_store
-            .get_or_insert(pc_id)
-            .clear_slot(0);
+        let (mut engine, assets, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
         let authorized = crate::coordinates::MapPoint::new(2607.467_041, 881.610_474);
 
         engine.apply_command(
@@ -5756,7 +5859,8 @@ mod tests {
                 target_pos: authorized,
                 running: false,
                 already_authorized: true,
-                goal_override: Some((crate::sector::SectorNumber::new(55), 4)),
+                goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+                goal_sector_index_override: Some(goal_index),
             },
         );
 
@@ -5764,9 +5868,99 @@ mod tests {
             drop_ale_seek_goal(&engine),
             (
                 authorized,
-                crate::position_interface::SectorHandle::new(55),
-                4,
+                crate::position_interface::SectorHandle::new(0)
+                    .map(|sector| sector.with_arena_index(goal_index)),
+                0,
             )
+        );
+    }
+
+    #[test]
+    fn resolved_replay_drop_ale_without_exact_index_keeps_legacy_number_only_goal() {
+        let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        let authorized = crate::coordinates::MapPoint::new(180.0, 90.0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos: authorized,
+                running: false,
+                already_authorized: true,
+                goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+                goal_sector_index_override: None,
+            },
+        );
+
+        assert_eq!(
+            drop_ale_seek_goal(&engine),
+            (
+                authorized,
+                crate::position_interface::SectorHandle::new(0),
+                0,
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the FastFindGrid sector table")]
+    fn resolved_replay_drop_ale_rejects_out_of_range_exact_index() {
+        let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(0), 0)),
+            crate::fast_find_grid::SectorIndex::new(9999),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has public sector")]
+    fn resolved_replay_drop_ale_rejects_disagreeing_exact_index() {
+        let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level).sectors
+            [usize::from(goal_index)]
+        .sector_number = crate::sector::SectorNumber::new(1);
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(0), 0)),
+            Some(goal_index),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exact goal-sector identity requires a goal_override")]
+    fn drop_ale_rejects_exact_index_without_goal_override() {
+        let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            false,
+            None,
+            Some(goal_index),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "goal_override has invalid public sector")]
+    fn resolved_replay_drop_ale_rejects_invalid_public_sector() {
+        let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(-1), 0)),
+            None,
         );
     }
 
@@ -6739,6 +6933,7 @@ mod tests {
             crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
             false,
             false,
+            None,
             None,
         );
 

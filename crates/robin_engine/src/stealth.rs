@@ -165,20 +165,33 @@ pub fn can_leave_helping_climb(posture: Posture, action_state: ActionState) -> b
     ) && action_state == ActionState::Waiting
 }
 
-/// Execute leave-helping-climb: returns the transition info.
-///
-/// The carrier either has a partner still on their shoulders (two
-/// orders: climb-down + helping→upright) or they don't (single order:
-/// helping→upright).  We collapse to the single-order variant — the
-/// carried-partner state machine is driven separately through the
-/// carrier/carried entity fields (see the `ClimbUpOnShoulders` dispatch
-/// in tick.rs).
+/// Execute leave-helping-climb: returns the final stance transition.
 pub fn leave_helping_climb() -> StealthTransition {
     StealthTransition {
         animation: OrderType::TransitionHelpingClimbingWaitingUpright,
         result_posture: Posture::Upright,
         result_action_state: ActionState::Waiting,
         stop_first: false,
+    }
+}
+
+/// Exact order body appended by `RHElementActorPC::Translate` for
+/// `LEAVE_HELPING_CLIMB`.
+pub fn leave_helping_climb_orders(posture: Posture, has_carried: bool) -> &'static [OrderType] {
+    use OrderType::{
+        TransitionHelpingClimbingDown, TransitionHelpingClimbingWaitingUpright,
+        TransitionWaitingCarryingOnShouldersWaitingUpright,
+    };
+
+    match (posture, has_carried) {
+        (Posture::CarryingOnShoulders, true) => &[
+            TransitionHelpingClimbingDown,
+            TransitionHelpingClimbingWaitingUpright,
+        ],
+        (Posture::CarryingOnShoulders, false) => {
+            &[TransitionWaitingCarryingOnShouldersWaitingUpright]
+        }
+        _ => &[TransitionHelpingClimbingWaitingUpright],
     }
 }
 
@@ -687,6 +700,25 @@ mod tests {
             OrderType::TransitionWaitingUprightSimulatingBeggar
         );
         assert_eq!(t.result_posture, Posture::SimulatingBeggar);
+    }
+
+    #[test]
+    fn carried_helper_leave_queues_lower_then_stand() {
+        assert_eq!(
+            leave_helping_climb_orders(Posture::CarryingOnShoulders, true),
+            &[
+                OrderType::TransitionHelpingClimbingDown,
+                OrderType::TransitionHelpingClimbingWaitingUpright,
+            ]
+        );
+        assert_eq!(
+            leave_helping_climb_orders(Posture::CarryingOnShoulders, false),
+            &[OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright]
+        );
+        assert_eq!(
+            leave_helping_climb_orders(Posture::HelpingToClimb, false),
+            &[OrderType::TransitionHelpingClimbingWaitingUpright]
+        );
     }
 
     #[test]

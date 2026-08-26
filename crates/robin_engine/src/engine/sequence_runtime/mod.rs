@@ -1453,7 +1453,14 @@ impl WaitCommandContext<'_> {
         if let Some(animation) = animation {
             let id = crate::order::alloc_order_id(self.next_order_id);
             let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
-            order.compute_direction = false;
+            // Human::Translate deliberately delegates a plain dead-back wait
+            // to Actor::Translate. The base translator leaves RHOrder's
+            // default bComputeDirection=true intact, unlike the sword/bow
+            // dead-back arms handled above
+            // (`original-code/RHelementactorhuman.cpp:1014-1031`,
+            // `RHelementactor.cpp:3915-3943`). This can refresh the corpse's
+            // facing from a newly stamped placement destination.
+            order.compute_direction = animation == crate::order::OrderType::BeingDeadFallenBack;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
@@ -1785,10 +1792,18 @@ impl StealthCommandContext<'_> {
                 | Command::EnterHelpingClimb
                 | Command::LeaveHelpingClimb
         ) {
-            let id = crate::order::alloc_order_id(self.next_order_id);
-            let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
-            order.compute_direction = false;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            let has_carried = entity.pc_data().is_some_and(|pc| pc.carried.is_some());
+            let animations: &[crate::order::OrderType] = if command == Command::LeaveHelpingClimb {
+                crate::stealth::leave_helping_climb_orders(live_posture, has_carried)
+            } else {
+                std::slice::from_ref(&transition.animation)
+            };
+            for &animation in animations {
+                let id = crate::order::alloc_order_id(self.next_order_id);
+                let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
+                order.compute_direction = false;
+                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            }
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
@@ -2949,6 +2964,59 @@ mod sequence_phase_context_tests {
                 OrderType::FallingHitHarderUpright,
                 OrderType::WaitingUprightBored,
             ]
+        );
+    }
+
+    #[test]
+    fn plain_dead_back_wait_retains_base_actor_direction_computation() {
+        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::order::OrderType;
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::DeadBack,
+                ..Default::default()
+            },
+            actor: crate::element::ActorData {
+                action_state: ActionState::Waiting,
+                ..Default::default()
+            },
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 0,
+                ..Default::default()
+            },
+            soldier: Default::default(),
+        }));
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        wait.posture_after_transition = Posture::DeadBack;
+        wait.action_state_after_transition = ActionState::Waiting;
+        let sequence = engine.orders.sequence_manager.launch_element(wait);
+
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &crate::profiles::ProfileManager::default(),
+        }
+        .dispatch(owner, Command::Wait, sequence, 0);
+
+        let order = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("dead-back wait remains live")
+            .orders
+            .back()
+            .expect("dead-back wait translated to an order");
+        assert_eq!(order.order_type, OrderType::BeingDeadFallenBack);
+        assert!(
+            order.compute_direction,
+            "Actor::Translate keeps RHOrder's default bComputeDirection=true"
         );
     }
 

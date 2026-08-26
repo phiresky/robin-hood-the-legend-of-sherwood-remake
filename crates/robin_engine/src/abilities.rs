@@ -355,7 +355,11 @@ pub fn begin_carry(
         return BeginResult::Impossible;
     }
 
-    // Validate target: must exist, be human, out-of-order, in a carryable posture.
+    // Validate the same target-side invariants as
+    // RHElementActorPC::CheckSequenceElementValidity(TAKE_CORPSE). A body
+    // already linked to this PC remains valid: authentic restored states can
+    // retain that self-link while the PC is upright, and Original explicitly
+    // rejects only a *different* carrier (RHelementactorpc.cpp:6884-6909).
     let target_valid = match entities.get(target_id) {
         Some(e) => {
             if !e.is_human() {
@@ -364,11 +368,16 @@ pub fn begin_carry(
                 let posture = e.element_data().posture;
                 let unconscious = e.human_data().is_some_and(|h| h.unconscious);
                 let dead = e.is_dead();
-                (unconscious || dead)
+                let available_carrier = e
+                    .human_data()
+                    .is_some_and(|human| human.carrier.is_none_or(|carrier| carrier == carrier_id));
+                e.element_data().active
+                    && (unconscious || dead)
                     && matches!(
                         posture,
                         Posture::Lying | Posture::Dead | Posture::DeadBack | Posture::Tied
                     )
+                    && available_carrier
             }
         }
         None => false,
@@ -377,23 +386,16 @@ pub fn begin_carry(
         return BeginResult::Impossible;
     }
 
-    // Save target posture (Dead is mapped to DeadBack so the
-    // dropped-body posture restored later carries the back-down variant).
-    let target_posture = {
-        let target = entities[target_id].as_ref().unwrap();
-        let p = target.element_data().posture;
-        if p == Posture::Dead {
-            Posture::DeadBack
-        } else {
-            p
-        }
-    };
     let target_pos = {
         let target = entities[target_id].as_ref().unwrap();
         target.element_data().position_map()
     };
 
-    // Validate carrier: must be a living PC, not already carrying.
+    // Validate only the carrier invariants checked by Original. In particular,
+    // RHElementActorPC::CheckSequenceElementValidity(TAKE_CORPSE) never reads
+    // `mpCarried`: an authentic restored PC may still be linked to a different
+    // carried body while a new TakeCorpse is translated. Translate authors the
+    // pickup order anyway, and the first Execute replaces `mpCarried`.
     let carrier = match entities.get_mut(carrier_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
@@ -401,22 +403,7 @@ pub fn begin_carry(
     if !carrier.is_pc() || carrier.is_dead() {
         return BeginResult::Impossible;
     }
-    if carrier.pc_data().is_some_and(|pc| pc.carried.is_some()) {
-        return BeginResult::Impossible;
-    }
-
     let order_id = alloc_order_id(order_id_counter);
-
-    // Preserve the posture that DropCorpse must restore, but do not publish
-    // the carrier relationship during translation. Original assigns
-    // `mpCarried` and calls `SetCarrier(this)` only in the first Execute of
-    // TRANSITION_WAITING_UPRIGHT_CARRYING_CORPSE, after its validity check
-    // (RHelementactorpc.cpp:4835-4860). A command interrupted while an older
-    // transition prefix is still playing therefore has no partially grabbed
-    // body for SendCondolationCard(TAKE_CORPSE) to drop.
-    if let Some(pc) = carrier.pc_data_mut() {
-        pc.set_live_carried_posture(target_posture);
-    }
 
     // Set up the ability tracker and push the pickup animation order.
     let actor = match carrier.actor_data_mut() {
@@ -468,19 +455,36 @@ pub(crate) fn initialize_carry_relationship(
     carrier_id: EntityId,
     target_id: EntityId,
 ) {
+    // Original snapshots the new body's posture only when the pickup order
+    // first executes. Translation may still be playing a generated drop
+    // prefix for an older restored body, whose own mCarriedPosture must remain
+    // authoritative until that prefix releases it.
+    let target_posture = entities
+        .get(target_id)
+        .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"))
+        .element_data()
+        .posture;
+    let target_posture = if target_posture == Posture::Dead {
+        Posture::DeadBack
+    } else {
+        target_posture
+    };
     let carrier = entities
         .get_mut(carrier_id)
         .unwrap_or_else(|| panic!("Carry owner {carrier_id:?} vanished at initialization"));
     let pc = carrier
         .pc_data_mut()
         .unwrap_or_else(|| panic!("Carry owner {carrier_id:?} is not a PC"));
-    if let Some(existing) = pc.carried {
-        assert_eq!(
-            existing, target_id,
-            "Carry owner {carrier_id:?} acquired a different body before initialization"
-        );
-    } else {
-        pc.carried = Some(target_id);
+    // Original assigns mpCarried unconditionally. This intentionally replaces
+    // a stale/restored link to another body after the Execute-time validity
+    // check has accepted the new target.
+    let acquiring_target = pc.carried != Some(target_id);
+    pc.carried = Some(target_id);
+    if acquiring_target {
+        // This helper may be reached again while the pickup animation remains
+        // active. Original's assignment is guarded by IsInitialisation(), so
+        // do not resnapshot after CarryDone changes the target to Carried.
+        pc.set_live_carried_posture(target_posture);
     }
 
     let target = entities
@@ -489,14 +493,7 @@ pub(crate) fn initialize_carry_relationship(
     let human = target
         .human_data_mut()
         .unwrap_or_else(|| panic!("Carry target {target_id:?} is not human"));
-    if let Some(existing) = human.carrier {
-        assert_eq!(
-            existing, carrier_id,
-            "Carry target {target_id:?} acquired a different carrier before initialization"
-        );
-    } else {
-        human.carrier = Some(carrier_id);
-    }
+    human.carrier = Some(carrier_id);
     target
         .actor_data_mut()
         .unwrap_or_else(|| panic!("Carry target {target_id:?} is not an actor"))
@@ -2814,8 +2811,10 @@ struct CarrierSnapshot {
     target_frame: u16,
     target_frame_count: u16,
     /// The climber is still executing the animation that owns helper-side
-    /// synchronization. A stale sprite row is not enough: Original performs
-    /// SynchronizeAnim only from the live climbing Execute arm.
+    /// synchronization, including the terminal Execute edge before its
+    /// per-tick sprite motion latch is cleared. A stale sprite row alone is
+    /// not enough: Original performs SynchronizeAnim only from the live
+    /// climbing Execute arm.
     target_live_shoulder_ability: bool,
 }
 
@@ -3112,6 +3111,50 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
     }
 }
 
+/// Preserve the final `SynchronizeAnim` performed by a shoulder-climb
+/// `Execute` before order completion clears the climber's motion latch.
+///
+/// This deliberately updates only the helper sprite. The general carried
+/// transform pass remains after order propagation: moving that whole pass
+/// earlier changes the rider's movement result on the terminal tick.
+pub fn sync_terminal_shoulder_animations(entities: &mut Entities) {
+    let terminal_syncs: Vec<(EntityId, OrderType, u16, u16)> = entities
+        .pcs()
+        .filter_map(|(helper_pc_id, helper)| {
+            let target_id = helper.pc.carried?;
+            if helper.pc.live_carried_posture() != Posture::OnShoulders {
+                return None;
+            }
+            let target = entities.get(target_id)?;
+            let sprite = &target.element_data().sprite;
+            if sprite.last_motion_state != Some(crate::sprite::MotionState::Terminated) {
+                return None;
+            }
+            let helper_anim = match sprite.last_action {
+                OrderType::ClimbingUpOnShoulders => OrderType::TransitionHelpingClimbingUp,
+                OrderType::ClimbingDownFromShoulders => OrderType::TransitionHelpingClimbingDown,
+                _ => return None,
+            };
+            Some((
+                EntityId::Pc(helper_pc_id),
+                helper_anim,
+                sprite.current_frame,
+                sprite.frame_count,
+            ))
+        })
+        .collect();
+
+    for (helper_id, helper_anim, frame, frame_count) in terminal_syncs {
+        let Some(helper) = entities.get_mut(helper_id) else {
+            continue;
+        };
+        let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
+        let sprite = &mut helper.element_data_mut().sprite;
+        sprite.force_sprite_row(helper_anim, helper_dir);
+        sprite.synchronize_anim(frame, frame_count);
+    }
+}
+
 /// Synchronize the corpse carried by one PC from inside that PC's
 /// `WalkingWithCorpse` Execute arm.
 ///
@@ -3240,6 +3283,229 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    fn take_corpse_translation_fixture() -> (Entities, EntityId, EntityId, EntityId) {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::CarryingCorpse,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                ..Default::default()
+            },
+        })));
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Tied,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData {
+                unconscious: true,
+                ..Default::default()
+            },
+            pc: PcData {
+                life_points: 1,
+                ..Default::default()
+            },
+        })));
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Lying,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData {
+                unconscious: true,
+                ..Default::default()
+            },
+            pc: PcData {
+                life_points: 1,
+                ..Default::default()
+            },
+        })));
+        (
+            entities,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            EntityId::Pc(crate::entity_id::PcId(2)),
+        )
+    }
+
+    /// Seed3 linux3 Savegame_007 replay-011 and Savegame_008 replay-028:
+    /// restored PC 194 is CarryingCorpse/Waiting and remains reciprocally
+    /// linked to one body while TakeCorpse targets a second available body.
+    /// Original ignores `mpCarried` during validity, installs action 188, and
+    /// replaces that pointer only at the first Execute boundary.
+    #[test]
+    fn take_corpse_translation_accepts_restored_carry_link_and_first_execute_replaces_it() {
+        let (mut entities, carrier, old_target, target) = take_corpse_translation_fixture();
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(old_target);
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+        entities
+            .get_mut(old_target)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier);
+
+        let mut manager = SequenceManager::new();
+        let seq_id =
+            launch_ability_element(&mut manager, crate::element::Command::TakeCorpse, carrier);
+        let mut next_order_id = 300;
+        assert_eq!(
+            begin_carry(
+                &mut entities,
+                &mut manager,
+                carrier,
+                target,
+                seq_id,
+                0,
+                &mut next_order_id,
+            ),
+            BeginResult::Started
+        );
+
+        let element = manager.get_element(seq_id, 0).unwrap();
+        assert_eq!(element.command, crate::element::Command::TakeCorpse);
+        assert_eq!(
+            element.current_order().unwrap().order_type,
+            OrderType::TransitionWaitingUprightCarryingCorpse,
+            "manager-phase translation must expose Original action 188 instead of falling back to Wait"
+        );
+        assert_eq!(
+            entities.get(carrier).unwrap().pc_data().unwrap().carried,
+            Some(old_target),
+            "translation must not mutate the restored relationship before first Execute"
+        );
+        assert_eq!(
+            entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Tied,
+            "translation must preserve the old body's restored drop posture through its prefix"
+        );
+        assert_eq!(
+            entities
+                .get(old_target)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .carrier,
+            Some(carrier)
+        );
+        assert_eq!(
+            entities.get(target).unwrap().human_data().unwrap().carrier,
+            None
+        );
+
+        initialize_carry_relationship(&mut entities, carrier, target);
+        assert_eq!(
+            entities.get(carrier).unwrap().pc_data().unwrap().carried,
+            Some(target),
+            "first Execute must replace the restored mpCarried link"
+        );
+        assert_eq!(
+            entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Lying,
+            "first Execute must snapshot the new target's posture"
+        );
+        assert_eq!(
+            entities.get(target).unwrap().human_data().unwrap().carrier,
+            Some(carrier)
+        );
+        entities
+            .get_mut(target)
+            .unwrap()
+            .set_posture(Posture::Carried);
+        initialize_carry_relationship(&mut entities, carrier, target);
+        assert_eq!(
+            entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Lying,
+            "later Execute calls must not replace the first-Execute posture with Carried"
+        );
+        assert_eq!(
+            entities
+                .get(old_target)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .carrier,
+            Some(carrier),
+            "Original does not clear the old body's reciprocal pointer here"
+        );
+    }
+
+    #[test]
+    fn take_corpse_translation_rejects_inactive_or_foreign_carried_target() {
+        for invalid in ["inactive", "foreign_carrier"] {
+            let (mut entities, carrier, _old_target, target) = take_corpse_translation_fixture();
+            match invalid {
+                "inactive" => entities.get_mut(target).unwrap().element_data_mut().active = false,
+                "foreign_carrier" => {
+                    entities
+                        .get_mut(target)
+                        .unwrap()
+                        .human_data_mut()
+                        .unwrap()
+                        .carrier = Some(EntityId::Pc(crate::entity_id::PcId(99)));
+                }
+                _ => unreachable!(),
+            }
+            let mut manager = SequenceManager::new();
+            let seq_id =
+                launch_ability_element(&mut manager, crate::element::Command::TakeCorpse, carrier);
+            let mut next_order_id = 300;
+
+            assert_eq!(
+                begin_carry(
+                    &mut entities,
+                    &mut manager,
+                    carrier,
+                    target,
+                    seq_id,
+                    0,
+                    &mut next_order_id,
+                ),
+                BeginResult::Impossible,
+                "Original rejects the {invalid} TakeCorpse target"
+            );
+            assert!(manager.get_element(seq_id, 0).unwrap().orders.is_empty());
+        }
     }
 
     fn corpse_carry_fixture(carrier_action: OrderType) -> (Entities, EntityId, EntityId) {
@@ -4587,10 +4853,28 @@ mod tests {
         );
 
         {
+            let climber = entities.get_mut(climber_id).unwrap();
+            climber.element_data_mut().sprite.last_motion_state =
+                Some(crate::sprite::MotionState::Terminated);
+        }
+        sync_terminal_shoulder_animations(&mut entities);
+        let helper = entities.get(helper_id).unwrap().element_data();
+        assert_eq!(
+            (
+                helper.sprite.current_row,
+                helper.sprite.current_frame,
+                helper.sprite.frame_count,
+            ),
+            (100, 5, 1),
+            "the terminal climb Execute must synchronize the helper once before its motion latch clears"
+        );
+
+        {
             let rider = entities.get_mut(climber_id).unwrap().element_data_mut();
             rider.sprite.last_action = OrderType::WaitingOnShoulders;
             rider.sprite.current_frame = 2;
             rider.sprite.frame_count = u16::MAX;
+            rider.sprite.last_motion_state = None;
         }
         sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
         let rider = entities.get(climber_id).unwrap().element_data();

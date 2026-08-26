@@ -1101,7 +1101,25 @@ pub(crate) fn make_arrow_falling_down(
     // opens with its own `NewMove`, which re-anchors the old position onto
     // the impact point before the deflection step is applied.
     proj.element.sprite.position_iface.new_move();
-    proj.advance_trajectory_one_frame();
+    let exhausted = proj.advance_trajectory_one_frame();
+    if exhausted
+        && !proj.projectile.dive
+        && !proj.projectile.disappear
+        && proj.element.obstacle_index().is_none()
+    {
+        // A shield can throw an arrow away from an impact point which is
+        // already fractionally below the ground plane.  Original's nested
+        // `Hourglass` does not stop at the empty replacement trajectory: it
+        // continues into `HitObstacle`, whose bare-ground branch snaps the
+        // elevation to +0.001 and recomputes the map position.  The shared
+        // trajectory helper deliberately leaves impact handling to callers,
+        // so perform that terminal branch here as part of the nested call.
+        let mut position = proj.element.position();
+        position.z = 0.001;
+        proj.element.set_position(position);
+        proj.element
+            .set_position_map_preserving_3d(position.to_map());
+    }
 }
 
 pub(super) fn preserve_falling_hole_disappearance(
@@ -1127,6 +1145,7 @@ pub(crate) fn projectile_shield_holder(
     increment: WorldVec3D,
 ) -> Option<EntityId> {
     let flight_dir = (increment.x, increment.y * INVERSE_ASPECT_RATIO);
+    let crosses_ground = (new.z > 0.0 && old.z < 0.0) || (new.z < 0.0 && old.z > 0.0);
     for (actor_id, actor) in entities.actors() {
         let holder: EntityId = actor_id.into();
         if Some(holder) == shooter || !actor.is_active() || actor.is_dead() {
@@ -1144,7 +1163,8 @@ pub(crate) fn projectile_shield_holder(
         let (look_x, look_y) =
             crate::element::direction_vector_16(actor.element_data().direction());
         if look_x * flight_dir.0 + look_y * flight_dir.1 < 0.0
-            && obstacle.is_blocking_ray_3d([new.x, new.y, new.z], [old.x, old.y, old.z])
+            && (crosses_ground
+                || obstacle.is_blocking_ray_3d([new.x, new.y, new.z], [old.x, old.y, old.z]))
         {
             return Some(holder);
         }
@@ -1793,6 +1813,13 @@ fn tick_arrows_matching(
             // coordinates.
             let old_pos = [arrow_old.x, arrow_old.y, arrow_old.z];
             let new_pos = [arrow_new.x, arrow_new.y, arrow_new.z];
+            // Original passes `bTestGround=true` to `IsReachable` for each
+            // candidate shield.  That routine reports a strict Z=0 crossing
+            // before it inspects the supplied obstacle list, so a ground-
+            // crossing projectile is attributed to the first front-facing
+            // shield even when the retained shield geometry is far away.
+            let crosses_ground = (arrow_new.z > 0.0 && arrow_old.z < 0.0)
+                || (arrow_new.z < 0.0 && arrow_old.z > 0.0);
 
             // Flight direction with Y un-compressed.
             let flight_dir = (vx, vy * INVERSE_ASPECT_RATIO);
@@ -1803,8 +1830,10 @@ fn tick_arrows_matching(
                 }
                 // (a) Arrow from front: dot(look_dir, flight_dir) < 0.
                 let dot = shield.look_dir.0 * flight_dir.0 + shield.look_dir.1 * flight_dir.1;
-                // (b) Arrow path intersects shield geometry.
-                let blocking = dot < 0.0 && shield.obstacle.is_blocking_ray_3d(new_pos, old_pos);
+                // (b) The shared reachability call reports either its
+                // ground-plane test or an intersection with shield geometry.
+                let blocking = dot < 0.0
+                    && (crosses_ground || shield.obstacle.is_blocking_ray_3d(new_pos, old_pos));
                 tracing::trace!(
                     ?arrow_id,
                     holder = ?shield.holder_id,

@@ -3390,6 +3390,7 @@ impl EngineInner {
                             patrol_chief: ss.patrol_chief,
                             antagonist: ss.antagonist,
                             detected_body: ss.detected_body,
+                            blood_alcohol: ss.blood_alcohol,
                             duty_flag: ss.duty_flag,
                             is_tower_guard: ss.is_tower_guard,
                             company_number: ss.company_number,

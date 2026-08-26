@@ -4885,6 +4885,22 @@ impl EngineInner {
                     && actor.active_ability.done_effect_applied)
                     .then_some(actor.active_ability.target)
                     .flatten()
+            })
+            .map(|victim_id| {
+                let sprite = &self
+                    .get_entity(victim_id)
+                    .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+                    .element_data()
+                    .sprite;
+                (
+                    victim_id,
+                    (
+                        sprite.last_action,
+                        sprite.last_processed_order_id,
+                        sprite.current_frame,
+                        sprite.frame_count,
+                    ),
+                )
             });
         let sprite_frozen = self.actors_frozen();
         let results = crate::abilities::tick_ability(
@@ -4894,9 +4910,25 @@ impl EngineInner {
             actor_id,
             sprite_frozen,
         );
-        if let Some(victim_id) = strangle_victim_after_attacker
+        if let Some((victim_id, victim_sprite_before)) = strangle_victim_after_attacker
             && !sprite_frozen
+            && self
+                .get_entity(victim_id)
+                .map(|victim| {
+                    let sprite = &victim.element_data().sprite;
+                    (
+                        sprite.last_action,
+                        sprite.last_processed_order_id,
+                        sprite.current_frame,
+                        sprite.frame_count,
+                    ) == victim_sprite_before
+                })
+                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
         {
+            // Execute(STRANGLING) has one unconditional tail increment once
+            // the attacker's action is past DONE.  The TurnFast short-circuit
+            // path performs that increment inside tick_ability; only supply
+            // the normal-path tail when the victim was not advanced there.
             self.get_entity_mut(victim_id)
                 .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
                 .element_data_mut()

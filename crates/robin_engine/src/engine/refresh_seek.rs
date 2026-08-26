@@ -215,10 +215,14 @@ pub(crate) struct ResolvedEntitySeek {
 impl crate::engine::EngineInner {
     /// Execute Original's explicit `RHNONANIMATION_REFRESHING_SEEK` hold.
     ///
-    /// Unlike ordinary movement arms, this order calls `RefreshSeek`
-    /// unconditionally: there is no countdown or target-displacement gate.
-    /// It is installed when a final Move|SEEK reaches a building and executes
-    /// on the actor's following Hourglass slot.
+    /// Unlike ordinary movement arms, this order has no countdown or
+    /// target-displacement gate. It does retain the entity-arm null-target
+    /// sentinel: `StartPostSeekSequence` clears the actor's `mpSeekTarget`
+    /// while the route element keeps its stale `GetElement()` pointer, and
+    /// Original terminates instead of refreshing in that state
+    /// (`original-code/RHelementactor.cpp:3241-3256`). It is installed when a
+    /// final Move|SEEK reaches a building and executes on the actor's following
+    /// Hourglass slot.
     pub(super) fn tick_refreshing_seek_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -232,7 +236,7 @@ impl crate::engine::EngineInner {
         else {
             return None;
         };
-        let Some((target, action, flags, tolerance)) = self
+        let Some((action, flags, tolerance)) = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
@@ -242,7 +246,6 @@ impl crate::engine::EngineInner {
                     return None;
                 }
                 let SequenceElementData::Movement {
-                    element: target,
                     action,
                     flags,
                     tolerance,
@@ -253,14 +256,24 @@ impl crate::engine::EngineInner {
                         "RefreshingSeek owner {owner:?} selected non-movement element {seq_id:?}/{elem_idx}"
                     )
                 };
-                Some((*target, *action, *flags, *tolerance))
+                Some((*action, *flags, *tolerance))
             })
         else {
             return None;
         };
 
+        let actor = self
+            .get_entity(owner)
+            .and_then(|entity| entity.actor_data())
+            .unwrap_or_else(|| panic!("RefreshingSeek owner {owner:?} is not an actor"));
+        let target = if actor.continuation.seek_to_point {
+            None
+        } else {
+            actor.seek_target
+        };
         let Some(target) = target else {
-            // The point-target arm returns TERMINATED without refreshing.
+            // The point-target arm and an entity arm whose post-seek handoff
+            // cleared mpSeekTarget both return TERMINATED without refreshing.
             // Actor::Hourglass owns the subsequent DoNextOrder; retiring the
             // element here would skip that base completion boundary and lose
             // a synchronously exposed successor.

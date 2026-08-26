@@ -4294,10 +4294,14 @@ impl AiController {
     /// Original calls `Face(noise.posOrigin)`, whose `PositionToPoint3D`
     /// recovers height through `posOrigin.pSector`. A schema trace cannot
     /// reconstruct that pointer for every transient noise, but it records the
-    /// same noise elevation separately. Treating the missing sector as ground
-    /// level can rotate a high-ground listener into the opposite quadrant.
+    /// same noise elevation separately. A valid layer tells those normalized
+    /// positions apart from an authoritative null `RHposition`: Original
+    /// `RHArtificialIntelligence::PositionToPoint3D` treats a null sector as
+    /// ground level regardless of the separately stored noise elevation
+    /// (`RHartificialintelligence.cpp:3707-3755`). Projectile impact positions
+    /// retain the `0xffff` layer sentinel when their sector really was null.
     pub fn face_noise_origin_with_ctx(&mut self, noise: &Noise, ctx: &AiContext) {
-        if noise.origin.sector.is_some() {
+        if noise.origin.sector.is_some() || noise.origin.level == u16::MAX {
             self.face_position_3d_with_ctx(noise.origin, ctx);
         } else {
             self.face_position_at_elevation_with_ctx(noise.origin, f32::from(noise.elevation), ctx);

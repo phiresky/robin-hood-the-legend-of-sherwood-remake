@@ -5630,7 +5630,10 @@ fn setup_ai_state_native_probe(
     (engine, assets, actor)
 }
 
-fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> EntityId {
+fn install_unrelated_multi_exit_building_actor(
+    engine: &mut EngineInner,
+    probe_owner: EntityId,
+) -> EntityId {
     use crate::element::ActiveDoorPass;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -5688,10 +5691,11 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
         },
     ];
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
-    // Include the probe owner's ordinary sector as well. Once this helper
-    // installs an exact arena, every live public sector used by the fixture
-    // must remain resolvable; otherwise building the owner view correctly
-    // rejects the synthetic arena as incomplete.
+    // The state-change probe owner already lives in public sector 1. Once
+    // this helper installs exact topology for its unrelated building, that
+    // owner must also have a real arena sector: Original carries an
+    // `RHSector*`, and a nonempty arena cannot validly resolve a sector that
+    // the fixture omitted altogether.
     for (index, sector_number) in [
         building_sector,
         SectorNumber::new(7),
@@ -5725,6 +5729,20 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
             underlying_sector: None,
         });
     }
+    let probe_sector_index = crate::fast_find_grid::SectorIndex::new(
+        u32::try_from(level.sectors.len() - 1).expect("probe sector arena index exceeds u32"),
+    )
+    .expect("probe sector arena index is valid");
+    engine
+        .get_entity_mut(probe_owner)
+        .expect("state-change probe owner exists")
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_sector_topology(
+            crate::position_interface::SectorHandle::new(1),
+            Some(probe_sector_index),
+        );
     door_actor
 }
 
@@ -6224,7 +6242,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     let sim = crate::sim_rng::test_context();
     let (mut seeking_engine, seeking_assets, seeking) =
         setup_ai_state_native_probe("SeekingRngProbe", 3);
-    let door_actor = install_unrelated_multi_exit_building_actor(&mut seeking_engine);
+    let door_actor = install_unrelated_multi_exit_building_actor(&mut seeking_engine, seeking);
     select_unrelated_pass_door_fixture(&mut seeking_engine, door_actor);
     {
         let entity = seeking_engine.world.entities.get_mut(seeking).unwrap();
@@ -6274,7 +6292,8 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
 
     let (mut fleeing_engine, fleeing_assets, fleeing) =
         setup_ai_state_native_probe("FleeingRngProbe", 5);
-    let fleeing_door_actor = install_unrelated_multi_exit_building_actor(&mut fleeing_engine);
+    let fleeing_door_actor =
+        install_unrelated_multi_exit_building_actor(&mut fleeing_engine, fleeing);
     select_unrelated_pass_door_fixture(&mut fleeing_engine, fleeing_door_actor);
     let (_, fleeing_trace) = with_draw_trace(|| {
         run_ai_state_native_probe(&mut fleeing_engine, &fleeing_assets, fleeing);
@@ -6290,7 +6309,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
     use crate::sim_rng::{RngSite, with_draw_trace};
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
-    let door_actor = install_unrelated_multi_exit_building_actor(&mut engine);
+    let door_actor = install_unrelated_multi_exit_building_actor(&mut engine, owner);
     select_unrelated_pass_door_fixture(&mut engine, door_actor);
     engine
         .get_entity_mut(owner)
@@ -6339,7 +6358,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     use std::collections::VecDeque;
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
-    let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine);
+    let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine, owner);
     let entering_officer = engine.add_entity(make_scripted_soldier(""));
     let owner_camp = engine
         .get_entity(owner)

@@ -6,13 +6,12 @@ impl EngineInner {
     /// Find a projection-area sight obstacle on `layer` whose
     /// screen-space plane contains `pos`.
     ///
-    /// Used by the elevation-line emergency fallbacks: iterate plane
-    /// sectors in the spatial bucket at `(pos, layer 0)`, then keep
-    /// the one whose attached sight obstacle's layer matches and whose
-    /// screen-space sector plane contains the position.  We don't carry
-    /// a plane-sector registry yet — but every plane sector wraps a
-    /// single projection-area obstacle, so iterating projection-area
-    /// obstacles directly gives the same answer.
+    /// Used by the elevation-line emergency fallbacks: iterate authored
+    /// plane sectors in the spatial bucket at `(pos, layer 0)`, then keep
+    /// the last one whose attached sight obstacle's layer matches and whose
+    /// screen-space sector plane contains the position. Plane sectors are
+    /// created and inserted in static sight-obstacle order; runtime dynamic
+    /// obstacles do not own one.
     pub(in crate::engine) fn find_plane_obstacle_at(
         &self,
         assets: &LevelAssets,
@@ -29,6 +28,7 @@ impl EngineInner {
     /// probe has left the current polygon but the actor has not, the
     /// old polygon is accepted.  Use `bbox_at` = probe and
     /// `polygon_at` = current map position to capture that.
+    ///
     pub(in crate::engine) fn find_plane_obstacle_split(
         &self,
         assets: &LevelAssets,
@@ -36,22 +36,71 @@ impl EngineInner {
         bbox_at: MapPoint,
         polygon_at: MapPoint,
     ) -> Option<u16> {
-        for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
-            if !obs.is_projection_area() {
-                continue;
-            }
-            if obs.layer != layer {
-                continue;
-            }
-            if !obs.box_projection.contains_point(bbox_at) {
-                continue;
-            }
-            if !obs.contains_point_projection(polygon_at) {
-                continue;
-            }
-            return Some(oi as u16);
-        }
-        None
+        let grid_width = i32::from(self.world.fast_grid.level.grid_width);
+        let grid_height = i32::from(self.world.fast_grid.level.grid_height);
+        assert!(
+            grid_width > 0 && grid_height > 0,
+            "elevation emergency queried before the fast-find grid was sized"
+        );
+        // Original GetBlockIndex casts each coordinate to SWORD before the
+        // arithmetic shift and directly indexes the grid. Out-of-domain
+        // coordinates violate its contract; do not turn them into a fake
+        // edge-block lookup.
+        let truncated_x = bbox_at.x.trunc();
+        let truncated_y = bbox_at.y.trunc();
+        assert!(
+            bbox_at.x.is_finite()
+                && bbox_at.y.is_finite()
+                && truncated_x >= f32::from(i16::MIN)
+                && truncated_x <= f32::from(i16::MAX)
+                && truncated_y >= f32::from(i16::MIN)
+                && truncated_y <= f32::from(i16::MAX),
+            "elevation emergency probe {bbox_at:?} is outside Original's SWORD coordinate domain"
+        );
+        let cell_x = i32::from(truncated_x as i16) >> 6;
+        let cell_y = i32::from(truncated_y as i16) >> 6;
+        assert!(
+            (0..grid_width).contains(&cell_x) && (0..grid_height).contains(&cell_y),
+            "elevation emergency probe {bbox_at:?} resolves outside the fast-find grid"
+        );
+        let block_min = MapPoint::new((cell_x << 6) as f32, (cell_y << 6) as f32);
+        let block_bbox = MapBBox::from_coords(
+            block_min.x,
+            block_min.y,
+            block_min.x + crate::fast_find_grid::GRID_CELL_SIZE_F,
+            block_min.y + crate::fast_find_grid::GRID_CELL_SIZE_F,
+        );
+
+        assets
+            .static_sight_obstacles
+            .iter()
+            .enumerate()
+            .filter(|(_, obs)| {
+                let projected_vertices = obs
+                    .obstacle_points
+                    .iter()
+                    .map(|point| crate::geo2d::GeoPoint2D {
+                        x: point.x,
+                        y: point.y - point.z_top,
+                    })
+                    .collect::<Vec<_>>();
+                obs.is_projection_area()
+                    && obs.layer == layer
+                    // Mirror AddSector's polygon-vs-block registration gate
+                    // before applying CrossElevationLine's point predicates.
+                    && crate::geo2d::polygon_vertices_intersect_bbox(
+                        &projected_vertices,
+                        &block_bbox.to_geo(),
+                    )
+                    && obs.box_projection.contains_point(bbox_at)
+                    && obs.contains_point_projection(polygon_at)
+            })
+            .map(|(index, _)| {
+                u16::try_from(index).unwrap_or_else(|_| {
+                    panic!("projection-area obstacle index {index} does not fit in u16")
+                })
+            })
+            .last()
     }
 
     pub(in crate::engine) fn crossed_elevation_obstacle(
@@ -907,5 +956,142 @@ impl EngineInner {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projection_obstacle(id: u32, z: f32) -> crate::sight_obstacle::SightObstacle {
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+            id,
+            crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+        );
+        obstacle.layer = 0;
+        obstacle.sector = 0;
+        obstacle.obstacle_points = vec![
+            crate::sight_obstacle::ObstaclePoint {
+                x: 0.0,
+                y: 0.0,
+                z_bottom: 0.0,
+                z_top: z,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 100.0,
+                y: 0.0,
+                z_bottom: 0.0,
+                z_top: z,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 100.0,
+                y: 100.0,
+                z_bottom: 0.0,
+                z_top: z,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 0.0,
+                y: 100.0,
+                z_bottom: 0.0,
+                z_top: z,
+            },
+        ];
+        obstacle.rebuild_geometry();
+        obstacle
+    }
+
+    #[test]
+    fn elevation_emergency_uses_last_authored_plane_and_ignores_dynamic_obstacles() {
+        let first = projection_obstacle(10, 0.0);
+        let last_authored = projection_obstacle(11, 0.0);
+        let dynamic = projection_obstacle(12, 0.0);
+        let assets = LevelAssets {
+            static_sight_obstacles: std::sync::Arc::new(vec![first, last_authored]),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        // Plane-sector activity is independent of the sight obstacle's patch
+        // activity in Original; an inactive authored obstacle still owns an
+        // active emergency plane sector unless that sector is toggled itself.
+        engine.world.static_sight_obstacle_active = vec![true, false];
+        engine.world.dynamic_sight_obstacles.push(dynamic);
+
+        assert_eq!(
+            engine.find_plane_obstacle_at(&assets, 0, MapPoint::new(50.0, 50.0)),
+            Some(1),
+            "Original visits every containing plane sector and leaves the last authored one selected"
+        );
+        assert_eq!(
+            engine.find_plane_obstacle_split(
+                &assets,
+                0,
+                MapPoint::new(60.0, 60.0),
+                MapPoint::new(50.0, 50.0),
+            ),
+            Some(1),
+            "the asymmetric second emergency uses the same authored-sector ordering"
+        );
+    }
+
+    #[test]
+    fn split_elevation_emergency_excludes_planes_absent_from_the_probe_block() {
+        let registered = projection_obstacle(20, 0.0);
+        let mut absent_from_probe_block = projection_obstacle(21, 0.0);
+        // A U-shaped authored plane: current=(10,10) is in the left leg and
+        // probe=(70,10) is inside its broad bbox, but the projected polygon
+        // never intersects the probe's x=64..128/y=0..64 grid block. Original
+        // AddSector therefore does not register this later plane there.
+        absent_from_probe_block.obstacle_points = [
+            (0.0, 0.0),
+            (50.0, 0.0),
+            (50.0, 70.0),
+            (150.0, 70.0),
+            (150.0, 0.0),
+            (200.0, 0.0),
+            (200.0, 120.0),
+            (0.0, 120.0),
+        ]
+        .into_iter()
+        .map(|(x, y)| crate::sight_obstacle::ObstaclePoint {
+            x,
+            y,
+            z_bottom: 0.0,
+            z_top: 0.0,
+        })
+        .collect();
+        absent_from_probe_block.rebuild_geometry();
+        let assets = LevelAssets {
+            static_sight_obstacles: std::sync::Arc::new(vec![registered, absent_from_probe_block]),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+
+        assert_eq!(
+            engine.find_plane_obstacle_split(
+                &assets,
+                0,
+                MapPoint::new(70.0, 10.0),
+                MapPoint::new(10.0, 10.0),
+            ),
+            Some(0),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "resolves outside the fast-find grid")]
+    fn elevation_emergency_does_not_clamp_an_outside_probe_to_the_edge_block() {
+        let assets = LevelAssets {
+            static_sight_obstacles: std::sync::Arc::new(vec![projection_obstacle(30, 0.0)]),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+
+        let _ = engine.find_plane_obstacle_at(&assets, 0, MapPoint::new(-1.0, 10.0));
     }
 }

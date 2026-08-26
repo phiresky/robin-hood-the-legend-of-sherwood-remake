@@ -42,6 +42,7 @@ if [[ "$fail_fast" != 0 && "$fail_fast" != 1 ]]; then
     exit 2
 fi
 fail_fast_stop=${PARITY_SWEEP_FAIL_FAST_STOP:-}
+fail_fast_token=${PARITY_SWEEP_FAIL_FAST_TOKEN:-}
 fail_fast_gate=
 if [[ "$fail_fast" == 1 \
     && ( "$shard" != 0 || "$shards" != 1 || "$global_concurrency" != 1 ) \
@@ -55,6 +56,10 @@ fi
 if [[ -n "$fail_fast_stop" ]]; then
     if [[ "$fail_fast_stop" != /* || "$fail_fast_stop" == *$'\n'* ]]; then
         printf 'error: PARITY_SWEEP_FAIL_FAST_STOP must be an absolute newline-free path\n' >&2
+        exit 2
+    fi
+    if [[ ! "$fail_fast_token" =~ ^[0-9a-f]{32,64}$ ]]; then
+        printf 'error: PARITY_SWEEP_FAIL_FAST_TOKEN must contain 32-64 lowercase hexadecimal digits\n' >&2
         exit 2
     fi
     mkdir -p -- "${fail_fast_stop%/*}" || exit 2
@@ -127,7 +132,10 @@ publish_fail_fast_stop() {
     fi
     temporary=$(mktemp "${fail_fast_stop}.tmp.XXXXXX") \
         || { exec {stop_gate_fd}>&-; return 1; }
-    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$temporary" \
+    {
+        printf 'FAIL_FAST_BATCH_TOKEN=%s\n' "$fail_fast_token"
+        printf 'FAILED_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } >"$temporary" \
         || { rm -f -- "$temporary"; exec {stop_gate_fd}>&-; return 1; }
     # A hard link is an atomic create-without-replace. Multiple failing shards
     # may race here; exactly one publishes and all observe the same stop path.

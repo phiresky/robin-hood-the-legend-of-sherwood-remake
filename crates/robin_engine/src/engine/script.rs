@@ -961,12 +961,17 @@ impl EngineInner {
                     if index >= script.bindings.script_point_count {
                         return None;
                     }
+                    let sector_number = *script.bindings.location_sectors.get(index)?;
+                    let sector = script
+                        .bindings
+                        .location_sector_handles
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .or_else(|| crate::position_interface::SectorHandle::new(sector_number))?;
                     Some((
                         *script.bindings.location_positions.get(index)?,
-                        Some((
-                            *script.bindings.location_layers.get(index)?,
-                            *script.bindings.location_sectors.get(index)?,
-                        )),
+                        Some((*script.bindings.location_layers.get(index)?, sector)),
                     ))
                 } else {
                     let computed = script
@@ -974,7 +979,12 @@ impl EngineInner {
                         .computed_locations
                         .get(index - script.bindings.script_location_count)?
                         .as_ref()?;
-                    Some((computed.position, computed.layer.zip(computed.sector)))
+                    let sector = computed.sector_handle.or_else(|| {
+                        computed
+                            .sector
+                            .and_then(crate::position_interface::SectorHandle::new)
+                    });
+                    Some((computed.position, computed.layer.zip(sector)))
                 }
             });
             let Some(((x, y), dest_layer_sector)) = resolved else {
@@ -993,16 +1003,34 @@ impl EngineInner {
                     .element_data_mut();
                 element.set_position_map(crate::coordinates::MapPoint { x, y });
                 element.set_layer(layer);
-                element.set_sector(crate::position_interface::SectorHandle::new(sector));
-                let valid_motion = self.world.fast_grid.level.sectors.iter().any(|candidate| {
-                    candidate.sector_number.get() == sector as i16
-                        && candidate.layer == layer
-                        && candidate.sector_type.is_motion()
-                        && candidate.sector_type.is_area()
-                });
+                element
+                    .sprite
+                    .position_iface
+                    .set_sector_topology(Some(sector), sector.arena_index());
+                let valid_motion = if let Some(index) = sector.arena_index() {
+                    self.world
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(index))
+                        .is_some_and(|candidate| {
+                            candidate.sector_number.get() == sector.get() as i16
+                                && candidate.layer == layer
+                                && candidate.sector_type.is_motion()
+                                && candidate.sector_type.is_area()
+                        })
+                } else {
+                    self.world.fast_grid.level.sectors.iter().any(|candidate| {
+                        candidate.sector_number.get() == sector.get() as i16
+                            && candidate.layer == layer
+                            && candidate.sector_type.is_motion()
+                            && candidate.sector_type.is_area()
+                    })
+                };
                 if !valid_motion {
                     tracing::warn!(
-                        "SetActorLocation: location {location} references non-motion sector {sector}"
+                        "SetActorLocation: location {location} references non-motion sector {}",
+                        sector.get()
                     );
                     return Ok(0);
                 }
@@ -1014,10 +1042,7 @@ impl EngineInner {
                     actor_handle,
                     x,
                     y,
-                    dest_layer_sector: dest_layer_sector.and_then(|(layer, sector)| {
-                        crate::position_interface::SectorHandle::new(sector)
-                            .map(|sector| (layer, sector))
-                    }),
+                    dest_layer_sector,
                     spawn_elevation_probe: None,
                 }],
             );
@@ -3445,6 +3470,25 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_ai_owner_work_for_boundary_mode(
+            sim,
+            assets,
+            owner,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    pub(super) fn drain_ai_owner_work_for_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
             Enemy,
@@ -4211,13 +4255,23 @@ impl EngineInner {
                     } else {
                         // Ordinary ReturnToDuty resumes on the same call stack
                         // and recursively closes its completion callbacks.
-                        self.drain_direct_ai_owner_boundary_mode(
-                            sim,
-                            owner,
-                            assets,
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        );
+                        if surface_completion {
+                            self.drain_direct_ai_owner_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        } else {
+                            self.drain_direct_ai_owner_prefix_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        }
                     }
                     continue;
                 }
@@ -4308,6 +4362,7 @@ impl EngineInner {
                             &self.orders.sequence_manager,
                             owner,
                             target_id,
+                            |element| crate::engine::ai::ai_view_position_sector(self, element),
                             &|sector| self.building_sector_is_authorized(sector),
                             &|sector| self.get_sector_lift_type(sector),
                         )
@@ -4432,6 +4487,7 @@ impl EngineInner {
                             &self.orders.sequence_manager,
                             owner,
                             target_id,
+                            |element| crate::engine::ai::ai_view_position_sector(self, element),
                             &|sector| self.building_sector_is_authorized(sector),
                             &|sector| self.get_sector_lift_type(sector),
                         )
@@ -5608,15 +5664,17 @@ impl EngineInner {
                     sprite.display_order_ref = None;
                     sprite.behind_display_order_ref = false;
 
-                    // Projection-area refresh: if the native told us the
-                    // destination's layer/sector, look up the new
-                    // projection area and stamp its obstacle + material
-                    // on the actor.  Computed (non-static) locations
-                    // don't carry layer/sector so the refresh is
-                    // skipped — the obstacle only gets rebound when
-                    // the destination was a real script point or
-                    // script sector.
-                    if let Some((layer, sector)) = dest_layer_sector {
+                    // Ordinary SetActorLocation refreshes the projection
+                    // obstacle from the destination point. RecordEnterGame
+                    // deliberately does not: Original sets its outside 3D
+                    // spawn, layer, and sector without calling SetObstacle,
+                    // retaining the actor's existing plane while it walks
+                    // back onto the map (`RHScript.cpp:5822-5837`).
+                    // Computed (non-static) locations likewise carry no
+                    // destination topology and skip the refresh.
+                    if let Some((layer, sector)) = dest_layer_sector
+                        && spawn_elevation_probe.is_none()
+                    {
                         let new_obstacle =
                             self.get_projection_area_index(assets, sector.get(), layer, pt);
                         let new_material = new_obstacle.and_then(|oi| {
@@ -5923,10 +5981,13 @@ impl EngineInner {
             return;
         };
 
-        // Look up the first gate's `point_in` and the building's sector
-        // number. Sector number comes from the grid sector tagged
-        // `building_index == bld_idx` (populated at level load).
-        let (gate_point_in, sector_num) = {
+        // Look up the first gate's `point_in` and the exact building sector.
+        // Original stores the `RHSectorBuilding*` itself on the actor, while
+        // the actor's layer is the separate special layer.  Retain both the
+        // public number and arena object here: recovering by number + actor
+        // layer is impossible because building sectors live on the lift
+        // layer.
+        let (gate_point_in, building_sector) = {
             let gate_handle = self
                 .script_domains
                 .buildings
@@ -5938,14 +5999,31 @@ impl EngineInner {
                 .and_then(crate::natives::ScriptHandleCodec::door_index)
                 .and_then(|di| self.script_domains.interactables.doors.get(di))
                 .map(|d| d.point_in);
-            let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
-                if gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16) {
-                    Some(gs.sector_number)
-                } else {
-                    None
-                }
+            let mut sectors = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .iter()
+                .enumerate()
+                .filter(|(_, gs)| {
+                    gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16)
+                });
+            let first_sector = sectors.next().map(|(index, gs)| (index, gs.sector_number));
+            assert!(
+                sectors.next().is_none(),
+                "PutActorInBuilding: building {building} resolves to multiple grid sectors"
+            );
+            let sector = first_sector.map(|(index, sector_number)| {
+                let public = crate::position_interface::SectorHandle::new(u16::from(sector_number))
+                    .expect("building sector uses the null public-sector sentinel");
+                let arena = crate::fast_find_grid::SectorIndex::new(
+                    u32::try_from(index).expect("building sector arena index exceeds u32"),
+                )
+                .expect("building sector arena index equals the null sentinel");
+                public.with_arena_index(arena)
             });
-            (point_in, sn)
+            (point_in, sector)
         };
 
         let Some(point_in) = gate_point_in else {
@@ -5954,7 +6032,7 @@ impl EngineInner {
             );
             return;
         };
-        let Some(sector_num) = sector_num else {
+        let Some(building_sector) = building_sector else {
             tracing::warn!(
                 "PutActorInBuilding: building {building} has no grid sector — cannot position actor"
             );
@@ -5970,9 +6048,9 @@ impl EngineInner {
             elem.hidden_in_building = true;
             elem.active = false;
             elem.set_layer(special_layer);
-            elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-                sector_num,
-            )));
+            elem.sprite
+                .position_iface
+                .set_sector_topology(Some(building_sector), building_sector.arena_index());
             elem.set_position_map(point_in);
             elem.update_grid_cell();
             // After `SetPositionMap` on the gate's point-in, re-derive
@@ -6023,16 +6101,6 @@ impl EngineInner {
                     let elem = carried_entity.element_data_mut();
                     elem.hidden_in_building = true;
                     elem.active = false;
-                    elem.set_layer(special_layer);
-                    elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-                        sector_num,
-                    )));
-                    elem.set_position_map(point_in);
-                    elem.update_grid_cell();
-                    if carried_entity.actor_data().is_some() {
-                        let pi = carried_entity.position_iface_mut();
-                        pi.set_map_position(point_in);
-                    }
                 }
                 // Push the carried into the occupants list.
                 if bld_idx >= self.script_domains.buildings.occupants.len() {
@@ -6078,7 +6146,8 @@ impl EngineInner {
 
         tracing::debug!(
             "PutActorInBuilding: actor={actor} building={building} \
-             → layer={special_layer}, sector={sector_num}, pos=({:.1},{:.1})",
+             → layer={special_layer}, sector={}, pos=({:.1},{:.1})",
+            building_sector.get(),
             point_in.x,
             point_in.y,
         );
@@ -6104,6 +6173,123 @@ mod script_context_tests {
             classes: vec![startup],
         })
         .expect("minimal StartUp script must load")
+    }
+
+    #[test]
+    fn put_actor_in_building_retains_exact_sector_across_special_layer() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(8);
+        let lift_layer = engine.world.fast_grid.lift_layer();
+        let special_layer = engine.world.fast_grid.level.special_layer;
+        assert_ne!(lift_layer, special_layer);
+
+        let public = crate::sector::SectorNumber::new(353);
+        let arena_raw = engine.world.fast_grid_mut().add_sector(
+            crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION
+                    | crate::sector::SectorType::AREA
+                    | crate::sector::SectorType::BUILDING,
+                layer: lift_layer,
+                sector_number: public,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: crate::sector::BuildingIdx::new(0),
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            lift_layer,
+        );
+        let arena = crate::fast_find_grid::SectorIndex::new(arena_raw)
+            .expect("test building arena index is valid");
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_in: crate::coordinates::MapPoint::new(1222.0, 2078.0),
+                layer_in: lift_layer,
+                sector_in: public,
+                sector_in_index: Some(arena),
+                ..Default::default()
+            });
+        engine.script_domains.buildings.gates = vec![vec![
+            crate::natives::ScriptHandleCodec::door_handle_from_index(0),
+        ]];
+
+        let mut carried_element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorCivilian,
+            active: true,
+            ..Default::default()
+        };
+        carried_element.set_layer(2);
+        carried_element.set_sector(crate::position_interface::SectorHandle::new(12));
+        carried_element.set_position_map(crate::coordinates::MapPoint::new(80.0, 90.0));
+        let carried_id = engine.add_entity(crate::element::Entity::Civilian(
+            crate::element::ActorCivilian {
+                element: carried_element,
+                actor: Default::default(),
+                human: Default::default(),
+                npc: Default::default(),
+                civilian: Default::default(),
+            },
+        ));
+        let actor_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                carried: Some(carried_id),
+                ..Default::default()
+            },
+        }));
+        engine.put_actor_in_building(
+            crate::natives::ScriptHandleCodec::actor_handle(actor_id),
+            crate::natives::ScriptHandleCodec::building_handle_from_index(0),
+        );
+
+        let actor = engine
+            .get_entity(actor_id)
+            .expect("scripted building occupant remains live");
+        assert_eq!(actor.element_data().layer(), special_layer);
+        let sector = actor
+            .element_data()
+            .sector()
+            .expect("scripted building occupant retains a sector");
+        assert_eq!(sector.get(), u16::from(public));
+        assert_eq!(sector.arena_index(), Some(arena));
+        assert_eq!(
+            crate::engine::ai::ai_view_position_sector(&engine, actor.element_data()),
+            Some(sector),
+            "AI Position consumes the retained building pointer without trying to recover it from the actor's different layer"
+        );
+
+        let carried = engine
+            .get_entity(carried_id)
+            .expect("carried actor remains live after recursive building entry");
+        assert!(!carried.element_data().active);
+        assert!(carried.element_data().hidden_in_building);
+        assert_eq!(carried.element_data().layer(), 2);
+        let carried_sector = carried.element_data().sector().unwrap();
+        assert_eq!(carried_sector.get(), 12);
+        assert_eq!(carried_sector.arena_index(), None);
+        assert_eq!(
+            carried.element_data().position_map(),
+            crate::coordinates::MapPoint::new(80.0, 90.0),
+            "RHScript::PutActorInBulding changes only the requested actor's topology and position"
+        );
     }
 
     #[test]
@@ -6263,6 +6449,157 @@ mod script_context_tests {
                 .custom_minimap_dot,
             crate::minimap::CustomDot::NotCustomized as u16
         );
+    }
+
+    #[test]
+    fn record_enter_game_preserves_projection_plane_while_set_actor_location_refreshes_it() {
+        let sim = crate::sim_rng::test_context();
+        let obstacle = crate::position_interface::ObstacleHandle::new(86)
+            .expect("test obstacle handle is valid");
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.0,
+            bz: 0.0,
+            dz: 90.00101,
+        };
+
+        for (spawn_elevation_probe, expected_obstacle, expected_plane, expected_material) in [
+            (
+                Some((20.0, 30.0)),
+                Some(obstacle),
+                plane,
+                crate::element::GameMaterial::Stone,
+            ),
+            (
+                None,
+                crate::position_interface::ObstacleHandle::new(0),
+                crate::position_interface::PlaneZCoeffs {
+                    az: 0.0,
+                    bz: 0.0,
+                    dz: 10.0,
+                },
+                crate::element::GameMaterial::Wood,
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            engine.world.fast_grid_mut().size_map(8, 8);
+            engine.world.fast_grid_mut().allocate_layers(1);
+            let sector_number = crate::sector::SectorNumber::new(0);
+            let sector_index = engine.world.fast_grid_mut().add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: Vec::new(),
+                    bounding_box: crate::coordinates::MapBBox::new(),
+                    sector_type: crate::sector::SectorType::MOTION
+                        | crate::sector::SectorType::AREA,
+                    layer: 0,
+                    sector_number,
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+            let sector = crate::position_interface::SectorHandle::new(0)
+                .expect("test sector handle is valid")
+                .with_arena_index(
+                    crate::fast_find_grid::SectorIndex::new(sector_index)
+                        .expect("test arena sector index is valid"),
+                );
+            let mut replacement = crate::sight_obstacle::SightObstacle::new(
+                1,
+                crate::sight_obstacle::SIGHTOBSTACLE_SOLID
+                    | crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+            );
+            replacement.obstacle_points = vec![
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 0.0,
+                    y: 0.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 2000.0,
+                    y: 0.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 2000.0,
+                    y: 3000.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+                crate::sight_obstacle::ObstaclePoint {
+                    x: 0.0,
+                    y: 3000.0,
+                    z_bottom: 0.0,
+                    z_top: 10.0,
+                },
+            ];
+            replacement.top_plane_points = [
+                [0.0, 0.0, 10.0],
+                [2000.0, 0.0, 10.0],
+                [2000.0, 3000.0, 10.0],
+            ];
+            replacement.layer = 0;
+            replacement.sector = 0;
+            replacement.material = crate::element::GameMaterial::Wood as u8;
+            replacement.rebuild_geometry();
+            let assets = LevelAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![replacement]),
+                ..LevelAssets::default()
+            };
+            let mut element = crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            };
+            element.set_obstacle_index(Some(obstacle), Some(plane));
+            element.set_material(crate::element::GameMaterial::Stone);
+            engine
+                .world
+                .entities
+                .push(Some(crate::element::Entity::Soldier(
+                    crate::element::ActorSoldier {
+                        element,
+                        actor: Default::default(),
+                        human: Default::default(),
+                        npc: Default::default(),
+                        soldier: Default::default(),
+                    },
+                )));
+            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
+
+            engine.apply_host_commands(
+                &sim,
+                &assets,
+                vec![crate::natives::EngineCommand::SetActorLocation {
+                    actor_handle,
+                    x: 1000.0,
+                    y: 2000.0,
+                    dest_layer_sector: Some((0, sector)),
+                    spawn_elevation_probe,
+                }],
+            );
+
+            let entity = engine
+                .get_entity(engine.entity_id_for_index(0).expect("test actor entity"))
+                .expect("test actor survives location command");
+            assert_eq!(entity.position_iface().get_obstacle(), expected_obstacle);
+            assert_eq!(entity.position_iface().get_plane(), Some(&expected_plane));
+            assert_eq!(entity.position_iface().get_material(), expected_material);
+            if spawn_elevation_probe.is_some() {
+                assert_eq!(entity.position_iface().get_position().z, 10.0);
+                assert_eq!(entity.position_iface().map_position().y, 2000.0);
+            }
+        }
     }
 
     #[test]

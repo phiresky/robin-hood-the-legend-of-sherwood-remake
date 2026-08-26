@@ -323,8 +323,15 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_
 # increment when IsReachableThick succeeds. The same-relative schema-14 trace
 # exercises the same save/RNG/input seed and matches Rust through exact EOF.
 parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_032/replay-002-session-0001.jsonl.zst
-# Existing current-Original replacement (same save/RNG/input seed, 1,500 frames):
-# parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
+# Proven current-Original replacement (same save, RNG seed 1, random-input
+# seed 9002, and 1,500 frames):
+# parity-save-replays/60s-random-input/schema16-replacements-20260823/traces/Savegame_nicouzouf/Profile_001/Savegame_032/replay-002-session-0001.jsonl.zst
+# Recorder SHA-256 cf752e03264b5593fe05e3c548a9763f6bb151c0ce440f44f53591aa4d1f3ea1;
+# compressed trace SHA-256 182c1fefcd3db98fea138504c2e440be822c3e8010ac5cfdeb5ed22c2885e49f.
+# The current optimized runner (SHA-256
+# 044fc4e9395df75616e604167a82faec327e07982c995ab02a20792d84c84ea6)
+# matched all 1,500 frames exactly on 2026-08-23. The replacement key, not
+# these stale schema-12 bytes, is the permanent EOF-ledger entry.
 # Stale schema-12 anti-collision oracle. At frame 6743 the archive retains
 # increment_map.x 0xbefcbc1d after the actor's deviated recovery. Both the
 # current Original binary (sha256 72d435beaafb0475447ce6910d7a944391df8e9e6e6ae016b016d4f42816b444)

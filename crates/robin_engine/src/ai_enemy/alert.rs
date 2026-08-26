@@ -159,9 +159,10 @@ fn alert_soldier_sort_distance(
     dx * dx + dy * dy + dz * dz
 }
 
-/// Normal (non-drunken) `Q_SHALL_I_STAY_ON_MY_POST` branch selection.
+/// `Q_SHALL_I_STAY_ON_MY_POST` branch selection.
 ///
-/// Original enters the outdoor answers only when
+/// Original tests alcohol first. A sufficiently drunk soldier stays on post
+/// even while inactive or indoors. It enters the normal outdoor answers only when
 /// `IsActiveAndOutsideBuilding()` is true. Inactive soldiers therefore use
 /// the indoor answer (`false`) and are allowed to leave even when their
 /// profile marks them as duty soldiers.
@@ -171,8 +172,10 @@ fn alert_soldier_stays_on_post(
     is_tower_guard: bool,
     duty_flag: bool,
     company_number: u16,
+    blood_alcohol: u8,
 ) -> bool {
-    active && !in_building && (is_tower_guard || duty_flag || company_number == 100)
+    i32::from(blood_alcohol) > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
+        || (active && !in_building && (is_tower_guard || duty_flag || company_number == 100))
 }
 
 /// Preserve `AlertSoldiers`' two positive, strict radius predicates.
@@ -582,9 +585,10 @@ impl EnemyAi {
             // is_allowed_to_leave_his_post || patrol_chief == me.
             // `Q_SHALL_I_STAY_ON_MY_POST`
             // returns true outdoors for tower guards, duty soldiers, and
-            // company-100 soldiers; indoors (L11057) it always returns
-            // false, so they're always allowed to leave.
-            // Original's AnswerQuestion first checks
+            // company-100 soldiers. Its drunk answer returns true before
+            // selecting the normal active/outdoor or indoor branch; otherwise
+            // the indoor answer is false, so those soldiers may leave.
+            // After the drunk branch, Original's AnswerQuestion checks
             // IsActiveAndOutsideBuilding(). Inactive soldiers are absent
             // from `entity_views`, but that must select the indoor answer,
             // not be treated as active and outdoors.
@@ -594,6 +598,7 @@ impl EnemyAi {
                 cs.is_tower_guard,
                 cs.duty_flag,
                 cs.company_number,
+                cs.blood_alcohol,
             );
             let allowed_to_leave = !stays_on_post;
             let patrol_chief_is_me = cs
@@ -1806,6 +1811,7 @@ mod tests {
             patrol_chief: None,
             antagonist: 0,
             detected_body: 0,
+            blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -1978,9 +1984,85 @@ mod tests {
 
     #[test]
     fn inactive_duty_soldier_uses_indoor_stay_on_post_answer() {
-        assert!(!alert_soldier_stays_on_post(false, false, false, true, 0));
-        assert!(alert_soldier_stays_on_post(true, false, false, true, 0));
-        assert!(!alert_soldier_stays_on_post(true, true, false, true, 0));
+        assert!(!alert_soldier_stays_on_post(
+            false, false, false, true, 0, 0
+        ));
+        assert!(alert_soldier_stays_on_post(true, false, false, true, 0, 0));
+        assert!(!alert_soldier_stays_on_post(true, true, false, true, 0, 0));
+    }
+
+    #[test]
+    fn drunkenness_precedes_active_outdoor_stay_on_post_branch() {
+        let limit = crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT as u8;
+        assert!(!alert_soldier_stays_on_post(
+            false, false, false, false, 0, limit
+        ));
+        assert!(alert_soldier_stays_on_post(
+            false,
+            false,
+            false,
+            false,
+            0,
+            limit + 1
+        ));
+        assert!(alert_soldier_stays_on_post(
+            true,
+            true,
+            false,
+            false,
+            0,
+            limit + 1
+        ));
+    }
+
+    #[test]
+    fn patrol_chief_can_alert_drunk_soldier_despite_stay_on_post_answer() {
+        let candidate_position = Position {
+            x: 10.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(96, soldier_entity_view(candidate_position));
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut candidate = alert_candidate(96, candidate_position);
+        candidate.blood_alcohol = (crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT + 1) as u8;
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(candidate.clone());
+
+        let mut unrelated_officer = EnemyAi::new(99);
+        unrelated_officer.soldier_profile_rank = ProfileRank::Officer;
+        assert!(!unrelated_officer.alert_soldiers(
+            Position::default(),
+            0,
+            &AiGlobalState::default(),
+            None,
+            &ctx,
+            &tick,
+            AlertSoldiersFailureContinuation::None,
+        ));
+
+        tick.camp_soldiers[0].patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(99),
+        ));
+        let mut patrol_chief = EnemyAi::new(99);
+        patrol_chief.soldier_profile_rank = ProfileRank::Officer;
+        assert!(patrol_chief.alert_soldiers(
+            Position::default(),
+            0,
+            &AiGlobalState::default(),
+            None,
+            &ctx,
+            &tick,
+            AlertSoldiersFailureContinuation::None,
+        ));
+        assert_eq!(
+            patrol_chief.base.outbox.reentrant.cross_npc_actions.len(),
+            1
+        );
     }
 
     #[test]

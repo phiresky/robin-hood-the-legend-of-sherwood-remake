@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace=$(pwd)
-mkdir -p "$workspace/.codex-tmp"
-test_root=$(mktemp -d "$workspace/.codex-tmp/native-conversion-prepass-test.XXXXXX")
-trap 'rm -rf -- "$test_root"' EXIT
+repository=$(pwd)
+mkdir -p "$repository/.codex-tmp"
+test_root=$(mktemp -d "$repository/.codex-tmp/native-conversion-prepass-test.XXXXXX")
+workspace=$test_root
+cleanup() {
+    if [[ -n ${parallel_barrier:-} && -d "$parallel_barrier" ]]; then
+        : >"$parallel_barrier/release"
+    fi
+    if [[ -n ${parallel_pid:-} ]]; then
+        wait "$parallel_pid" 2>/dev/null || true
+    fi
+    rm -rf -- "$test_root"
+}
+trap cleanup EXIT
 
 runner="$test_root/fake-runner"
 invocations="$test_root/invocations"
@@ -40,6 +50,14 @@ fi
 if [[ "$trace" == *mutate-bundle* && -n ${FAKE_MUTATE_BUNDLE_WRAPPER:-} ]]; then
     printf 'tampered during conversion\n' >>"$FAKE_MUTATE_BUNDLE_WRAPPER"
 fi
+if [[ -n ${FAKE_CONVERT_BARRIER_DIR:-} ]]; then
+    mkdir -p -- "$FAKE_CONVERT_BARRIER_DIR/active"
+    : >"$FAKE_CONVERT_BARRIER_DIR/active/$BASHPID"
+    while [[ ! -e "$FAKE_CONVERT_BARRIER_DIR/release" ]]; do
+        sleep 0.05
+    done
+    rm -f -- "$FAKE_CONVERT_BARRIER_DIR/active/$BASHPID"
+fi
 printf 'native:%s\n' "$(<"$trace")" >"$trace.parity.bitcode.zst"
 rm -f -- "$trace"
 printf 'converted %s; deleted the recording\n' "$trace"
@@ -68,15 +86,162 @@ run_prepass() {
     env FAKE_CONVERT_INVOCATIONS="$invocations" \
         FAKE_LOADER_INVOCATIONS="${FAKE_LOADER_INVOCATIONS:-}" \
         FAKE_MUTATE_BUNDLE_WRAPPER="${FAKE_MUTATE_BUNDLE_WRAPPER:-}" \
+        FAKE_CONVERT_BARRIER_DIR="${FAKE_CONVERT_BARRIER_DIR:-}" \
         NATIVE_CONVERT_JOBS=2 \
         NATIVE_CONVERT_TIMEOUT_SECONDS=3600 \
         NATIVE_CONVERT_OUTER_LOCK="$test_root/global.lock" \
         NATIVE_CONVERT_MIN_FREE_KIB=0 \
         NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB=0 \
         NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER=1 \
-        "$@" scripts/run_native_conversion_prepass.sh \
+        NATIVE_CONVERT_TEST_MEMINFO=/proc/meminfo \
+        "$@" "$repository/scripts/run_native_conversion_prepass.sh" \
             "$workspace" "$corpus" "$selected_runner" "$selected_sha" "$audit"
 }
+
+# Eight jobs are allowed, are all admitted at once for independent traces, and
+# still charge the configured memory reserve once per worker. Concurrent-corpus
+# mode uses the same bounded parallelism at idle CPU/I/O priority.
+parallel_corpus="$test_root/corpus-parallel-eight"
+parallel_audit="$test_root/audit-parallel-eight"
+parallel_barrier="$test_root/parallel-eight-barrier"
+make_corpus "$parallel_corpus"
+mkdir -p "$parallel_barrier/active"
+for index in {01..09}; do
+    add_source "$parallel_corpus" "$index-parallel"
+done
+FAKE_CONVERT_BARRIER_DIR="$parallel_barrier" \
+    run_prepass "$parallel_corpus" "$parallel_audit" NATIVE_CONVERT_JOBS=0008 &
+parallel_pid=$!
+parallel_count=0
+for _ in {1..200}; do
+    parallel_count=$(find "$parallel_barrier/active" -type f 2>/dev/null | wc -l)
+    (( parallel_count == 8 )) && break
+    sleep 0.05
+done
+if (( parallel_count != 8 )); then
+    : >"$parallel_barrier/release"
+    wait "$parallel_pid" || true
+    parallel_pid=
+    printf 'test failure: eight conversion workers were not admitted concurrently (saw %s)\n' \
+        "$parallel_count" >&2
+    exit 1
+fi
+: >"$parallel_barrier/release"
+wait "$parallel_pid"
+parallel_pid=
+[[ -f "$parallel_audit/COMPLETE" ]]
+[[ "$(wc -l <"$parallel_audit/native.SHA256SUMS")" == 9 ]]
+grep -Fxq 'JOBS=8' "$parallel_audit/provenance.env"
+
+limit_corpus="$test_root/corpus-job-limit"
+make_corpus "$limit_corpus"
+add_source "$limit_corpus" 01-limit
+before=$(wc -l <"$invocations")
+if run_prepass "$limit_corpus" "$test_root/audit-job-limit" NATIVE_CONVERT_JOBS=9; then
+    printf 'test failure: accepted more than eight conversion jobs\n' >&2
+    exit 1
+fi
+for huge_jobs in 18446744073709551616 999999999999999999999999999999999999999999; do
+    if run_prepass "$limit_corpus" "$test_root/audit-job-limit-$huge_jobs" \
+        NATIVE_CONVERT_JOBS="$huge_jobs"
+    then
+        printf 'test failure: accepted overflowing conversion job count %s\n' \
+            "$huge_jobs" >&2
+        exit 1
+    fi
+done
+if run_prepass "$limit_corpus" "$test_root/audit-job-leading-zero-nine" \
+    NATIVE_CONVERT_JOBS=00000000000000000000000000000000000009
+then
+    printf 'test failure: accepted over-limit conversion jobs hidden by leading zeroes\n' >&2
+    exit 1
+fi
+other_corpus="$test_root/corpus-other-corpora-parallel"
+other_audit="$test_root/audit-other-corpora-parallel"
+other_barrier="$test_root/other-corpora-parallel-barrier"
+make_corpus "$other_corpus"
+mkdir -p "$other_barrier/active"
+for index in {01..04}; do add_source "$other_corpus" "$index-other"; done
+FAKE_CONVERT_BARRIER_DIR="$other_barrier" run_prepass "$other_corpus" "$other_audit" \
+    NATIVE_CONVERT_JOBS=3 NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 &
+parallel_pid=$!
+parallel_count=0
+for _ in {1..200}; do
+    parallel_count=$(find "$other_barrier/active" -type f 2>/dev/null | wc -l)
+    (( parallel_count == 3 )) && break
+    sleep 0.05
+done
+[[ "$parallel_count" == 3 ]]
+other_second_corpus="$test_root/corpus-other-corpora-second"
+make_corpus "$other_second_corpus"
+add_source "$other_second_corpus" 01-second
+if run_prepass "$other_second_corpus" "$test_root/audit-other-corpora-second" \
+    NATIVE_CONVERT_JOBS=1 NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1
+then
+    printf 'test failure: concurrent-campaign singleton admitted a second corpus\n' >&2
+    exit 1
+fi
+: >"$other_barrier/release"
+wait "$parallel_pid"
+parallel_pid=
+grep -Fxq 'JOBS=3' "$other_audit/provenance.env"
+grep -Fxq 'ALLOW_OTHER_CORPORA=1' "$other_audit/provenance.env"
+grep -Fxq 'NICE=19' "$other_audit/provenance.env"
+grep -Fxq 'IONICE_CLASS=3' "$other_audit/provenance.env"
+before=$(wc -l <"$invocations")
+for concurrent_jobs in 4 8; do
+    rejected_corpus="$test_root/corpus-other-rejected-$concurrent_jobs"
+    make_corpus "$rejected_corpus"
+    add_source "$rejected_corpus" 01-rejected
+    if run_prepass "$rejected_corpus" "$test_root/audit-other-rejected-$concurrent_jobs" \
+        NATIVE_CONVERT_JOBS="$concurrent_jobs" NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1
+    then
+        printf 'test failure: accepted %s jobs in concurrent-campaign mode\n' \
+            "$concurrent_jobs" >&2
+        exit 1
+    fi
+done
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+test_meminfo="$test_root/meminfo"
+printf 'MemTotal:       100000 kB\nMemAvailable:    90000 kB\n' >"$test_meminfo"
+# One 20,000-KiB worker fits the injected 90,000-KiB availability, while eight
+# require 160,000 KiB. The fixture is accepted only with the direct-runner test
+# escape hatch, so production admission remains tied to /proc/meminfo.
+if run_prepass "$limit_corpus" "$test_root/audit-memory-limit" \
+    NATIVE_CONVERT_JOBS=8 \
+    NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB=20000 \
+    NATIVE_CONVERT_TEST_MEMINFO="$test_meminfo"
+then
+    printf 'test failure: eight jobs bypassed the per-worker memory gate\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+if run_prepass "$limit_corpus" "$test_root/audit-memory-overflow" \
+    NATIVE_CONVERT_JOBS=8 \
+    NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB=1152921504606846976
+then
+    printf 'test failure: accepted a per-worker memory reserve that overflows eight-job arithmetic\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+disk_total_kib=$(df -Pk -- "$limit_corpus" | awk 'NR == 2 {print $2}')
+if run_prepass "$limit_corpus" "$test_root/audit-disk-limit" \
+    NATIVE_CONVERT_MIN_FREE_KIB="$((disk_total_kib + 1))"
+then
+    printf 'test failure: bypassed free-disk admission above filesystem capacity\n' >&2
+    exit 1
+fi
+if run_prepass "$limit_corpus" "$test_root/audit-disk-overflow" \
+    NATIVE_CONVERT_MIN_FREE_KIB=9223372036854775808
+then
+    printf 'test failure: accepted a free-disk reserve outside signed arithmetic\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+: >"$invocations"
 
 corpus="$test_root/corpus-pass"
 audit="$test_root/audit-pass"
@@ -282,6 +447,15 @@ make_corpus "$bundle_corpus"
 add_source "$bundle_corpus" 01-bundle
 loader_invocations="$test_root/loader-invocations"
 : >"$loader_invocations"
+before=$(wc -l <"$invocations")
+if TEST_RUNNER="$bundle" TEST_RUNNER_SHA="$bundle_sha" \
+    run_prepass "$bundle_corpus" "$test_root/audit-bundle-meminfo-fixture" \
+        NATIVE_CONVERT_TEST_MEMINFO="$test_meminfo"
+then
+    printf 'test failure: packaged runner accepted test meminfo injection\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$before" ]]
 TEST_RUNNER="$bundle" TEST_RUNNER_SHA="$bundle_sha" \
     FAKE_LOADER_INVOCATIONS="$loader_invocations" LD_LIBRARY_PATH=/poison \
     run_prepass "$bundle_corpus" "$test_root/audit-bundle"
@@ -387,7 +561,7 @@ then
 fi
 [[ ! -e "$test_root/audit-bundle-during-run/COMPLETE" ]]
 
-if NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER=1 scripts/run_native_conversion_prepass.sh \
+if NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER=1 "$repository/scripts/run_native_conversion_prepass.sh" \
     "$workspace" "$corpus" "$runner" "${runner_sha%?}0" "$test_root/audit-sha"
 then
     printf 'test failure: accepted incorrect runner hash\n' >&2

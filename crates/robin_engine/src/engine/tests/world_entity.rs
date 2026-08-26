@@ -4011,6 +4011,74 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
 }
 
 #[test]
+fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::sector::{SectorNumber, SectorType};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let square = |min: f32, max: f32| GridSector {
+        points: vec![
+            MapPoint::new(min, min),
+            MapPoint::new(max, min),
+            MapPoint::new(max, max),
+            MapPoint::new(min, max),
+        ],
+        bounding_box: MapBBox::from_coords(min, min, max, max),
+        sector_number: SectorNumber::new(88),
+        layer: 2,
+        sector_type: SectorType::MOTION,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+    engine.world.fast_grid_mut().level_mut().sectors =
+        vec![square(0.0, 100.0), square(600.0, 800.0)];
+
+    let Entity::Soldier(owner_entity) = engine.get_entity_mut(owner).unwrap() else {
+        panic!("fighter owner changed kind")
+    };
+    owner_entity.element.active = true;
+    owner_entity.npc.life_points = 100;
+    owner_entity
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("fighter owner has Enemy AI")
+        .base
+        .me = owner.index();
+
+    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    target_element.active = true;
+    target_element.set_position_map(MapPoint::new(684.0, 745.0));
+    target_element.set_layer(2);
+    target_element.set_sector(crate::position_interface::SectorHandle::new(88));
+    assert_eq!(target_element.sector().unwrap().arena_index(), None);
+
+    let registry = engine.build_full_fighter_registry_for_test(owner, &assets);
+    let target_sector = registry
+        .iter()
+        .find(|fighter| fighter.handle == target.index())
+        .and_then(|fighter| fighter.position.sector)
+        .expect("target fighter snapshot has a sector");
+    assert_eq!(u16::from(target_sector), 88);
+    assert_eq!(target_sector.arena_index(), SectorIndex::new(1));
+}
+
+#[test]
 fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
 
@@ -4371,7 +4439,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let me_sector = crate::position_interface::SectorHandle::new(1);
-    let me_sector_index = crate::fast_find_grid::SectorIndex::new(1);
 
     for (id, position) in [
         (owner_id, MapPoint::new(100.0, 0.0)),
@@ -4380,9 +4447,12 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
-        entity
-            .position_iface_mut()
-            .set_sector_topology(me_sector, me_sector_index);
+        // Schema-12 actors can retain only the public sector number even
+        // though the loaded gate graph has exact arena identities. Original
+        // Position(actor) still supplies the exact RHSector* to the roof
+        // fallback lookup, so exercise the runtime recovery path here.
+        entity.element_data_mut().set_sector(me_sector);
+        assert_eq!(entity.element_data().sector().unwrap().arena_index(), None);
     }
     let owner = engine
         .get_entity_mut(owner_id)
@@ -4431,6 +4501,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         &engine.orders.sequence_manager,
         owner_id,
         target_id,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
         &|_| true,
         &|_| None,
     )
@@ -4492,13 +4563,48 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         "an ordinary route failure registers before this frame's manager boundary"
     );
 
-    // Without the selected PassDoor, both ordinary live positions are in the
-    // same sector. The roof special case must remain absent so the caller can
-    // retain couldn't-reachpoint and take its normal emergency fallback.
     engine
         .orders
         .sequence_manager
         .element_terminated(sequence_id, 0);
+
+    // Result616 reaches the same lookup without a selected PassDoor: both
+    // ordinary actor positions came from the legacy save as number-only
+    // handles while every loaded gate endpoint was exact. Recover both
+    // pointers before starting the identity-aware path walk.
+    {
+        let target = engine
+            .get_entity_mut(target_id)
+            .expect("roof-wait target remains live");
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 200.0));
+        target
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(2));
+        assert_eq!(target.element_data().sector().unwrap().arena_index(), None);
+    }
+    let ordinary_wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
+        &engine.world.entities,
+        &engine.script_domains.interactables.doors,
+        &engine.orders.sequence_manager,
+        owner_id,
+        target_id,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
+        &|_| true,
+        &|_| None,
+    )
+    .expect("ordinary restored positions recover their exact gate sectors");
+    assert_eq!(ordinary_wait, wait);
+
+    // Without the selected PassDoor, both ordinary live positions are in the
+    // same sector. The roof special case must remain absent so the caller can
+    // retain couldn't-reachpoint and take its normal emergency fallback.
+    engine
+        .get_entity_mut(target_id)
+        .expect("roof-wait target remains live")
+        .element_data_mut()
+        .set_sector(me_sector);
     assert!(
         crate::engine::ai::precompute_avenger_on_roof_wait_position(
             &engine.world.entities,
@@ -4506,6 +4612,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
             &engine.orders.sequence_manager,
             owner_id,
             target_id,
+            |element| crate::engine::ai::ai_view_position_sector(&engine, element),
             &|_| true,
             &|_| None,
         )
@@ -8603,6 +8710,82 @@ fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
             .cross_npc_actions
             .is_empty(),
         "the direct target setter must not escape to the next-frame global batch"
+    );
+}
+
+#[test]
+fn recursive_break_phalanx_borrows_global_think_depth_without_owning_end_think() {
+    use crate::ai::{AiState, CrossNpcAction, StimulusType, Substate};
+    use crate::element::Camp;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
+    let Entity::Soldier(source_soldier) = engine
+        .get_entity_mut(source_id)
+        .expect("phalanx-break source exists")
+    else {
+        panic!("phalanx-break source changed kind")
+    };
+    // Keep BattleDecisions on its active-enemy path; the empty synthetic
+    // patrol fixture otherwise recurses through unrelated patrol setup.
+    source_soldier.soldier.cached_camp = Camp::Royalists;
+    let source = source_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("phalanx-break source has AI");
+    // Rust's typed handler has already performed its controller-local
+    // EndThink by the time the engine drains the direct call. Original's
+    // static byte remains one until BreakPhalanx returns to that EndThink.
+    source.think_recursion_depth = 0;
+    source
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::BreakPhalanx {
+            target: member_id.index(),
+            refresh_them_list: false,
+        });
+    {
+        let member = engine
+            .get_entity_mut(member_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("phalanx-break member has EnemyAi");
+        member.base.current_state = AiState::Attacking;
+        member.base.current_substate = Substate::AttackingPhalanx;
+        member.list_them = vec![source_id.index()];
+        member.base.primary_target = source_id.index();
+        assert_eq!(member.base.think_recursion_depth, 0);
+        // Model a completion candidate already present on the recursively
+        // called object. BreakPhalanx has no matching EndThink of its own,
+        // so its engine prefix must not dispatch the flag.
+        member.base.already_on_point = true;
+        member.base.completion_latch_inside_think = false;
+    }
+
+    engine.process_synchronous_reentrant_actions_for(&sim, source_id, &assets);
+
+    let member = engine
+        .get_entity(member_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx-break member retains EnemyAi");
+    assert_eq!(
+        member.base.think_recursion_depth, 0,
+        "the member's controller-local depth must be restored raw after borrowing the static depth"
+    );
+    assert!(
+        !member.base.completion_latch_inside_think,
+        "the member must not inherit ownership of the source's EndThink"
+    );
+    assert!(
+        !member
+            .base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .iter()
+            .any(|queued| queued.stimulus_type == StimulusType::EventReachPoint),
+        "the recursively called member owns no EndThink completion surface"
     );
 }
 

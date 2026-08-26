@@ -1061,12 +1061,13 @@ impl EngineInner {
 
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc_mode(
+            self.drain_pending_for_npc_boundary_mode(
                 sim,
                 npc_id,
                 assets,
                 owner_local_no_forecast,
                 defer_turn_instruction,
+                surface_completion,
             );
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
@@ -1202,11 +1203,11 @@ impl EngineInner {
             return;
         }
 
-        // `sequence_element_is_about_to_be_launched(self, NULL)`
-        // — used by the civilian stuck-counter suppression.
-        // Query once up front so we can hand it to the AI layer
-        // without holding a sequence-manager borrow across the
-        // AI tick.
+        // `sequence_element_is_about_to_be_launched(self, NULL)`.
+        // Civilians consume this entry-time value directly. Enemy
+        // The16thFrame can synchronously register work during
+        // RefreshArrowProtection, so its stuck suffix re-reads the live
+        // manager after closing that authored prefix below.
         let sequence_null_about_to_launch = self
             .orders
             .sequence_manager
@@ -1223,14 +1224,6 @@ impl EngineInner {
         let actor_command = self.actor_command(npc_id);
         let is_idle = actor_command == crate::element::Command::Wait;
         let receiving_wasp_sting = actor_command == crate::element::Command::ReceiveWaspSting;
-        let stuck_command_active = matches!(
-            actor_command,
-            crate::element::Command::Wait
-                | crate::element::Command::SwordstrikeSmalltalkLeft
-                | crate::element::Command::SwordstrikeSmalltalkRight
-                | crate::element::Command::ParrySmalltalkLeft
-                | crate::element::Command::ParrySmalltalkRight
-        );
         // C++ `RHElementActor::GetAnimation()` returns `mpOrder->action`, not
         // the sprite row most recently performed. A transition may complete
         // during Actor::Execute and promote its successor before NPC
@@ -1283,13 +1276,14 @@ impl EngineInner {
 
         match entity {
             Entity::Soldier(s) => {
-                s.npc
+                let has_stuck_suffix = s
+                    .npc
                     .ai_brain
                     .enemy_mut()
                     .unwrap_or_else(|| {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
-                    .the_16th_frame(
+                    .the_16th_frame_before_stuck(
                         sim,
                         frame_phase,
                         &ctx,
@@ -1298,9 +1292,17 @@ impl EngineInner {
                         Some(&self.world.fast_grid),
                         is_idle,
                         receiving_wasp_sting,
-                        stuck_command_active,
-                        sequence_null_about_to_launch,
                     );
+
+                if has_stuck_suffix {
+                    self.finish_enemy_periodic_stuck_suffix_after_refresh(
+                        sim,
+                        npc_id,
+                        assets,
+                        frame_phase,
+                        &ctx,
+                    );
+                }
             }
             Entity::Civilian(c) => {
                 c.npc
@@ -1323,6 +1325,56 @@ impl EngineInner {
             _ => unreachable!("post-detection owner must remain an NPC"),
         }
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+    }
+
+    /// Close RefreshArrowProtection's synchronous prefix and resume the
+    /// every-64-frame watchdog at its exact live manager-query boundary.
+    pub(in crate::engine) fn finish_enemy_periodic_stuck_suffix_after_refresh(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        frame_phase: u8,
+        ctx: &crate::ai::AiContext,
+    ) {
+        // RefreshArrowProtection's GoTo/SetState calls are synchronous in
+        // Original. Materialize their manager registrations before the
+        // following live GetCommand/SequenceElementIsAboutToBeLaunched reads,
+        // but retain the enclosing direct-call completion boundary until the
+        // suffix has run.
+        self.drain_direct_ai_owner_prefix_boundary_mode(sim, npc_id, assets, true, false);
+        let actor_command = self.actor_command(npc_id);
+        let post_refresh_stuck_command_active = matches!(
+            actor_command,
+            crate::element::Command::Wait
+                | crate::element::Command::SwordstrikeSmalltalkLeft
+                | crate::element::Command::SwordstrikeSmalltalkRight
+                | crate::element::Command::ParrySmalltalkLeft
+                | crate::element::Command::ParrySmalltalkRight
+        );
+        let post_refresh_sequence_about_to_launch = self
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
+        let Entity::Soldier(soldier) = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("periodic soldier {} disappeared", npc_id.index()))
+        else {
+            panic!("periodic soldier {} changed kind", npc_id.index());
+        };
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .unwrap_or_else(|| panic!("periodic soldier {} lost enemy AI", npc_id.index()))
+            .the_16th_frame_after_refresh(
+                frame_phase,
+                ctx,
+                post_refresh_stuck_command_active,
+                post_refresh_sequence_about_to_launch,
+            );
     }
 
     /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
