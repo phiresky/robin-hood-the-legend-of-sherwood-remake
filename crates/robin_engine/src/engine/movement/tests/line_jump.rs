@@ -80,6 +80,32 @@ mod suite {
     }
 
     #[test]
+    fn shoulder_line_jump_routes_only_the_approach_on_the_carrier() {
+        let mut engine = EngineInner::new();
+        let carrier = engine.add_entity(extraction_test_pc(Posture::CarryingOnShoulders));
+        let mut rider = extraction_test_pc(Posture::OnShoulders);
+        rider.human_data_mut().expect("test rider is human").carrier = Some(carrier);
+        let rider = engine.add_entity(rider);
+
+        assert_eq!(line_jump_approach_owner(&engine, rider), carrier);
+        assert_eq!(
+            line_jump_approach_owner(&engine, carrier),
+            carrier,
+            "a selected carrier remains the owner of its own line approach"
+        );
+        let tail = build_line_jump_click_tail(
+            rider,
+            OrderType::WalkingUpright,
+            crate::jump_line::JumpLineIndex::new(1).unwrap(),
+            crate::jump_line::JumpLineIndex::new(2).unwrap(),
+            crate::coordinates::MapPoint::ZERO,
+            0,
+            1.0,
+        );
+        assert!(tail.iter().all(|element| element.owner == Some(rider)));
+    }
+
+    #[test]
     fn running_with_sword_uses_distance_motion() {
         assert_eq!(
             sword_movement_dispatch_action(OrderType::WalkingUpright),

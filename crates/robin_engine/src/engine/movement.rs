@@ -4096,6 +4096,34 @@ pub(crate) fn build_line_jump_click_tail(
     vec![jump, final_move]
 }
 
+/// Actor that owns the routed approach to a selected jump line.
+///
+/// `RHengine.cpp::PerformMove` substitutes the carrier only for
+/// `AppendMoveToLineToSequence`; the explicit jump and post-jump movement
+/// remain owned by the selected PC.
+pub(in crate::engine) fn line_jump_approach_owner(
+    engine: &EngineInner,
+    selected_pc: EntityId,
+) -> EntityId {
+    let selected = engine.expect_entity(selected_pc, "line-jump selected PC");
+    if selected.element_data().posture != crate::element::Posture::OnShoulders {
+        return selected_pc;
+    }
+    let carrier = selected
+        .human_data()
+        .unwrap_or_else(|| panic!("OnShoulders line-jump owner {selected_pc:?} is not human"))
+        .carrier
+        .unwrap_or_else(|| {
+            panic!("OnShoulders line-jump owner {selected_pc:?} has no retained carrier")
+        });
+    let carrier_entity = engine.expect_entity(carrier, "OnShoulders line-jump carrier");
+    assert!(
+        carrier_entity.is_pc(),
+        "OnShoulders line-jump carrier {carrier:?} for {selected_pc:?} is not a PC"
+    );
+    carrier
+}
+
 #[derive(Clone, Copy, Default)]
 struct FinalTol {
     tol: f32,

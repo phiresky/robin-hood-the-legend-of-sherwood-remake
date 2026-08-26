@@ -551,13 +551,9 @@ impl EngineInner {
                         });
                     let source_line_sector_number = source_line_sector.sector_number;
                     let source_line_midpoint = source_line.get_middle_point();
-                    // TODO(parity): when the selected PC is OnShoulders,
-                    // Original routes this source-line approach on the
-                    // carrier but retains the selected PC as owner of the
-                    // explicit JumpCmd and click-tail Move. Split approach
-                    // and tail ownership here once shoulder line-jump input
-                    // has an authoritative replay fixture.
-                    let tail = build_line_jump_click_tail(
+                    let approach_owner = line_jump_approach_owner(self, *pc_id);
+                    let mut tail_sequence = crate::sequence::Sequence::new();
+                    for element in build_line_jump_click_tail(
                         *pc_id,
                         player_group_move_action(run),
                         source_line_idx,
@@ -565,7 +561,14 @@ impl EngineInner {
                         resolved_jump_dest,
                         pc_effective_layer,
                         1.0,
-                    );
+                    ) {
+                        tail_sequence.append_element(element);
+                    }
+                    // AppendPostureRecovery remains owned by the selected PC
+                    // even when Original substitutes its carrier solely for
+                    // the routed source-line approach.
+                    self.append_posture_recovery(*pc_id, &mut tail_sequence);
+                    let tail = tail_sequence.elements;
 
                     // Original PerformMove delegates the source-line approach
                     // to AppendMoveToLineToSequence.  A cross-sector approach
@@ -580,19 +583,21 @@ impl EngineInner {
                     let gate_path = if source_and_line_are_same_sector {
                         Some(Vec::new())
                     } else {
-                        let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
+                        let approach_auth = self
+                            .get_entity(approach_owner)
+                            .map(|entity| entity.actor_auth_info());
                         let level = self.world.fast_grid.level.clone();
                         self.scripts.mission.as_ref().and_then(|_| {
                             find_group_move_gate_path(
                                 &self.script_domains.interactables.doors,
-                                *pc_id,
+                                approach_owner,
                                 pc_pos,
                                 *src_sector,
                                 source_line_midpoint,
                                 source_line_sector_number,
                                 Some(source_line_sector_idx),
                                 source_line.layer,
-                                pc_auth.as_ref(),
+                                approach_auth.as_ref(),
                                 &|sector| self.building_sector_is_authorized(sector),
                                 &|sector| {
                                     level
@@ -607,14 +612,14 @@ impl EngineInner {
                     let Some(gate_path) = gate_path else {
                         self.hero_speaking(
                             assets,
-                            *pc_id,
+                            approach_owner,
                             crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                         );
                         continue;
                     };
                     self.build_gate_movement_sequence(
                         sim,
-                        *pc_id,
+                        approach_owner,
                         (!source_and_line_are_same_sector).then_some(*src_sector),
                         gate_path,
                         GoalShape::Line {
@@ -630,7 +635,7 @@ impl EngineInner {
                         Vec::new(),
                         tail,
                         false,
-                        true,
+                        false,
                     )
                     .unwrap_or_else(|| {
                         panic!(
