@@ -561,10 +561,7 @@ impl SbFileSystem {
     }
 
     pub fn read_all(&self, path: &str) -> Result<Vec<u8>, i32> {
-        let mut file = self.open(path, SB_FILE_READ)?;
-        let mut bytes = vec![0; file.get_size() as usize];
-        file.serialize_bytes(&mut bytes)?;
-        Ok(bytes)
+        Ok(self.open(path, SB_FILE_READ)?.into_bytes())
     }
 }
 
@@ -593,6 +590,16 @@ impl SbFile {
 
     pub fn read_all(path: &str) -> Result<Vec<u8>, i32> {
         global_file_system().read_all(path)
+    }
+
+    /// Consume the stream and return its full backing buffer.
+    ///
+    /// Open buffers the entire file up front, so callers that want all
+    /// the bytes can take the buffer directly instead of copying it
+    /// back out through the stream API — for the sprite bank that copy
+    /// is hundreds of megabytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.file.into_inner()
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> i32 {
