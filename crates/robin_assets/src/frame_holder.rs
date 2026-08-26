@@ -12,6 +12,8 @@
 //! a custom memory manager.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -333,6 +335,61 @@ pub struct FrameHolder {
 
     /// Bank file signature for validation.
     signature: u32,
+
+    /// Runtime statistics of which bank sprites actually get read.
+    /// Shared across clones (the engine's pixel-opacity handle counts
+    /// into the same set as the render path); replaced on bank reload.
+    #[serde(skip)]
+    usage: Arc<UsageTracker>,
+}
+
+/// Tracks which bank sprites have had their packed data read, and how many
+/// packed bytes that covers.
+///
+/// Answers "how much of the bank does a level actually touch" — the number
+/// that decides whether lazy (mmap-backed) bank loading is worth pursuing.
+/// Recording is one relaxed `fetch_or` per read; a running summary is
+/// emitted on the `sprite_bank_usage` debug target every 1024 new sprites
+/// (`RUST_LOG=sprite_bank_usage=debug`).
+#[derive(Debug, Default)]
+pub struct UsageTracker {
+    /// One bit per sprite index, set on first read.
+    bits: OnceLock<Vec<AtomicU64>>,
+    unique: AtomicUsize,
+    bytes: AtomicU64,
+    /// Total packed bytes in the bank, stamped at load.
+    total_bytes: AtomicU64,
+}
+
+impl UsageTracker {
+    fn record(&self, sprite_index: usize, packed_size: u32, num_sprites: usize) {
+        let bits = self.bits.get_or_init(|| {
+            std::iter::repeat_with(|| AtomicU64::new(0))
+                .take(num_sprites.div_ceil(64))
+                .collect()
+        });
+        let Some(word) = bits.get(sprite_index / 64) else {
+            return;
+        };
+        let mask = 1u64 << (sprite_index % 64);
+        if word.fetch_or(mask, Ordering::Relaxed) & mask != 0 {
+            return; // already counted
+        }
+        let unique = self.unique.fetch_add(1, Ordering::Relaxed) + 1;
+        let bytes =
+            self.bytes.fetch_add(packed_size as u64, Ordering::Relaxed) + packed_size as u64;
+        if unique.is_power_of_two() || unique.is_multiple_of(1024) {
+            let total = self.total_bytes.load(Ordering::Relaxed).max(1);
+            tracing::debug!(
+                target: "sprite_bank_usage",
+                unique,
+                touched_mb = bytes as f64 / 1e6,
+                total_mb = total as f64 / 1e6,
+                pct = (bytes as f64 / total as f64) * 100.0,
+                "sprite bank usage"
+            );
+        }
+    }
 }
 
 impl FrameHolder {
@@ -371,7 +428,16 @@ impl FrameHolder {
     /// Packed pixel data for a sprite, or `None` for sentinel (zero-size)
     /// entries that were never populated.
     pub fn packed_data(&self, sprite_index: u32) -> Option<&[u16]> {
+        self.record_usage(sprite_index as usize);
         self.sprites[sprite_index as usize].packed_data.as_deref()
+    }
+
+    /// Count `sprite_index` as touched in the shared usage statistics.
+    fn record_usage(&self, sprite_index: usize) {
+        if let Some(sprite) = self.sprites.get(sprite_index) {
+            self.usage
+                .record(sprite_index, sprite.packed_size, self.sprites.len());
+        }
     }
 
     pub fn rgba_data(&self, sprite_index: u32) -> Option<&[u8]> {
@@ -577,6 +643,7 @@ impl FrameHolder {
                 None => self.sprites.push(PackedSprite::default()),
             }
         }
+        self.reset_usage_tracker();
     }
 
     /// Same as [`initialize_sprite_bank`] but with a progress-update
@@ -609,39 +676,45 @@ impl FrameHolder {
 
         progress(ProgressUpdate::Phase("Reading sprite bank file...", 0.30));
         // Tick the bar immediately so the user sees it move before the
-        // slow `.bks` read below (~30 MB, couple of seconds on cold cache).
+        // slow `.bks` read below (~600 MB fullgame, several seconds on
+        // cold cache).
         progress(ProgressUpdate::Tick(0.5));
 
         let bks_path = format!("{}/Data/robinhood.bks", data_dir);
         let dic_path = format!("{}/Data/robinhood.dic", data_dir);
 
-        // Read the bank file into memory in chunks so we can tick the
-        // progress bar during the I/O.
-        let mut bks_file = SbFile::open(&bks_path, 0)
-            .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?;
-        let bks_size = bks_file.get_size() as usize;
-        let mut bks_bytes = vec![0u8; bks_size];
-        const BKS_CHUNK: usize = 4 * 1024 * 1024; // 4 MB
-        let mut offset = 0;
-        while offset < bks_size {
-            let end = (offset + BKS_CHUNK).min(bks_size);
-            bks_file
-                .serialize_bytes(&mut bks_bytes[offset..end])
-                .map_err(|e| anyhow!("read sprite bank: error {e}"))?;
-            offset = end;
-            progress(ProgressUpdate::Tick(0.25));
-        }
+        // Open buffers the whole bank; take that buffer directly. Every
+        // extra in-memory copy of the bank costs hundreds of milliseconds
+        // and doubles peak RSS.
+        let bks_bytes = SbFile::open(&bks_path, 0)
+            .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
+            .into_bytes();
+        progress(ProgressUpdate::Tick(1.0));
 
         progress(ProgressUpdate::Phase("Decoding sprite pixel data...", 0.85));
-        // Zero-copy cast + single memcpy. The chunks_exact + from_le_bytes
-        // approach was 23-30s in debug mode on a 100 MB fullgame bank
-        // because the iterator's per-u16 function-call overhead dominates.
-        // bytemuck::cast_slice assumes LE host byte order, which matches
-        // the only targets we ship (x86_64 / arm64).
-        let bank_words: Vec<u16> = bytemuck::try_cast_slice::<u8, u16>(&bks_bytes)
-            .map_err(|error| anyhow!("sprite bank must contain aligned 16-bit words: {error}"))?
-            .to_vec();
-        drop(bks_bytes); // free the raw byte buffer
+        if !bks_bytes.len().is_multiple_of(2) {
+            return Err(anyhow!(
+                "sprite bank must contain 16-bit words (odd byte length {})",
+                bks_bytes.len()
+            ));
+        }
+        // Zero-copy view of the bank as u16 words; assumes LE host byte
+        // order, which matches the only targets we ship (x86_64 / arm64).
+        // Allocators align large buffers well past 2 bytes, so the copying
+        // fallback below is effectively dead code kept for correctness.
+        let aligned_fallback: Vec<u16>;
+        let bank_words: &[u16] = match bytemuck::try_cast_slice::<u8, u16>(&bks_bytes) {
+            Ok(words) => words,
+            Err(_) => {
+                aligned_fallback = bks_bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_le_bytes(*c))
+                    .collect();
+                &aligned_fallback
+            }
+        };
         progress(ProgressUpdate::Tick(1.0));
 
         progress(ProgressUpdate::Phase(
@@ -650,15 +723,24 @@ impl FrameHolder {
         ));
         let dic_bytes = SbFile::read_all(&dic_path)
             .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
-        self.load_sprite_index_bytes(&dic_bytes, &bank_words, progress)?;
+        self.load_sprite_index_bytes(&dic_bytes, bank_words, progress)?;
 
         tracing::info!(
             "Sprite bank loaded: {} dictionaries, {} sprites",
             self.dictionaries.len(),
             self.sprites.len()
         );
+        self.reset_usage_tracker();
 
         Ok(())
+    }
+
+    /// Start a fresh usage-statistics epoch for the just-loaded bank.
+    fn reset_usage_tracker(&mut self) {
+        let total: u64 = self.sprites.iter().map(|s| s.packed_size as u64).sum();
+        let usage = UsageTracker::default();
+        usage.total_bytes.store(total, Ordering::Relaxed);
+        self.usage = Arc::new(usage);
     }
 
     fn load_sprite_index_bytes(
@@ -772,6 +854,7 @@ impl FrameHolder {
         bit_depth: u16,
     ) {
         let idx = sprite_index as usize;
+        self.record_usage(idx);
         let sprite = &self.sprites[idx];
         let packed = sprite
             .packed_data
@@ -843,6 +926,7 @@ impl FrameHolder {
         bit_depth: u16,
     ) {
         let idx = sprite_index as usize;
+        self.record_usage(idx);
         let sprite = &self.sprites[idx];
         let packed = sprite
             .packed_data
@@ -886,6 +970,7 @@ impl FrameHolder {
         bit_depth: u16,
     ) {
         let idx = sprite_index as usize;
+        self.record_usage(idx);
         let sprite = &self.sprites[idx];
         let packed = sprite
             .packed_data
@@ -963,6 +1048,7 @@ impl FrameHolder {
         if idx >= self.sprites.len() {
             return false;
         }
+        self.record_usage(idx);
         let sprite = &self.sprites[idx];
         let Some(packed) = sprite.packed_data.as_deref() else {
             return false;
