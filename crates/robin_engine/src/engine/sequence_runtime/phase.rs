@@ -248,6 +248,7 @@ impl EngineInner {
             tolerance,
             goal_sector,
             goal_layer,
+            recorded_gate_path,
         )) = self
             .orders
             .sequence_manager
@@ -271,6 +272,7 @@ impl EngineInner {
                     *tolerance,
                     *sector,
                     *layer,
+                    element.recorded_gate_path.clone(),
                 )),
                 _ => None,
             })
@@ -639,6 +641,7 @@ impl EngineInner {
                 action,
                 flags,
                 tolerance,
+                recorded_gate_path,
             )
         {
             return OwnerActionBarrier::Skip;

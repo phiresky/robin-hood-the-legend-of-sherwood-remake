@@ -1018,6 +1018,7 @@ mod tests {
             already_authorized: false,
             goal_override: None,
             goal_sector_index_override: None,
+            recorded_gate_path: None,
         };
         let mut json = serde_json::to_value(current).unwrap();
         let fields = json
@@ -1027,6 +1028,7 @@ mod tests {
         fields.remove("already_authorized");
         fields.remove("goal_override");
         fields.remove("goal_sector_index_override");
+        fields.remove("recorded_gate_path");
 
         let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
         assert!(matches!(
@@ -1035,9 +1037,50 @@ mod tests {
                 already_authorized: false,
                 goal_override: None,
                 goal_sector_index_override: None,
+                recorded_gate_path: None,
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn resolved_drop_ale_command_json_preserves_recorded_route_provenance() {
+        let command = PlayerCommand::DropAleAt {
+            actor: crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
+            target_pos: crate::coordinates::MapPoint::new(50.0, 75.0),
+            running: false,
+            already_authorized: true,
+            goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+            goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(0),
+            recorded_gate_path: Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: crate::fast_find_grid::SectorIndex::new(57),
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Success(vec![
+                    crate::gate::GatePathStep {
+                        door_index: crate::gate::DoorIndex(7),
+                        direct: false,
+                    },
+                ]),
+            }),
+        };
+        let json = serde_json::to_value(&command).unwrap();
+        let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
+        let PlayerCommand::DropAleAt {
+            recorded_gate_path: Some(decoded_route),
+            ..
+        } = decoded
+        else {
+            panic!("resolved DropAle route must survive JSON round-trip");
+        };
+        let PlayerCommand::DropAleAt {
+            recorded_gate_path: Some(expected_route),
+            ..
+        } = command
+        else {
+            unreachable!();
+        };
+        assert_eq!(decoded_route, expected_route);
     }
 
     #[test]

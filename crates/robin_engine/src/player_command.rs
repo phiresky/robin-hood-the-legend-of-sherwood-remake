@@ -236,6 +236,10 @@ pub enum PlayerCommand {
         /// turn a valid cross-building route into no route at all.
         #[serde(default)]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        /// Replay-only authoritative result of Original's gate search. Live
+        /// commands leave this unset and use the runtime gate graph.
+        #[serde(default)]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
     /// protect in [`ShieldState::protected_pc`] and flip

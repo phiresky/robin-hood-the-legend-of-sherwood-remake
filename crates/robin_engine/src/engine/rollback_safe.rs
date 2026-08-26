@@ -216,6 +216,49 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    #[doc(hidden)]
+    pub fn has_pending_recorded_drop_ale_route(
+        &self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+    ) -> bool {
+        self.inner
+            .orders
+            .sequence_manager
+            .has_pending_drop_ale_route_candidate(actor, destination)
+    }
+
+    /// Inject the gate-search outcome that Original records when a postponed
+    /// DropAle point Seek is finally instructed.
+    #[doc(hidden)]
+    pub fn inject_recorded_drop_ale_route(
+        &mut self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+        goal_sector: crate::position_interface::SectorHandle,
+        goal_layer: u16,
+        recorded_gate_path: crate::gate::RecordedGatePath,
+    ) -> bool {
+        if !self
+            .inner
+            .orders
+            .sequence_manager
+            .has_pending_drop_ale_route_candidate(actor, destination)
+        {
+            return false;
+        }
+        self.inner
+            .orders
+            .sequence_manager
+            .inject_recorded_drop_ale_route(
+                actor,
+                destination,
+                goal_sector,
+                goal_layer,
+                recorded_gate_path,
+            )
+    }
+
     /// Restore an Original schema-16 session-boundary transient before the
     /// first replay frame. The v48 save payload does not carry this field.
     #[doc(hidden)]

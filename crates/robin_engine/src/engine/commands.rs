@@ -830,6 +830,7 @@ impl EngineInner {
                 already_authorized,
                 goal_override,
                 goal_sector_index_override,
+                recorded_gate_path,
             } => {
                 self.apply_drop_ale_at(
                     *actor,
@@ -838,6 +839,7 @@ impl EngineInner {
                     *already_authorized,
                     *goal_override,
                     *goal_sector_index_override,
+                    recorded_gate_path.clone(),
                 );
             }
             ShieldSelectProtected {
@@ -1593,6 +1595,7 @@ impl EngineInner {
                 already_authorized: _,
                 goal_override: _,
                 goal_sector_index_override: _,
+                recorded_gate_path: _,
             } => {
                 if *actor != recording_pc {
                     return;
@@ -2334,6 +2337,7 @@ impl EngineInner {
                     already_authorized: false,
                     goal_override: None,
                     goal_sector_index_override: None,
+                    recorded_gate_path: None,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
                     // See Interaction arm — whole-sequence abort on
@@ -2444,6 +2448,7 @@ impl EngineInner {
                     already_authorized,
                     goal_override,
                     goal_sector_index_override,
+                    recorded_gate_path,
                 } = &cmd
             {
                 self.apply_drop_ale_at_with_recovery(
@@ -2454,6 +2459,7 @@ impl EngineInner {
                     *already_authorized,
                     *goal_override,
                     *goal_sector_index_override,
+                    recorded_gate_path.clone(),
                 );
                 posture_recovery_embedded = true;
             } else {
@@ -4387,6 +4393,7 @@ impl EngineInner {
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     ) {
         self.apply_drop_ale_at_with_recovery(
             actor,
@@ -4396,6 +4403,7 @@ impl EngineInner {
             already_authorized,
             goal_override,
             goal_sector_index_override,
+            recorded_gate_path,
         );
     }
 
@@ -4410,6 +4418,7 @@ impl EngineInner {
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     ) {
         use crate::order::OrderType;
 
@@ -4596,6 +4605,7 @@ impl EngineInner {
 
         let mut move_elem =
             SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
+        move_elem.recorded_gate_path = recorded_gate_path;
         if let SequenceElementData::Movement {
             destination,
             tolerance,
@@ -6309,7 +6319,7 @@ mod tests {
         let (mut engine, assets, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
         assert_eq!(layer, 0);
@@ -6357,7 +6367,7 @@ mod tests {
         let (mut engine, _, pc_id, source, alias) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(180.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle target must resolve to a sector");
@@ -6401,7 +6411,7 @@ mod tests {
             0,
         );
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle patch target resolves through its underlying sector");
@@ -6445,6 +6455,7 @@ mod tests {
                 already_authorized: false,
                 goal_override: None,
                 goal_sector_index_override: None,
+                recorded_gate_path: None,
             },
         );
 
@@ -6455,8 +6466,18 @@ mod tests {
 
     #[test]
     fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
-        let (mut engine, assets, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+        let (mut engine, assets, pc_id, source_index, goal_index) =
+            setup_drop_ale_sector_identity_scene();
         let authorized = crate::coordinates::MapPoint::new(2607.467_041, 881.610_474);
+        let recorded_gate_path = crate::gate::RecordedGatePath {
+            source_sector: crate::sector::SectorNumber::new(0),
+            source_sector_index: Some(source_index),
+            source_layer: 0,
+            outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                door_index: crate::gate::DoorIndex(42),
+                direct: false,
+            }]),
+        };
 
         engine.apply_command(
             &crate::sim_rng::test_context(),
@@ -6470,6 +6491,7 @@ mod tests {
                 already_authorized: true,
                 goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
                 goal_sector_index_override: Some(goal_index),
+                recorded_gate_path: Some(recorded_gate_path.clone()),
             },
         );
 
@@ -6481,6 +6503,131 @@ mod tests {
                     .map(|sector| sector.with_arena_index(goal_index)),
                 0,
             )
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .and_then(|sequence| sequence.elements.first())
+                .and_then(|element| element.recorded_gate_path.as_ref()),
+            Some(&recorded_gate_path),
+            "the authoritative route must survive until cross-sector Seek expansion"
+        );
+    }
+
+    #[test]
+    fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        engine.scripts.mission = Some(minimal_script());
+        let raw_goal = crate::position_interface::SectorHandle::new(22).unwrap();
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap();
+            pc.element_data_mut().set_sector(Some(raw_goal));
+            pc.element_data_mut().set_layer(2);
+            pc.position_iface_mut()
+                .set_door(crate::position_interface::DoorHandle(7), true);
+        }
+        engine.script_domains.interactables.doors =
+            (0..8).map(|_| crate::gate::Door::default()).collect();
+        engine.script_domains.interactables.doors[7] = crate::gate::Door {
+            active: true,
+            sector_in: crate::sector::SectorNumber::new(133),
+            layer_in: 11,
+            sector_out: crate::sector::SectorNumber::new(22),
+            layer_out: 2,
+            ..crate::gate::Door::default()
+        };
+        let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
+        let mut seek = SequenceElement::new_movement(
+            1,
+            Command::Seek,
+            Some(pc_id),
+            crate::order::OrderType::WalkingUpright,
+        );
+        seek.recorded_gate_path = Some(crate::gate::RecordedGatePath {
+            source_sector: crate::sector::SectorNumber::new(133),
+            source_sector_index: None,
+            source_layer: 11,
+            outcome: crate::gate::RecordedGateOutcome::Failure,
+        });
+        let sequence_id = engine.orders.sequence_manager.launch_element(seek);
+
+        assert!(engine.try_dispatch_cross_sector_point_seek(
+            &crate::sim_rng::test_context(),
+            &assets,
+            pc_id,
+            sequence_id,
+            0,
+            destination,
+            Some(raw_goal),
+            2,
+            crate::order::OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::SEEK,
+            0.0,
+            Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: None,
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Failure,
+            }),
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "public source sector differs at dispatch")]
+    fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_return() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        engine.scripts.mission = Some(minimal_script());
+        let raw_goal = crate::position_interface::SectorHandle::new(22).unwrap();
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap();
+            pc.element_data_mut().set_sector(Some(raw_goal));
+            pc.element_data_mut().set_layer(2);
+            pc.position_iface_mut()
+                .set_door(crate::position_interface::DoorHandle(7), false);
+        }
+        engine.script_domains.interactables.doors =
+            (0..8).map(|_| crate::gate::Door::default()).collect();
+        engine.script_domains.interactables.doors[7] = crate::gate::Door {
+            active: true,
+            sector_in: crate::sector::SectorNumber::new(133),
+            layer_in: 11,
+            sector_out: crate::sector::SectorNumber::new(22),
+            layer_out: 2,
+            ..crate::gate::Door::default()
+        };
+        let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
+        let sequence_id =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new_movement(
+                    1,
+                    Command::Seek,
+                    Some(pc_id),
+                    crate::order::OrderType::WalkingUpright,
+                ));
+
+        engine.try_dispatch_cross_sector_point_seek(
+            &crate::sim_rng::test_context(),
+            &assets,
+            pc_id,
+            sequence_id,
+            0,
+            destination,
+            Some(raw_goal),
+            2,
+            crate::order::OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::SEEK,
+            0.0,
+            Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: None,
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Failure,
+            }),
         );
     }
 
@@ -6501,6 +6648,7 @@ mod tests {
                 already_authorized: true,
                 goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
                 goal_sector_index_override: None,
+                recorded_gate_path: None,
             },
         );
 
@@ -6525,6 +6673,7 @@ mod tests {
             true,
             Some((crate::sector::SectorNumber::new(0), 0)),
             crate::fast_find_grid::SectorIndex::new(9999),
+            None,
         );
     }
 
@@ -6542,6 +6691,7 @@ mod tests {
             true,
             Some((crate::sector::SectorNumber::new(0), 0)),
             Some(goal_index),
+            None,
         );
     }
 
@@ -6556,6 +6706,7 @@ mod tests {
             false,
             None,
             Some(goal_index),
+            None,
         );
     }
 
@@ -6569,6 +6720,7 @@ mod tests {
             false,
             true,
             Some((crate::sector::SectorNumber::new(-1), 0)),
+            None,
             None,
         );
     }
@@ -7542,6 +7694,7 @@ mod tests {
             crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
             false,
             false,
+            None,
             None,
             None,
         );

@@ -1008,10 +1008,35 @@ impl Door {
 ///
 /// `direct = true` means going from `point_out` (sector_out side) to
 /// `point_in` (sector_in side). `direct = false` means the reverse.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub struct GatePathStep {
     pub door_index: DoorIndex,
     pub direct: bool,
+}
+
+/// Authoritative gate-search outcome captured by an Original parity trace.
+///
+/// Live gameplay never sets this: it exists so replay can preserve both a
+/// successful gate chain and an observed `FindPathGates` failure instead of
+/// silently running a second search against reconstructed topology.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct RecordedGatePath {
+    pub source_sector: crate::sector::SectorNumber,
+    pub source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    pub source_layer: u16,
+    pub outcome: RecordedGateOutcome,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum RecordedGateOutcome {
+    Success(Vec<GatePathStep>),
+    Failure,
 }
 
 fn is_actor_authorized_for_gate<F>(
