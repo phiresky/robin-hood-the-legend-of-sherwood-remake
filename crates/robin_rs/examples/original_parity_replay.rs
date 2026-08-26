@@ -14,6 +14,10 @@
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -3795,6 +3799,8 @@ const TRACE_NATIVE_VERSION: u32 = 66;
 /// completion markers.
 const TRACE_NATIVE_SUFFIX: &str = ".parity.bitcode.zst";
 const TRACE_CONVERSION_QUARANTINE_SUFFIX: &str = ".parity-conversion-source";
+const TRACE_REBLOCK_SOURCE_SUFFIX: &str = ".parity-reblock-source-v66";
+const TRACE_REBLOCK_BINDING_SUFFIX: &str = ".parity-reblock-binding-v66.json";
 const TRACE_NATIVE_FOOTER_MAGIC: [u8; 16] = *b"RHPRTRACEFOOTER!";
 const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -3810,13 +3816,18 @@ const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
 // native writer deliberately leaves it disabled.
 const TRACE_NATIVE_ZSTD_LEVEL: i32 = 9;
 const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
-/// Frames per on-disk block. bitcode gets its size win from packing many
-/// values into one buffer, so records are grouped into blocks; a few hundred
-/// records already captured nearly all of the whole-trace win in the format
-/// experiment, and 1024 keeps writer memory bounded while squeezing out the
-/// remainder. Readers accept any block size, so this can change without a
-/// cache-version bump.
-const TRACE_NATIVE_BLOCK_RECORDS: usize = 1024;
+/// Frames per on-disk block. A schema-16 frame contains a complete Original
+/// state envelope, so decoding 1024 at once expanded a roughly 100 MiB
+/// bitcode record into 2-3.6 GiB of live Rust allocations. Sixteen frames
+/// retain bitcode's columnar packing while bounding the decoded block to a
+/// small fraction of one replay engine. Readers accept any block size, so
+/// this storage-only change remains version-66 compatible.
+const TRACE_NATIVE_BLOCK_RECORDS: usize = 16;
+/// Bound the zstd history retained by every replay process. Cross-frame
+/// repetition is already captured inside the 16-frame bitcode blocks; a
+/// whole-trace 512 MiB-2 GiB window only traded resident memory for a small
+/// artifact-size win and prevented one replay lane per CPU core.
+const TRACE_NATIVE_WINDOW_LOG: u32 = 25;
 
 #[derive(
     Debug,
@@ -3865,6 +3876,21 @@ struct BinaryTraceFooter {
     version: u32,
     frame_count: u64,
     final_frame: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct NativeReblockBinding {
+    version: u32,
+    canonical_path: PathBuf,
+    source_content_sha256: String,
+    source_bytes: u64,
+    source_semantic_sha256: String,
+    frame_count: u64,
+    final_frame: u64,
+    #[cfg(unix)]
+    source_device: u64,
+    #[cfg(unix)]
+    source_inode: u64,
 }
 
 /// Structural extent of the authoritative Original frame stream.
@@ -4010,6 +4036,8 @@ struct Options {
     frame_zero_screenshot_dir: Option<PathBuf>,
     bench_encodings: bool,
     convert: bool,
+    reblock: bool,
+    validate_native: bool,
 }
 
 struct DumpOptions {
@@ -4369,6 +4397,14 @@ impl VisualReplay {
 
 fn main() {
     let options = parse_options();
+    if options.reblock {
+        reblock_native_trace(&options.trace_path);
+        return;
+    }
+    if options.validate_native {
+        validate_native_trace(&options.trace_path);
+        return;
+    }
     if options.convert {
         convert_recording_to_native(&options.trace_path);
         return;
@@ -5516,11 +5552,14 @@ fn parse_options() -> Options {
         [--frame-zero-screenshot-only] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
-        [--dump-entity KIND:INDEX]...] [--bench-encodings] [--convert] TRACE.jsonl[.zst]";
+        [--dump-entity KIND:INDEX]...] [--bench-encodings] [--convert] [--reblock] \
+        [--validate-native] TRACE.jsonl[.zst]";
 
     let mut args = std::env::args_os().skip(1);
     let mut bench_encodings = false;
     let mut convert = false;
+    let mut reblock = false;
+    let mut validate_native = false;
     let mut scan_all = false;
     let mut no_auto_dump = false;
     let mut visual = false;
@@ -5538,6 +5577,8 @@ fn parse_options() -> Options {
             Some("--scan-all") => scan_all = true,
             Some("--bench-encodings") => bench_encodings = true,
             Some("--convert") => convert = true,
+            Some("--reblock") => reblock = true,
+            Some("--validate-native") => validate_native = true,
             Some("--no-auto-dump") => no_auto_dump = true,
             Some("--visual") => visual = true,
             Some("--frame-zero-screenshot-dir") => {
@@ -5598,6 +5639,14 @@ fn parse_options() -> Options {
         !frame_zero_screenshot_only || frame_zero_screenshot_dir.is_some(),
         "--frame-zero-screenshot-only requires --frame-zero-screenshot-dir"
     );
+    assert!(
+        usize::from(bench_encodings)
+            + usize::from(convert)
+            + usize::from(reblock)
+            + usize::from(validate_native)
+            <= 1,
+        "--bench-encodings, --convert, --reblock, and --validate-native are mutually exclusive"
+    );
     Options {
         scan_all,
         no_auto_dump,
@@ -5608,6 +5657,8 @@ fn parse_options() -> Options {
         frame_zero_screenshot_dir,
         bench_encodings,
         convert,
+        reblock,
+        validate_native,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
@@ -7039,6 +7090,637 @@ fn sync_directory(directory: &Path, operation: &str) {
         });
 }
 
+fn native_reblock_source_path(native_path: &Path) -> PathBuf {
+    let mut path = native_path.as_os_str().to_owned();
+    path.push(TRACE_REBLOCK_SOURCE_SUFFIX);
+    PathBuf::from(path)
+}
+
+fn native_reblock_binding_path(native_path: &Path) -> PathBuf {
+    let mut path = native_path.as_os_str().to_owned();
+    path.push(TRACE_REBLOCK_BINDING_SUFFIX);
+    PathBuf::from(path)
+}
+
+fn native_reblock_temporary_prefix(native_path: &Path, binding: bool) -> String {
+    let canonical_path = native_reblock_canonical_path(native_path);
+    #[cfg(unix)]
+    let path_bytes = canonical_path.as_os_str().as_bytes();
+    #[cfg(not(unix))]
+    let path_text = canonical_path.to_string_lossy();
+    #[cfg(not(unix))]
+    let path_bytes = path_text.as_bytes();
+    let path_digest = sha256_hex(path_bytes);
+    let kind = if binding { "binding-v66" } else { "v66" };
+    format!(".parity-reblock-{kind}-{path_digest}-")
+}
+
+fn cleanup_native_reblock_orphans(native_path: &Path) {
+    let parent = native_path
+        .parent()
+        .expect("absolute native trace always has a parent directory");
+    let prefixes = [
+        native_reblock_temporary_prefix(native_path, false),
+        native_reblock_temporary_prefix(native_path, true),
+    ];
+    let mut removed = 0_usize;
+    for entry in std::fs::read_dir(parent).unwrap_or_else(|error| {
+        panic!(
+            "list native reblock temporary directory {}: {error}",
+            parent.display()
+        )
+    }) {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "read native reblock temporary entry in {}: {error}",
+                parent.display()
+            )
+        });
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(entry.path()).unwrap_or_else(|error| {
+            panic!(
+                "inspect native reblock temporary {}: {error}",
+                entry.path().display()
+            )
+        });
+        if !metadata.file_type().is_file() {
+            eprintln!(
+                "warning: preserving non-regular native reblock temporary {}",
+                entry.path().display()
+            );
+            continue;
+        }
+        std::fs::remove_file(entry.path()).unwrap_or_else(|error| {
+            panic!(
+                "remove orphaned native reblock temporary {}: {error}",
+                entry.path().display()
+            )
+        });
+        removed += 1;
+    }
+    if removed > 0 {
+        sync_directory(parent, "native reblock orphan cleanup");
+        eprintln!(
+            "removed {removed} orphaned temporary file(s) for {}",
+            native_path.display()
+        );
+    }
+}
+
+fn native_reblock_canonical_path(native_path: &Path) -> PathBuf {
+    let parent = native_path
+        .parent()
+        .expect("absolute native trace always has a parent directory")
+        .canonicalize()
+        .unwrap_or_else(|error| {
+            panic!(
+                "canonicalize native trace parent {}: {error}",
+                native_path.parent().unwrap().display()
+            )
+        });
+    parent.join(
+        native_path
+            .file_name()
+            .expect("native trace path always has a file name"),
+    )
+}
+
+fn native_reblock_file_identity(path: &Path) -> (u64, String, u64, u64) {
+    let metadata = std::fs::metadata(path)
+        .unwrap_or_else(|error| panic!("stat native reblock file {}: {error}", path.display()));
+    #[cfg(unix)]
+    let (device, inode) = (metadata.dev(), metadata.ino());
+    #[cfg(not(unix))]
+    let (device, inode) = (0, 0);
+    (metadata.len(), trace_content_sha256(path), device, inode)
+}
+
+fn native_reblock_semantic_identity(path: &Path) -> (u64, u64, String) {
+    let footer = read_binary_trace_footer(path)
+        .unwrap_or_else(|error| panic!("read native reblock footer {}: {error}", path.display()));
+    validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+        panic!("validate native reblock footer {}: {error}", path.display())
+    });
+    let (frame_count, digest) = digest_and_validate_native_trace(path);
+    assert_eq!(frame_count, footer.frame_count);
+    (frame_count, footer.final_frame, sha256_hex(&digest))
+}
+
+fn create_native_reblock_binding(native_path: &Path) -> NativeReblockBinding {
+    let (source_bytes, source_content_sha256, source_device, source_inode) =
+        native_reblock_file_identity(native_path);
+    let (frame_count, final_frame, source_semantic_sha256) =
+        native_reblock_semantic_identity(native_path);
+    NativeReblockBinding {
+        version: TRACE_NATIVE_VERSION,
+        canonical_path: native_reblock_canonical_path(native_path),
+        source_content_sha256,
+        source_bytes,
+        source_semantic_sha256,
+        frame_count,
+        final_frame,
+        #[cfg(unix)]
+        source_device,
+        #[cfg(unix)]
+        source_inode,
+    }
+}
+
+fn write_native_reblock_binding(path: &Path, binding: &NativeReblockBinding) {
+    let parent = path
+        .parent()
+        .expect("absolute native reblock binding always has a parent");
+    let mut temporary = tempfile::Builder::new()
+        .prefix(&native_reblock_temporary_prefix(
+            Path::new(&binding.canonical_path),
+            true,
+        ))
+        .tempfile_in(parent)
+        .unwrap_or_else(|error| {
+            panic!(
+                "create temporary native reblock binding beside {}: {error}",
+                path.display()
+            )
+        });
+    serde_json::to_writer(&mut temporary, binding)
+        .unwrap_or_else(|error| panic!("write native reblock binding: {error}"));
+    temporary
+        .write_all(b"\n")
+        .unwrap_or_else(|error| panic!("terminate native reblock binding: {error}"));
+    temporary
+        .flush()
+        .unwrap_or_else(|error| panic!("flush native reblock binding: {error}"));
+    temporary
+        .as_file()
+        .sync_all()
+        .unwrap_or_else(|error| panic!("sync native reblock binding: {error}"));
+    temporary.persist(path).unwrap_or_else(|error| {
+        panic!(
+            "atomically publish native reblock binding {}: {}",
+            path.display(),
+            error.error
+        )
+    });
+    sync_directory(parent, "native reblock binding publication");
+}
+
+fn read_native_reblock_binding(path: &Path, native_path: &Path) -> NativeReblockBinding {
+    reject_conversion_symlink(path);
+    let file = File::open(path)
+        .unwrap_or_else(|error| panic!("open native reblock binding {}: {error}", path.display()));
+    let binding: NativeReblockBinding = serde_json::from_reader(BufReader::new(file))
+        .unwrap_or_else(|error| panic!("read native reblock binding {}: {error}", path.display()));
+    assert_eq!(
+        binding.version,
+        TRACE_NATIVE_VERSION,
+        "native reblock binding {} has unsupported version",
+        path.display()
+    );
+    assert_eq!(
+        binding.canonical_path,
+        native_reblock_canonical_path(native_path),
+        "native reblock binding {} belongs to another canonical path",
+        path.display()
+    );
+    binding
+}
+
+fn validate_native_reblock_source_binding(source_path: &Path, binding: &NativeReblockBinding) {
+    validate_native_reblock_source_file_identity(source_path, binding)
+        .unwrap_or_else(|error| panic!("{error}"));
+    validate_native_reblock_semantics(source_path, binding, "recovery source");
+}
+
+fn validate_native_reblock_source_file_identity(
+    source_path: &Path,
+    binding: &NativeReblockBinding,
+) -> Result<(), String> {
+    let (bytes, content_sha256, device, inode) = native_reblock_file_identity(source_path);
+    if !native_reblock_file_identity_matches(binding, bytes, &content_sha256, device, inode) {
+        return Err(format!(
+            "native reblock recovery {} content or inode is not the bound source",
+            source_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn native_reblock_file_identity_matches(
+    binding: &NativeReblockBinding,
+    bytes: u64,
+    content_sha256: &str,
+    device: u64,
+    inode: u64,
+) -> bool {
+    if bytes != binding.source_bytes || content_sha256 != binding.source_content_sha256 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        device == binding.source_device && inode == binding.source_inode
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (device, inode);
+        true
+    }
+}
+
+fn validate_native_reblock_semantics(path: &Path, binding: &NativeReblockBinding, label: &str) {
+    let (frame_count, final_frame, semantic_sha256) = native_reblock_semantic_identity(path);
+    assert_eq!(
+        frame_count, binding.frame_count,
+        "{label} frame count changed"
+    );
+    assert_eq!(
+        final_frame, binding.final_frame,
+        "{label} final frame changed"
+    );
+    assert_eq!(
+        semantic_sha256, binding.source_semantic_sha256,
+        "{label} is not semantically identical to the bound source"
+    );
+}
+
+enum NativeReblockPreparation {
+    Ready(NativeReblockBinding),
+    AlreadyCommitted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeReblockRecoveryState {
+    Fresh,
+    AuthenticatedPair,
+    BindingOnly,
+}
+
+fn classify_native_reblock_recovery_state(
+    native_exists: bool,
+    source_exists: bool,
+    binding_exists: bool,
+) -> Result<NativeReblockRecoveryState, String> {
+    match (native_exists, source_exists, binding_exists) {
+        (true, false, false) => Ok(NativeReblockRecoveryState::Fresh),
+        (_, true, true) => Ok(NativeReblockRecoveryState::AuthenticatedPair),
+        (true, false, true) => Ok(NativeReblockRecoveryState::BindingOnly),
+        (_, true, false) => {
+            Err("native reblock recovery source has no authenticated binding".to_owned())
+        }
+        (false, false, false) => {
+            Err("native trace is missing and has no authenticated recovery pair".to_owned())
+        }
+        (false, false, true) => Err(
+            "native reblock binding exists without canonical trace or recovery source".to_owned(),
+        ),
+    }
+}
+
+fn prepare_native_reblock_source(
+    native_path: &Path,
+    source_path: &Path,
+    binding_path: &Path,
+) -> NativeReblockPreparation {
+    let source_exists = source_path.exists();
+    let binding_exists = binding_path.exists();
+    let recovery_state = classify_native_reblock_recovery_state(
+        native_path.is_file(),
+        source_exists,
+        binding_exists,
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "{error}: canonical={} source={} binding={}; preserve every existing path for manual audit",
+            native_path.display(),
+            source_path.display(),
+            binding_path.display()
+        )
+    });
+
+    if recovery_state == NativeReblockRecoveryState::Fresh {
+        let binding = create_native_reblock_binding(native_path);
+        write_native_reblock_binding(binding_path, &binding);
+        std::fs::hard_link(native_path, source_path).unwrap_or_else(|error| {
+            panic!(
+                "create authenticated reblock source {} for {}: {error}",
+                source_path.display(),
+                native_path.display()
+            )
+        });
+        sync_directory(
+            native_path.parent().unwrap(),
+            "native parity trace reblock source publication",
+        );
+        validate_native_reblock_source_file_identity(source_path, &binding)
+            .unwrap_or_else(|error| panic!("{error}"));
+        return NativeReblockPreparation::Ready(binding);
+    }
+
+    let binding = read_native_reblock_binding(binding_path, native_path);
+    if recovery_state == NativeReblockRecoveryState::BindingOnly {
+        let (bytes, content_sha256, device, inode) = native_reblock_file_identity(native_path);
+        if native_reblock_file_identity_matches(&binding, bytes, &content_sha256, device, inode) {
+            validate_native_reblock_semantics(native_path, &binding, "canonical source");
+            std::fs::hard_link(native_path, source_path).unwrap_or_else(|error| {
+                panic!(
+                    "resume authenticated reblock source publication {}: {error}",
+                    source_path.display()
+                )
+            });
+            sync_directory(
+                native_path.parent().unwrap(),
+                "resumed native parity trace reblock source publication",
+            );
+            validate_native_reblock_source_file_identity(source_path, &binding)
+                .unwrap_or_else(|error| panic!("{error}"));
+            return NativeReblockPreparation::Ready(binding);
+        }
+
+        // The source link is removed before its binding during commit. A
+        // semantically identical but byte-distinct canonical file proves the
+        // atomic publication completed and only binding cleanup remains.
+        validate_native_reblock_semantics(native_path, &binding, "published canonical trace");
+        std::fs::remove_file(binding_path).unwrap_or_else(|error| {
+            panic!(
+                "finish committed native reblock binding cleanup {}: {error}",
+                binding_path.display()
+            )
+        });
+        sync_directory(
+            native_path.parent().unwrap(),
+            "committed native reblock binding cleanup",
+        );
+        return NativeReblockPreparation::AlreadyCommitted;
+    }
+
+    validate_native_reblock_source_binding(source_path, &binding);
+    if native_path.exists() {
+        validate_native_reblock_semantics(native_path, &binding, "canonical trace");
+    }
+    eprintln!(
+        "resuming authenticated reblock of {} from {}",
+        native_path.display(),
+        source_path.display()
+    );
+    NativeReblockPreparation::Ready(binding)
+}
+
+fn requested_native_trace_path(trace_path: &Path) -> PathBuf {
+    let requested = absolute_trace_path(trace_path);
+    if requested
+        .as_os_str()
+        .to_string_lossy()
+        .ends_with(TRACE_NATIVE_SUFFIX)
+    {
+        requested
+    } else {
+        native_binary_trace_path(&requested)
+    }
+}
+
+fn update_native_semantic_digest<T: bitcode::Encode + ?Sized>(digest: &mut Sha256, value: &T) {
+    let encoded = bitcode::encode(value);
+    digest.update((encoded.len() as u64).to_le_bytes());
+    digest.update(encoded);
+}
+
+/// Rewrite an authoritative version-66 native trace into bounded bitcode
+/// blocks and a bounded-window zstd frame. The semantic record stream and
+/// fixed footer are unchanged.
+///
+/// A hard-link recovery source is synced before the atomic replacement. If
+/// the process crashes at any later point, rerunning `--reblock` reads that
+/// original inode and retries; the link is removed only after a complete
+/// semantic-digest and timeline readback of the replacement.
+fn reblock_native_trace(trace_path: &Path) {
+    let native_path = requested_native_trace_path(trace_path);
+    let display = native_path.display();
+    let parent = native_path
+        .parent()
+        .expect("absolute native trace always has a parent directory");
+    let source_path = native_reblock_source_path(&native_path);
+    let binding_path = native_reblock_binding_path(&native_path);
+    let _generation_lock = lock_native_trace_generation(&native_path);
+    reject_conversion_symlink(&native_path);
+    reject_conversion_symlink(&source_path);
+    reject_conversion_symlink(&binding_path);
+    cleanup_native_reblock_orphans(&native_path);
+    let binding = match prepare_native_reblock_source(&native_path, &source_path, &binding_path) {
+        NativeReblockPreparation::Ready(binding) => binding,
+        NativeReblockPreparation::AlreadyCommitted => {
+            eprintln!("native trace reblock was already committed for {display}");
+            return;
+        }
+    };
+    let source_bytes = binding.source_bytes;
+    let started = Instant::now();
+    let mut source = BinaryTraceReader::open(&source_path);
+    let footer = source.footer;
+    validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+        panic!(
+            "native parity trace reblock source {} has an invalid footer: {error}",
+            source_path.display()
+        )
+    });
+    let header = source.read_header();
+    assert_eq!(
+        header.version, TRACE_NATIVE_VERSION,
+        "native parity trace reblock source has version {}",
+        header.version
+    );
+    let mut source_digest = Sha256::new();
+    update_native_semantic_digest(&mut source_digest, &header);
+    let mut timeline = TraceTimeline::new(header.trace.initial_frame);
+    let mut frame_count = 0_u64;
+
+    let mut temporary = tempfile::Builder::new()
+        .prefix(&native_reblock_temporary_prefix(&native_path, false))
+        .tempfile_in(parent)
+        .unwrap_or_else(|error| {
+            panic!("create temporary reblocked native trace beside {display}: {error}")
+        });
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(
+            BufWriter::new(temporary.as_file_mut()),
+            TRACE_NATIVE_ZSTD_LEVEL,
+        )
+        .unwrap_or_else(|error| panic!("start native trace reblock compression: {error}"));
+        configure_cache_compression(&mut encoder, None);
+        write_binary_record(&mut encoder, &header, "reblocked native trace header");
+        let mut block = Vec::with_capacity(TRACE_NATIVE_BLOCK_RECORDS);
+        loop {
+            let record = source.read_record();
+            update_native_semantic_digest(&mut source_digest, &record);
+            let terminal = match &record {
+                BinaryTraceRecord::Frame(frame) => {
+                    timeline
+                        .observe(frame.frame_before, frame.frame_after)
+                        .unwrap_or_else(|error| {
+                            panic!("native trace reblock source timeline is invalid: {error}")
+                        });
+                    frame_count += 1;
+                    None
+                }
+                BinaryTraceRecord::End {
+                    rng_suffix,
+                    final_frame,
+                    frame_count: terminal_frame_count,
+                } => {
+                    assert!(
+                        rng_suffix.is_some(),
+                        "native trace reblock source lost RNG suffix"
+                    );
+                    Some((
+                        terminal_frame_count
+                            .expect("native trace reblock source lost terminal frame count"),
+                        final_frame.expect("native trace reblock source lost final frame"),
+                    ))
+                }
+            };
+            block.push(record);
+            if block.len() == TRACE_NATIVE_BLOCK_RECORDS || terminal.is_some() {
+                write_binary_record(
+                    &mut encoder,
+                    block.as_slice(),
+                    "reblocked native trace frame block",
+                );
+                block.clear();
+            }
+            if let Some((terminal_frame_count, final_frame)) = terminal {
+                assert_eq!(terminal_frame_count, frame_count);
+                timeline
+                    .validate_terminator(terminal_frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!("native trace reblock terminator is invalid: {error}")
+                    });
+                source
+                    .validate_terminator(terminal_frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!("native trace reblock source footer is invalid: {error}")
+                    });
+                break;
+            }
+        }
+        let mut writer = encoder
+            .finish()
+            .unwrap_or_else(|error| panic!("finish native trace reblock compression: {error}"));
+        write_binary_trace_footer(&mut writer, footer)
+            .unwrap_or_else(|error| panic!("write reblocked native trace footer: {error}"));
+        writer
+            .flush()
+            .unwrap_or_else(|error| panic!("flush reblocked native trace: {error}"));
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .unwrap_or_else(|error| panic!("sync reblocked native trace: {error}"));
+    let expected_digest = source_digest.finalize();
+    assert_eq!(
+        sha256_hex(&expected_digest),
+        binding.source_semantic_sha256,
+        "native trace reblock source changed after its authenticated binding was published"
+    );
+    let (decoded_frames, actual_digest) = digest_and_validate_native_trace(temporary.path());
+    assert_eq!(decoded_frames, frame_count);
+    assert_eq!(
+        actual_digest, expected_digest,
+        "temporary reblocked native trace for {display} differs semantically from its recovery source"
+    );
+    temporary.persist(&native_path).unwrap_or_else(|error| {
+        panic!(
+            "atomically publish reblocked native trace {display}: {}",
+            error.error
+        )
+    });
+    sync_directory(parent, "reblocked native trace publication");
+    std::fs::remove_file(&source_path).unwrap_or_else(|error| {
+        panic!(
+            "remove verified native trace reblock source {}: {error}",
+            source_path.display()
+        )
+    });
+    std::fs::remove_file(&binding_path).unwrap_or_else(|error| {
+        panic!(
+            "remove verified native trace reblock binding {}: {error}",
+            binding_path.display()
+        )
+    });
+    sync_directory(parent, "verified native trace reblock commit");
+    let output_bytes = std::fs::metadata(&native_path)
+        .expect("stat reblocked native parity trace")
+        .len();
+    eprintln!(
+        "reblocked {display}: {frame_count} frames, {:.2} MiB -> {:.2} MiB in {:.1}s ({} records/block, {} MiB zstd window)",
+        source_bytes as f64 / (1024.0 * 1024.0),
+        output_bytes as f64 / (1024.0 * 1024.0),
+        started.elapsed().as_secs_f64(),
+        TRACE_NATIVE_BLOCK_RECORDS,
+        1_u64 << (TRACE_NATIVE_WINDOW_LOG - 20),
+    );
+}
+
+/// Read and semantically validate a native trace without running the replay.
+/// This is intentionally read-only so a migration operator can compare old
+/// and reblocked artifacts by digest, elapsed time, and peak process RSS.
+fn validate_native_trace(trace_path: &Path) {
+    let native_path = requested_native_trace_path(trace_path);
+    let started = Instant::now();
+    let (frame_count, digest) = digest_and_validate_native_trace(&native_path);
+    eprintln!(
+        "validated {}: {frame_count} frames, semantic_sha256={}, {:.1}s",
+        native_path.display(),
+        sha256_hex(&digest),
+        started.elapsed().as_secs_f64(),
+    );
+}
+
+fn digest_and_validate_native_trace(path: &Path) -> (u64, sha2::digest::Output<Sha256>) {
+    let mut reader = BinaryTraceReader::open(path);
+    validate_binary_trace_footer(&reader.footer)
+        .unwrap_or_else(|error| panic!("reblocked native trace footer is invalid: {error}"));
+    let header = reader.read_header();
+    assert_eq!(header.version, TRACE_NATIVE_VERSION);
+    let mut digest = Sha256::new();
+    update_native_semantic_digest(&mut digest, &header);
+    let mut timeline = TraceTimeline::new(header.trace.initial_frame);
+    let mut decoded_frames = 0_u64;
+    loop {
+        let record = reader.read_record();
+        update_native_semantic_digest(&mut digest, &record);
+        match record {
+            BinaryTraceRecord::Frame(frame) => {
+                timeline
+                    .observe(frame.frame_before, frame.frame_after)
+                    .unwrap_or_else(|error| panic!("reblocked native trace timeline: {error}"));
+                decoded_frames += 1;
+            }
+            BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            } => {
+                assert!(
+                    rng_suffix.is_some(),
+                    "reblocked native trace lost RNG suffix"
+                );
+                let frame_count = frame_count.expect("reblocked native trace lost frame count");
+                let final_frame = final_frame.expect("reblocked native trace lost final frame");
+                assert_eq!(frame_count, decoded_frames);
+                timeline
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| panic!("reblocked native trace terminator: {error}"));
+                reader
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| panic!("reblocked native trace footer: {error}"));
+                return (decoded_frames, digest.finalize());
+            }
+        }
+    }
+}
+
 fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
     if trace_path
         .as_os_str()
@@ -7434,17 +8116,14 @@ fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHea
     read_binary_record(&mut decoder, "native parity trace header")
 }
 
-/// A compression window wide enough for `expected_bytes` of encoded stream,
-/// never wider than the reader accepts. A streaming encoder cannot know how
-/// much is coming, so it reserves the whole window up front: pinning every
-/// trace at the 2 GiB maximum costs ~1.9 GiB of resident memory per conversion
-/// even for a trace whose stream is a few hundred MiB. Capture hosts run one
-/// conversion per capture job, so that reservation is the difference between
-/// fitting in RAM and not, and it buys nothing — a window that already spans
-/// the whole stream matches just as far as a larger one.
+/// A compression window large enough for short encoded streams and otherwise
+/// capped at [`TRACE_NATIVE_WINDOW_LOG`]. A wider zstd frame makes every
+/// replay decoder retain that history even though parity consumes records
+/// strictly once and in order. The bounded window is therefore part of the
+/// replay lane's memory contract, not merely an encoder tuning parameter.
 fn native_stream_window_log(expected_bytes: Option<u64>) -> u32 {
     let Some(bytes) = expected_bytes else {
-        return TRACE_ZSTD_WINDOW_LOG_MAX;
+        return TRACE_NATIVE_WINDOW_LOG;
     };
     // ceil(log2(bytes)): the smallest window that still spans the estimate.
     let spanning = u64::BITS
@@ -7456,7 +8135,7 @@ fn native_stream_window_log(expected_bytes: Option<u64>) -> u32 {
         - 1;
     // Below ~1 MiB the window stops being what limits matching, and a stream
     // that outgrows the estimate only loses long-range matches, never data.
-    spanning.clamp(20, TRACE_ZSTD_WINDOW_LOG_MAX)
+    spanning.clamp(20, TRACE_NATIVE_WINDOW_LOG)
 }
 
 /// How much bitcode a recording is expected to encode into. Measured traces
@@ -11273,6 +11952,104 @@ mod tests {
         )
     }
 
+    fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeader {
+        BinaryTraceHeader {
+            version: TRACE_NATIVE_VERSION,
+            source_fingerprint: source_fingerprint.to_owned(),
+            trace: TraceHeader {
+                record_type: "header".to_owned(),
+                mission: "test".to_owned(),
+                proto_level: "test".to_owned(),
+                rng_seed: 1,
+                schema: 16,
+                session_index: 1,
+                start_state: TraceStartState::MissionStart,
+                initial_frame: 0,
+                simulation_hz: 25,
+                synchronous_pathfinding: true,
+                rng_stream: "libc_rand_raw_global_draw_order".to_owned(),
+                visibility_queries: "opaque_is_reachable".to_owned(),
+                authoritative_state: None,
+                random_input_seed: None,
+                sim_config: TraceSimConfig {
+                    difficulty: TraceDifficulty::Medium,
+                    script_enabled: true,
+                    highlander: false,
+                    highlander2: false,
+                    golden_eye: false,
+                    ignore_default_loose: false,
+                    bypass_fog_sprites_crash: false,
+                    amount_of_speaking: 0,
+                },
+                campaign: TraceCampaign {
+                    version: 1,
+                    values: Vec::new(),
+                    ares: 0,
+                    missions: Vec::new(),
+                    accessible_mission_indices: Vec::new(),
+                    pending_accessible_mission_indices: Vec::new(),
+                    last_mission_index: None,
+                    current_mission_index: None,
+                    next_mission_index: None,
+                    blazon_mission_index: None,
+                    last_played_mission_indices: Vec::new(),
+                    last_pseudo_mission_status: 0,
+                    last_pseudo_mission_id: 0,
+                    characters: Vec::new(),
+                    gang_indices: Vec::new(),
+                    reservist_indices: Vec::new(),
+                    mission_team_indices: Vec::new(),
+                    peasant_names: Vec::new(),
+                    reservists_are_back: false,
+                    collected_relics: Vec::new(),
+                    production_sectors: Vec::new(),
+                },
+                motion_grid: TraceMotionGrid { layers: Vec::new() },
+                initial_npc_transients: None,
+                initial_save: None,
+            },
+            rng_prefix: TraceRngPrefix {
+                r#type: "rng_prefix".to_owned(),
+                draws: TraceRngBatch {
+                    first_index: 0,
+                    values: Vec::new(),
+                    callsite_offsets: Vec::new(),
+                    main_thread: Vec::new(),
+                    domains: Vec::new(),
+                },
+            },
+        }
+    }
+
+    fn write_synthetic_native_trace(path: &Path, source_fingerprint: &str, checksum: bool) {
+        let file = File::create(path).unwrap();
+        let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
+        encoder.window_log(20).unwrap();
+        encoder.include_checksum(checksum).unwrap();
+        write_binary_record(
+            &mut encoder,
+            &minimal_test_native_header(source_fingerprint),
+            "synthetic native header",
+        );
+        write_binary_record(
+            &mut encoder,
+            std::slice::from_ref(&complete_test_end(0, 0)),
+            "synthetic native block",
+        );
+        let mut writer = encoder.finish().unwrap();
+        write_binary_trace_footer(
+            &mut writer,
+            BinaryTraceFooter {
+                version: TRACE_NATIVE_VERSION,
+                frame_count: 0,
+                final_frame: 0,
+            },
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        writer.get_ref().sync_all().unwrap();
+    }
+
     fn write_test_native_records_with_compression(
         records: &[BinaryTraceRecord],
         footer: Option<BinaryTraceFooter>,
@@ -11324,6 +12101,8 @@ mod tests {
         assert_eq!(TRACE_NATIVE_VERSION, 66);
         assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 9);
         assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
+        assert_eq!(TRACE_NATIVE_WINDOW_LOG, 25);
 
         let footer = BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
@@ -11338,6 +12117,284 @@ mod tests {
         ));
         reader.validate_terminator(0, 10).unwrap();
         assert_eq!(read_binary_trace_footer(native.path()).unwrap(), footer);
+    }
+
+    #[test]
+    fn reblock_recovery_source_is_adjacent_and_version_specific() {
+        let native = Path::new("dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst");
+        assert_eq!(
+            native_reblock_source_path(native),
+            PathBuf::from(
+                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-source-v66"
+            )
+        );
+        assert_eq!(
+            native_reblock_binding_path(native),
+            PathBuf::from(
+                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-binding-v66.json"
+            )
+        );
+    }
+
+    #[test]
+    fn reblock_binding_rejects_foreign_content_and_inode() {
+        let binding = NativeReblockBinding {
+            version: TRACE_NATIVE_VERSION,
+            canonical_path: PathBuf::from("trace.parity.bitcode.zst"),
+            source_content_sha256: "bound-content".to_owned(),
+            source_bytes: 123,
+            source_semantic_sha256: "bound-semantics".to_owned(),
+            frame_count: 10,
+            final_frame: 20,
+            #[cfg(unix)]
+            source_device: 30,
+            #[cfg(unix)]
+            source_inode: 40,
+        };
+        assert!(native_reblock_file_identity_matches(
+            &binding,
+            123,
+            "bound-content",
+            30,
+            40
+        ));
+        assert!(!native_reblock_file_identity_matches(
+            &binding,
+            123,
+            "foreign-content",
+            30,
+            40
+        ));
+        #[cfg(unix)]
+        assert!(!native_reblock_file_identity_matches(
+            &binding,
+            123,
+            "bound-content",
+            30,
+            41
+        ));
+    }
+
+    #[test]
+    fn foreign_reblock_recovery_without_binding_cannot_replace_canonical() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding = native_reblock_binding_path(&native);
+        write_synthetic_native_trace(&native, "canonical", false);
+        write_synthetic_native_trace(&source, "foreign", false);
+        let canonical_before = std::fs::read(&native).unwrap();
+        let foreign_before = std::fs::read(&source).unwrap();
+
+        assert!(
+            classify_native_reblock_recovery_state(true, source.exists(), binding.exists())
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&native).unwrap(), canonical_before);
+        assert_eq!(std::fs::read(&source).unwrap(), foreign_before);
+        assert!(!binding.exists());
+    }
+
+    #[test]
+    fn stale_bound_reblock_source_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        write_synthetic_native_trace(&native, "canonical", false);
+        let binding = create_native_reblock_binding(&native);
+        write_native_reblock_binding(&binding_path, &binding);
+        write_synthetic_native_trace(&source, "foreign", false);
+        let canonical_before = std::fs::read(&native).unwrap();
+        let source_before = std::fs::read(&source).unwrap();
+        let binding_before = std::fs::read(&binding_path).unwrap();
+
+        assert!(validate_native_reblock_source_file_identity(&source, &binding).is_err());
+        assert_eq!(std::fs::read(&native).unwrap(), canonical_before);
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        assert_eq!(std::fs::read(&binding_path).unwrap(), binding_before);
+    }
+
+    #[test]
+    fn authenticated_reblock_source_survives_missing_canonical() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        write_synthetic_native_trace(&native, "canonical", false);
+        let binding = create_native_reblock_binding(&native);
+        write_native_reblock_binding(&binding_path, &binding);
+        std::fs::hard_link(&native, &source).unwrap();
+        std::fs::remove_file(&native).unwrap();
+
+        assert!(matches!(
+            prepare_native_reblock_source(&native, &source, &binding_path),
+            NativeReblockPreparation::Ready(_)
+        ));
+        assert!(!native.exists());
+        assert!(source.exists());
+        assert!(binding_path.exists());
+    }
+
+    #[test]
+    fn missing_reblock_canonical_without_authenticated_pair_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding = native_reblock_binding_path(&native);
+        assert!(
+            classify_native_reblock_recovery_state(
+                native.exists(),
+                source.exists(),
+                binding.exists()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn binding_only_without_canonical_or_source_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        write_synthetic_native_trace(&native, "canonical", false);
+        let binding = create_native_reblock_binding(&native);
+        write_native_reblock_binding(&binding_path, &binding);
+        std::fs::remove_file(&native).unwrap();
+
+        assert!(
+            classify_native_reblock_recovery_state(
+                native.exists(),
+                source.exists(),
+                binding_path.exists()
+            )
+            .is_err()
+        );
+        assert!(binding_path.exists());
+    }
+
+    #[test]
+    fn binding_only_same_inode_canonical_recreates_recovery_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        write_synthetic_native_trace(&native, "canonical", false);
+        let binding = create_native_reblock_binding(&native);
+        write_native_reblock_binding(&binding_path, &binding);
+
+        assert!(matches!(
+            prepare_native_reblock_source(&native, &source, &binding_path),
+            NativeReblockPreparation::Ready(_)
+        ));
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&native).unwrap().ino(),
+            std::fs::metadata(&source).unwrap().ino()
+        );
+    }
+
+    #[test]
+    fn semantic_equal_postpublish_state_only_cleans_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        let replacement = directory.path().join("replacement.parity.bitcode.zst");
+        write_synthetic_native_trace(&native, "canonical", false);
+        let binding = create_native_reblock_binding(&native);
+        write_native_reblock_binding(&binding_path, &binding);
+        std::fs::hard_link(&native, &source).unwrap();
+        write_synthetic_native_trace(&replacement, "canonical", true);
+        assert_ne!(
+            trace_content_sha256(&native),
+            trace_content_sha256(&replacement)
+        );
+        std::fs::rename(&replacement, &native).unwrap();
+        std::fs::remove_file(&source).unwrap();
+
+        assert!(matches!(
+            prepare_native_reblock_source(&native, &source, &binding_path),
+            NativeReblockPreparation::AlreadyCommitted
+        ));
+        assert!(native.exists());
+        assert!(!source.exists());
+        assert!(!binding_path.exists());
+    }
+
+    #[test]
+    fn reblock_orphan_cleanup_is_trace_scoped_and_preserves_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("trace.parity.bitcode.zst");
+        let other_native = directory.path().join("other.parity.bitcode.zst");
+        let output_orphan = directory.path().join(format!(
+            "{}dead",
+            native_reblock_temporary_prefix(&native, false)
+        ));
+        let binding_orphan = directory.path().join(format!(
+            "{}dead",
+            native_reblock_temporary_prefix(&native, true)
+        ));
+        let other_orphan = directory.path().join(format!(
+            "{}live",
+            native_reblock_temporary_prefix(&other_native, false)
+        ));
+        let unrelated = directory.path().join(".parity-reblock-v66-unrelated");
+        std::fs::write(&output_orphan, b"partial output").unwrap();
+        std::fs::write(&binding_orphan, b"partial binding").unwrap();
+        std::fs::write(&other_orphan, b"another trace").unwrap();
+        std::fs::write(&unrelated, b"not ours").unwrap();
+        #[cfg(unix)]
+        let symlink = {
+            let symlink = directory.path().join(format!(
+                "{}symlink",
+                native_reblock_temporary_prefix(&native, false)
+            ));
+            std::os::unix::fs::symlink(&unrelated, &symlink).unwrap();
+            symlink
+        };
+
+        cleanup_native_reblock_orphans(&native);
+
+        assert!(!output_orphan.exists());
+        assert!(!binding_orphan.exists());
+        assert!(other_orphan.exists());
+        assert!(unrelated.exists());
+        #[cfg(unix)]
+        assert!(
+            std::fs::symlink_metadata(symlink)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reblock_temporary_owner_hash_distinguishes_non_utf8_paths() {
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(b"trace-\xfe".to_vec()));
+        let second = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(b"trace-\xff".to_vec()));
+        assert_ne!(
+            native_reblock_temporary_prefix(&first, false),
+            native_reblock_temporary_prefix(&second, false)
+        );
+    }
+
+    #[test]
+    fn native_maintenance_commands_accept_logical_and_native_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let logical = directory.path().join("replay-001-session-0001.jsonl.zst");
+        let native = native_binary_trace_path(&logical);
+        assert_eq!(requested_native_trace_path(&logical), native);
+        assert_eq!(requested_native_trace_path(&native), native);
     }
 
     #[test]
@@ -12000,21 +13057,29 @@ mod tests {
     }
 
     #[test]
-    fn compression_window_spans_the_stream_without_reserving_the_maximum() {
-        // No estimate: the encoder keeps the widest window it may ever need.
-        assert_eq!(native_stream_window_log(None), TRACE_ZSTD_WINDOW_LOG_MAX);
-        // 192 MiB of stream fits a 256 MiB window, so long-range matching still
-        // reaches every earlier byte without reserving 2 GiB to do it.
-        assert_eq!(native_stream_window_log(Some(192 * 1024 * 1024)), 28);
-        assert_eq!(native_stream_window_log(Some(256 * 1024 * 1024)), 28);
-        assert_eq!(native_stream_window_log(Some(256 * 1024 * 1024 + 1)), 29);
-        // Tiny and absurd estimates stay inside the encoder's accepted range.
+    fn compression_window_is_bounded_for_parallel_replay_lanes() {
+        // Unknown and large streams use the fixed 32 MiB replay-memory budget.
+        assert_eq!(native_stream_window_log(None), TRACE_NATIVE_WINDOW_LOG);
+        assert_eq!(
+            native_stream_window_log(Some(192 * 1024 * 1024)),
+            TRACE_NATIVE_WINDOW_LOG
+        );
+        assert_eq!(
+            native_stream_window_log(Some(256 * 1024 * 1024)),
+            TRACE_NATIVE_WINDOW_LOG
+        );
+        assert_eq!(
+            native_stream_window_log(Some(256 * 1024 * 1024 + 1)),
+            TRACE_NATIVE_WINDOW_LOG
+        );
+        // Tiny estimates retain the encoder's accepted minimum.
         assert_eq!(native_stream_window_log(Some(0)), 20);
         assert_eq!(native_stream_window_log(Some(1)), 20);
         assert_eq!(
             native_stream_window_log(Some(u64::MAX)),
-            TRACE_ZSTD_WINDOW_LOG_MAX
+            TRACE_NATIVE_WINDOW_LOG
         );
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
     }
 
     #[test]
@@ -12034,8 +13099,8 @@ mod tests {
         assert!(std::fs::metadata(&compressed).unwrap().len() < 4096);
         assert_eq!(recording_uncompressed_bytes(&compressed), Some(4096));
 
-        // A streamed frame may not declare one; the caller then falls back to
-        // the widest window rather than guessing a small one.
+        // A streamed frame may not declare one; the caller then uses the
+        // bounded replay-memory window rather than guessing from file size.
         let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 1).unwrap();
         encoder.write_all(&jsonl).unwrap();
         let streamed = directory.path().join("undeclared.jsonl.zst");
@@ -12043,7 +13108,7 @@ mod tests {
         assert_eq!(recording_uncompressed_bytes(&streamed), None);
         assert_eq!(
             native_stream_window_log(expected_native_stream_bytes(&streamed)),
-            TRACE_ZSTD_WINDOW_LOG_MAX
+            TRACE_NATIVE_WINDOW_LOG
         );
     }
 
