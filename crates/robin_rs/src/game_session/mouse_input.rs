@@ -439,11 +439,17 @@ fn on_left_mouse_up(
                 on_minimap,
                 host.viewport.level_size,
             );
-            let cmd = PlayerCommand::MinimapMouseUp {
-                on_minimap,
-                center_on,
-            };
+            let cmd = PlayerCommand::MinimapMouseUp { on_minimap };
             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            if let Some(point) = center_on {
+                dispatch_local_command(
+                    host,
+                    engine,
+                    frame_cmds,
+                    assets,
+                    &PlayerCommand::CenterCameraOnPoint { point },
+                );
+            }
             host.input.cancel_multi_selection();
         }
 

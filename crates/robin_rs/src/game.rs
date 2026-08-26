@@ -647,14 +647,9 @@ impl Game {
         // harness's outer owner. Installing the separate placeholder here
         // would replace the authoritative campaign and violate PA-037's
         // ownership invariant.
-        let mut input = engine_api::InputState::default();
-        let mut display = engine_api::HostDisplayState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 assets,
-                &mut engine_api::DevState::default(),
                 engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
                     engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
                         exit_code: self.operation.get_current(),

@@ -2595,10 +2595,9 @@ impl TimerImmediateContext<'_> {
     }
 }
 
-/// Map/dialog/popup commands need host minimap access plus only the
-/// deterministic presentation outputs and messenger reset-input edge.
+/// Map/dialog/popup commands emit presentation outputs and the messenger
+/// reset-input edge without borrowing host UI state.
 struct PresentationCommandContext<'a> {
-    display: &'a mut HostDisplayState,
     fast_forward: bool,
     side_effects: &'a mut SideEffects,
     messenger: &'a mut crate::messenger::Messenger,
@@ -2618,7 +2617,12 @@ impl PresentationCommandContext<'_> {
                         _ => None,
                     })
                     .unwrap_or(false);
-                self.display.minimap.display_map(show, false);
+                self.side_effects.host_events.push(HostEvent::Minimap(
+                    MinimapHostEvent::DisplayMap {
+                        show,
+                        restore_position: false,
+                    },
+                ));
             }
             Command::PlayDialog => {
                 if !self.fast_forward {

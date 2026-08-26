@@ -993,7 +993,7 @@ impl EngineInner {
     #[allow(clippy::collapsible_match)]
     pub(crate) fn change_state(
         &mut self,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         seat: usize,
         request: EngineStateRequest,
     ) -> bool {
@@ -1009,7 +1009,7 @@ impl EngineInner {
             EngineStateRequest::ZoomingUp => {
                 // Display transition state is host-owned and supplied by
                 // the caller, so it never enters the simulation snapshot.
-                if self.is_zoom_possible_for_seat(display, seat)
+                if self.is_zoom_possible_for_camera(display, seat)
                     && self.is_zoom_up_possible_for_seat(seat)
                 {
                     display.background_transform.required_zoom_up = false;
@@ -1043,7 +1043,7 @@ impl EngineInner {
                 }
             }
             EngineStateRequest::ZoomingDown => {
-                if self.is_zoom_possible_for_seat(display, seat)
+                if self.is_zoom_possible_for_camera(display, seat)
                     && self.is_zoom_down_possible_for_seat(seat)
                 {
                     display.background_transform.required_zoom_down = false;
@@ -4442,7 +4442,7 @@ impl EngineInner {
     /// Tetris-shift slot `slot..NUMBER_OF_QA_MEMORY` on every PC.
     /// Called once all PCs have successfully launched their slot-`slot`
     /// macros — see `apply_start_macro` which drives the call.
-    pub(crate) fn do_tetris_macro(&mut self, display: &mut HostDisplayState, slot: u8) {
+    pub(crate) fn do_tetris_macro(&mut self, slot: u8) {
         let pcs = self.world.pc_ids.clone();
         for pc in pcs {
             if let Some(state) = self.players.macro_store.get_mut(pc) {
@@ -4473,7 +4473,35 @@ impl EngineInner {
             saved_pc.quick_action_interactors[last] = None;
             saved_pc.quick_action_buttons[last] = 0;
         }
-        display.rearm_macro_tetris(&self.world.pc_ids, &self.players.macro_store, slot as usize);
+        let slots = self.macro_slot_lengths();
+        self.feedback
+            .pending_side_effects
+            .host_events
+            .push(HostEvent::MacroUi(MacroUiHostEvent::RearmTetris {
+                slot: slot as usize,
+                slots,
+            }));
+    }
+
+    pub(crate) fn macro_slot_lengths(&self) -> Vec<MacroSlotLengths> {
+        self.world
+            .pc_ids
+            .iter()
+            .filter_map(|&pc_id| {
+                let state = self.players.macro_store.get(pc_id)?;
+                let lengths = std::array::from_fn(|slot| {
+                    state
+                        .slot(slot)
+                        .map(crate::macro_store::QuickActionSlot::len)
+                        .unwrap_or(0)
+                        .try_into()
+                        .unwrap_or_else(|_| {
+                            panic!("macro slot {slot} has more than u16::MAX steps")
+                        })
+                });
+                Some(MacroSlotLengths { pc_id, lengths })
+            })
+            .collect()
     }
 
     /// Enable or disable the `--goldeneye` cheat (NPCs can't see the player).

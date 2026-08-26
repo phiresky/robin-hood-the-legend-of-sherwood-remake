@@ -13,7 +13,7 @@ impl EngineInner {
     fn dispatch_immediate_action(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
     ) {
@@ -80,7 +80,7 @@ impl EngineInner {
     pub(crate) fn drain_pending_immediate_actions_sync(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         while let Some(action) = self.orders.sequence_manager.pop_pending_immediate_action() {
@@ -122,7 +122,7 @@ impl EngineInner {
     pub(crate) fn drain_registration_inline_actions_sync(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         while let Some(action) = self
@@ -657,7 +657,7 @@ impl EngineInner {
     pub(super) fn dispatch_engine_or_execute_immediate(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        _display: &mut CameraDisplayState,
         assets: &LevelAssets,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -837,7 +837,6 @@ impl EngineInner {
                     && !self.control.fast_forward
                     && self.control.begin_popup_scroll_display();
                 PresentationCommandContext {
-                    display,
                     fast_forward: self.control.fast_forward,
                     side_effects: &mut self.feedback.pending_side_effects,
                     messenger: &mut self.orders.messenger,

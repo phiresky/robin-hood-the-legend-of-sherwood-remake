@@ -1280,10 +1280,7 @@ mod tests {
             let frontend = &mut host.frontend;
             engine
                 .advance_frame(
-                    &mut frontend.engine_display,
-                    &mut frontend.input,
                     &assets,
-                    &mut robin_engine::engine::DevState::default(),
                     robin_engine::engine::SimulationFrameInput::new(vec![
                         PlayerCommand::SetFastForward.into(),
                     ])
@@ -1342,10 +1339,7 @@ mod tests {
             let frontend = &mut host.frontend;
             engine
                 .advance_frame(
-                    &mut frontend.engine_display,
-                    &mut frontend.input,
                     &assets,
-                    &mut robin_engine::engine::DevState::default(),
                     robin_engine::engine::SimulationFrameInput::new(vec![
                         PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
                     ])
@@ -1425,10 +1419,7 @@ mod tests {
             manager
                 .engine
                 .advance_frame(
-                    &mut frontend.engine_display,
-                    &mut frontend.input,
                     &assets,
-                    &mut robin_engine::engine::DevState::default(),
                     robin_engine::engine::SimulationFrameInput::new(vec![
                         PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
                     ])

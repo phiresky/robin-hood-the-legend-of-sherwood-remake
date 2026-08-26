@@ -1994,10 +1994,7 @@ mod tests {
         let mut input = InputState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 assets,
-                &mut robin_engine::engine::DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(vec![cmd.into()])
                     .with_hourglass(false),
             )

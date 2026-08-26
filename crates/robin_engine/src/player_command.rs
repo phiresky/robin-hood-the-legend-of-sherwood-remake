@@ -591,11 +591,11 @@ pub enum PlayerCommand {
     /// the click / drag-end / center-on-map-click branch.
     MinimapMouseUp {
         on_minimap: bool,
-        /// Fully-resolved map point to center the shared camera on. `None`
-        /// represents a drag release, collapsed-map click, dead-zone click,
-        /// or failed minimap projection. Host minimap geometry is never read
-        /// to decide the deterministic camera mutation during replay.
-        center_on: Option<MapPoint>,
+    },
+    /// Center the shared camera on a host-resolved map point. Minimap gesture
+    /// presentation is deliberately represented by a separate command.
+    CenterCameraOnPoint {
+        point: MapPoint,
     },
     /// Right-click on the displayed minimap — close the map and clear
     /// pending highlights.

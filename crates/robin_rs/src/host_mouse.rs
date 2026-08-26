@@ -1593,10 +1593,7 @@ mod tests {
         let mut input = InputState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 assets,
-                &mut robin_engine::engine::DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     PlayerCommand::SelectPc {
                         pc_id: pc,
@@ -1675,10 +1672,7 @@ mod tests {
             let mut input = InputState::default();
             engine
                 .advance_frame(
-                    &mut display,
-                    &mut input,
                     &assets,
-                    &mut robin_engine::engine::DevState::default(),
                     robin_engine::engine::SimulationFrameInput::new(vec![
                         PlayerCommand::SelectResolvedAction { pc_id: pc, action }.into(),
                     ])

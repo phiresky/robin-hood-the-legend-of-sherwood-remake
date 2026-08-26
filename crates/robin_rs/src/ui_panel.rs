@@ -921,8 +921,8 @@ impl PortraitCache {
         &mut self,
         res: &mut ResourceManager,
         engine: &mut engine_api::Engine,
-        display: &mut engine_api::HostDisplayState,
-        input: &mut engine_api::InputState,
+        _display: &mut engine_api::HostDisplayState,
+        _input: &mut engine_api::InputState,
         assets: &engine_api::LevelAssets,
     ) {
         const FIRSTNAME_BASE: usize = 100;
@@ -970,10 +970,7 @@ impl PortraitCache {
                     if !engine.is_peasant_name_registered(&full) {
                         engine
                             .advance_frame(
-                                display,
-                                input,
                                 assets,
-                                &mut engine_api::DevState::default(),
                                 engine_api::SimulationFrameInput::new(vec![
                                     engine_api::SimCommand::from(
                                         engine_player_command::PlayerCommand::RegisterPeasantName {

@@ -4457,7 +4457,7 @@ impl EngineInner {
     pub(super) fn tick_ability_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut super::HostDisplayState,
+        display: &mut super::CameraDisplayState,
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
@@ -5743,7 +5743,7 @@ impl EngineInner {
                     // CIV_REMARK_BEGGAR_* speech cue is queued inside
                     // `reveal_scrolls` and later dispatched by
                     // the owner-local speech drain.
-                    match self.reveal_scrolls(sim, display, assets, beggar_id) {
+                    match self.reveal_scrolls(sim, assets, beggar_id) {
                         Some(remark) => tracing::debug!(
                             beggar = ?beggar_id,
                             ?remark,

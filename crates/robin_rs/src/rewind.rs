@@ -295,10 +295,7 @@ mod tests {
         let mut input = InputState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp).into(),
                 ])
@@ -312,10 +309,7 @@ mod tests {
         // frames, making an incorrectly defaulted replay display observable.
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut DevState::default(),
                 robin_engine::engine::SimulationFrameInput::no_hourglass().with_external_actions(
                     vec![robin_engine::engine::ExternalAction::SimpleMessage {
                         message: SimpleMessage::LockAlt,

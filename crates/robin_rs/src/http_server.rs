@@ -971,18 +971,15 @@ pub fn drain_global_headless(
 
 fn admit_external_actions(
     engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
-    input: &mut engine_api::InputState,
+    _display: &mut engine_api::HostDisplayState,
+    _input: &mut engine_api::InputState,
     assets: &LevelAssets,
     actions: Vec<engine_api::ExternalAction>,
     journal: &mut Vec<engine_api::ExternalAction>,
 ) -> Result<Vec<engine_api::ExternalActionResult>, String> {
     let output = engine
         .advance_frame(
-            display,
-            input,
             assets,
-            &mut engine_api::DevState::default(),
             engine_api::SimulationFrameInput::no_hourglass()
                 .with_post_external_actions(actions.clone()),
         )
@@ -1048,30 +1045,34 @@ fn dispatch_in_engine(
             Ok(ReplyBody::Json(serde_json::json!({"results": results})))
         }
         HttpPayload::Console(cmd) => {
-            // The DevState is host-side and not in scope here; we use a
-            // throwaway DevState since console cheats that mutate
-            // `dev.debug.*` are hooked elsewhere via the in-game
-            // overlay. Sim-affecting branches (CAMPAIGN, ARES, …) do
-            // their work on the engine directly and don't read DevState
-            // back.  See `console_dispatch.rs` for which commands fall
-            // into which bucket.
-            //
-            // Route through `run_cheat_string` — the HTTP caller is
-            // treated as the "WASM GUI" entry point, which always wants
-            // the full dev cheat set regardless of `use_final`.
+            // HTTP forces the full developer parser, but it has no live
+            // `DevState`. Presentation-only commands therefore stay outside
+            // the authoritative journal and report that limitation.
+            let Some(command) = robin_engine::console::parse_with_final(&cmd, false) else {
+                return Ok(ReplyBody::Json(frame_console_response_to_json(
+                    engine_api::FrameConsoleResponse::Unknown,
+                )));
+            };
+            if command.is_host_only() {
+                return Ok(ReplyBody::Json(frame_console_response_to_json(
+                    engine_api::FrameConsoleResponse::NotImplemented(
+                        "host-only console command over HTTP".to_owned(),
+                    ),
+                )));
+            }
             let results = admit_external_actions(
                 engine,
                 display,
                 input,
                 assets,
-                vec![engine_api::ExternalAction::CheatString {
-                    input: cmd,
+                vec![engine_api::ExternalAction::ConsoleCommand {
+                    command,
                     selected_view_element: *selected_view_element,
                 }],
                 external_actions,
             )?;
             match results.into_iter().next() {
-                Some(engine_api::ExternalActionResult::CheatString {
+                Some(engine_api::ExternalActionResult::ConsoleCommand {
                     response,
                     selected_view_element: selected,
                 }) => {

@@ -4026,10 +4026,7 @@ fn cross_post_initialize_frame(
 ) {
     engine
         .advance_frame(
-            display,
-            input,
             assets,
-            dev,
             robin_engine::engine::SimulationFrameInput::no_hourglass().with_post_initialize(true),
         )
         .unwrap_or_else(|error| panic!("admit Original PostInitialize boundary: {error}"));
@@ -5042,7 +5039,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
                 .with_simulation_body_allowed(frame.simulation_body_ran);
             engine
-                .advance_frame(&mut display, &mut input, &assets, &mut dev, frame_input)
+                .advance_frame(&assets, frame_input)
                 .unwrap_or_else(|error| {
                     panic!("admit original frame {}: {error}", frame.frame_before)
                 })
@@ -12744,10 +12741,7 @@ mod tests {
 
         let output = engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(
                     repair_commands
                         .into_iter()

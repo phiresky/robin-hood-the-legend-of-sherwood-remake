@@ -8,7 +8,9 @@
 use super::{DevState, EngineInner, LevelAssets};
 use crate::ai::AiLockFlags;
 use crate::campaign::CampaignValue;
-use crate::console::{ConsoleCommand, parse_with_final};
+use crate::console::ConsoleCommand;
+#[cfg(test)]
+use crate::console::parse_with_final;
 use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
 use crate::natives::EngineCommand;
 use crate::sequence::SequenceElement;
@@ -46,6 +48,7 @@ impl EngineInner {
     /// dispatch the command, and record the raw input in history.
     ///
     /// Returns `ConsoleResponse::Unknown` if the input doesn't parse.
+    #[cfg(test)]
     pub(crate) fn run_console_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -94,6 +97,7 @@ impl EngineInner {
     /// around the dispatch, and restores it afterwards — gives the
     /// WASM GUI access to the full cheat list even in `_FINAL` builds
     /// (the help array otherwise hides the developer cheats).
+    #[cfg(test)]
     pub(crate) fn run_cheat_string(
         &mut self,
         assets: &LevelAssets,
@@ -123,6 +127,30 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         dev: &mut DevState,
+        selected_view_element: &mut Option<EntityId>,
+        cmd: &ConsoleCommand,
+    ) -> ConsoleResponse {
+        self.dispatch_console_command_resolved(sim, assets, Some(dev), selected_view_element, cmd)
+    }
+
+    /// Dispatch a command that was parsed and classified by the host before
+    /// frame admission. This path deliberately has no access to `DevState`.
+    pub(crate) fn dispatch_sim_console_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        selected_view_element: &mut Option<EntityId>,
+        cmd: &ConsoleCommand,
+    ) -> ConsoleResponse {
+        assert!(!cmd.is_host_only(), "host-only console command admitted");
+        self.dispatch_console_command_resolved(sim, assets, None, selected_view_element, cmd)
+    }
+
+    fn dispatch_console_command_resolved(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        mut dev: Option<&mut DevState>,
         selected_view_element: &mut Option<EntityId>,
         cmd: &ConsoleCommand,
     ) -> ConsoleResponse {
@@ -339,31 +367,32 @@ impl EngineInner {
 
             // ── Debug flag toggles ───────────────────────────────
             Elevation => toggle_debug(
-                &mut dev.debug.elevation_display,
+                &mut host_dev(&mut dev).debug.elevation_display,
                 "Elevation display enabled.",
                 "Elevation display disabled.",
             ),
             Railroad => toggle_debug(
-                &mut dev.debug.railroad_display,
+                &mut host_dev(&mut dev).debug.railroad_display,
                 "Railroads displayed.",
                 "Railroads hidden.",
             ),
             Einstein => toggle_debug(
-                &mut dev.debug.all_obstacles_display,
+                &mut host_dev(&mut dev).debug.all_obstacles_display,
                 "3D-obstacles displayed.",
                 "3D-obstacles hidden.",
             ),
             Projection => toggle_debug(
-                &mut dev.debug.projection_areas_display,
+                &mut host_dev(&mut dev).debug.projection_areas_display,
                 "Projection areas displayed.",
                 "Projection areas hidden.",
             ),
             Euler => {
                 // Toggles motion-graph display and resets the index to 0.
-                dev.debug.motion_graph_display = !dev.debug.motion_graph_display;
-                dev.debug.motion_graph_display_index = 0;
+                host_dev(&mut dev).debug.motion_graph_display =
+                    !host_dev(&mut dev).debug.motion_graph_display;
+                host_dev(&mut dev).debug.motion_graph_display_index = 0;
                 ConsoleResponse::Ok(
-                    if dev.debug.motion_graph_display {
+                    if host_dev(&mut dev).debug.motion_graph_display {
                         "The seven bridges of Koenigsberg."
                     } else {
                         "Graph hidden."
@@ -372,10 +401,11 @@ impl EngineInner {
                 )
             }
             Motion => {
-                dev.debug.motion_obstacles_display = !dev.debug.motion_obstacles_display;
-                dev.debug.door_display = !dev.debug.door_display;
+                host_dev(&mut dev).debug.motion_obstacles_display =
+                    !host_dev(&mut dev).debug.motion_obstacles_display;
+                host_dev(&mut dev).debug.door_display = !host_dev(&mut dev).debug.door_display;
                 ConsoleResponse::Ok(
-                    if dev.debug.motion_obstacles_display {
+                    if host_dev(&mut dev).debug.motion_obstacles_display {
                         "Motion obstacles displayed."
                     } else {
                         "Motion obstacles hidden."
@@ -386,8 +416,8 @@ impl EngineInner {
             Noise => {
                 // "noise" banner, then on enable four lines (status +
                 // three legend lines), on disable just the status line.
-                dev.debug.noise_display = !dev.debug.noise_display;
-                let body = if dev.debug.noise_display {
+                host_dev(&mut dev).debug.noise_display = !host_dev(&mut dev).debug.noise_display;
+                let body = if host_dev(&mut dev).debug.noise_display {
                     "Noise display enabled.\n\
                      \x20 White circles: Noises\n\
                      \x20 Black circles: Deafness because of covering noises, explosions etc...\n\
@@ -398,54 +428,56 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!("noise\n{body}"))
             }
             SeekAndDestroy => toggle_debug(
-                &mut dev.debug.display_seek_points,
+                &mut host_dev(&mut dev).debug.display_seek_points,
                 "Seek points displayed",
                 "Seek points hidden",
             ),
             Light => toggle_debug(
-                &mut dev.debug.display_light_zones,
+                &mut host_dev(&mut dev).debug.display_light_zones,
                 "Light zones enabled.",
                 "Light zones disabled.",
             ),
             PcSight => {
                 // Prints the *old* state then toggles, so the displayed
                 // text is inverted vs. the new value.
-                let was = dev.debug.pc_sight;
-                dev.debug.pc_sight = !was;
+                let was = host_dev(&mut dev).debug.pc_sight;
+                host_dev(&mut dev).debug.pc_sight = !was;
                 ConsoleResponse::Ok(if was { "PCs can't see" } else { "PCs can see" }.to_string())
             }
             Shadow => toggle_debug(
-                &mut dev.debug.free_shadow_polygon,
+                &mut host_dev(&mut dev).debug.free_shadow_polygon,
                 "Free shadow polygon enabled",
                 "Free shadow polygon disabled",
             ),
             Sphere => {
-                dev.debug.shadow_polygon_sphere = !dev.debug.shadow_polygon_sphere;
+                host_dev(&mut dev).debug.shadow_polygon_sphere =
+                    !host_dev(&mut dev).debug.shadow_polygon_sphere;
                 ConsoleResponse::Ok(String::new())
             }
             SpriteMasks => toggle_debug(
-                &mut dev.debug.sprite_masks_display,
+                &mut host_dev(&mut dev).debug.sprite_masks_display,
                 "Sprite masks displayed.",
                 "Sprite masks hidden.",
             ),
             Surface => toggle_debug(
-                &mut dev.debug.surface_display,
+                &mut host_dev(&mut dev).debug.surface_display,
                 "Surface overlay displayed.",
                 "Surface overlay hidden.",
             ),
             EnergyDisplay => toggle_debug(
-                &mut dev.debug.combat_energy_display,
+                &mut host_dev(&mut dev).debug.combat_energy_display,
                 "Combat energy display enabled !",
                 "Combat energy display disabled !",
             ),
             Anim => toggle_debug(
-                &mut dev.debug.display_animation_lines,
+                &mut host_dev(&mut dev).debug.display_animation_lines,
                 "Animation lines displayed.",
                 "Animation lines hidden.",
             ),
             Companies => {
-                dev.debug.company_number_display = !dev.debug.company_number_display;
-                let on = dev.debug.company_number_display;
+                host_dev(&mut dev).debug.company_number_display =
+                    !host_dev(&mut dev).debug.company_number_display;
+                let on = host_dev(&mut dev).debug.company_number_display;
                 ConsoleResponse::Ok(
                     if on {
                         "Company number displayed"
@@ -457,8 +489,9 @@ impl EngineInner {
             }
             CestLaZone => {
                 // "Zone" banner then the enabled/disabled status line.
-                dev.debug.script_zone_display = !dev.debug.script_zone_display;
-                let status = if dev.debug.script_zone_display {
+                host_dev(&mut dev).debug.script_zone_display =
+                    !host_dev(&mut dev).debug.script_zone_display;
+                let status = if host_dev(&mut dev).debug.script_zone_display {
                     "Script zone display enabled."
                 } else {
                     "Script zone display disabled."
@@ -466,13 +499,14 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!("Zone\n{status}"))
             }
             BigBrother => {
-                dev.debug.actor_info_display = !dev.debug.actor_info_display;
+                host_dev(&mut dev).debug.actor_info_display =
+                    !host_dev(&mut dev).debug.actor_info_display;
                 // TODO: Port the original actor-info text overlay. Until then,
                 // make BIG BROTHER drive the live numeric ID overlay that is
                 // already rendered by the host.
-                dev.debug.entity_ids = dev.debug.actor_info_display;
+                host_dev(&mut dev).debug.entity_ids = host_dev(&mut dev).debug.actor_info_display;
                 ConsoleResponse::Ok(
-                    if dev.debug.actor_info_display {
+                    if host_dev(&mut dev).debug.actor_info_display {
                         "Actor infos displayed !"
                     } else {
                         "Actors infos hidden !"
@@ -482,15 +516,15 @@ impl EngineInner {
             }
             LevelText { option } => match option.as_deref() {
                 Some("DG") => {
-                    dev.debug.all_dialogues = true;
+                    host_dev(&mut dev).debug.all_dialogues = true;
                     ConsoleResponse::Ok("Displaying all dialogues...".to_string())
                 }
                 Some("DB") => {
-                    dev.debug.all_debriefings = true;
+                    host_dev(&mut dev).debug.all_debriefings = true;
                     ConsoleResponse::Ok("Displaying all debriefings...".to_string())
                 }
                 Some("PT") => {
-                    dev.debug.all_popup_texts = true;
+                    host_dev(&mut dev).debug.all_popup_texts = true;
                     ConsoleResponse::Ok("Displaying all popup texts...".to_string())
                 }
                 Some("SB") => ConsoleResponse::Ok(
@@ -607,16 +641,15 @@ impl EngineInner {
                 // Body only runs when there is a selected view element
                 // and it is an NPC; otherwise it falls through silently.
                 // The success path always prints "Honolulu" first, then
-                // one of three branches keyed on the `last_actor_in_honolulu`
-                // tracker:
+                // one of three branches keyed on the host-resolved target:
                 //  1. selection is active → deactivate + lock AI +
                 //     stash in tracker + clear selection + "Bye…"
-                //  2. tracker is populated and inactive → reactivate
-                //     stored NPC + unlock AI + "I'm back!"
+                //  2. target is inactive → reactivate it + unlock AI +
+                //     "I'm back!"
                 //  3. otherwise → three-line usage help
                 //
-                // The tracker lives on `DevState::last_actor_in_honolulu`
-                // (not simulation state; dev-only).
+                // Live hosts resolve an empty current selection from their
+                // `last_actor_in_honolulu` latch before frame admission.
                 let Some(id) = *selected_view_element else {
                     // No selection / not an NPC falls through with zero
                     // output.
@@ -641,29 +674,22 @@ impl EngineInner {
                             base.non_script_lock(AiLockFlags::FREEZE);
                         }
                     }
-                    dev.last_actor_in_honolulu = Some(id);
+                    if let Some(host) = dev.as_deref_mut() {
+                        host.last_actor_in_honolulu = Some(id);
+                    }
                     *selected_view_element = None;
                     return ConsoleResponse::Ok("Honolulu\nBye, I'm on holiday.".to_string());
                 }
 
-                // Reactivate stored vacation NPC — only if it's still
-                // the one we previously stashed and still inactive.
-                if let Some(last_id) = dev.last_actor_in_honolulu {
-                    let still_inactive = self
-                        .get_entity(last_id)
-                        .map(|e| !e.element_data().active)
-                        .unwrap_or(false);
-                    if still_inactive {
-                        if let Some(entity) = self.get_entity_mut(last_id) {
-                            entity.element_data_mut().active = true;
-                            if let Some(npc) = entity.npc_data_mut()
-                                && let Some(base) = npc.ai_brain.base_mut()
-                            {
-                                base.non_script_unlock(AiLockFlags::FREEZE);
-                            }
-                        }
-                        return ConsoleResponse::Ok("Honolulu\nI'm back!".to_string());
+                // Reactivate the host-resolved vacation NPC.
+                if let Some(entity) = self.get_entity_mut(id) {
+                    entity.element_data_mut().active = true;
+                    if let Some(npc) = entity.npc_data_mut()
+                        && let Some(base) = npc.ai_brain.base_mut()
+                    {
+                        base.non_script_unlock(AiLockFlags::FREEZE);
                     }
+                    return ConsoleResponse::Ok("Honolulu\nI'm back!".to_string());
                 }
 
                 // Fallback: three-line usage help.
@@ -992,7 +1018,7 @@ impl EngineInner {
                 // Idempotent set (not a toggle): unconditionally
                 // enables FPS display and prints "FPS displayed."
                 // every time.
-                dev.debug.fps_display = true;
+                host_dev(&mut dev).debug.fps_display = true;
                 ConsoleResponse::Ok("FPS displayed.".to_string())
             }
             StatusFramecache | StatusShadow => {
@@ -1013,9 +1039,9 @@ impl EngineInner {
                 // count); the rest (cache sizes, physical memory) were
                 // platform-detection stubs even in the shipping
                 // original.
-                dev.console.push_output("=> CPU Information");
-                dev.console.push_output("");
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output("=> CPU Information");
+                host_dev(&mut dev).console.push_output("");
+                host_dev(&mut dev).console.push_output(format!(
                     "Vendor String................. {}",
                     std::env::consts::ARCH
                 ));
@@ -1028,28 +1054,29 @@ impl EngineInner {
                 );
                 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
                 let (has_mmx, has_sse, has_sse2, has_avx) = (false, false, false, false);
-                dev.console
+                host_dev(&mut dev)
+                    .console
                     .push_output("FPU........................... Detected");
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output(format!(
                     "Multi Media eXtension......... {}",
                     if has_mmx { "Detected" } else { "Not Detected" }
                 ));
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output(format!(
                     "Streaming SIMD Extension...... {}",
                     if has_sse { "Detected" } else { "Not Detected" }
                 ));
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output(format!(
                     "SSE2.......................... {}",
                     if has_sse2 { "Detected" } else { "Not Detected" }
                 ));
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output(format!(
                     "AVX........................... {}",
                     if has_avx { "Detected" } else { "Not Detected" }
                 ));
                 let procs = std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1);
-                dev.console.push_output(format!(
+                host_dev(&mut dev).console.push_output(format!(
                     "Architecture.................. {}",
                     if procs > 1 {
                         "Multiprocessor"
@@ -1057,7 +1084,8 @@ impl EngineInner {
                         "Monoprocessor"
                     }
                 ));
-                dev.console
+                host_dev(&mut dev)
+                    .console
                     .push_output(format!("Logical Processors............ {procs}"));
                 ConsoleResponse::Ok(String::new())
             }
@@ -1075,9 +1103,10 @@ impl EngineInner {
                         .and_then(|e| e.pc_data())
                         .map(|pc| !pc.interface_hidden)
                         .unwrap_or(true);
-                    dev.console
+                    host_dev(&mut dev)
+                        .console
                         .push_output(format!("Actor id ........................ {}", id.index()));
-                    dev.console.push_output(format!(
+                    host_dev(&mut dev).console.push_output(format!(
                         "Interface Displayed ............. {}",
                         if displayed { "YES" } else { "NO" }
                     ));
@@ -1103,7 +1132,9 @@ impl EngineInner {
             }
 
             // ── Misc dev-mode ────────────────────────────────────
-            Help => ConsoleResponse::Ok(cheat_help_text(dev.console.use_final).to_string()),
+            Help => ConsoleResponse::Ok(
+                cheat_help_text(host_dev(&mut dev).console.use_final).to_string(),
+            ),
             AssertFalse => {
                 // The int 3 trap is commented out, so just log.
                 tracing::warn!("console: assert(false) cheat invoked");
@@ -1235,6 +1266,11 @@ impl EngineInner {
     fn campaign_mut_or_panic(&mut self) -> &mut crate::campaign::Campaign {
         &mut self.mission_domain.campaign
     }
+}
+
+fn host_dev<'a>(dev: &'a mut Option<&mut DevState>) -> &'a mut DevState {
+    dev.as_deref_mut()
+        .expect("host-only console command reached authoritative dispatch")
 }
 
 /// Toggle a bool debug flag and produce an on/off reply in one expression.

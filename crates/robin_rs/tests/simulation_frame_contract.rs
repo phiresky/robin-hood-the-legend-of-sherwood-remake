@@ -97,10 +97,7 @@ fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() 
 
     let output = engine
         .advance_frame(
-            &mut display,
-            &mut input,
             &assets,
-            &mut dev,
             SimulationFrameInput::new(vec![PlayerCommand::SetGoldenEyeMode { on: true }.into()])
                 .with_hourglass(false),
         )
@@ -120,7 +117,7 @@ fn admitted_host_action_is_replayable() {
     replacement_campaign.set_ares(2);
     let frame = SimulationFrameInput::no_hourglass().with_external_actions(vec![
         ExternalAction::ConsoleCommand {
-            input: "GOLDENEYE".to_owned(),
+            command: robin_engine::console::ConsoleCommand::Goldeneye,
             selected_view_element: None,
         },
         ExternalAction::SimpleMessage {

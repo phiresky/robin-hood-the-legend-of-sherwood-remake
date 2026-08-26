@@ -15,7 +15,14 @@
 /// Commands that take arguments carry them inline. Commands from the
 /// "final" cheat list (CASH, GOODLUCK, etc.) are parsed as aliases to
 /// the same variant as their dev-mode equivalents.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
 pub enum ConsoleCommand {
     // ── Campaign / mission flow ──
     GiveMoney {
@@ -116,7 +123,50 @@ pub enum ConsoleCommand {
     /// this into a plain `Ok(msg)` so
     /// the overlay shows the help text instead of a generic
     /// "Unknown command" error.
-    UsageError(&'static str),
+    UsageError(String),
+}
+
+impl ConsoleCommand {
+    /// Whether this command only changes host-owned developer presentation.
+    ///
+    /// These commands are dispatched by the host before frame admission and
+    /// must never be placed in the deterministic external-action journal.
+    pub fn is_host_only(&self) -> bool {
+        matches!(
+            self,
+            Self::Elevation
+                | Self::BigBrother
+                | Self::Einstein
+                | Self::EnergyDisplay
+                | Self::Euler
+                | Self::Fps
+                | Self::Light
+                | Self::LevelText { .. }
+                | Self::Motion
+                | Self::Noise
+                | Self::PcSight
+                | Self::Projection
+                | Self::Railroad
+                | Self::SeekAndDestroy
+                | Self::Shadow
+                | Self::Sphere
+                | Self::SpriteMasks
+                | Self::Surface
+                | Self::Anim
+                | Self::Companies
+                | Self::CestLaZone
+                | Self::StatusFramecache
+                | Self::StatusHardware
+                | Self::StatusShadow
+                | Self::StatusPc
+                | Self::Help
+                | Self::AssertFalse
+                | Self::Forget
+                | Self::Sarkozy
+                | Self::Optimize
+                | Self::UsageError(_)
+        )
+    }
 }
 
 // ─── Console struct ─────────────────────────────────────────────
@@ -217,7 +267,7 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
             filename: tokens[1].to_string(),
         }),
         "CAMPAIGN" => Some(ConsoleCommand::UsageError(
-            "Verboten : Please enter a valid filename !",
+            "Verboten : Please enter a valid filename !".to_owned(),
         )),
         "DIES" if tokens.get(1) == Some(&"IRAE") => Some(ConsoleCommand::DiesIrae),
         "EINSTEIN" => Some(ConsoleCommand::Einstein),
@@ -544,7 +594,7 @@ mod tests {
         assert_eq!(
             parse("CAMPAIGN"),
             Some(ConsoleCommand::UsageError(
-                "Verboten : Please enter a valid filename !"
+                "Verboten : Please enter a valid filename !".to_owned()
             ))
         );
     }

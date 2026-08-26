@@ -2258,6 +2258,28 @@ impl Drop for HourglassTimer {
 }
 
 impl EngineInner {
+    pub(crate) fn perform_frame_hourglass(
+        &mut self,
+        assets: &LevelAssets,
+        simulation_body_allowed: bool,
+    ) -> super::SideEffects {
+        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        let effects =
+            self.perform_hourglass_authoritative(&mut display, assets, simulation_body_allowed);
+        self.feedback.cutscene_camera.display = display;
+        effects
+    }
+
+    pub(crate) fn perform_frame_post_initialize(
+        &mut self,
+        assets: &LevelAssets,
+    ) -> Option<super::SideEffects> {
+        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        let effects = self.perform_post_initialize_authoritative(&mut display, assets);
+        self.feedback.cutscene_camera.display = display;
+        effects
+    }
+
     /// Expose the exact actor/sprite/sequence identities around the PC Drop
     /// Execute boundary without changing any authoritative state.
     fn debug_drop_owner_boundary(
@@ -2324,7 +2346,16 @@ impl EngineInner {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> super::SideEffects {
-        self.perform_hourglass_with_body_gate(display, assets, dev, true)
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        let effects = self.perform_hourglass_authoritative(&mut camera, assets, true);
+        self.feedback.cutscene_camera.display = camera;
+        for event in effects.host_events.iter().cloned() {
+            display.apply_host_event(&mut InputState::default(), event);
+        }
+        if dev.projectile_cheat_rain >= 0 {
+            dev.projectile_cheat_rain = -1;
+        }
+        effects
     }
 
     /// Run an hourglass while optionally forcing the simulation-body gate
@@ -2333,11 +2364,10 @@ impl EngineInner {
     /// A closed gate still runs the mission script/message phase and advances
     /// the mission clock, exactly like the engine's persistent lock, but does
     /// not mutate that persistent lock state.
-    pub(crate) fn perform_hourglass_with_body_gate(
+    fn perform_hourglass_authoritative(
         &mut self,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
-        dev: &mut DevState,
         simulation_body_allowed: bool,
     ) -> super::SideEffects {
         let _hourglass_timer = HourglassTimer::start();
@@ -2375,7 +2405,7 @@ impl EngineInner {
         // before any actor receives the next movement tick.
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
-        let code = self.perform_hourglass_inner(sim, display, assets, dev, simulation_body_allowed);
+        let code = self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed);
         self.control.arrow_refresh_pending = true;
 
         // Post-tick sim mutations that used to live in `game_session`
@@ -2391,18 +2421,17 @@ impl EngineInner {
         // the 75-frame forbid window ends one frame late and a repeat bark
         // the Original accepted at exactly +75 frames is wrongly rejected.
         self.tick_refresh_hero_mouth();
-        display.minimap.tick_transition();
-        // Advance the delayed-reveal highlight state machine.  Run it
-        // once per hourglass (rather than from the draw loop) so
-        // rollback replays the reveal timing deterministically.
-        display.minimap.tick_highlights();
-        // Advance per-PC QA macro-icon shift-fall phase so host
-        // renderers can read via `macro_shift_phase` without mutating
-        // engine state at draw time.
-        display.tick_macro_shift_phases(&self.world.pc_ids, &self.players.macro_store);
-        // Advance per-PC QA titbit fizzle-blink phase.  Host renderer
-        // reads visibility via `macro_titbit_blink_hidden`.
-        display.tick_macro_blink_phases(&self.world.pc_ids);
+        self.feedback
+            .pending_side_effects
+            .host_events
+            .push(HostEvent::Minimap(MinimapHostEvent::Tick));
+        self.feedback
+            .pending_side_effects
+            .host_events
+            .push(HostEvent::MacroUi(MacroUiHostEvent::Tick {
+                slots: self.macro_slot_lengths(),
+                pc_ids: self.world.pc_ids.clone(),
+            }));
         // Advance destination-marker animation and retire finished
         // marks.  Used to run during rendering, which broke rollback
         // determinism — the render path is now read-only.
@@ -2514,7 +2543,6 @@ impl EngineInner {
         // state, so peer-2's held scroll doesn't gate the host's, and vice
         // versa.
         self.feedback.cutscene_camera.display.frame_scrolled = [false; 4];
-        display.frame_scrolled = [false; 4];
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = code;
@@ -2579,9 +2607,9 @@ impl EngineInner {
     /// explicit stage after its first refresh/sound boundary.  Rollback
     /// replay invokes the same stage after replaying frame zero so the
     /// resulting pre-frame-one simulation state remains deterministic.
-    pub fn perform_post_initialize(
+    fn perform_post_initialize_authoritative(
         &mut self,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
         let needs_post_initialize = self
@@ -2612,6 +2640,24 @@ impl EngineInner {
         Some(fx)
     }
 
+    #[cfg(test)]
+    pub(crate) fn perform_post_initialize(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Option<super::SideEffects> {
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        let effects = self.perform_post_initialize_authoritative(&mut camera, assets);
+        self.feedback.cutscene_camera.display = camera;
+        if let Some(effects) = &effects {
+            let mut input = InputState::default();
+            for event in effects.host_events.iter().cloned() {
+                display.apply_host_event(&mut input, event);
+            }
+        }
+        effects
+    }
+
     /// Whether any PC is currently guarded.
     pub fn is_pc_guarded(&self) -> bool {
         for &pc_id in &self.world.pc_ids {
@@ -2627,9 +2673,8 @@ impl EngineInner {
     fn perform_hourglass_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
-        dev: &mut DevState,
         simulation_body_allowed: bool,
     ) -> GameCode {
         let pc_guarded = time_hourglass_phase(HourglassPhase::DeferredEffectsStart, || {
@@ -2641,7 +2686,6 @@ impl EngineInner {
                 sim,
                 display,
                 assets,
-                dev,
                 pc_guarded,
                 simulation_body_allowed,
             )
@@ -2674,7 +2718,7 @@ impl EngineInner {
         });
 
         time_hourglass_phase(HourglassPhase::Sequences, || {
-            self.hourglass_phase_sequences(sim, display, assets)
+            self.hourglass_phase_sequences_authoritative(sim, display, assets)
         });
 
         // `RHSequenceElement::SetState(Terminated)` calls the owner's
@@ -2936,20 +2980,11 @@ impl EngineInner {
     fn hourglass_phase_mission_and_messages(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        _display: &mut CameraDisplayState,
         assets: &LevelAssets,
-        dev: &mut DevState,
         pc_guarded: bool,
         simulation_body_allowed: bool,
     ) -> Option<GameCode> {
-        // ── Projectile cheat rain ────────────────────────────────
-        // The original `ProjectileRain` cheat was wired up but never
-        // implemented in the shipped build.  Preserve the drain so the
-        // dev flag resets, but don't invent gameplay that never existed.
-        if dev.projectile_cheat_rain >= 0 {
-            dev.projectile_cheat_rain = -1;
-        }
-
         // ── Anti-chorus timer ────────────────────────────────────
         if self.control.chorus_timer > 0 {
             self.control.chorus_timer -= 1;
@@ -2972,17 +3007,35 @@ impl EngineInner {
         // ── Check quit conditions ────────────────────────────────
         // Each of the three quit branches displays the full minimap.
         if self.mission_domain.state.quit_won {
-            display.minimap.display_map(false, true);
+            self.feedback
+                .pending_side_effects
+                .host_events
+                .push(HostEvent::Minimap(MinimapHostEvent::DisplayMap {
+                    show: false,
+                    restore_position: true,
+                }));
             self.finalize_mission_script(sim, assets, false);
             return Some(GameCode::LevelSucceeded);
         }
         if self.mission_domain.state.quit_lost {
-            display.minimap.display_map(false, true);
+            self.feedback
+                .pending_side_effects
+                .host_events
+                .push(HostEvent::Minimap(MinimapHostEvent::DisplayMap {
+                    show: false,
+                    restore_position: true,
+                }));
             self.quit_mission();
             return Some(GameCode::LevelFailed);
         }
         if self.mission_domain.state.quit_interrupted {
-            display.minimap.display_map(false, true);
+            self.feedback
+                .pending_side_effects
+                .host_events
+                .push(HostEvent::Minimap(MinimapHostEvent::DisplayMap {
+                    show: false,
+                    restore_position: true,
+                }));
             self.finalize_mission_script(sim, assets, true);
             return Some(GameCode::LevelInterrupted);
         }
@@ -3526,7 +3579,9 @@ impl EngineInner {
                                  producer must set the PC id"
                             ),
                             Some(pc_id) => {
-                                display.blink_qa(pc_id, slot);
+                                self.feedback.pending_side_effects.host_events.push(
+                                    HostEvent::MacroUi(MacroUiHostEvent::BlinkQa { pc_id, slot }),
+                                );
                             }
                         }
                     }
@@ -3972,7 +4027,7 @@ impl EngineInner {
     fn hourglass_phase_entity_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> EntitySlots<Option<crate::entities::BoundaryPosition>> {
         // Preserve the position each element exposed before the globally
@@ -5488,7 +5543,7 @@ impl EngineInner {
     pub(super) fn tick_actor_owner_envelopes_with_display(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
@@ -5509,7 +5564,7 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
-        let mut display = HostDisplayState::default();
+        let mut display = CameraDisplayState::default();
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
             &mut display,
@@ -5522,7 +5577,7 @@ impl EngineInner {
     fn tick_actor_owner_envelopes_with_owner_hook(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
@@ -6265,7 +6320,7 @@ impl EngineInner {
     pub(super) fn hourglass_phase_gameplay_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _display: &mut HostDisplayState,
+        _display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         // Active abilities, Listen/Heard, projectiles, and beggar simulation
@@ -6310,7 +6365,7 @@ impl EngineInner {
     fn hourglass_phase_deferred_effects_end(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         was_swordfighting: bool,
     ) {

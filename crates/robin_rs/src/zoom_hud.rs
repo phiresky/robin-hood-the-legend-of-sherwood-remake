@@ -432,10 +432,7 @@ mod tests {
         let mut input = InputState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut engine_api::DevState::default(),
                 engine_api::SimulationFrameInput::new(vec![
                     PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp).into(),
                 ])

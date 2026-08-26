@@ -1609,10 +1609,7 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
     let nickname = args.mp_nickname.clone();
     engine
         .advance_frame(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
             assets,
-            &mut engine_api::DevState::default(),
             engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
                 PlayerCommand::ConnectSeat {
                     player_id: host.transport.local_seat,

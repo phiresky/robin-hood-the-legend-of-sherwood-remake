@@ -765,10 +765,7 @@ mod tests {
         let mut display = std::mem::take(&mut host.engine_display);
         engine
             .advance_frame(
-                &mut display,
-                &mut host.input,
                 &assets,
-                &mut robin_engine::engine::DevState::default(),
                 robin_engine::engine::SimulationFrameInput::no_hourglass().with_external_actions(
                     vec![robin_engine::engine::ExternalAction::ReplaceCampaign {
                         campaign: malformed,
