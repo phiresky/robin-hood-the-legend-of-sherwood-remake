@@ -14531,13 +14531,23 @@ mod tests {
         });
         let current_json = serde_json::json!({
             "rank": true,
-            "allowed_to_leave_post": true,
+            // Current schema-16 recordings emit this spelling. Keep the
+            // false case explicit: stay-on-post rejections are exactly where
+            // the pre-fix converter used to fail its lossless round-trip
+            // audit by serializing this key under the legacy spelling.
+            "allowed_to_leave_post": false,
         });
         let legacy: TraceAlertEligibility = serde_json::from_value(legacy_json.clone()).unwrap();
         let current: TraceAlertEligibility = serde_json::from_value(current_json.clone()).unwrap();
         assert_eq!(legacy.allowed_to_leave_post, Some(true));
-        assert_eq!(current.allowed_to_leave_post, Some(true));
-        assert_eq!(bitcode::encode(&legacy), bitcode::encode(&current));
+        assert_eq!(current.allowed_to_leave_post, Some(false));
+
+        let current_true: TraceAlertEligibility = serde_json::from_value(serde_json::json!({
+            "rank": true,
+            "allowed_to_leave_post": true,
+        }))
+        .unwrap();
+        assert_eq!(bitcode::encode(&legacy), bitcode::encode(&current_true));
 
         let frozen_v66 = FrozenTraceAlertEligibilityV66 {
             rank: true,
