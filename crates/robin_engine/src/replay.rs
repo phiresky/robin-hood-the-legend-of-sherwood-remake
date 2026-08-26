@@ -54,10 +54,10 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 12 adds the post-version-11
-/// quick-action batch: shield danger geometry, independent automatic queues,
-/// resolved group-move routes, and resolved DropAle routes.
-pub const REPLAY_SCHEMA_VERSION: u32 = 12;
+/// On-disk replay schema version. Version 13 moves Serde-backed binary replay
+/// payloads to bitcode revision 7ae8807. Replay compatibility is intentionally
+/// exact-schema only, so version-12 payloads are not decoded by this build.
+pub const REPLAY_SCHEMA_VERSION: u32 = 13;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -548,8 +548,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replay_schema_version_includes_post_4297_quick_action_batch() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 12);
+    fn replay_schema_version_identifies_7ae_serde_codec() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 13);
     }
     use crate::player_command::PlayerCommand;
 
@@ -638,13 +638,13 @@ mod tests {
     }
 
     #[test]
-    fn old_schema_jsonl_is_rejected() {
-        let input = r#"{"mission_id":"old","rng_seed":7,"version":2,"total_frames":0,"campaign":null}
+    fn schema_twelve_jsonl_is_rejected() {
+        let input = r#"{"mission_id":"old","rng_seed":7,"version":12,"total_frames":0,"campaign":null}
 "#;
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("old replay schemas are not current snapshots");
+            .expect_err("schema 12 replays are not current snapshots");
         assert!(
-            error.contains("unsupported replay schema version 2"),
+            error.contains("unsupported replay schema version 12"),
             "{error}"
         );
     }

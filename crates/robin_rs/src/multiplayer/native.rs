@@ -670,7 +670,7 @@ async fn handle_incoming_peer(
                 .clone()
             {
                 let encode_start = web_time::Instant::now();
-                match bincode::serde::encode_to_vec(&engine, bincode::config::standard()) {
+                match bitcode::serialize(&engine) {
                     Ok(bytes) => {
                         tracing::info!(
                             seat = assigned_seat_u8,

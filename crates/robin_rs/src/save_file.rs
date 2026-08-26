@@ -948,7 +948,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 52, got 46"
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 46")
         );
     }
 

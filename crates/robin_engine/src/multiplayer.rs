@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 18;
+pub const NET_PROTOCOL_VERSION: u32 = 19;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -109,7 +109,7 @@ pub enum NetMsg {
         ms_until_next_frame: Option<u32>,
     },
     /// Server → newly-handshaking peer: an authoritative engine
-    /// snapshot for mid-mission joins.  `engine_bytes` is bincode 2.
+    /// snapshot for mid-mission joins. `engine_bytes` is Serde bitcode.
     InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
     /// Client → server: this peer has loaded the mission, installed
     /// the host snapshot, and is ready to enter the synchronized sim.
@@ -258,9 +258,9 @@ impl NetChannels {
         &self,
         frame: u32,
         engine: &Engine,
-    ) -> Result<(), bincode::error::EncodeError> {
+    ) -> Result<(), bitcode::Error> {
         self.set_initial_snapshot(frame, engine);
-        let engine_bytes = bincode::serde::encode_to_vec(engine, bincode::config::standard())?;
+        let engine_bytes = bitcode::serialize(engine)?;
         let _ = self.outgoing.send(NetOutbound::InitialSnapshot {
             frame,
             engine_bytes,
@@ -360,10 +360,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_post_4297_quick_action_batch() {
-        // Shield geometry, independent automatic queues, resolved group moves,
-        // and resolved DropAle routes all change serialized command/snapshot data.
-        assert_eq!(NET_PROTOCOL_VERSION, 18);
+    fn protocol_version_includes_7ae_serde_snapshot_codec() {
+        // Version 19 replaces bincode snapshots with Serde bitcode at 7ae8807;
+        // peers on version 18 must fail the handshake before decoding bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 19);
     }
 
     #[test]

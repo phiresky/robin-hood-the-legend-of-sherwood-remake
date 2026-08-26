@@ -42,10 +42,11 @@ dirs = { version = "6", optional = true }
 ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
 bitcode.workspace = true
-# Engine snapshots for multiplayer mid-mission joins.  Bitcode caps
-# enum variants at 256; some sim enums exceed that, so the snapshot
-# path uses bincode instead (no enum-size limit, slightly larger
-# wire payload — fine for a one-shot send at handshake time).
+# The parity-native v66 wire format is authoritative and remains on 0.6.9.
+# The game replay and multiplayer formats use the workspace's pinned revision.
+bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
+# Still used by parity format-size diagnostics and isolated serialization
+# contract tests; multiplayer snapshots no longer depend on it.
 bincode.workspace = true
 zstd.workspace = true
 base64 = "0.22"

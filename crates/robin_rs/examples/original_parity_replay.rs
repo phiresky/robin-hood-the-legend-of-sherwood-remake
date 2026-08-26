@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 use base64::Engine as _;
+// Version 66 native parity traces are authoritative artifacts. Keep their
+// codec pinned independently of the game's intentionally evolving formats.
+use bitcode_parity as bitcode;
 use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
@@ -52,6 +55,32 @@ fn sha256_hex(bytes: &[u8]) -> String {
         write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
     }
     hex
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(tag = "command", rename_all = "snake_case")]
+enum TraceDirectorCompletion {
+    CameraGoto,
+    ZoomLevel,
+}
+
+impl From<TraceDirectorCompletion> for robin_engine::engine::DirectorCompletion {
+    fn from(value: TraceDirectorCompletion) -> Self {
+        match value {
+            TraceDirectorCompletion::CameraGoto => Self::CameraGoto,
+            TraceDirectorCompletion::ZoomLevel => Self::ZoomLevel,
+        }
+    }
 }
 
 #[derive(
@@ -3479,7 +3508,7 @@ struct TraceFrame {
     game_code: i32,
     simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
-    director_completions: Vec<robin_engine::engine::DirectorCompletion>,
+    director_completions: Vec<TraceDirectorCompletion>,
     #[serde(default)]
     campaign: Option<TraceCampaign>,
     #[serde(default)]
@@ -5081,7 +5110,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let mut external_facts = frame
             .director_completions
             .drain(..)
-            .map(robin_engine::engine::ExternalFact::DirectorCompletion)
+            .map(|completion| {
+                robin_engine::engine::ExternalFact::DirectorCompletion(completion.into())
+            })
             .collect::<Vec<_>>();
         // `RHGame` records the engine frame before running the host sound
         // manager (`original-code/RHgame.cpp:1879-1915`). Consequently these
@@ -12072,6 +12103,7 @@ fn compare_float_indexed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcode_parity as bitcode;
 
     #[test]
     fn original_motion_state_comparison_rejects_only_undefined_stack_values() {

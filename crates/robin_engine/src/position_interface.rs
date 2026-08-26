@@ -465,13 +465,17 @@ impl Serialize for SectorHandle {
     where
         S: serde::Serializer,
     {
-        match self.arena {
-            Some(arena) => SectorHandleSerde::Exact {
-                public: self.public,
-                arena,
+        if serializer.is_human_readable() {
+            match self.arena {
+                Some(arena) => SectorHandleSerde::Exact {
+                    public: self.public,
+                    arena,
+                }
+                .serialize(serializer),
+                None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
             }
-            .serialize(serializer),
-            None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
+        } else {
+            (self.public.get(), self.arena).serialize(serializer)
         }
     }
 }
@@ -481,16 +485,24 @@ impl<'de> Deserialize<'de> for SectorHandle {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(match SectorHandleSerde::deserialize(deserializer)? {
-            SectorHandleSerde::Legacy(public) => Self {
-                public,
-                arena: None,
-            },
-            SectorHandleSerde::Exact { public, arena } => Self {
-                public,
-                arena: Some(arena),
-            },
-        })
+        if deserializer.is_human_readable() {
+            Ok(match SectorHandleSerde::deserialize(deserializer)? {
+                SectorHandleSerde::Legacy(public) => Self {
+                    public,
+                    arena: None,
+                },
+                SectorHandleSerde::Exact { public, arena } => Self {
+                    public,
+                    arena: Some(arena),
+                },
+            })
+        } else {
+            let (public, arena) =
+                <(u16, Option<crate::fast_find_grid::SectorIndex>)>::deserialize(deserializer)?;
+            let public = nonmax::NonMaxU16::new(public)
+                .ok_or_else(|| serde::de::Error::custom("reserved sector sentinel 65535"))?;
+            Ok(Self { public, arena })
+        }
     }
 }
 
@@ -2333,6 +2345,35 @@ pub fn vector_normal_iso(x: f32, y: f32, direct: bool) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sector_handle_roundtrips_legacy_and_exact_forms_across_serde_formats() {
+        let legacy = SectorHandle::new(23).unwrap();
+        let exact = legacy.with_arena_index(crate::fast_find_grid::SectorIndex::new(41).unwrap());
+
+        assert_eq!(serde_json::to_string(&legacy).unwrap(), "23");
+        assert_eq!(
+            serde_json::to_string(&exact).unwrap(),
+            r#"{"public":23,"arena":41}"#
+        );
+        let legacy_from_json: SectorHandle = serde_json::from_str("23").unwrap();
+        let exact_from_json: SectorHandle =
+            serde_json::from_str(r#"{"public":23,"arena":41}"#).unwrap();
+        assert_eq!(legacy_from_json.get(), legacy.get());
+        assert_eq!(legacy_from_json.arena_index(), None);
+        assert_eq!(exact_from_json.get(), exact.get());
+        assert_eq!(exact_from_json.arena_index(), exact.arena_index());
+
+        let values = vec![legacy, exact];
+        let bytes = bitcode::serialize(&values).expect("serialize mixed sector handles");
+        let restored: Vec<SectorHandle> =
+            bitcode::deserialize(&bytes).expect("deserialize mixed sector handles");
+        assert_eq!(restored.len(), values.len());
+        for (restored, value) in restored.into_iter().zip(values) {
+            assert_eq!(restored.get(), value.get());
+            assert_eq!(restored.arena_index(), value.arena_index());
+        }
+    }
 
     fn p3(x: f32, y: f32, z: f32) -> WorldPoint3D {
         WorldPoint3D::new(x, y, z)

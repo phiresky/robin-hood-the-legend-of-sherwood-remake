@@ -200,6 +200,17 @@ mod tests {
     }
 
     #[test]
+    fn schema_twelve_is_rejected_without_compatibility_decode() {
+        let mut data = sample_data();
+        data.header.version = 12;
+        let encoded = encode_compact(&data, ENGINE_VERSION_HASH).unwrap();
+        assert!(matches!(
+            decode_compact(&encoded),
+            Err(FormatError::UnsupportedVersion { version: 12 })
+        ));
+    }
+
+    #[test]
     fn compact_prefix_required() {
         assert!(matches!(
             decode_compact("not-a-replay"),

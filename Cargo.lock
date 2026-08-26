@@ -642,7 +642,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a6ed1b54d8dc333e7be604d00fa9262f4635485ffea923647b6521a5fff045d"
 dependencies = [
  "arrayvec",
- "bitcode_derive",
+ "bitcode_derive 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bytemuck",
+ "glam",
+ "serde",
+]
+
+[[package]]
+name = "bitcode"
+version = "0.6.9"
+source = "git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf#7ae88076943b74151e99713f33635ac5a5d4f4bf"
+dependencies = [
+ "arrayvec",
+ "bitcode_derive 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bytemuck",
  "glam",
  "serde",
@@ -653,6 +665,16 @@ name = "bitcode_derive"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "238b90427dfad9da4a9abd60f3ec1cdee6b80454bde49ed37f1781dd8e9dc7f9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "bitcode_derive"
+version = "0.6.9"
+source = "git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf#7ae88076943b74151e99713f33635ac5a5d4f4bf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5857,7 +5879,7 @@ name = "robin_assets"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "bitcode",
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bytemuck",
  "bzip2",
  "flate2",
@@ -5876,7 +5898,7 @@ name = "robin_engine"
 version = "0.0.0"
 dependencies = [
  "bincode",
- "bitcode",
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bitflags 2.13.1",
  "enum-map",
  "fastrand",
@@ -5925,7 +5947,8 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "bincode",
- "bitcode",
+ "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bitflags 2.13.1",
  "bytemuck",
  "clap",

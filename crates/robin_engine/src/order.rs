@@ -17,9 +17,9 @@ use std::num::NonZeroU32;
     PartialEq,
     Eq,
     Hash,
-    serde::Serialize,
-    serde::Deserialize,
     num_enum::TryFromPrimitive,
+    strum_macros::Display,
+    strum_macros::EnumString,
     robin_state_hash_derive::StateHash,
 )]
 #[repr(u32)]
@@ -440,6 +440,34 @@ pub enum OrderType {
     TakingTarget,
 
     RefreshingSeek,
+}
+
+impl serde::Serialize for OrderType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&self.to_string())
+        } else {
+            serializer.serialize_u32(*self as u32)
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OrderType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+            name.parse().map_err(serde::de::Error::custom)
+        } else {
+            let discriminant = <u32 as serde::Deserialize>::deserialize(deserializer)?;
+            Self::try_from(discriminant).map_err(serde::de::Error::custom)
+        }
+    }
 }
 
 impl OrderType {
@@ -969,6 +997,17 @@ mod tests {
         assert_eq!(OrderType::WaitingWithPurse as u32, 265);
         assert_eq!(OrderType::Special as u32, 270);
         assert_eq!(OrderType::ShootingWithBowAnonymous as u32, 280);
+    }
+
+    #[test]
+    fn high_order_type_uses_stable_human_and_nonhuman_serde_forms() {
+        let value = OrderType::ShootingWithBowAnonymous;
+        let json = serde_json::to_string(&value).expect("serialize order JSON");
+        assert_eq!(json, "\"ShootingWithBowAnonymous\"");
+        assert_eq!(serde_json::from_str::<OrderType>(&json).unwrap(), value);
+
+        let bytes = bitcode::serialize(&value).expect("serialize high order type");
+        assert_eq!(bitcode::deserialize::<OrderType>(&bytes).unwrap(), value);
     }
 
     #[test]

@@ -203,11 +203,8 @@ pub(crate) fn drain_net_inputs(
                 // rejoin without advancing the frame cursor.
                 if frame == 0 && manager.sim_frame == 0 {
                     let local_hash = robin_engine::replay::state_hash(&manager.engine);
-                    match bincode::serde::decode_from_slice::<Engine, _>(
-                        &engine_bytes,
-                        bincode::config::standard(),
-                    ) {
-                        Ok((snapshot, _)) => {
+                    match bitcode::deserialize::<Engine>(&engine_bytes) {
+                        Ok(snapshot) => {
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
                                 host.transport.reconnecting = false;
@@ -265,41 +262,34 @@ pub(crate) fn drain_net_inputs(
                 // Mid-mission rejoin (frame > 0): atomically adopt the host's
                 // snapshot after attaching immutable script/grid/sprite data
                 // once from the locally loaded LevelAssets.
-                match bincode::serde::decode_from_slice::<Engine, _>(
-                    &engine_bytes,
-                    bincode::config::standard(),
-                ) {
-                    Ok((snapshot, _)) => {
-                        match manager.engine.try_adopt_snapshot(snapshot, assets) {
-                            Ok(()) => {
-                                host.transport.reconnecting = false;
-                                admission_events.push(
-                                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
-                                );
-                                let adopted_hash =
-                                    robin_engine::replay::state_hash(&manager.engine);
-                                tracing::info!(
-                                    frame,
-                                    local_sim_frame = manager.sim_frame,
-                                    bytes = engine_bytes.len(),
-                                    adopted_hash = format!("{adopted_hash:016x}"),
-                                    "multiplayer: adopting host's engine snapshot"
-                                );
-                                manager.set_sim_frame(frame);
-                                if let Some(net) = host.transport.net.as_ref() {
-                                    net.send_ready_to_sim(frame);
-                                }
-                                *rewind_buffer = RewindBuffer::new();
-                                manager.drop_pending_inputs_before(frame);
-                                recent_timeline_history.clear();
-                                peer_hashes.retain(|&f, _| f >= frame);
-                                rewrote_sim_state = true;
+                match bitcode::deserialize::<Engine>(&engine_bytes) {
+                    Ok(snapshot) => match manager.engine.try_adopt_snapshot(snapshot, assets) {
+                        Ok(()) => {
+                            host.transport.reconnecting = false;
+                            admission_events
+                                .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
+                            let adopted_hash = robin_engine::replay::state_hash(&manager.engine);
+                            tracing::info!(
+                                frame,
+                                local_sim_frame = manager.sim_frame,
+                                bytes = engine_bytes.len(),
+                                adopted_hash = format!("{adopted_hash:016x}"),
+                                "multiplayer: adopting host's engine snapshot"
+                            );
+                            manager.set_sim_frame(frame);
+                            if let Some(net) = host.transport.net.as_ref() {
+                                net.send_ready_to_sim(frame);
                             }
-                            Err(error) => panic!(
-                                "multiplayer: rejected incompatible host snapshot at frame {frame}: {error}"
-                            ),
+                            *rewind_buffer = RewindBuffer::new();
+                            manager.drop_pending_inputs_before(frame);
+                            recent_timeline_history.clear();
+                            peer_hashes.retain(|&f, _| f >= frame);
+                            rewrote_sim_state = true;
                         }
-                    }
+                        Err(error) => panic!(
+                            "multiplayer: rejected incompatible host snapshot at frame {frame}: {error}"
+                        ),
+                    },
                     Err(e) => panic!(
                         "multiplayer: failed to deserialize host snapshot at frame {frame}: {e}"
                     ),
@@ -906,8 +896,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("snapshot command admission");
-        let engine_bytes = bincode::serde::encode_to_vec(&snapshot, bincode::config::standard())
-            .expect("serialize snapshot");
+        let engine_bytes = bitcode::serialize(&snapshot).expect("serialize snapshot");
         incoming
             .send(NetEvent::InitialSnapshot {
                 frame: 0,

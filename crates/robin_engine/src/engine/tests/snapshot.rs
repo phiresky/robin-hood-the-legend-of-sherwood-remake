@@ -92,12 +92,9 @@ fn engine_state_hash_is_deterministic_within_the_current_build() {
         crate::replay::state_hash(&clone)
     );
 
-    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
-        .expect("encode compatibility fixture");
-    let (restored, consumed): (EngineInner, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("decode compatibility fixture");
-    assert_eq!(consumed, bytes.len());
+    let bytes = bitcode::serialize(&engine).expect("encode multiplayer snapshot fixture");
+    let restored: EngineInner =
+        bitcode::deserialize(&bytes).expect("decode multiplayer snapshot fixture");
     assert_eq!(
         crate::replay::state_hash(&engine),
         crate::replay::state_hash(&restored)
