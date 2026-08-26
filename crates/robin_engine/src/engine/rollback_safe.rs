@@ -1135,8 +1135,8 @@ impl Engine {
                         "titbit": pc.titbits[slot],
                         "button": pc.quick_action_buttons[slot],
                         "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
-                        "action_size": pc.quick_action_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
-                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
+                        "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
+                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(|sequence| sequence.len()),
                     })
                 })
                 .collect::<Vec<_>>()

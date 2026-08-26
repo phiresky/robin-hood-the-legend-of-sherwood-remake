@@ -294,7 +294,7 @@ impl QuickActionSlot {
             .max(
                 self.legacy_action_sequence
                     .as_ref()
-                    .map_or(0, Sequence::len),
+                    .map_or(0, |sequence| sequence.len()),
             )
             .max(usize::from(self.legacy_quickito.is_some()))
     }

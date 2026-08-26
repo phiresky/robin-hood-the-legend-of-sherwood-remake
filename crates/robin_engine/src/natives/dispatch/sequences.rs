@@ -1179,7 +1179,7 @@ impl NativeContext<'_, '_> {
                     *element = self.actor_id(target);
                     *tolerance = f32::from_bits(distance as u32);
                     *flags |= MoveFlags::SEEK;
-                    *post_seek_sequence = Some(Box::new(post_seek));
+                    *post_seek_sequence = Some(post_seek.into_post_seek());
                 }
                 self.record_element(seek_elem)
             }
@@ -1230,7 +1230,7 @@ impl NativeContext<'_, '_> {
                     *element = self.actor_id(target);
                     *tolerance = f32::from_bits(distance as u32);
                     *flags |= MoveFlags::SEEK;
-                    *post_seek_sequence = Some(Box::new(post_seek));
+                    *post_seek_sequence = Some(post_seek.into_post_seek());
                 }
                 self.record_element(seek_elem)
             }

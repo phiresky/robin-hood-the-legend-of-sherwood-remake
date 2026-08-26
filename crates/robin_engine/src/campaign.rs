@@ -137,7 +137,7 @@ pub struct PcDescription {
 // ─── Campaign ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct Campaign {
+pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapshot>> {
     // ── Values / currency ──
     pub values: EnumMap<CampaignValue, i32>,
     pub ares: i8,
@@ -182,8 +182,9 @@ pub struct Campaign {
     /// start and consumed by [`Campaign::restore_snapshot`] when the
     /// player abandons / restarts.  Stored with campaign state so
     /// abandon/restart behavior survives save/load and rollback
-    /// snapshots. Boxed to avoid recursive sizing.
-    pub pre_mission_snapshot: Option<Box<Campaign>>,
+    /// snapshots. `CampaignSnapshot` instantiates this field with `()`, so a
+    /// restart image cannot recursively contain another restart image.
+    pub pre_mission_snapshot: S,
     /// Authoritative simulation state immediately before mission selection.
     /// Kept beside the existing campaign restart snapshot so save-loaded
     /// `LevelRestart` can replay selection from the identical RNG position.
@@ -193,6 +194,75 @@ pub struct Campaign {
     /// constructed. Direct launches do not run campaign selection, so their
     /// restart path must rebuild that exact mission without selecting again.
     pub pre_mission_was_preselected: bool,
+}
+
+/// A campaign restart image with no nested restart image of its own.
+pub type CampaignSnapshot = Campaign<()>;
+
+impl<S: robin_util::state_hash::StateHash> Campaign<S> {
+    pub(crate) fn replace_snapshot<T: robin_util::state_hash::StateHash>(
+        self,
+        pre_mission_snapshot: T,
+    ) -> Campaign<T> {
+        let Self {
+            values,
+            ares,
+            missions,
+            accessible_mission_indices,
+            pending_accessible_mission_indices,
+            last_mission_idx,
+            current_mission_idx,
+            next_mission_idx,
+            blazon_mission_idx,
+            last_played_mission_indices,
+            last_pseudo_mission_status,
+            last_pseudo_mission_id,
+            characters,
+            gang_indices,
+            reservist_indices,
+            mission_team_indices,
+            peasant_names,
+            reservists_are_back,
+            collected_relics,
+            production_sectors,
+            pre_mission_snapshot: _,
+            pre_mission_rng_seed,
+            pre_mission_sim_config,
+            pre_mission_was_preselected,
+        } = self;
+        Campaign {
+            values,
+            ares,
+            missions,
+            accessible_mission_indices,
+            pending_accessible_mission_indices,
+            last_mission_idx,
+            current_mission_idx,
+            next_mission_idx,
+            blazon_mission_idx,
+            last_played_mission_indices,
+            last_pseudo_mission_status,
+            last_pseudo_mission_id,
+            characters,
+            gang_indices,
+            reservist_indices,
+            mission_team_indices,
+            peasant_names,
+            reservists_are_back,
+            collected_relics,
+            production_sectors,
+            pre_mission_snapshot,
+            pre_mission_rng_seed,
+            pre_mission_sim_config,
+            pre_mission_was_preselected,
+        }
+    }
+}
+
+impl CampaignSnapshot {
+    fn into_campaign(self) -> Campaign {
+        self.replace_snapshot(None)
+    }
 }
 
 impl Default for Campaign {
@@ -376,9 +446,8 @@ impl Campaign {
     /// snapshot field is cleared so the stored state doesn't grow
     /// unboundedly across repeated mission starts.
     pub fn snapshot(&mut self) {
-        let mut snap = self.clone();
-        snap.pre_mission_snapshot = None;
-        self.pre_mission_snapshot = Some(Box::new(snap));
+        let snap = self.clone().replace_snapshot(());
+        self.pre_mission_snapshot = Some(snap);
     }
 
     /// Capture the campaign and the authoritative pre-selection simulation
@@ -439,7 +508,7 @@ impl Campaign {
         let Some(snap) = self.pre_mission_snapshot.take() else {
             return false;
         };
-        *self = *snap;
+        *self = snap.into_campaign();
         true
     }
 

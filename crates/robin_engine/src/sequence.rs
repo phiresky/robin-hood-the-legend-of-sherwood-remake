@@ -649,6 +649,7 @@ pub enum SequenceInvariantError {
     LegacyCommandRequiresGenericData { command: Command },
     MissingLegacyCommandField { command: Command, field: Field },
     InvalidLegacyCommandFieldType { command: Command, field: Field },
+    NestedPostSeekSequence,
 }
 
 impl fmt::Display for SequenceInvariantError {
@@ -678,6 +679,10 @@ impl fmt::Display for SequenceInvariantError {
                 formatter,
                 "legacy command {command:?} has the wrong value type for field {field:?}"
             ),
+            Self::NestedPostSeekSequence => write!(
+                formatter,
+                "post-seek sequences cannot themselves contain post-seek sequences"
+            ),
         }
     }
 }
@@ -691,7 +696,7 @@ impl std::error::Error for SequenceInvariantError {}
 /// Element subtypes — variants for simple, movement, generic, damage,
 /// and interaction elements.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub enum SequenceElementData {
+pub enum SequenceElementData<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Base type with no extra data.
     Simple,
 
@@ -724,7 +729,7 @@ pub enum SequenceElementData {
         /// here.
         ///
         /// **Ownership invariant for `Clone`:** the auto-derived
-        /// `Clone` on `SequenceElement` deep-clones this `Box<Sequence>`,
+        /// `Clone` on `SequenceElement` deep-clones this continuation,
         /// which is fine for `Engine`-level rollback snapshots (each
         /// clone is an independent timeline) but is semantically wrong
         /// for "duplicate this element within the same engine" — both
@@ -735,7 +740,10 @@ pub enum SequenceElementData {
         /// future caller needs ownership-transfer semantics, replace
         /// the `clone()` call with a hand-written
         /// `create_copy(&mut self)` that `mem::take`s this field.
-        post_seek_sequence: Option<Box<Sequence>>,
+        /// Root elements use `Option<PostSeekSequence>` here. Elements inside
+        /// a `PostSeekSequence` instantiate this generic with `()`, making the
+        /// representation structurally non-recursive.
+        post_seek_sequence: P,
     },
 
     /// Generic property-bag element.
@@ -776,6 +784,63 @@ pub enum SequenceElementData {
         /// The entity to interact with.
         antagonist: Option<EntityId>,
     },
+}
+
+impl<P: robin_util::state_hash::StateHash> SequenceElementData<P> {
+    fn try_map_post_seek<Q: robin_util::state_hash::StateHash, E>(
+        self,
+        map: impl FnOnce(P) -> Result<Q, E>,
+    ) -> Result<SequenceElementData<Q>, E> {
+        Ok(match self {
+            Self::Simple => SequenceElementData::Simple,
+            Self::Movement {
+                destination,
+                layer,
+                sector,
+                gate_id,
+                line_id,
+                element,
+                flags,
+                tolerance,
+                direction,
+                action,
+                speed_factor,
+                post_seek_sequence,
+            } => SequenceElementData::Movement {
+                destination,
+                layer,
+                sector,
+                gate_id,
+                line_id,
+                element,
+                flags,
+                tolerance,
+                direction,
+                action,
+                speed_factor,
+                post_seek_sequence: map(post_seek_sequence)?,
+            },
+            Self::Generic { properties } => SequenceElementData::Generic { properties },
+            Self::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            } => SequenceElementData::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            },
+            Self::Interaction { antagonist } => SequenceElementData::Interaction { antagonist },
+        })
+    }
 }
 
 impl SequenceElementData {
@@ -863,7 +928,7 @@ impl SequenceElementData {
 ///  └──→ Impossible
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct SequenceElement {
+pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: u32,
 
@@ -914,7 +979,7 @@ pub struct SequenceElement {
     pub orders: VecDeque<Order>,
 
     /// Subtype-specific data.
-    pub data: SequenceElementData,
+    pub data: SequenceElementData<P>,
 
     /// Index of a postponed element (within the same sequence) that should be
     /// restarted when this element finishes.
@@ -953,6 +1018,63 @@ pub struct SequenceElement {
     /// successful load from silently discarding state while those behaviors
     /// are being ported.
     pub(crate) legacy_v48: Option<LegacyV48SequenceElementState>,
+}
+
+impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
+    fn try_map_post_seek<Q: robin_util::state_hash::StateHash, E>(
+        self,
+        map: impl FnOnce(P) -> Result<Q, E>,
+    ) -> Result<SequenceElement<Q>, E> {
+        let Self {
+            id,
+            command,
+            command_level,
+            owner,
+            state,
+            priority,
+            script_driven,
+            posture_after_transition,
+            action_state_after_transition,
+            num_transition_orders,
+            retained_movement_goal,
+            recorded_gate_path,
+            orders,
+            data,
+            postponed_element_index,
+            cross_postponed,
+            next_link_severed,
+            legacy_v48,
+        } = self;
+        Ok(SequenceElement {
+            id,
+            command,
+            command_level,
+            owner,
+            state,
+            priority,
+            script_driven,
+            posture_after_transition,
+            action_state_after_transition,
+            num_transition_orders,
+            retained_movement_goal,
+            recorded_gate_path,
+            orders,
+            data: data.try_map_post_seek(map)?,
+            postponed_element_index,
+            cross_postponed,
+            next_link_severed,
+            legacy_v48,
+        })
+    }
+}
+
+impl SequenceElement<()> {
+    pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
+        match &self.data {
+            SequenceElementData::Generic { properties } => properties.get(&field),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -1605,12 +1727,12 @@ impl TryFrom<&SequenceElement> for SequenceCommand {
 /// Level 3: [Move to goal]                  ← waits for level 2 to finish
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct Sequence {
+pub struct Sequence<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: SequenceId,
 
     /// All elements in this sequence, ordered by command level.
-    pub elements: Vec<SequenceElement>,
+    pub elements: Vec<SequenceElement<P>>,
 
     /// Index of the next element to start.
     cursor: usize,
@@ -1626,6 +1748,103 @@ pub struct Sequence {
 
     /// Whether `launch()` has been called.
     started: bool,
+}
+
+/// A continuation attached to a root movement element. Its elements use a
+/// unit post-seek slot, so the continuation cannot recursively contain one.
+pub type PostSeekSequence = Sequence<()>;
+
+impl Sequence {
+    pub fn try_into_post_seek(self) -> Result<PostSeekSequence, SequenceInvariantError> {
+        let Self {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        } = self;
+        let elements = elements
+            .into_iter()
+            .map(|element| {
+                element.try_map_post_seek(|post_seek| {
+                    if post_seek.is_some() {
+                        Err(SequenceInvariantError::NestedPostSeekSequence)
+                    } else {
+                        Ok(())
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PostSeekSequence {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        })
+    }
+
+    pub fn into_post_seek(self) -> PostSeekSequence {
+        self.try_into_post_seek()
+            .unwrap_or_else(|error| panic!("invalid gameplay post-seek sequence: {error}"))
+    }
+}
+
+impl PostSeekSequence {
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&SequenceElement<()>> {
+        self.elements.get(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut SequenceElement<()>> {
+        self.elements.get_mut(index)
+    }
+
+    pub fn last(&self) -> Option<&SequenceElement<()>> {
+        self.elements.last()
+    }
+
+    pub fn into_sequence(self) -> Sequence {
+        let Self {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        } = self;
+        let elements = elements
+            .into_iter()
+            .map(|element| {
+                element
+                    .try_map_post_seek(|()| {
+                        Ok::<_, std::convert::Infallible>(None::<PostSeekSequence>)
+                    })
+                    .expect("infallible post-seek promotion")
+            })
+            .collect();
+        Sequence {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        }
+    }
 }
 
 impl Sequence {

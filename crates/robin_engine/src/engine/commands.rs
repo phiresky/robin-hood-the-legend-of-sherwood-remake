@@ -1145,7 +1145,8 @@ impl EngineInner {
                 self.apply_change_qa_memory(seat, *slot);
             }
             QueueQuickAction { action, command } => {
-                self.apply_queue_quick_action(sim, display, input, assets, seat, *action, command);
+                let command = command.to_player_command();
+                self.apply_queue_quick_action(sim, display, input, assets, seat, *action, &command);
             }
             MakeQueuedActionFast { pc_id } => {
                 self.apply_make_queued_action_fast(sim, *pc_id);
@@ -2497,7 +2498,7 @@ impl EngineInner {
         *seek_destination = destination;
         *layer = route.goal_layer;
         *sector = Some(goal_sector);
-        *post_seek_sequence = Some(Box::new(post_seek));
+        *post_seek_sequence = Some(post_seek.into_post_seek());
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek);
@@ -3104,7 +3105,13 @@ impl EngineInner {
                         post_seek_sequence: Some(post_seek),
                         ..
                     } = &element.data
-                    && !valid(engine, assets, post_seek, swordfighting, false)
+                    && !valid(
+                        engine,
+                        assets,
+                        &post_seek.clone().into_sequence(),
+                        swordfighting,
+                        false,
+                    )
                 {
                     return false;
                 }
@@ -3145,7 +3152,7 @@ impl EngineInner {
                 .get_entity_mut(pc)
                 .and_then(|entity| entity.actor_data_mut())
                 .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not an actor"));
-            actor.post_seek_sequence = Some(Box::new(seek));
+            actor.post_seek_sequence = Some(seek.into_post_seek());
         }
         self.remove_quick_action_titbits_for(pc, slot);
         self.launch_sequence(action);
@@ -3802,7 +3809,7 @@ impl EngineInner {
                 post_seek_sequence, ..
             } = &mut seek.data
             {
-                *post_seek_sequence = Some(Box::new(post_seek));
+                *post_seek_sequence = Some(post_seek.into_post_seek());
             }
 
             let mut seq = Sequence::new();
@@ -4007,7 +4014,7 @@ impl EngineInner {
             *element = None;
             *tolerance = 0.0;
             *flags = MoveFlags::empty();
-            *post_seek_sequence = Some(Box::new(post_seek));
+            *post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let mut sequence = Sequence::new();
@@ -4226,7 +4233,7 @@ impl EngineInner {
             *element = Some(target);
             *tolerance = action_distance;
             *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(Box::new(command_seq));
+            *post_seek_sequence = Some(command_seq.into_post_seek());
         }
 
         let mut seq = Sequence::new();
@@ -4307,7 +4314,7 @@ impl EngineInner {
             *element = Some(target);
             *tolerance = action_distance;
             *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(Box::new(command_seq));
+            *post_seek_sequence = Some(command_seq.into_post_seek());
         }
 
         let mut seq = Sequence::new();
@@ -4679,7 +4686,7 @@ impl EngineInner {
             *element = Some(target_id);
             *tolerance = seek_tolerance;
             *flags |= MoveFlags::SEEK;
-            *post_seek_sequence = Some(Box::new(post_seek));
+            *post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let mut sequence = Sequence::new();
@@ -4871,7 +4878,7 @@ impl EngineInner {
             *element = Some(target_id);
             *tolerance = target_distance;
             *flags |= MoveFlags::SEEK;
-            *post_seek_sequence = Some(Box::new(post_seek));
+            *post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let mut sequence = Sequence::new();
@@ -5167,7 +5174,7 @@ impl EngineInner {
             if append_posture_recovery {
                 self.append_posture_recovery(actor, &mut post_seek);
             }
-            *post_seek_sequence = Some(Box::new(post_seek));
+            *post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let mut sequence = Sequence::new();
@@ -5247,7 +5254,7 @@ impl EngineInner {
             post_seek_sequence, ..
         } = &mut seek_elem.data
         {
-            *post_seek_sequence = Some(Box::new(post_seek));
+            *post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let mut sequence = Sequence::new();

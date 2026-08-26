@@ -17,6 +17,285 @@ use crate::profiles::Action;
 use crate::sequence::Field;
 use serde::{Deserialize, Serialize};
 
+/// The deliberately restricted payload accepted by
+/// [`PlayerCommand::QueueQuickAction`]. A separate enum makes the command
+/// graph non-recursive and prevents queued commands from nesting queues.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum QueuedQuickActionCommand {
+    GroupMove {
+        actors: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        show_marker: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        door_route_override: Option<bool>,
+        recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
+        recorded_failed_gate_routes: Vec<EntityId>,
+    },
+    LaunchInteraction {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+    },
+    LaunchGroundTarget {
+        actor: EntityId,
+        target_pos: WorldPoint3D,
+        command: Command,
+        target_field: Field,
+        titbit_layer: u16,
+    },
+    LaunchSelfAbility {
+        actor: EntityId,
+        command: Command,
+    },
+    LaunchScrollRead {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    EnterSwordfight {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    SwordStrikeCmd {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        with_seek: bool,
+        seek_distance: Option<f32>,
+    },
+    DropAleAt {
+        actor: EntityId,
+        target_pos: MapPoint,
+        running: bool,
+        already_authorized: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    },
+    CrouchDown,
+    StandUp,
+}
+
+impl QueuedQuickActionCommand {
+    pub fn from_player_command(command: PlayerCommand) -> Option<Self> {
+        use PlayerCommand::*;
+        Some(match command {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => Self::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => Self::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => Self::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => Self::LaunchSelfAbility { actor, command },
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => Self::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => Self::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            } => Self::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => Self::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => Self::CrouchDown,
+            StandUp => Self::StandUp,
+            _ => return None,
+        })
+    }
+
+    pub fn to_player_command(&self) -> PlayerCommand {
+        use QueuedQuickActionCommand::*;
+        match self.clone() {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => PlayerCommand::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => PlayerCommand::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => PlayerCommand::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => {
+                PlayerCommand::LaunchSelfAbility { actor, command }
+            }
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            } => PlayerCommand::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => PlayerCommand::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => PlayerCommand::CrouchDown,
+            StandUp => PlayerCommand::StandUp,
+        }
+    }
+}
+
+impl From<PlayerCommand> for QueuedQuickActionCommand {
+    fn from(command: PlayerCommand) -> Self {
+        Self::from_player_command(command)
+            .expect("unsupported PlayerCommand used as a queued quick action")
+    }
+}
+
 /// A single player-issued command that affects simulation state.
 #[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum PlayerCommand {
@@ -448,7 +727,7 @@ pub enum PlayerCommand {
     /// advances subsequent slots as each dispatched action completes.
     QueueQuickAction {
         action: Action,
-        command: Box<PlayerCommand>,
+        command: QueuedQuickActionCommand,
     },
     /// Double-click acceleration for Shift-planned movement.  If the newest
     /// pending QA is a move it becomes a run; otherwise the active actor is

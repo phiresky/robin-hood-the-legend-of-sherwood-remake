@@ -149,7 +149,7 @@ fn actor_post_seek_interaction(
 ) -> Option<ActorPostSeekInteraction> {
     let element = actor
         .post_seek_sequence
-        .as_deref()
+        .as_ref()
         .and_then(|sequence| sequence.elements.first())?;
     let antagonist = match &element.data {
         crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,

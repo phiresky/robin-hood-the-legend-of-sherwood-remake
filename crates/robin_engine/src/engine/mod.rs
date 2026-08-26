@@ -3830,7 +3830,7 @@ impl EngineInner {
         // avoid re-entrant borrows, so explicitly close this owner's terminal
         // stack before launching the post-seek tail.
         self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-        self.launch_sequence(*post_seek);
+        self.launch_sequence(post_seek.into_sequence());
         true
     }
 

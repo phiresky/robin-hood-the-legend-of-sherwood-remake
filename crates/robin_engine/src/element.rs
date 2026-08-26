@@ -741,7 +741,7 @@ pub struct ActorData {
     /// (target reached/lost, or a self-seek collapses immediately).
     /// Copied from the movement sequence element's `post_seek_sequence`
     /// at seek dispatch.
-    pub post_seek_sequence: Option<Box<crate::sequence::Sequence>>,
+    pub post_seek_sequence: Option<crate::sequence::PostSeekSequence>,
 
     pub passing_door_directly: bool,
 
