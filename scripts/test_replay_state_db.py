@@ -360,6 +360,79 @@ class ReplayStateDatabaseTests(unittest.TestCase):
         self.assertEqual(skipped["skipped_exact"], 1)
         self.assertEqual(skipped["enqueued"], 0)
 
+    def test_merged_markerless_corpus_enqueues_from_workspace_and_claims_by_membership(
+        self,
+    ) -> None:
+        source_root = "parity-save-replays/source-corpus"
+        target_root = "parity-save-replays/final-corpus"
+        logical = f"{source_root}/traces/save/replay-001-session-0001.jsonl.zst"
+        native = Path(f"{self.root / logical}.parity.bitcode.zst")
+        native.parent.mkdir(parents=True)
+        native.write_bytes(b"native\nRHPRTRACEFOOTER!" + bytes(20))
+        native_sha = DB.sha256_file(native)
+        invalid_logical = f"{source_root}/traces/save/replay-002-session-0001.jsonl.zst"
+        invalid_native = Path(f"{self.root / invalid_logical}.parity.bitcode.zst")
+        invalid_native.write_bytes(b"native without terminal footer")
+        unrelated = "parity-save-replays/unrelated/traces/save/replay-001-session-0001.jsonl.zst"
+        with self.connection:
+            source_id = DB.upsert_corpus(self.connection, source_root, expected=2)
+            self.connection.execute(
+                "UPDATE corpora SET corpus_status='active' WHERE corpus_id=?",
+                (source_id,),
+            )
+            replay_id = DB.upsert_replay(self.connection, logical, None)
+            self.connection.execute(
+                "UPDATE replays SET corpus_id=? WHERE replay_id=?", (source_id, replay_id)
+            )
+            self.connection.execute(
+                "INSERT INTO final_corpus_members(corpus_id,replay_id,source_ledger) "
+                "VALUES(?,?,?)",
+                (source_id, replay_id, "test-ledger"),
+            )
+            invalid_id = DB.upsert_replay(self.connection, invalid_logical, None)
+            self.connection.execute(
+                "UPDATE replays SET corpus_id=? WHERE replay_id=?",
+                (source_id, invalid_id),
+            )
+            self.connection.execute(
+                "INSERT INTO final_corpus_members(corpus_id,replay_id,source_ledger) "
+                "VALUES(?,?,?)",
+                (source_id, invalid_id, "test-ledger"),
+            )
+            DB.upsert_runner(
+                self.connection,
+                {
+                    "RUNNER_BUNDLE_TRUST_SHA256": "2" * 64,
+                    "RUNNER_RAW_SHA256": "1" * 64,
+                },
+            )
+            DB.merge_corpora(
+                self.connection, target_root, [source_root], 2, None, 16
+            )
+            DB.upsert_replay(self.connection, unrelated, None)
+            DB.add_work(
+                self.connection, unrelated, "replay", "2" * 64,
+                None, None, "4" * 64, 1000,
+            )
+
+        queued = DB.enqueue_corpus_replay_work(
+            self.connection, target_root, "2" * 64, 100, self.root
+        )
+        self.assertEqual(
+            queued,
+            {"members": 2, "native_ready": 1, "enqueued": 1,
+             "skipped_exact": 0, "missing_native": 0,
+             "missing_marker": 0, "invalid_footer": 1},
+        )
+        claim = DB.claim_work(
+            self.connection, "replay", "host-a:merged", 60,
+            "2" * 64, target_root,
+        )
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim["logical_path"], logical)
+        self.assertIsNone(claim["completion_marker"])
+        self.assertEqual(claim["source_sha256"], native_sha)
+
     def test_corpus_work_lease_prevents_duplicate_and_expires(self) -> None:
         result = self.evidence("exact", "0", f"{DB.EOF_MARKER}\n")
         with self.connection:

@@ -318,13 +318,18 @@ publish_result() {
     mv -- "$private_log" "$temporary/log"
     printf '%s\n' "$result_status" >"$temporary/status"
     log_sha=$(sha256_file "$temporary/log")
-    marker_sha=$(sha256_file "$marker_path" 2>/dev/null || printf missing)
+    marker_sha=missing
+    [[ -z "$marker_path" ]] || marker_sha=$(sha256_file "$marker_path" 2>/dev/null || printf missing)
     {
         printf 'FORMAT=schema16-incremental-eof-v1\n'
         printf 'STARTED_UTC=%s\nFINISHED_UTC=%s\n' "$started" "$finished"
         printf 'LOGICAL_PATH_SHA256=%s\nIDENTITY_SHA256=%s\n' "$logical_sha" "$identity"
-        printf 'COMPLETION_MARKER=%s\nCOMPLETION_MARKER_SHA256=%s\n' \
-            "$marker_logical" "$marker_sha"
+        if [[ -n "$marker_logical" ]]; then
+            printf 'COMPLETION_MARKER=%s\nCOMPLETION_MARKER_SHA256=%s\n' \
+                "$marker_logical" "$marker_sha"
+        else
+            printf 'COMPLETION_MARKER_STATUS=not-recorded\n'
+        fi
         printf 'NATIVE_SHA256_PRE=%s\nNATIVE_SHA256_POST=%s\n' "$native_pre" "$native_post"
         printf 'RUNNER_RAW_SHA256=%s\nRUNNER_BUNDLE_TRUST_SHA256=%s\n' "$runner_sha" "$bundle_trust_sha"
         printf 'RUNNER_BUNDLE_MANIFEST_SHA256=%s\nRUNNER_LIB_MANIFEST_SHA256=%s\n' \
@@ -379,8 +384,14 @@ for key in ("work_id","claim_token","logical_path","completion_marker","source_s
  print("" if v.get(key) is None else v[key])
 ')
     work_id=${fields[0]} token=${fields[1]} logical=${fields[2]} marker_logical=${fields[3]} native_expected=${fields[4]}
-    [[ "$logical" == "$corpus"/* && -n "$marker_logical" && "$marker_logical" == "$corpus"/* \
-        && "$native_expected" =~ ^[0-9a-f]{64}$ ]] || { printf 'unsafe claim payload\n' >&2; exit 2; }
+    [[ -n "$logical" && "$logical" != /* && "$logical" != *..* && "$logical" != *$'\n'* \
+        && "$native_expected" =~ ^[0-9a-f]{64}$ ]] \
+        || { printf 'unsafe claim payload\n' >&2; exit 2; }
+    if [[ -n "$marker_logical" ]]; then
+        [[ "$marker_logical" != /* && "$marker_logical" != *..* \
+            && "$marker_logical" != *$'\n'* ]] \
+            || { printf 'unsafe claim payload\n' >&2; exit 2; }
+    fi
 
     existing=$(db_command exact-evidence-key "$logical" --runner-trust "$bundle_trust_sha" \
         --native-sha256 "$native_expected") || exit 3
@@ -412,21 +423,27 @@ for key in ("work_id","claim_token","logical_path","completion_marker","source_s
 
     if [[ "$mode" == local ]]; then
         native="$claim_dir/root/$logical.parity.bitcode.zst"
-        marker="$claim_dir/root/$marker_logical"
-        if ! fetch_remote_file "$logical" .parity.bitcode.zst "$native" \
-            || ! fetch_remote_file "$marker_logical" '' "$marker"; then
+        marker=
+        if ! fetch_remote_file "$logical" .parity.bitcode.zst "$native"; then
             : >"$lost_flag"
+        elif [[ -n "$marker_logical" ]]; then
+            marker="$claim_dir/root/$marker_logical"
+            mkdir -p -- "${marker%/*}"
+            fetch_remote_file "$marker_logical" '' "$marker" || : >"$lost_flag"
         fi
         logical_run="$claim_dir/root/$logical"
     else
         native="$workspace/$logical.parity.bitcode.zst"
-        marker="$workspace/$marker_logical"
+        marker=
+        [[ -z "$marker_logical" ]] || marker="$workspace/$marker_logical"
         logical_run="$workspace/$logical"
     fi
     native_pre=$(sha256_file "$native" 2>/dev/null || printf missing)
     footer=$(tail -c 36 -- "$native" 2>/dev/null | head -c 16 || true)
+    marker_missing=0
+    [[ -z "$marker_logical" || -f "$marker" ]] || marker_missing=1
     if [[ ! -e "$lost_flag" ]] && { [[ "$native_pre" != "$native_expected" \
-        || "$footer" != RHPRTRACEFOOTER! || ! -f "$marker" ]]; }; then
+        || "$footer" != RHPRTRACEFOOTER! || "$marker_missing" == 1 ]]; }; then
         publish_infrastructure_stop integrity-native-artifact
         exit 1
     fi
