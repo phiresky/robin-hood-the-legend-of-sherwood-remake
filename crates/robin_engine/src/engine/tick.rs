@@ -2630,7 +2630,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) {
+    ) -> Result<(), String> {
         // Sound Hourglass completes after the preceding Engine frame in the
         // Original. Its callbacks therefore finish before the next
         // PerformHourglass begins and must be the first mutation here.
@@ -2669,11 +2669,14 @@ impl EngineInner {
             });
             if matches_pending {
                 let pending = pending.expect("matching pending exclamation disappeared");
-                assert_eq!(
-                    (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id),
-                    resolution.identifier,
-                    "sound manager resolved a different speech profile than the pending request"
-                );
+                let expected_identifier =
+                    (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id);
+                if expected_identifier != resolution.identifier {
+                    return Err(format!(
+                        "sound manager resolved identifier {} for actor {}, but pending request expects {}",
+                        resolution.identifier, resolution.actor_id, expected_identifier
+                    ));
+                }
                 self.feedback.sound_sim.pending_exclamations.remove(0);
             } else if replay_injected_resolutions {
                 // The host sound queue is not serialized in legacy saves.
@@ -2692,15 +2695,17 @@ impl EngineInner {
                     "replay injected an authoritative Original host exclamation that does not match the Rust logical FIFO"
                 );
             } else if pending.is_some() {
-                panic!(
-                    "sound-manager resolution order diverged; pending FIFO: {:?}",
+                return Err(format!(
+                    "sound-manager resolution order diverged for actor {} exclamation {}; pending FIFO: {:?}",
+                    resolution.actor_id,
+                    resolution.exclamation_id,
                     self.feedback.sound_sim.pending_exclamations
-                );
+                ));
             } else {
-                panic!(
+                return Err(format!(
                     "live sound manager resolved exclamation {} for actor {} with no pending request",
                     resolution.exclamation_id, resolution.actor_id
-                );
+                ));
             }
             if resolution.duration_frames == 0 {
                 self.feedback
@@ -2718,6 +2723,7 @@ impl EngineInner {
                 );
             }
         }
+        Ok(())
     }
 
     /// Drain effects deferred by the preceding tick before any mission,
@@ -2732,7 +2738,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> bool {
-        self.hourglass_phase_sound_boundary(sim, assets);
+        self.hourglass_phase_sound_boundary(sim, assets)
+            .unwrap_or_else(|reason| panic!("internal sound boundary rejected: {reason}"));
         let cur_frame = self.control.frame_counter;
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in

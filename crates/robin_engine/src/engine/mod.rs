@@ -73,8 +73,9 @@ pub(crate) use commands::command_action_distance_animation;
 pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use frame::{
-    ExternalAction, ExternalActionResult, ExternalFact, FrameAdvanceError, FrameConsoleResponse,
-    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput,
+    ExternalAction, ExternalActionResult, ExternalFacts, FrameAdvanceError, FrameConsoleResponse,
+    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput, SoundBoundary,
+    SoundBoundaryPolicy,
 };
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
@@ -373,7 +374,8 @@ impl EngineInner {
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
     ) {
-        self.queue_resolved_exclamations_with_origin(resolutions, false);
+        self.try_queue_resolved_exclamations(resolutions, false)
+            .unwrap_or_else(|reason| panic!("live sound resolutions rejected: {reason}"));
     }
 
     /// Queue resolutions recorded by the Original host sound manager.
@@ -387,22 +389,25 @@ impl EngineInner {
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
     ) {
-        self.queue_resolved_exclamations_with_origin(resolutions, true);
+        self.try_queue_resolved_exclamations(resolutions, true)
+            .unwrap_or_else(|reason| panic!("replay sound resolutions rejected: {reason}"));
     }
 
-    fn queue_resolved_exclamations_with_origin(
+    pub(super) fn try_queue_resolved_exclamations(
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
         replay_injected: bool,
-    ) {
-        assert!(
-            self.feedback.sound_sim.resolved_exclamations.is_empty(),
-            "resolved exclamations were not consumed before the next sound boundary"
-        );
+    ) -> Result<(), String> {
+        if !self.feedback.sound_sim.resolved_exclamations.is_empty() {
+            return Err(
+                "resolved exclamations were not consumed before the next sound boundary".to_owned(),
+            );
+        }
         self.feedback.sound_sim.resolved_exclamations = resolutions;
         self.feedback
             .sound_sim
             .replay_injected_resolved_exclamations = replay_injected;
+        Ok(())
     }
 
     /// Cancel the first logical exclamation for an actor without calling

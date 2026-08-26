@@ -4797,11 +4797,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         if debug_startup {
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
-        let mut external_facts = frame
-            .director_completions
-            .drain(..)
-            .map(robin_engine::engine::ExternalFact::DirectorCompletion)
-            .collect::<Vec<_>>();
+        let director_completions = frame.director_completions.drain(..).collect::<Vec<_>>();
         // `RHGame` records the engine frame before running the host sound
         // manager (`original-code/RHgame.cpp:1879-1915`). Consequently these
         // resolutions belong chronologically before the input commands stored
@@ -4821,9 +4817,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 }
             })
             .collect();
-        external_facts.push(robin_engine::engine::ExternalFact::ReplaySoundBoundary(
-            resolutions,
-        ));
+        let external_facts = robin_engine::engine::ExternalFacts::new(
+            director_completions,
+            Some(robin_engine::engine::SoundBoundary::replay(resolutions)),
+        );
         let popup_nested_refresh = frame.popup_events.as_deref().is_some_and(|events| {
             events.iter().any(|event| {
                 event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true)
