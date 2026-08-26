@@ -327,6 +327,38 @@ impl PcMacroState {
         self.recording_slot
     }
 
+    pub fn first_empty_slot(&self) -> Option<u8> {
+        self.slots
+            .iter()
+            .position(QuickActionSlot::is_empty)
+            .map(|slot| slot as u8)
+    }
+
+    pub fn last_occupied_slot(&self) -> Option<u8> {
+        self.slots
+            .iter()
+            .rposition(|slot| !slot.is_empty())
+            .map(|slot| slot as u8)
+    }
+
+    /// Upgrade the newest queued movement to running. Returns whether a
+    /// pending move was found and changed.
+    pub fn make_last_move_running(&mut self) -> Option<u8> {
+        let Some(slot) = self.last_occupied_slot() else {
+            return None;
+        };
+        let Some(step) = self.slots[slot as usize].steps.last_mut() else {
+            return None;
+        };
+        match &mut step.replay {
+            QaReplayCommand::Move { running, .. } | QaReplayCommand::DropAle { running, .. } => {
+                *running = true;
+                Some(slot)
+            }
+            _ => None,
+        }
+    }
+
     /// Read a slot's titbit id.  Returns `None` for an empty slot.
     pub fn get_slot_titbit(&self, slot: usize) -> Option<crate::titbit::TitbitId> {
         self.maul_titbits.get(slot).copied().flatten()

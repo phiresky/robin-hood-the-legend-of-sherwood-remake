@@ -1308,6 +1308,22 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
         .map(|i| i as u8)
 }
 
+fn action_index(
+    profiles: &engine_profiles::ProfileManager,
+    entity: &Entity,
+    action: engine_profiles::Action,
+) -> Option<u8> {
+    if action == engine_profiles::Action::NoAction {
+        return None;
+    }
+    let profile = profiles.get_character(entity.pc_data()?.profile_index)?;
+    profile
+        .actions
+        .iter()
+        .position(|candidate| *candidate == action)
+        .map(|index| index as u8)
+}
+
 fn allied_action_index(relative_x: f32) -> u8 {
     ((relative_x / (ELEMENT_WIDTH as f32 / 3.0)).floor() as u8).min(2)
 }
@@ -1743,6 +1759,7 @@ pub fn draw_panel(
     mouse_x: f32,
     mouse_y: f32,
     titbit_renderer: Option<&mut crate::titbit_renderer::TitbitRenderer>,
+    shift_held: bool,
 ) {
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
@@ -2030,7 +2047,13 @@ pub fn draw_panel(
                 };
 
                 // Determine active action button index and disabled state.
-                let active_idx = entity.and_then(|e| active_action_index(profiles, e));
+                let active_idx = if shift_held {
+                    entity.and_then(|entity| {
+                        action_index(profiles, entity, engine.planned_action_for_seat(local_seat))
+                    })
+                } else {
+                    entity.and_then(|e| active_action_index(profiles, e))
+                };
 
                 for i in 0..num_buttons {
                     let is_active = active_idx == Some(i as u8);

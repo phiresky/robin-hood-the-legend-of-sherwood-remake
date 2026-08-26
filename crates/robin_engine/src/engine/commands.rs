@@ -736,6 +736,18 @@ impl EngineInner {
                 self.set_pc_action(assets, input, seat, *pc_id, *action);
                 self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
             }
+            SelectPlannedAction { pc_id, action } => {
+                if !self.players.seats[seat].selection.contains(pc_id) {
+                    tracing::warn!(?pc_id, ?action, "ignored planned action for unselected PC");
+                    return;
+                }
+                self.players.seats[seat].planned_action =
+                    if self.players.seats[seat].planned_action == *action {
+                        crate::profiles::Action::NoAction
+                    } else {
+                        *action
+                    };
+            }
             CancelAction { pc_id } => {
                 self.set_pc_action(
                     assets,
@@ -991,6 +1003,12 @@ impl EngineInner {
             }
             ChangeQaMemory { slot } => {
                 self.apply_change_qa_memory(seat, *slot);
+            }
+            QueueQuickAction { action, command } => {
+                self.apply_queue_quick_action(sim, display, input, assets, seat, *action, command);
+            }
+            MakeQueuedActionFast { pc_id } => {
+                self.apply_make_queued_action_fast(sim, *pc_id);
             }
             SetLockAlt(on) => {
                 self.players.seats[seat].is_lock_alt = *on;
@@ -1384,7 +1402,7 @@ impl EngineInner {
         // re-borrow `self` inside the per-PC loop.
         let recording_pcs = self.players.qa_recording_for.clone();
         for recording_pc in recording_pcs {
-            self.record_macro_step_for_pc(seat, cmd, recording_pc);
+            self.record_macro_step_for_pc(seat, cmd, recording_pc, None);
         }
     }
 
@@ -1393,6 +1411,7 @@ impl EngineInner {
         seat: usize,
         cmd: &PlayerCommand,
         recording_pc: EntityId,
+        action_override: Option<crate::profiles::Action>,
     ) {
         use crate::macro_store::QuickActionStep;
         use PlayerCommand::*;
@@ -1400,11 +1419,13 @@ impl EngineInner {
         // Helper: read the acting PC's current action.  Returns
         // NoAction if the entity isn't a PC or doesn't exist.
         let pc_action = |engine: &EngineInner, pc: EntityId| -> crate::profiles::Action {
-            engine
-                .get_entity(pc)
-                .and_then(|e| e.pc_data())
-                .map(|pc| pc.current_action)
-                .unwrap_or(crate::profiles::Action::NoAction)
+            action_override.unwrap_or_else(|| {
+                engine
+                    .get_entity(pc)
+                    .and_then(|e| e.pc_data())
+                    .map(|pc| pc.current_action)
+                    .unwrap_or(crate::profiles::Action::NoAction)
+            })
         };
 
         let entity_pos = |engine: &EngineInner, id: EntityId| -> Option<MapPoint> {
@@ -1728,6 +1749,185 @@ impl EngineInner {
             && let Some(pc_state) = self.players.macro_store.get_mut(recording_pc)
         {
             pc_state.set_slot_titbit(slot_idx as usize, tb);
+        }
+    }
+
+    /// Append a Shift-click action to each addressed PC's next free QA slot.
+    /// Recording is performed directly against `MacroStore`: the nested live
+    /// command is never applied here, which is what keeps action planning from
+    /// equipping weapons or interrupting an actor that is still moving.
+    fn apply_queue_quick_action(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        seat: usize,
+        action: crate::profiles::Action,
+        command: &PlayerCommand,
+    ) {
+        use PlayerCommand::*;
+
+        let actors: Vec<EntityId> = match command {
+            GroupMove { actors, .. } => actors.clone(),
+            LaunchInteraction { actor, .. }
+            | LaunchGroundTarget { actor, .. }
+            | DropAleAt { actor, .. }
+            | LaunchSelfAbility { actor, .. }
+            | LaunchScrollRead { actor, .. }
+            | EnterSwordfight { actor, .. }
+            | SwordStrikeCmd { actor, .. } => vec![*actor],
+            CrouchDown | StandUp => self.players.seats[seat].selection.clone(),
+            _ => {
+                tracing::warn!(?command, "Shift queue rejected unsupported player command");
+                return;
+            }
+        };
+
+        for actor in actors {
+            let Some(slot) = self
+                .players
+                .macro_store
+                .get_or_insert(actor)
+                .first_empty_slot()
+            else {
+                tracing::warn!(?actor, "Shift queue is full; quick action was not recorded");
+                continue;
+            };
+
+            self.players
+                .macro_store
+                .get_or_insert(actor)
+                .begin_recording(slot);
+            self.record_macro_step_for_pc(seat, command, actor, Some(action));
+            self.players
+                .macro_store
+                .get_mut(actor)
+                .expect("queued quick-action state disappeared")
+                .stop_recording();
+
+            if !self.has_quick_action(actor, slot) {
+                tracing::warn!(?actor, ?command, "Shift queue command produced no QA step");
+                continue;
+            }
+
+            let was_active = self.players.auto_queue_active.contains(&actor);
+            if !was_active {
+                self.players.auto_queue_active.push(actor);
+            }
+            let actor_busy = self
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(actor, |_| true);
+            if !was_active && !actor_busy {
+                self.start_auto_queue_front(sim, display, input, assets, actor);
+            }
+        }
+    }
+
+    fn apply_make_queued_action_fast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        pc: EntityId,
+    ) {
+        let upgraded_slot = self
+            .players
+            .macro_store
+            .get_mut(pc)
+            .and_then(crate::macro_store::PcMacroState::make_last_move_running);
+        if let Some(slot) = upgraded_slot {
+            let titbit = self
+                .players
+                .macro_store
+                .get(pc)
+                .and_then(|state| state.get_slot_titbit(slot as usize))
+                .unwrap_or_else(|| panic!("queued run PC {pc:?} slot {slot} has no titbit"));
+            self.feedback
+                .titbit_manager
+                .promote_quick_action_to_run(titbit);
+        } else {
+            self.actor_make_fast(sim, pc);
+        }
+    }
+
+    /// Launch the front QA for one automatic queue and immediately collapse
+    /// that PC's memory strip. The launched sequence is now the active item;
+    /// the visible slots contain only work still waiting behind it.
+    fn start_auto_queue_front(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        pc: EntityId,
+    ) {
+        if !self.has_quick_action(pc, 0) {
+            return;
+        }
+        self.replay_macro_slot(sim, display, input, assets, pc, 0);
+        if !self.has_quick_action(pc, 0) {
+            self.do_tetris_macro_for_pc(display, pc, 0);
+        }
+    }
+
+    fn do_tetris_macro_for_pc(&mut self, display: &mut HostDisplayState, pc: EntityId, slot: u8) {
+        let first = slot as usize;
+        if first >= crate::macro_store::NUMBER_OF_QA_MEMORY {
+            panic!("quick-action tetris slot {slot} is out of range");
+        }
+        self.players.macro_store.get_or_insert(pc).do_tetris(first);
+        let saved = self
+            .get_entity_mut(pc)
+            .and_then(|entity| entity.pc_data_mut())
+            .unwrap_or_else(|| panic!("quick-action queue owner {pc:?} is not a PC"));
+        for index in first..crate::macro_store::NUMBER_OF_QA_MEMORY - 1 {
+            saved.quick_action_types[index] = saved.quick_action_types[index + 1];
+            saved.quick_action_sequences[index] = saved.quick_action_sequences[index + 1].clone();
+            saved.quick_seek_sequences[index] = saved.quick_seek_sequences[index + 1].clone();
+            saved.quick_action_special_counts[index] = saved.quick_action_special_counts[index + 1];
+            saved.quick_action_buttons[index] = saved.quick_action_buttons[index + 1];
+            saved.quick_action_interactors[index] = saved.quick_action_interactors[index + 1];
+            saved.titbits[index] = saved.titbits[index + 1];
+            saved.portrait.quick_icons[index] = saved.portrait.quick_icons[index + 1];
+        }
+        let last = crate::macro_store::NUMBER_OF_QA_MEMORY - 1;
+        saved.quick_action_types[last] = crate::element_kinds::QuickAction::None;
+        saved.quick_action_sequences[last] = None;
+        saved.quick_seek_sequences[last] = None;
+        saved.quick_action_special_counts[last] = 0;
+        saved.quick_action_buttons[last] = 0;
+        saved.quick_action_interactors[last] = None;
+        saved.titbits[last] = u32::MAX;
+        saved.portrait.quick_icons[last] = Default::default();
+        display.rearm_macro_tetris(&self.world.pc_ids, &self.players.macro_store, first);
+    }
+
+    /// Advance automatic Shift-click queues after actor work has settled for
+    /// the frame. Called by the engine tick, not the renderer, so replay and
+    /// rollback observe identical launch frames.
+    pub(super) fn advance_auto_quick_action_queues(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) {
+        let active = self.players.auto_queue_active.clone();
+        let mut scratch_input = InputState::default();
+        for pc in active {
+            if self
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc, |_| true)
+            {
+                continue;
+            }
+            if self.has_quick_action(pc, 0) {
+                self.start_auto_queue_front(sim, display, &mut scratch_input, assets, pc);
+            } else {
+                self.players
+                    .auto_queue_active
+                    .retain(|queued| *queued != pc);
+            }
         }
     }
 
@@ -5107,6 +5307,122 @@ mod tests {
         }));
 
         (engine, assets, pc_id)
+    }
+
+    #[test]
+    fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 4)]);
+        engine.players.seats[0].selection.push(pc_id);
+        let sequence_count = engine.orders.sequence_manager.sequence_count();
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::SelectPlannedAction {
+                pc_id,
+                action: Action::Bow,
+            },
+        );
+
+        assert_eq!(engine.players.seats[0].planned_action, Action::Bow);
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::pc_data)
+                .expect("test PC")
+                .current_action,
+            Action::NoAction
+        );
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            sequence_count
+        );
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::SelectPlannedAction {
+                pc_id,
+                action: Action::Bow,
+            },
+        );
+        assert_eq!(engine.players.seats[0].planned_action, Action::NoAction);
+    }
+
+    #[test]
+    fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
+        engine.players.seats[0].selection.push(pc_id);
+        let queued = PlayerCommand::QueueQuickAction {
+            action: Action::Whistle,
+            command: Box::new(PlayerCommand::LaunchSelfAbility {
+                actor: pc_id,
+                command: Command::WhistleCmd,
+            }),
+        };
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        let sim = crate::sim_rng::test_context();
+
+        engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+        assert!(engine.players.auto_queue_active.contains(&pc_id));
+        assert!(!engine.has_quick_action(pc_id, 0));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::WhistleCmd
+                })
+        );
+
+        engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+        assert!(engine.has_quick_action(pc_id, 0));
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("queued QA state");
+        assert_eq!(state.slot(0).expect("slot zero").steps.len(), 1);
+        assert!(state.get_slot_titbit(0).is_some());
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::pc_data)
+                .expect("test PC")
+                .current_action,
+            Action::NoAction,
+            "queueing must not arm the live PC action"
+        );
+
+        let (sequence_id, element_index) = engine
+            .orders
+            .sequence_manager
+            .live_element_for_actor_matching(pc_id, |element| {
+                element.command == Command::WhistleCmd
+            })
+            .expect("first queued action is live");
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(sequence_id, element_index);
+        engine.advance_auto_quick_action_queues(&sim, &mut display, &assets);
+
+        assert!(!engine.has_quick_action(pc_id, 0));
+        assert!(engine.players.auto_queue_active.contains(&pc_id));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::WhistleCmd
+                }),
+            "the pending QA starts as soon as the preceding action terminates"
+        );
     }
 
     #[test]

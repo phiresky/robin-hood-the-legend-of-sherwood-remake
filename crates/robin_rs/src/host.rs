@@ -24,6 +24,7 @@ use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_profile::{PlayerProfile, PlayerProfileManager};
+use robin_engine::profiles::Action;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -605,6 +606,10 @@ pub struct HostFrontend {
 
     // ── Trajectory preview (transient) ───────────────────────────
     pub valid_trajectory: bool,
+    /// Modifier/action identity that produced the cached preview. Changing
+    /// either invalidates it even when the mouse itself has not moved.
+    pub trajectory_preview_shift_held: bool,
+    pub trajectory_preview_action: Action,
     pub trajectory_preview_points: Vec<TrajectoryPoint>,
     pub trajectory_preview_start: WorldPoint3D,
     /// Shooter layer captured alongside `trajectory_preview_points`.

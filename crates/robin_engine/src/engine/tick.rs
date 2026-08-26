@@ -2377,6 +2377,7 @@ impl EngineInner {
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
         let code = self.perform_hourglass_inner(sim, display, assets, dev, simulation_body_allowed);
+        self.advance_auto_quick_action_queues(sim, display, assets);
         self.control.arrow_refresh_pending = true;
 
         // Post-tick sim mutations that used to live in `game_session`

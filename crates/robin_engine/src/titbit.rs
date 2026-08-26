@@ -684,6 +684,26 @@ impl TitbitManager {
             .any(|t| t.id == raw && t.kind == TitbitKind::QuickActionRun)
     }
 
+    /// Upgrade a queued walk titbit to the run presentation used by a
+    /// Shift-double-click. Missing IDs are invalid queue state.
+    pub fn promote_quick_action_to_run(&mut self, titbit_id: TitbitId) {
+        let raw = titbit_id.get();
+        let Some(base_index) = self
+            .titbits
+            .iter()
+            .position(|titbit| titbit.id == raw && titbit.kind == TitbitKind::QuickAction)
+        else {
+            panic!("queued quick-action titbit {raw} disappeared before run promotion");
+        };
+        self.titbits[base_index].phase = QuickAction::Run as u16;
+        if !self.is_running_for_qa(titbit_id) {
+            let mut run = self.titbits[base_index].clone();
+            run.kind = TitbitKind::QuickActionRun;
+            run.display_order -= 0.001;
+            self.titbits.push(run);
+        }
+    }
+
     // ── Blinking ──
 
     /// Set blinking state for all titbits matching `titbit_id`.

@@ -3411,6 +3411,24 @@ impl SequenceManager {
             .is_some_and(|element| element.data.is_movement())
     }
 
+    /// Furthest currently-live movement destination for an actor.  Shift-held
+    /// planning uses this as the hypothetical origin when no queued move is
+    /// already ahead of it.
+    pub fn actor_planned_movement_destination(
+        &self,
+        actor: impl Into<EntityId>,
+    ) -> Option<crate::coordinates::MapPoint> {
+        let actor = actor.into();
+        let live = self.actor_live.get(&actor)?;
+        live.iter().rev().find_map(|element_ref| {
+            let element = self.get_element(element_ref.sequence_id, element_ref.element_index)?;
+            match &element.data {
+                SequenceElementData::Movement { destination, .. } => Some(*destination),
+                _ => None,
+            }
+        })
+    }
+
     /// Select the accepted element for the duration of its command
     /// translation, or release it again.
     ///
