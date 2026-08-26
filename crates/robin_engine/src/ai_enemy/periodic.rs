@@ -161,13 +161,12 @@ impl EnemyAi {
                 | Substate::FleeingRunForArrowReserves,
         );
 
-        // RefreshArrowProtection is synchronous in Original.  Its phalanx
-        // arm launches GoTo before the switch below reads GetCommand(), so a
-        // soldier that entered RunningToPhalanx in this very call is already
-        // on MOVE_OK and must not be counted as standing around.  Rust drains
-        // the queued actor order only after the AI borrow is released, hence
-        // the caller's command snapshot still says Wait here.
-        let stuck_command_active = stuck_command_active && !refreshed_arrow_protection;
+        // The engine snapshots the actor command before entering this AI
+        // callback, but Original reads GetCommand() here, after
+        // RefreshArrowProtection's GoTo has synchronously Halted the old
+        // movement and exposed Wait. The deferred Rust GoTo is not itself a
+        // manager element in `sequence_null_about_to_launch` yet.
+        let stuck_command_active = stuck_command_active || refreshed_arrow_protection;
         if in_reachpoint_arm && stuck_command_active {
             // A queued Null sequence element means a
             // transition is in-flight — don't bump the stuck counter.

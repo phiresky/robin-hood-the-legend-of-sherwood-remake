@@ -193,7 +193,12 @@ fn is_facing_swordfight_target(
 }
 
 fn live_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
-    let view = ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target");
+    ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target")
+        .position
+}
+
+fn literal_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
+    let view = ctx.expect_entity_view(primary_target, "ReconsiderSwordfight facing target");
     let mut position = view.position;
     position.x = view.detection_position.x;
     position.y = view.detection_position.y;
@@ -3113,7 +3118,7 @@ impl EnemyAi {
         // `mpPrimaryTarget` changes immediately above, because the tick's
         // owner-local live position still belongs to the preceding target.
         let facing_target_position = swordfight_facing_target_position(&primary, tick, |target| {
-            live_swordfight_target_position(target, ctx)
+            literal_swordfight_target_position(target, ctx)
         });
         let facing_primary = is_facing_swordfight_target(
             &ctx.position,

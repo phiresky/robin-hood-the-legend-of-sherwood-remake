@@ -7415,12 +7415,13 @@ mod tests {
     }
 
     #[test]
-    fn periodic_phalanx_goto_is_visible_to_same_call_stuck_detector() {
+    fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
         // schema14 seed1000000, linux2/P002/Savegame_032/replay-008,
-        // frame 17254. RefreshArrowProtection synchronously changes the
-        // soldier from Reactiontime/Wait to RunningToPhalanx/MoveOk before
-        // Original's stuck detector reads GetCommand(). The deferred Rust
-        // order must have the same same-call visibility.
+        // frame 17254. RefreshArrowProtection changes the soldier from
+        // Reactiontime/Wait to RunningToPhalanx and launches a GoTo, but the
+        // same-call stuck check still observes the actor's current Wait and
+        // advances its counter. Rust must not substitute its deferred order
+        // for that live actor/sequence-manager observation.
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
         ai.base.current_state = AiState::Attacking;
@@ -7428,8 +7429,12 @@ mod tests {
         ai.base.stuck_counter = 2;
         ai.list_them.push(2);
 
-        let owner_position = test_position(0.0, 0.0);
-        let enemy_position = test_position(1_000.0, 0.0);
+        let exact_position = |x, y| Position {
+            sector: SectorHandle::new(0),
+            ..test_position(x, y)
+        };
+        let owner_position = exact_position(500.0, 500.0);
+        let enemy_position = exact_position(1_500.0, 500.0);
         let mut owner_view = soldier_view(owner_position);
         owner_view.camp = Camp::Royalists;
         let mut enemy_view = soldier_view(enemy_position);
@@ -7464,8 +7469,8 @@ mod tests {
         });
         tick.fighter_registry.push(FighterSnapshot {
             handle: 3,
-            position: test_position(100.0, 0.0),
-            raw_position: test_position(100.0, 0.0),
+            position: exact_position(600.0, 500.0),
+            raw_position: exact_position(600.0, 500.0),
             direction: 0,
             is_friendly: true,
             is_soldier: true,
@@ -7483,7 +7488,7 @@ mod tests {
             None,
             true,
             false,
-            true,
+            false,
             false,
         );
 
@@ -7493,8 +7498,105 @@ mod tests {
         );
         assert_ne!(ai.base.last_goto_destination, Position::default());
         assert_eq!(
-            ai.base.stuck_counter, 2,
-            "the same-call MoveOk launch leaves Original's counter untouched"
+            ai.base.stuck_counter, 3,
+            "the deferred phalanx GoTo does not hide the current idle actor"
+        );
+    }
+
+    #[test]
+    fn periodic_phalanx_already_on_point_does_not_fake_a_pending_sequence() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.stuck_counter = 2;
+        ai.list_them.push(2);
+
+        // Direction zero puts the open left slot 25 pixels to the left of
+        // the existing shield bearer. The owner is already exactly there,
+        // so RefreshArrowProtection's GoTo completes without registering a
+        // movement sequence.
+        let exact_position = |x, y| Position {
+            sector: SectorHandle::new(0),
+            ..test_position(x, y)
+        };
+        let owner_position = exact_position(575.0, 500.0);
+        let enemy_position = exact_position(1_500.0, 500.0);
+        let mut owner_view = soldier_view(owner_position);
+        owner_view.camp = Camp::Royalists;
+        owner_view.current_animation = OrderType::WaitingUpright;
+        let mut enemy_view = soldier_view(enemy_position);
+        enemy_view.camp = Camp::Lacklandists;
+        enemy_view.action_state = crate::element::ActionState::AimingWithBow;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner_view);
+        views.insert(2, enemy_view);
+        let ctx = AiContext {
+            position: owner_position,
+            self_animation: OrderType::WaitingUpright,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.seen_last_frame_enemies.push(2);
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 1,
+            position: owner_position,
+            raw_position: owner_position,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 2,
+            position: enemy_position,
+            raw_position: enemy_position,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 3,
+            position: exact_position(600.0, 500.0),
+            raw_position: exact_position(600.0, 500.0),
+            direction: 0,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingPhalanx as u32,
+            ..FighterSnapshot::default()
+        });
+
+        ai.the_16th_frame(
+            &sim,
+            0,
+            &ctx,
+            &AiGlobalState::default(),
+            &tick,
+            None,
+            true,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunningToPhalanx
+        );
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .self_stimuli
+                .iter()
+                .any(|stimulus| stimulus.stimulus_type == StimulusType::EventReachPoint)
+        );
+        assert_eq!(
+            ai.base.stuck_counter, 3,
+            "an already-on-point GoTo leaves no pending sequence to suppress Original's counter"
         );
     }
 
