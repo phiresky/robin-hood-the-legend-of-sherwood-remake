@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 15;
+pub const NET_PROTOCOL_VERSION: u32 = 16;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -448,5 +448,60 @@ mod tests {
                 },
             }
         ));
+    }
+
+    #[test]
+    fn resolved_drop_ale_route_roundtrips_over_bitcode_wire() {
+        let route = crate::gate::RecordedGatePath {
+            source_sector: crate::sector::SectorNumber::new(133),
+            source_sector_index: crate::fast_find_grid::SectorIndex::new(57),
+            source_layer: 11,
+            outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                door_index: crate::gate::DoorIndex(7),
+                direct: false,
+            }]),
+        };
+        let msg = NetMsg::Input {
+            origin_frame: 35_283,
+            command: PlayerCommand::DropAleAt {
+                actor: crate::element::EntityId::Pc(crate::entity_id::PcId(36)),
+                target_pos: crate::coordinates::MapPoint::new(778.0, 1714.0),
+                running: false,
+                already_authorized: true,
+                goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+                goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(0),
+                recorded_gate_path: Some(route.clone()),
+            },
+        };
+
+        let decoded = decode_msg(&encode_msg(&msg)).expect("decode resolved DropAle command");
+        let NetMsg::Input {
+            origin_frame: 35_283,
+            command:
+                PlayerCommand::DropAleAt {
+                    actor,
+                    target_pos,
+                    running: false,
+                    already_authorized: true,
+                    goal_override: Some((goal_sector, 0)),
+                    goal_sector_index_override,
+                    recorded_gate_path: Some(decoded_route),
+                },
+        } = decoded
+        else {
+            panic!("resolved DropAle command must survive bitcode wire round-trip");
+        };
+        assert_eq!(
+            actor,
+            crate::element::EntityId::Pc(crate::entity_id::PcId(36))
+        );
+        assert_eq!(target_pos.x.to_bits(), 778.0_f32.to_bits());
+        assert_eq!(target_pos.y.to_bits(), 1714.0_f32.to_bits());
+        assert_eq!(goal_sector, crate::sector::SectorNumber::new(0));
+        assert_eq!(
+            goal_sector_index_override,
+            crate::fast_find_grid::SectorIndex::new(0)
+        );
+        assert_eq!(decoded_route, route);
     }
 }

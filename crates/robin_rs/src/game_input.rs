@@ -998,6 +998,7 @@ fn resolve_action_left_click(
                     already_authorized: false,
                     goal_override: None,
                     goal_sector_index_override: None,
+                    recorded_gate_path: None,
                 },
                 commit_tail(is_recording),
             ];
