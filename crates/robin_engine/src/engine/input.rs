@@ -175,15 +175,13 @@ impl EngineInner {
     /// then the actor's current position.
     pub fn planned_action_origin(&self, pc_id: EntityId) -> Option<MapPoint> {
         self.players
-            .macro_store
+            .auto_queues
             .get(pc_id)
-            .and_then(|state| {
-                state
-                    .slots()
+            .and_then(|queue| {
+                queue
                     .iter()
                     .rev()
-                    .flat_map(|slot| slot.steps.iter().rev())
-                    .find_map(|step| match step.replay {
+                    .find_map(|entry| match entry.step.replay {
                         crate::macro_store::QaReplayCommand::Move { destination, .. }
                         | crate::macro_store::QaReplayCommand::TargetInteraction {
                             destination,
