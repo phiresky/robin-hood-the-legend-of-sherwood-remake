@@ -31,8 +31,6 @@ pub enum PlayerCommand {
         destination: MapPoint,
         running: bool,
         /// Whether to show the click marker at the destination.
-        /// Defaults true so older replay records keep mouse-click behaviour.
-        #[serde(default = "default_true")]
         show_marker: bool,
         /// Optional explicit goal `(sector, layer)` that bypasses the
         /// spatial lookup at `destination`.  Used by host-side selected
@@ -48,18 +46,19 @@ pub enum PlayerCommand {
         /// registered geometry). Jump-sector hover also rewrites the
         /// selected sector to the underlying motion sector when no jump
         /// line is executable, matching `RHEngine::PerformMove`.
+        #[serde(deserialize_with = "deserialize_required_option")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         /// Replay-only exact arena identity for `goal_override`. Schema-16
         /// Original traces retain the sparse FastFindGrid slot; live input
         /// leaves this unset and uses the spatial hit's arena identity.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         /// Replay-only reconstruction of which Original route constructor was
         /// selected. `Some(false)` forces ordinary `AppendMoveToSequence`
         /// semantics even when Rust's spatial hit lands on a coincident door
         /// overlay; `Some(true)` forces the door-target constructor. Live
         /// input leaves this unset and uses the spatial selection normally.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         door_route_override: Option<bool>,
         /// Schema-16 replay-only ordinary gate routes, keyed by actor. Each
         /// gate is `(Original gate index, direct)`. Original has already run
@@ -67,12 +66,10 @@ pub enum PlayerCommand {
         /// result avoids a second A* search choosing a different valid route
         /// and therefore authoring different building-exit waits/RNG draws.
         /// Live input leaves this empty.
-        #[serde(default)]
         recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
         /// Schema-16 replay-only actors whose authoritative Original
         /// `AppendMoveToSequence` gate search failed. Replaying that observed
         /// failure must not launch a second A* search against Rust topology.
-        #[serde(default)]
         recorded_failed_gate_routes: Vec<EntityId>,
     },
     /// Stop a PC (clear path, set waiting).
@@ -221,24 +218,22 @@ pub enum PlayerCommand {
         running: bool,
         /// The parity recorder stores the center returned by Original's
         /// `FindAutorizedPosition`, while live input stores the raw cursor.
-        /// Only an Original-trace replay sets this; older serialized commands
-        /// retain the live/raw interpretation.
-        #[serde(default)]
+        /// Only an Original-trace replay sets this.
         already_authorized: bool,
         /// Authoritative route goal retained by a matching schema-16 route
         /// construction event. Spatially re-querying an authorized projected
         /// point can select an overlapping floor instead.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         /// Replay-only exact sparse FastFindGrid identity for
         /// `goal_override`. Original compares sector pointers while public
         /// sector numbers are not unique, so retaining only the number can
         /// turn a valid cross-building route into no route at all.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         /// Replay-only authoritative result of Original's gate search. Live
         /// commands leave this unset and use the runtime gate graph.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
@@ -704,8 +699,16 @@ pub enum PlayerCommand {
     },
 }
 
-fn default_true() -> bool {
-    true
+/// Deserialize an explicitly present optional value.
+///
+/// Serde otherwise treats an absent `Option<T>` field as `None`, which would
+/// silently accept replay commands from an older, truncated schema.
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[cfg(test)]

@@ -1338,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_group_move_defaults_exact_goal_index_to_spatial_resolution() {
+    fn truncated_group_move_commands_are_rejected() {
         let current = PlayerCommand::GroupMove {
             actors: vec![crate::element::EntityId::Pc(crate::entity_id::PcId(1))],
             destination: crate::coordinates::MapPoint::new(50.0, 75.0),
@@ -1350,27 +1350,31 @@ mod tests {
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
         };
-        let mut json = serde_json::to_value(current).unwrap();
-        let fields = json
-            .get_mut("GroupMove")
-            .and_then(serde_json::Value::as_object_mut)
-            .expect("externally tagged GroupMove fields");
-        fields.remove("goal_sector_index_override");
-        fields.remove("recorded_failed_gate_routes");
+        let current = serde_json::to_value(current).unwrap();
+        for missing_field in [
+            "show_marker",
+            "goal_override",
+            "goal_sector_index_override",
+            "door_route_override",
+            "recorded_gate_routes",
+            "recorded_failed_gate_routes",
+        ] {
+            let mut truncated = current.clone();
+            truncated
+                .get_mut("GroupMove")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("externally tagged GroupMove fields")
+                .remove(missing_field);
 
-        let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
-        assert!(matches!(
-            decoded,
-            PlayerCommand::GroupMove {
-                goal_sector_index_override: None,
-                recorded_failed_gate_routes,
-                ..
-            } if recorded_failed_gate_routes.is_empty()
-        ));
+            assert!(
+                serde_json::from_value::<PlayerCommand>(truncated).is_err(),
+                "GroupMove without {missing_field} must be rejected"
+            );
+        }
     }
 
     #[test]
-    fn legacy_drop_ale_command_defaults_to_live_raw_input() {
+    fn truncated_drop_ale_commands_are_rejected() {
         let current = PlayerCommand::DropAleAt {
             actor: crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
             target_pos: crate::coordinates::MapPoint::new(50.0, 75.0),
@@ -1380,27 +1384,25 @@ mod tests {
             goal_sector_index_override: None,
             recorded_gate_path: None,
         };
-        let mut json = serde_json::to_value(current).unwrap();
-        let fields = json
-            .get_mut("DropAleAt")
-            .and_then(serde_json::Value::as_object_mut)
-            .expect("externally tagged DropAle command fields");
-        fields.remove("already_authorized");
-        fields.remove("goal_override");
-        fields.remove("goal_sector_index_override");
-        fields.remove("recorded_gate_path");
+        let current = serde_json::to_value(current).unwrap();
+        for missing_field in [
+            "already_authorized",
+            "goal_override",
+            "goal_sector_index_override",
+            "recorded_gate_path",
+        ] {
+            let mut truncated = current.clone();
+            truncated
+                .get_mut("DropAleAt")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("externally tagged DropAle command fields")
+                .remove(missing_field);
 
-        let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
-        assert!(matches!(
-            decoded,
-            PlayerCommand::DropAleAt {
-                already_authorized: false,
-                goal_override: None,
-                goal_sector_index_override: None,
-                recorded_gate_path: None,
-                ..
-            }
-        ));
+            assert!(
+                serde_json::from_value::<PlayerCommand>(truncated).is_err(),
+                "DropAleAt without {missing_field} must be rejected"
+            );
+        }
     }
 
     #[test]
