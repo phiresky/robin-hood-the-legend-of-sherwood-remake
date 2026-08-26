@@ -366,41 +366,56 @@ pub(super) fn run_forward_ticks(
             None
         };
 
+        let (replay_input, replay_timeline_after) = match timeline
+            .consume_replay_frame_for_step()?
+        {
+            super::runtime::ReplayStepAdmission::NoActiveReplay => (None, None),
+            super::runtime::ReplayStepAdmission::Recorded(recorded) => {
+                // Host controls are intentionally ignored while scrubbing because
+                // presentation modal state may not have the same shape mid-run.
+                if recorded.timeline_before != frame {
+                    return Err(format!(
+                        "replay ordinal admitted at timeline {}, current timeline is {}",
+                        recorded.timeline_before, frame
+                    ));
+                }
+                (
+                    Some(recorded.input),
+                    Some(super::runtime::TimelineFrame::from_wire(
+                        recorded.timeline_after,
+                    )),
+                )
+            }
+            super::runtime::ReplayStepAdmission::Finished {
+                ordinal,
+                total_frames,
+            } => {
+                return Err(format!(
+                    "cannot step replay at timeline frame {frame}: replay is finished at ordinal {ordinal} of {total_frames}"
+                ));
+            }
+        };
+
         // HTTP stepping can advance multiple ticks inside one host frame,
-        // so each tick needs its own pre-tick checkpoints. The outer mission
-        // frame only opened the first one.
+        // so each admitted tick needs its own pre-tick checkpoints. Detect a
+        // replay EOF before opening either transaction.
         let engine = &mut manager.engine;
         timeline.rewind_buffer.begin_frame(frame, engine, assets);
         if let Some(checker) = timeline.rollback_checker.as_mut() {
             checker.begin_frame(frame, engine);
-        }
-
-        let mut replay_input = None;
-        let mut replay_timeline_after = None;
-        if let Some(recorded) = timeline.consume_replay_frame_for_step()? {
-            // Host controls are intentionally ignored while scrubbing because
-            // presentation modal state may not have the same shape mid-run.
-            if recorded.timeline_before != frame {
-                return Err(format!(
-                    "replay ordinal admitted at timeline {}, current timeline is {}",
-                    recorded.timeline_before, frame
-                ));
-            }
-            replay_timeline_after = Some(super::runtime::TimelineFrame::from_wire(
-                recorded.timeline_after,
-            ));
-            replay_input = Some(recorded.input);
         }
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
         // point of the endpoint.
         let mut display = std::mem::take(&mut host.engine_display);
-        let simulation_frame = buffered_frame.clone().unwrap_or_else(|| {
-            replay_input.unwrap_or_else(|| {
+        let simulation_frame = match (buffered_frame.clone(), replay_input) {
+            (Some(buffered), _) => buffered,
+            (None, Some(recorded)) => recorded,
+            (None, None) => {
                 robin_engine::engine::SimulationFrameInput::default().with_post_initialize(true)
-            })
-        });
+            }
+        };
         game.run_engine_tick(
             host,
             &mut display,
@@ -520,6 +535,158 @@ mod tests {
     use super::*;
     use crate::rewind::RewindBuffer;
     use robin_engine::campaign::Campaign;
+    use robin_engine::replay::{
+        REPLAY_SCHEMA_VERSION, ReplayFile, ReplayFrame, ReplayHeader, ReplayPlayer,
+    };
+    use std::collections::BTreeMap;
+
+    fn one_frame_replay(input: engine_api::SimulationFrameInput) -> ReplayPlayer {
+        let data: robin_engine::replay::ReplayData = ReplayFile {
+            header: ReplayHeader {
+                mission_id: "step-test".into(),
+                rng_seed: 0,
+                sim_config: engine_api::SimConfig::default(),
+                version: REPLAY_SCHEMA_VERSION,
+                total_frames: 1,
+                campaign: bitcode::serialize(&Campaign::default()).expect("campaign fixture"),
+            },
+            frames: BTreeMap::from([(
+                0,
+                ReplayFrame {
+                    timeline_before: 0,
+                    timeline_after: 1,
+                    input,
+                    host_controls: Vec::new(),
+                },
+            )]),
+            hashes: BTreeMap::new(),
+            save_markers: BTreeMap::new(),
+            load_backs: BTreeMap::new(),
+        }
+        .into();
+        ReplayPlayer::new(data)
+    }
+
+    fn stepping_fixture(
+        replay_player: Option<ReplayPlayer>,
+    ) -> (
+        engine_api::LevelAssets,
+        engine_manager_api::EngineManager,
+        Host,
+        engine_api::DevState,
+        Game,
+        super::super::runtime::TimelineRuntime,
+    ) {
+        let mut assets = engine_api::LevelAssets::new();
+        let engine = engine_api::Engine::new_for_test_with_level_size(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+            4096.0,
+            4096.0,
+        )
+        .expect("fixture engine");
+        let timeline = super::super::runtime::TimelineRuntime::new(
+            super::super::replay_init::ReplayAndRollback {
+                recorder: None,
+                player: replay_player,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            super::super::runtime::FrameContract::Graphical,
+            false,
+            true,
+        );
+        (
+            assets,
+            engine_manager_api::EngineManager::new(engine),
+            Host::default(),
+            engine_api::DevState::default(),
+            Game::default(),
+            timeline,
+        )
+    }
+
+    #[test]
+    fn non_replay_forward_step_keeps_live_debugger_behavior() {
+        let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(None);
+
+        let (advanced, dismissed) = run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut timeline,
+            1,
+        )
+        .expect("live debugger step");
+
+        assert_eq!(advanced, 1);
+        assert_eq!(dismissed, 0);
+        assert_eq!(timeline.frame_number(), 1);
+        let input = timeline
+            .rewind_buffer
+            .frame_for(0)
+            .expect("live step recorded in rewind history");
+        assert!(input.run_post_initialize);
+    }
+
+    #[test]
+    fn replay_eof_refuses_to_fabricate_another_step() {
+        let recorded_input = engine_api::SimulationFrameInput::default();
+        let player = one_frame_replay(recorded_input);
+        let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(Some(player));
+
+        let (advanced, _) = run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut timeline,
+            1,
+        )
+        .expect("recorded replay step");
+        assert_eq!(advanced, 1);
+        assert!(
+            !timeline
+                .rewind_buffer
+                .frame_for(0)
+                .expect("recorded replay input")
+                .run_post_initialize,
+            "the recorded input must remain authoritative"
+        );
+
+        let error = run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut timeline,
+            1,
+        )
+        .expect_err("replay EOF must refuse a synthetic live frame");
+
+        assert_eq!(
+            error,
+            "cannot step replay at timeline frame 1: replay is finished at ordinal 1 of 1"
+        );
+        assert_eq!(timeline.frame_number(), 1);
+        assert_eq!(timeline.rewind_buffer.next_record_frame(), 1);
+        assert!(timeline.rewind_buffer.frame_for(1).is_none());
+        let player = timeline
+            .replay_player
+            .as_ref()
+            .expect("active replay remains");
+        assert!(player.is_finished());
+        assert_eq!(player.current_frame(), 1);
+    }
 
     #[test]
     fn forward_scrub_reuses_recorded_span_without_appending_an_old_checkpoint() {

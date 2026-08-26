@@ -78,6 +78,18 @@ impl ReplayFrameOrdinal {
     }
 }
 
+/// Result of asking the timeline for the next replay-owned debugger step.
+///
+/// A live debugger step and an exhausted replay are deliberately different:
+/// only the former may synthesize the normal empty/PostInitialize frame used
+/// when stepping a non-replay session.
+#[derive(Debug)]
+pub(super) enum ReplayStepAdmission {
+    NoActiveReplay,
+    Recorded(robin_engine::replay::ReplayFrame),
+    Finished { ordinal: u32, total_frames: u32 },
+}
+
 /// Explicit lockstep cursor transition carried by one persisted replay record.
 /// It cannot be derived from hourglass admission: host actions, multiplayer
 /// admission, debugger steps, and frozen engine ticks have distinct policies.
@@ -1512,21 +1524,23 @@ impl TimelineRuntime {
     /// Debugger/manual stepping owns its own transaction, so it advances the
     /// dense replay ordinal immediately instead of deferring it to
     /// [`Self::finish_recording`].
-    pub(super) fn consume_replay_frame_for_step(
-        &mut self,
-    ) -> Result<Option<robin_engine::replay::ReplayFrame>, String> {
+    pub(super) fn consume_replay_frame_for_step(&mut self) -> Result<ReplayStepAdmission, String> {
         let Some(player) = self.replay_player.as_mut() else {
-            return Ok(None);
+            return Ok(ReplayStepAdmission::NoActiveReplay);
         };
-        if player.is_finished() {
-            return Ok(None);
-        }
-        if player.current_frame() != self.replay_ordinal.number() {
+        let ordinal = player.current_frame();
+        if ordinal != self.replay_ordinal.number() {
             return Err(format!(
                 "replay player ordinal {} diverged from timeline runtime ordinal {}",
-                player.current_frame(),
+                ordinal,
                 self.replay_ordinal.number()
             ));
+        }
+        if player.is_finished() {
+            return Ok(ReplayStepAdmission::Finished {
+                ordinal,
+                total_frames: player.total_frames(),
+            });
         }
         let recorded = player.next_frame().clone();
         if recorded.timeline_before != self.current_frame.number() {
@@ -1538,7 +1552,7 @@ impl TimelineRuntime {
             ));
         }
         self.replay_ordinal.advance();
-        Ok(Some(recorded))
+        Ok(ReplayStepAdmission::Recorded(recorded))
     }
 
     pub(super) fn begin_recording(&mut self, frame: &mut MissionFrame, enabled: bool) {
@@ -1897,10 +1911,12 @@ mod tests {
             .expect("pin replay save");
         assert!(playback.playback_pinned_saves.contains_key(&0));
         for _ in 0..5 {
-            let recorded = playback
+            let ReplayStepAdmission::Recorded(recorded) = playback
                 .consume_replay_frame_for_step()
                 .expect("consume replay transaction")
-                .expect("five replay transactions remain");
+            else {
+                panic!("five replay transactions remain");
+            };
             assert_eq!(recorded.timeline_before, playback.current_frame().number());
             playback.current_frame = TimelineFrame::from_wire(recorded.timeline_after);
         }

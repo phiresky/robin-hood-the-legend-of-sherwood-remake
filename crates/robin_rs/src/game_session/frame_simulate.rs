@@ -854,39 +854,50 @@ impl InteractiveFrameSimulation {
                 .apply_playback_timeline_events(host, game, manager, assets)
                 .unwrap_or_else(|error| panic!("replay step boundary failed: {error}"));
             let step_frame = runtime.frame_number();
-            let buffered_frame = if step_frame < runtime.rewind_buffer.next_record_frame() {
+            let reusing_recorded_frame = step_frame < runtime.rewind_buffer.next_record_frame();
+            let buffered_frame = if reusing_recorded_frame {
                 runtime.rewind_buffer.frame_for(step_frame).cloned()
             } else {
-                Some(
-                    robin_engine::engine::SimulationFrameInput::default()
-                        .with_post_initialize(true),
-                )
+                None
             };
-            if let Some(buffered_frame) = buffered_frame {
-                let reusing_recorded_frame = step_frame < runtime.rewind_buffer.next_record_frame();
+            if !reusing_recorded_frame || buffered_frame.is_some() {
+                let (replay_input, replay_timeline_after) = match runtime
+                    .consume_replay_frame_for_step()
+                    .unwrap_or_else(|error| panic!("replay step admission failed: {error}"))
+                {
+                    super::runtime::ReplayStepAdmission::NoActiveReplay => (None, None),
+                    super::runtime::ReplayStepAdmission::Recorded(recorded) => {
+                        assert_eq!(recorded.timeline_before, step_frame);
+                        (
+                            Some(recorded.input),
+                            Some(super::runtime::TimelineFrame::from_wire(
+                                recorded.timeline_after,
+                            )),
+                        )
+                    }
+                    super::runtime::ReplayStepAdmission::Finished {
+                        ordinal,
+                        total_frames,
+                    } => {
+                        tracing::warn!(
+                            timeline_frame = step_frame,
+                            replay_ordinal = ordinal,
+                            replay_total_frames = total_frames,
+                            "step-forward: replay is already finished"
+                        );
+                        return;
+                    }
+                };
+
                 runtime
                     .rewind_buffer
                     .begin_frame(step_frame, &manager.engine, &assets);
 
-                let mut replay_input = None;
-                let mut replay_timeline_after = None;
-                if let Some(recorded) = runtime
-                    .consume_replay_frame_for_step()
-                    .unwrap_or_else(|error| panic!("replay step admission failed: {error}"))
-                {
-                    assert_eq!(recorded.timeline_before, step_frame);
-                    replay_timeline_after = Some(super::runtime::TimelineFrame::from_wire(
-                        recorded.timeline_after,
-                    ));
-                    replay_input = Some(recorded.input);
-                }
-                let simulation_frame = if reusing_recorded_frame {
-                    buffered_frame
-                } else {
-                    replay_input.unwrap_or_else(|| {
-                        robin_engine::engine::SimulationFrameInput::default()
-                            .with_post_initialize(true)
-                    })
+                let simulation_frame = match (buffered_frame, replay_input) {
+                    (Some(buffered), _) => buffered,
+                    (None, Some(recorded)) => recorded,
+                    (None, None) => robin_engine::engine::SimulationFrameInput::default()
+                        .with_post_initialize(true),
                 };
                 let mut display = std::mem::take(&mut host.engine_display);
                 game.run_engine_tick(
