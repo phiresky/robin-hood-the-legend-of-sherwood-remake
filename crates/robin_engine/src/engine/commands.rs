@@ -4878,12 +4878,13 @@ impl EngineInner {
             OrderType::WalkingUpright
         };
 
-        // The drop point's sector and layer come from the cursor, not from
-        // the actor: take the topmost sector under the point, resolve a patch
-        // overlay to the sector it covers, and resolve a jump sector to the
-        // sector it sits in. Jump sectors carry no sector number of their own,
-        // so reading the number off the raw hit loses the goal entirely and
-        // the seek never learns that it has to cross a gate.
+        // The drop point's exact goal, sector, and layer come from the cursor,
+        // not from the actor (`original-code/RHengine.cpp:15021+`): take the
+        // topmost sector under the point, resolve a patch overlay to the
+        // sector it covers, and resolve a jump sector to the sector it sits
+        // in. Jump sectors carry no sector number of their own, so reading the
+        // number off the raw hit loses the goal entirely and the seek never
+        // learns that it has to cross a gate.
         //
         // TODO: the original also refuses the whole action when the resolved
         // sector is a door, or a lift that is a wall or ladder. Not ported
@@ -5029,6 +5030,11 @@ impl EngineInner {
         let mut move_elem =
             SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
         move_elem.recorded_gate_path = recorded_gate_path;
+        move_elem.point_seek_route_provenance = if already_authorized {
+            crate::sequence::PointSeekRouteProvenance::OriginalReplay
+        } else {
+            crate::sequence::PointSeekRouteProvenance::Live
+        };
         if let SequenceElementData::Movement {
             destination,
             tolerance,
@@ -7618,6 +7624,17 @@ mod tests {
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
         assert_eq!(drop_ale_post_seek_commands(&engine), [Command::DropAle]);
         assert_eq!(drop_ale_seek_goal(&engine).0, target_pos);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .and_then(|sequence| sequence.elements.first())
+                .map(|element| element.point_seek_route_provenance),
+            Some(crate::sequence::PointSeekRouteProvenance::Live),
+            "live DropAle keeps reconstructed gate search as its fallback"
+        );
     }
 
     #[test]
@@ -7670,6 +7687,16 @@ mod tests {
                 .and_then(|element| element.recorded_gate_path.as_ref()),
             Some(&recorded_gate_path),
             "the authoritative route must survive until cross-sector Seek expansion"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .and_then(|sequence| sequence.elements.first())
+                .map(|element| element.point_seek_route_provenance),
+            Some(crate::sequence::PointSeekRouteProvenance::OriginalReplay),
         );
     }
 
@@ -7728,6 +7755,7 @@ mod tests {
                 source_layer: 11,
                 outcome: crate::gate::RecordedGateOutcome::Failure,
             }),
+            crate::sequence::PointSeekRouteProvenance::OriginalReplay,
         ));
     }
 
@@ -7784,6 +7812,7 @@ mod tests {
                 source_layer: 11,
                 outcome: crate::gate::RecordedGateOutcome::Failure,
             }),
+            crate::sequence::PointSeekRouteProvenance::OriginalReplay,
         );
     }
 

@@ -249,6 +249,7 @@ impl EngineInner {
             goal_sector,
             goal_layer,
             recorded_gate_path,
+            point_seek_route_provenance,
         )) = self
             .orders
             .sequence_manager
@@ -273,6 +274,7 @@ impl EngineInner {
                     *sector,
                     *layer,
                     element.recorded_gate_path.clone(),
+                    element.point_seek_route_provenance,
                 )),
                 _ => None,
             })
@@ -642,6 +644,7 @@ impl EngineInner {
                 flags,
                 tolerance,
                 recorded_gate_path,
+                point_seek_route_provenance,
             )
         {
             return OwnerActionBarrier::Skip;

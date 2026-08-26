@@ -61,9 +61,11 @@ pub struct ReplayHeader {
 /// pre/post command phases, the hourglass/body gates, and `PostInitialize` are
 /// therefore recorded exactly as admitted, including automatic quick-action
 /// queue commands and their independent serialized store. Version 13 requires
-/// exact route identity for every stored movement quick action. There is
-/// deliberately no Rust-schema compatibility adapter: earlier incompatible
-/// frame layouts are rejected at the header.
+/// exact route identity for every stored movement quick action and explicit
+/// point-Seek route provenance in every serialized engine snapshot, so an old
+/// Rust replay cannot silently re-run spatial placement or live gate search.
+/// There is deliberately no Rust-schema compatibility adapter: earlier
+/// incompatible layouts are rejected at the header.
 pub const REPLAY_SCHEMA_VERSION: u32 = 13;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
@@ -728,7 +730,7 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_requires_resolved_quick_action_moves() {
+    fn replay_schema_version_requires_resolved_moves_and_point_seek_provenance() {
         assert_eq!(REPLAY_SCHEMA_VERSION, 13);
     }
 

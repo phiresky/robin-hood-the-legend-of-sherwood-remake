@@ -910,6 +910,17 @@ pub struct SequenceElement {
     #[serde(default)]
     pub recorded_gate_path: Option<crate::gate::RecordedGatePath>,
 
+    /// Selects who owns gate-path resolution for this point Seek.
+    ///
+    /// Live commands leave this as [`PointSeekRouteProvenance::Live`] and may
+    /// query Rust's gate graph when the Seek is finally instructed. Original
+    /// parity replay marks DropAle seeks as `OriginalReplay`: if dispatch-time
+    /// source/goal identity is cross-sector, a success or failure must already
+    /// have crossed the frame boundary in `ExternalFacts`. This is the delayed
+    /// `AppendMoveToSequence` cross-sector search at
+    /// `original-code/RHsequence.cpp:339-433`, not command-admission work.
+    pub point_seek_route_provenance: PointSeekRouteProvenance,
+
     /// The sub-steps (movement waypoints, animation frames, etc.) for this element.
     pub orders: VecDeque<Order>,
 
@@ -1016,6 +1027,7 @@ impl SequenceElement {
             num_transition_orders: 0,
             retained_movement_goal: None,
             recorded_gate_path: None,
+            point_seek_route_provenance: PointSeekRouteProvenance::Live,
             orders: VecDeque::new(),
             data: SequenceElementData::Simple,
             postponed_element_index: None,
@@ -1552,6 +1564,27 @@ impl SequenceElement {
             ),
         }
     }
+}
+
+/// Authority for a point Seek's delayed gate-search result.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PointSeekRouteProvenance {
+    /// Live Rust gameplay may resolve the route from the current gate graph.
+    #[default]
+    Live,
+    /// Original replay owns the exact success/failure outcome.
+    OriginalReplay,
 }
 
 impl TryFrom<&SequenceElement> for SequenceCommand {
@@ -3119,54 +3152,74 @@ impl SequenceManager {
         goal_sector: crate::position_interface::SectorHandle,
         goal_layer: u16,
         recorded_gate_path: crate::gate::RecordedGatePath,
-    ) -> bool {
-        let mut candidates = 0_usize;
-        for sequence in self.sequences.values_mut() {
-            for element in &mut sequence.elements {
-                let SequenceElementData::Movement {
-                    destination: element_destination,
-                    layer,
-                    sector,
-                    element: target,
-                    flags,
-                    post_seek_sequence,
-                    ..
-                } = &mut element.data
-                else {
-                    continue;
-                };
-                let is_drop_ale = post_seek_sequence.as_ref().is_some_and(|post_seek| {
-                    post_seek
-                        .elements
-                        .first()
-                        .is_some_and(|post_element| post_element.command == Command::DropAle)
-                });
-                if element.owner != Some(actor)
-                    || element.command != Command::Seek
-                    || !Self::is_actor_live_state(element.state)
-                    || target.is_some()
-                    || !flags.contains(MoveFlags::SEEK)
-                    || !is_drop_ale
-                    || element_destination.x.to_bits() != destination.x.to_bits()
-                    || element_destination.y.to_bits() != destination.y.to_bits()
-                {
-                    continue;
-                }
-                candidates += 1;
-                assert!(
-                    element.recorded_gate_path.is_none(),
-                    "pending DropAle point Seek already has a recorded gate route"
-                );
-                *sector = Some(goal_sector);
-                *layer = goal_layer;
-                element.recorded_gate_path = Some(recorded_gate_path.clone());
-            }
+    ) -> Result<(), String> {
+        let elements_to_go = &self.elements_to_go;
+        let candidates =
+            self.sequences
+                .iter()
+                .flat_map(|(sequence_id, sequence)| {
+                    sequence.elements.iter().enumerate().filter_map(
+                        move |(element_index, element)| {
+                            let SequenceElementData::Movement {
+                                destination: element_destination,
+                                element: target,
+                                flags,
+                                post_seek_sequence,
+                                ..
+                            } = &element.data
+                            else {
+                                return None;
+                            };
+                            let is_drop_ale =
+                                post_seek_sequence.as_ref().is_some_and(|post_seek| {
+                                    post_seek.elements.first().is_some_and(|post_element| {
+                                        post_element.command == Command::DropAle
+                                    })
+                                });
+                            if element.owner != Some(actor)
+                                || element.command != Command::Seek
+                                || !(element.state == SequenceState::Postponed
+                                    || elements_to_go.contains(&(*sequence_id, element_index)))
+                                || element.point_seek_route_provenance
+                                    != PointSeekRouteProvenance::OriginalReplay
+                                || target.is_some()
+                                || !flags.contains(MoveFlags::SEEK)
+                                || !is_drop_ale
+                                || element_destination.x.to_bits() != destination.x.to_bits()
+                                || element_destination.y.to_bits() != destination.y.to_bits()
+                            {
+                                return None;
+                            }
+                            Some((*sequence_id, element_index))
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return Err(format!(
+                "matched {} pending point Seeks at destination ({}, {})",
+                candidates.len(),
+                destination.x,
+                destination.y,
+            ));
         }
-        assert!(
-            candidates <= 1,
-            "recorded DropAle route matched {candidates} pending point Seeks for {actor:?}"
-        );
-        candidates == 1
+        let (sequence_id, element_index) = candidates[0];
+        let element = self
+            .get_element_mut(sequence_id, element_index)
+            .expect("recorded DropAle route candidate disappeared before admission");
+        if element.point_seek_route_provenance != PointSeekRouteProvenance::OriginalReplay {
+            return Err("matching DropAle seek is not owned by Original replay".to_owned());
+        }
+        if element.recorded_gate_path.is_some() {
+            return Err("matching DropAle seek already has a recorded gate route".to_owned());
+        }
+        let SequenceElementData::Movement { layer, sector, .. } = &mut element.data else {
+            unreachable!("recorded DropAle route candidate stopped being movement")
+        };
+        *sector = Some(goal_sector);
+        *layer = goal_layer;
+        element.recorded_gate_path = Some(recorded_gate_path);
+        Ok(())
     }
 
     pub(crate) fn has_pending_drop_ale_route_candidate(
@@ -3176,9 +3229,15 @@ impl SequenceManager {
     ) -> bool {
         let candidates = self
             .sequences
-            .values()
-            .flat_map(|sequence| &sequence.elements)
-            .filter_map(|element| {
+            .iter()
+            .flat_map(|(sequence_id, sequence)| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(move |(element_index, element)| (*sequence_id, element_index, element))
+            })
+            .filter_map(|(sequence_id, element_index, element)| {
                 let SequenceElementData::Movement {
                     destination: element_destination,
                     element: target,
@@ -3197,7 +3256,10 @@ impl SequenceManager {
                 });
                 if element.owner != Some(actor)
                     || element.command != Command::Seek
-                    || !Self::is_actor_live_state(element.state)
+                    || !(element.state == SequenceState::Postponed
+                        || self.elements_to_go.contains(&(sequence_id, element_index)))
+                    || element.point_seek_route_provenance
+                        != PointSeekRouteProvenance::OriginalReplay
                     || target.is_some()
                     || !flags.contains(MoveFlags::SEEK)
                     || !is_drop_ale

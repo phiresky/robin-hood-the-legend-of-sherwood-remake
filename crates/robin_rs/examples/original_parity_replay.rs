@@ -2620,11 +2620,27 @@ fn collect_current_delayed_drop_ale_routes(
     entity_map: &EntityMap,
     engine: &mut Engine,
 ) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
+    let replay_setup = engine.parity_replay_setup();
+    collect_current_delayed_drop_ale_routes_matching(
+        route_events,
+        consumed_drop_ale_route_ordinals,
+        consumed_group_move_route_ordinals,
+        entity_map,
+        |actor, destination| replay_setup.has_pending_recorded_drop_ale_route(actor, destination),
+    )
+}
+
+fn collect_current_delayed_drop_ale_routes_matching(
+    route_events: &[TraceRouteConstructionEvent],
+    consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
+    consumed_group_move_route_ordinals: &BTreeSet<u64>,
+    entity_map: &EntityMap,
+    mut has_pending_replay_seek: impl FnMut(EntityId, robin_engine::coordinates::MapPoint) -> bool,
+) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
     assert!(
         consumed_drop_ale_route_ordinals.is_disjoint(consumed_group_move_route_ordinals),
         "schema-16 route ordinal was consumed independently by DropAle and group-move joins"
     );
-    let replay_setup = engine.parity_replay_setup();
     let mut seen_route_ordinals = BTreeSet::new();
     let mut routes = Vec::new();
     for event in route_events {
@@ -2650,9 +2666,12 @@ fn collect_current_delayed_drop_ale_routes(
         }
         let actor = entity_map.translate(event.actor);
         let destination = event.goal.into();
-        if !replay_setup.has_pending_recorded_drop_ale_route(actor, destination) {
-            continue;
-        }
+        assert!(
+            has_pending_replay_seek(actor, destination),
+            "schema-16 delayed DropAle route ordinal {ordinal} for {actor:?} at ({}, {}) has no staged Original-replay pending point Seek",
+            destination.x,
+            destination.y,
+        );
         claim_delayed_drop_ale_route_ordinal(
             ordinal,
             consumed_drop_ale_route_ordinals,
@@ -4532,6 +4551,36 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             director_completions,
             Some(robin_engine::engine::SoundBoundary::replay(resolutions)),
         );
+        // Delayed DropAle routes are recorded by Original only when the
+        // postponed Seek reaches its Go()/RefreshSeek boundary. Director and
+        // sound callbacks precede that boundary and may release the matching
+        // sequence in this same frame. Preview only that typed fact prefix on
+        // a clone; the authoritative engine still receives one atomic frame
+        // admission containing the prefix and every matched route outcome.
+        let frame_has_cross_sector_route_outcome = frame
+            .route_construction_events
+            .iter()
+            .any(|event| event.kind == "move" && event.source_sector != event.goal_sector);
+        let preview_delayed_drop_ale_fact_prefix = frame_has_cross_sector_route_outcome
+            && (!external_facts.director_completions.is_empty()
+                || external_facts.sound_boundary.is_some());
+        let mut delayed_drop_ale_fact_preview =
+            preview_delayed_drop_ale_fact_prefix.then(|| {
+                let mut preview = engine.clone();
+                preview
+                    .advance_frame(
+                        &assets,
+                        robin_engine::engine::SimulationFrameInput::no_hourglass()
+                            .with_external_facts(external_facts.clone()),
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "schema-16 frame {} rejected its external-fact prefix while resolving delayed DropAle routes: {error}",
+                            frame.frame_before,
+                        )
+                    });
+                preview
+            });
         let popup_nested_refresh = frame
             .popup_events
             .iter()
@@ -4606,12 +4655,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
             })
             .collect::<Vec<_>>();
+        let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
+            Some(preview) => preview,
+            None => &mut engine,
+        };
         let recorded_drop_ale_routes = collect_current_delayed_drop_ale_routes(
             &frame.route_construction_events,
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
-            &mut engine,
+            delayed_drop_ale_route_engine,
         );
         if debug_stage_timing {
             eprintln!(
@@ -14356,6 +14409,73 @@ mod tests {
     fn current_schema_delayed_route_ordinal_cannot_be_claimed_twice() {
         let mut delayed = BTreeSet::from([7]);
         claim_delayed_drop_ale_route_ordinal(7, &mut delayed, &BTreeSet::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "has no staged Original-replay pending point Seek")]
+    fn current_schema_delayed_drop_ale_rejects_unclaimed_recorded_outcome() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat {
+                bits: 2607.467_041_f32.to_bits(),
+            },
+            y: TraceFloat {
+                bits: 881.610_474_f32.to_bits(),
+            },
+        };
+
+        collect_current_delayed_drop_ale_routes_matching(
+            &[drop_ale_route_fixture(actor, target)],
+            &mut BTreeSet::new(),
+            &BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            |_, _| false,
+        );
+    }
+
+    #[test]
+    fn current_schema_delayed_drop_ale_retains_recorded_failure_outcome() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat {
+                bits: 2607.467_041_f32.to_bits(),
+            },
+            y: TraceFloat {
+                bits: 881.610_474_f32.to_bits(),
+            },
+        };
+        let mut event = drop_ale_route_fixture(actor, target);
+        event.gates.clear();
+        event.draft_diagnostics.insert(
+            "result".to_owned(),
+            TraceJsonValue::from(TraceJsonTree::String("failure".to_owned())),
+        );
+        let mut consumed = BTreeSet::new();
+
+        let routes = collect_current_delayed_drop_ale_routes_matching(
+            &[event],
+            &mut consumed,
+            &BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            |runtime_actor, destination| {
+                runtime_actor == EntityId::Pc(robin_engine::entity_id::PcId(12))
+                    && destination.x.to_bits() == target.x.bits
+                    && destination.y.to_bits() == target.y.bits
+            },
+        );
+
+        assert_eq!(consumed, BTreeSet::from([7]));
+        assert_eq!(routes.len(), 1);
+        assert!(matches!(
+            &routes[0].recorded_gate_path.outcome,
+            robin_engine::gate::RecordedGateOutcome::Failure
+        ));
     }
 
     #[test]

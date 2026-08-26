@@ -2612,6 +2612,7 @@ fn pending_drop_ale_seek(
         Some(owner),
         crate::order::OrderType::WalkingUpright,
     );
+    seek.point_seek_route_provenance = PointSeekRouteProvenance::OriginalReplay;
     let SequenceElementData::Movement {
         destination: seek_destination,
         layer,
@@ -2660,13 +2661,15 @@ fn delayed_drop_ale_route_overwrites_fallback_only_while_seek_is_pending() {
     let mut manager = SequenceManager::new();
 
     assert!(
-        !manager.inject_recorded_drop_ale_route(
-            owner,
-            destination,
-            authoritative_sector,
-            0,
-            route.clone(),
-        ),
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                destination,
+                authoritative_sector,
+                0,
+                route.clone(),
+            )
+            .is_err(),
         "an event arriving before its command must not mutate unrelated state"
     );
     let sequence =
@@ -2674,22 +2677,28 @@ fn delayed_drop_ale_route_overwrites_fallback_only_while_seek_is_pending() {
     let unrelated_destination = crate::coordinates::MapPoint::new(779.0, 1714.0);
     assert!(!manager.has_pending_drop_ale_route_candidate(owner, unrelated_destination));
     assert!(
-        !manager.inject_recorded_drop_ale_route(
-            owner,
-            unrelated_destination,
-            authoritative_sector,
-            0,
-            route.clone(),
-        ),
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                unrelated_destination,
+                authoritative_sector,
+                0,
+                route.clone(),
+            )
+            .is_err(),
         "a same-actor route with different goal bits must remain unrelated"
     );
-    assert!(manager.inject_recorded_drop_ale_route(
-        owner,
-        destination,
-        authoritative_sector,
-        0,
-        route.clone(),
-    ));
+    assert!(
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                destination,
+                authoritative_sector,
+                0,
+                route.clone(),
+            )
+            .is_ok()
+    );
     let element = manager.get_element(sequence, 0).unwrap();
     let SequenceElementData::Movement { sector, layer, .. } = &element.data else {
         unreachable!()
@@ -2700,19 +2709,20 @@ fn delayed_drop_ale_route_overwrites_fallback_only_while_seek_is_pending() {
 
     manager.get_element_mut(sequence, 0).unwrap().state = SequenceState::Terminated;
     assert!(
-        !manager.inject_recorded_drop_ale_route(
-            owner,
-            destination,
-            fallback_sector,
-            2,
-            recorded_drop_ale_failure(),
-        ),
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                destination,
+                fallback_sector,
+                2,
+                recorded_drop_ale_failure(),
+            )
+            .is_err(),
         "terminal DropAle elements must not receive later route events"
     );
 }
 
 #[test]
-#[should_panic(expected = "matched 2 pending point Seeks")]
 fn delayed_drop_ale_route_rejects_multiple_pending_matches() {
     let owner = EntityId::Pc(crate::entity_id::PcId(36));
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
@@ -2721,13 +2731,16 @@ fn delayed_drop_ale_route_rejects_multiple_pending_matches() {
     manager.launch_element(pending_drop_ale_seek(owner, destination, fallback_sector));
     manager.launch_element(pending_drop_ale_seek(owner, destination, fallback_sector));
 
-    manager.inject_recorded_drop_ale_route(
-        owner,
-        destination,
-        crate::position_interface::SectorHandle::new(0).unwrap(),
-        0,
-        recorded_drop_ale_failure(),
-    );
+    let error = manager
+        .inject_recorded_drop_ale_route(
+            owner,
+            destination,
+            crate::position_interface::SectorHandle::new(0).unwrap(),
+            0,
+            recorded_drop_ale_failure(),
+        )
+        .expect_err("ambiguous delayed route must fail");
+    assert!(error.contains("matched 2 pending point Seeks"));
 }
 
 #[test]
@@ -2738,13 +2751,17 @@ fn delayed_drop_ale_route_rejects_a_second_exact_route_event() {
     let fallback_sector = crate::position_interface::SectorHandle::new(25).unwrap();
     let mut manager = SequenceManager::new();
     manager.launch_element(pending_drop_ale_seek(owner, destination, fallback_sector));
-    assert!(manager.inject_recorded_drop_ale_route(
-        owner,
-        destination,
-        crate::position_interface::SectorHandle::new(0).unwrap(),
-        0,
-        recorded_drop_ale_failure(),
-    ));
+    assert!(
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                destination,
+                crate::position_interface::SectorHandle::new(0).unwrap(),
+                0,
+                recorded_drop_ale_failure(),
+            )
+            .is_ok()
+    );
 
     manager.has_pending_drop_ale_route_candidate(owner, destination);
 }
@@ -2760,13 +2777,17 @@ fn recorded_drop_ale_route_survives_binary_metadata_and_full_json_roundtrips() {
         crate::position_interface::SectorHandle::new(25).unwrap(),
     ));
     let route = recorded_drop_ale_failure();
-    assert!(manager.inject_recorded_drop_ale_route(
-        owner,
-        destination,
-        crate::position_interface::SectorHandle::new(0).unwrap(),
-        0,
-        route.clone(),
-    ));
+    assert!(
+        manager
+            .inject_recorded_drop_ale_route(
+                owner,
+                destination,
+                crate::position_interface::SectorHandle::new(0).unwrap(),
+                0,
+                route.clone(),
+            )
+            .is_ok()
+    );
     let encoded = bincode::serde::encode_to_vec(&route, bincode::config::standard())
         .expect("encode recorded route metadata");
     let (decoded_route, consumed): (crate::gate::RecordedGatePath, usize) =
@@ -2780,6 +2801,10 @@ fn recorded_drop_ale_route_survives_binary_metadata_and_full_json_roundtrips() {
     let decoded_element: SequenceElement =
         serde_json::from_str(&element_json).expect("decode complete pending DropAle element");
     assert_eq!(decoded_element.recorded_gate_path, Some(route));
+    assert_eq!(
+        decoded_element.point_seek_route_provenance,
+        PointSeekRouteProvenance::OriginalReplay,
+    );
     let SequenceElementData::Movement {
         post_seek_sequence, ..
     } = decoded_element.data
@@ -2789,5 +2814,26 @@ fn recorded_drop_ale_route_survives_binary_metadata_and_full_json_roundtrips() {
     assert_eq!(
         post_seek_sequence.unwrap().elements[0].command,
         Command::DropAle
+    );
+
+    let mut missing_provenance = serde_json::to_value(
+        manager
+            .get_element(sequence, 0)
+            .expect("pending DropAle element remains present"),
+    )
+    .expect("encode pending DropAle element as JSON value");
+    assert!(
+        missing_provenance
+            .as_object_mut()
+            .expect("SequenceElement JSON is an object")
+            .remove("point_seek_route_provenance")
+            .is_some(),
+        "current SequenceElement serialization must include route provenance"
+    );
+    let error = serde_json::from_value::<SequenceElement>(missing_provenance)
+        .expect_err("current Rust SequenceElement JSON must require route provenance");
+    assert!(
+        error.to_string().contains("point_seek_route_provenance"),
+        "missing-provenance error named the wrong field: {error}"
     );
 }

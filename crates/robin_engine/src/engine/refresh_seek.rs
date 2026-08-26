@@ -1113,6 +1113,7 @@ impl crate::engine::EngineInner {
         flags: MoveFlags,
         seek_distance: f32,
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+        route_provenance: crate::sequence::PointSeekRouteProvenance,
     ) -> bool {
         let Some(goal_sector) = goal_sector else {
             return false;
@@ -1167,6 +1168,14 @@ impl crate::engine::EngineInner {
         if seek_sectors_match(src_sector, goal_sector) {
             return false;
         }
+
+        assert!(
+            route_provenance != crate::sequence::PointSeekRouteProvenance::OriginalReplay
+                || recorded_gate_path.is_some(),
+            "Original-replay cross-sector point Seek for {owner:?} to ({}, {}) has no admitted RecordedDropAleRoute ExternalFact",
+            destination.x,
+            destination.y,
+        );
 
         let gate_path = match recorded_point_seek_gate_path(
             &self.script_domains.interactables.doors,
@@ -1421,6 +1430,88 @@ mod tests {
                 direct: false,
             }])),
             "raw owner==goal must not suppress a route whose dispatch-time door source differs"
+        );
+    }
+
+    fn replay_owned_point_seek_fixture() -> (
+        crate::engine::EngineInner,
+        EntityId,
+        SequenceId,
+        crate::coordinates::MapPoint,
+    ) {
+        let mut engine = crate::engine::EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        engine.script_domains.interactables.doors = drop_ale_exit_doors();
+        let owner = engine.add_entity(test_pc_at(100.0, 100.0, 133));
+        let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
+        let sequence_id =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new_movement(
+                    1,
+                    Command::Seek,
+                    Some(owner),
+                    OrderType::WalkingUpright,
+                ));
+        (engine, owner, sequence_id, destination)
+    }
+
+    #[test]
+    #[should_panic(expected = "has no admitted RecordedDropAleRoute ExternalFact")]
+    fn original_replay_point_seek_rejects_missing_recorded_outcome() {
+        let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
+
+        engine.try_dispatch_cross_sector_point_seek(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            sequence_id,
+            0,
+            destination,
+            SectorHandle::new(22),
+            0,
+            OrderType::WalkingUpright,
+            MoveFlags::SEEK,
+            0.0,
+            None,
+            crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        );
+    }
+
+    #[test]
+    fn live_point_seek_without_recorded_outcome_uses_gate_graph() {
+        let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
+
+        assert!(engine.try_dispatch_cross_sector_point_seek(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            sequence_id,
+            0,
+            destination,
+            SectorHandle::new(22),
+            0,
+            OrderType::WalkingUpright,
+            MoveFlags::SEEK,
+            0.0,
+            None,
+            crate::sequence::PointSeekRouteProvenance::Live,
+        ));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| &sequence.elements)
+                .any(|element| matches!(
+                    element.data,
+                    SequenceElementData::Movement {
+                        gate_id: Some(crate::gate::DoorIndex(7)),
+                        ..
+                    }
+                )),
+            "live point Seek must fall back to the reconstructed gate graph"
         );
     }
 

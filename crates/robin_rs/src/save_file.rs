@@ -456,9 +456,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v54** (2026-08-26, independent quick-action stores): automatic work is
 ///   separated from the three manual slots and manual replacement state is
 ///   represented explicitly.
-/// - **v55** (2026-08-26, resolved quick-action movement): every stored move
-///   requires its exact per-PC destination-sector identity; unresolved moves
-///   from the obsolete Rust QA schema are rejected.
+/// - **v55** (2026-08-26, exact movement-route ownership): every stored quick
+///   action move requires its resolved per-PC destination-sector identity, and
+///   sequence point Seeks require explicit live-versus-Original route
+///   provenance. Obsolete Rust saves are rejected instead of re-running
+///   spatial placement or silently re-enabling reconstructed gate search.
 pub const SAVE_FORMAT_VERSION: u32 = 55;
 
 /// Save file header.
@@ -713,7 +715,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_resolved_quick_action_moves() {
+    fn save_format_version_requires_resolved_moves_and_point_seek_provenance() {
         assert_eq!(SAVE_FORMAT_VERSION, 55);
     }
 

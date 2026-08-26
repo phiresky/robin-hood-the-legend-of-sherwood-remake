@@ -360,7 +360,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_requires_resolved_quick_action_moves() {
+    fn protocol_version_requires_resolved_moves_and_point_seek_provenance() {
         assert_eq!(NET_PROTOCOL_VERSION, 19);
     }
 

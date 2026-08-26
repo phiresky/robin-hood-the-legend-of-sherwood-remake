@@ -3281,7 +3281,7 @@ impl Engine {
                     actor,
                     reason: format!("invalid goal sector {}", goal_sector.get()),
                 })?;
-            if !inner
+            inner
                 .orders
                 .sequence_manager
                 .inject_recorded_drop_ale_route(
@@ -3291,13 +3291,11 @@ impl Engine {
                     goal_layer,
                     recorded_gate_path,
                 )
-            {
-                return Err(FrameAdvanceError::RecordedDropAleRouteRejected {
+                .map_err(|reason| FrameAdvanceError::RecordedDropAleRouteRejected {
                     index,
                     actor,
-                    reason: "no matching pending DropAle seek".to_owned(),
-                });
-            }
+                    reason,
+                })?;
         }
         Ok(())
     }
@@ -3846,6 +3844,8 @@ mod tests {
             Some(owner),
             crate::order::OrderType::WalkingUpright,
         );
+        seek.point_seek_route_provenance =
+            crate::sequence::PointSeekRouteProvenance::OriginalReplay;
         let SequenceElementData::Movement {
             destination: seek_destination,
             layer,
@@ -4211,6 +4211,61 @@ mod tests {
         assert_eq!(crate::replay::state_hash(&engine), engine_hash_before);
         assert_eq!(engine.frame_counter(), 0);
         assert!(!engine.is_men_to_blazon_conversion_mode());
+    }
+
+    #[test]
+    fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+        let (mut engine, assets) = frame_api_fixture();
+        engine.set_external_director_completion_replay(true);
+        let owner = EntityId::Pc(crate::entity_id::PcId(36));
+        let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
+        let fallback_sector =
+            crate::position_interface::SectorHandle::new(25).expect("valid fallback sector");
+
+        let mut camera = SequenceElement::new_generic(1, Command::CameraGoto, None);
+        camera.set_property(
+            Field::CameraPoint,
+            FieldValue::GeoPoint2D { x: 100.0, y: 100.0 },
+        );
+        camera.set_property(Field::CameraSpeed, FieldValue::Integer(0));
+        let mut seek = pending_drop_ale_seek(owner, destination, fallback_sector);
+        seek.command_level = 2;
+        let mut sequence = Sequence::new();
+        sequence.append_element(camera);
+        sequence.append_element(seek);
+        let sequence_id = engine
+            .inner
+            .orders
+            .sequence_manager
+            .launch_sequence(sequence);
+        engine
+            .inner
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        engine.inner.feedback.cutscene_camera.sequence_element =
+            Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
+
+        assert!(
+            !engine.has_pending_recorded_drop_ale_route(owner, destination),
+            "the later command level must not be claimable before the prefix releases it"
+        );
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_external_facts(
+                    ExternalFacts::default()
+                        .with_director_completions(vec![DirectorCompletion::CameraGoto]),
+                ),
+            )
+            .expect("stage director prefix");
+        assert!(
+            engine.has_pending_recorded_drop_ale_route(owner, destination),
+            "the delayed route collector must inspect state after the director/sound prefix"
+        );
     }
 
     #[test]
