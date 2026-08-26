@@ -84,8 +84,8 @@ pub(crate) use movement::{
 };
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
-    Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,
-    SnapshotGridComponent, SnapshotRestoreError,
+    Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup, MissionSetup,
+    ParityReplaySetup, SnapshotGridComponent, SnapshotRestoreError,
 };
 pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
 pub use seat::SeatState;
@@ -5351,34 +5351,10 @@ impl EngineInner {
             .active_blinking_blazons(self.control.frame_counter)
     }
 
-    /// Refresh the per-patch `display_doors` flag for this frame's
-    /// selection state.  `DisplayAllDoorsAndJumpZones` clears every
-    /// patch first, then the currently-selected patch sets its own
-    /// `display_doors`.  The flag drives the door-outline render pass
-    /// and the patch FX consumer.
-    ///
-    /// `Patch::display_doors` is explicitly excluded from serialization and
-    /// state hashing, so local cursor movement cannot perturb rollback or a
-    /// multiplayer peer's deterministic state.
-    pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
-        for patch in self.script_domains.interactables.patches.iter_mut() {
-            patch.display_doors = false;
-        }
-        if let Some(idx) = selected_patch_idx
-            && let Some(patch) = self
-                .script_domains
-                .interactables
-                .patches
-                .get_mut(idx as usize)
-        {
-            patch.display_doors = true;
-        }
-    }
-
     /// Queue the `UpdateInformationBars` engine command on the script
     /// host.  Called from the host after a save-load so the script
     /// refreshes its side of the information-bar UI.
-    pub fn queue_update_information_bars(&mut self) {
+    pub(crate) fn queue_update_information_bars(&mut self) {
         if let Some(effects) = self.mission_script_effects_mut() {
             effects.emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
         }

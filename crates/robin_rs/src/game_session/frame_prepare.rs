@@ -59,12 +59,11 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
         timeline: runtime,
         control: _,
     } = runtime;
-    let MissionWorld {
+    let MissionIngress {
         host,
         manager,
         assets,
-        ..
-    } = world;
+    } = world.ingress();
     let hud = &mut frontend.hud;
     let presentation = &mut frontend.presentation;
     let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
@@ -510,13 +509,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline: runtime,
             control,
         } = runtime;
-        let MissionWorld {
+        let MissionInputPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.input_phase();
         let MissionControl {
             manual_pause,
             step_forward_repeat_at_ms,
@@ -534,8 +533,9 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             game,
             manager,
             host,
-            &mut frame.commands,
+            &mut frame,
             &assets,
+            dev,
             &mut *window,
             &mut presentation.renderer,
             &mut resources.cursor,
@@ -720,13 +720,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline: runtime,
             ..
         } = runtime;
-        let MissionWorld {
+        let MissionOperationPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.operation_phase();
         let input = &mut frontend.input;
         let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;
@@ -933,13 +933,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline: runtime,
             control,
         } = runtime;
-        let MissionWorld {
+        let MissionPreTickPhase {
             host,
             game,
             manager,
             assets,
-            ..
-        } = world;
+        } = world.pre_tick_phase();
         let manual_pause = &mut control.manual_pause;
         let input = &mut frontend.input;
         let ui = &mut frontend.ui;

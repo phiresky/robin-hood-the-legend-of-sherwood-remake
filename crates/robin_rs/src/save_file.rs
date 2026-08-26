@@ -86,7 +86,7 @@ impl GameRuntimeSnapshot {
         assets: &LevelAssets,
     ) -> std::result::Result<(), SnapshotRestoreError> {
         let draw_hidden = self.game_persistent.draw_hidden;
-        engine.try_restore(&mut host.engine_display, self.engine, assets)?;
+        *engine = Engine::restore_from_snapshot(&mut host.engine_display, self.engine, assets)?;
         host.audio.sound = self.sound;
         host.audio.sound.after_load(&engine.sound_sim().sources);
         host.post_load_reset();
@@ -587,7 +587,7 @@ impl GameSaveFile {
         host: &mut Host,
         assets: &LevelAssets,
     ) -> std::result::Result<(), SnapshotRestoreError> {
-        engine.try_restore(&mut host.engine_display, self.engine, assets)?;
+        *engine = Engine::restore_from_snapshot(&mut host.engine_display, self.engine, assets)?;
         host.audio.sound = self.sound;
         // Re-arm the sound engine and prime the next hourglass to
         // (re)load music + resolve pendings.

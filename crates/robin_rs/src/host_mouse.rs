@@ -767,12 +767,6 @@ pub fn update_mouse(
     host.input.selected_patch_idx = selected_patch_idx;
     host.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map_pt);
 
-    // Refresh `Patch::display_doors` for the currently-selected patch. This
-    // individual render-only field is skipped by rollback hashing even though
-    // the rest of the canonical patch domain is hashed, so keep it out of the
-    // command log.
-    engine.refresh_selected_patch_display_doors(host.input.selected_patch_idx);
-
     // `valid_position_for_move` is true when the hovered patch is
     // set, or the selected sector is a motion-area / door / jump
     // sector.  Gate move-command dispatch on this.

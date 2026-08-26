@@ -497,11 +497,6 @@ pub enum PlayerCommand {
         arg1: i32,
         arg2: i32,
     },
-    /// Refresh the "selected patch" door highlight mask on the script
-    /// host.  Driven by the requirements-bar hover recompute.
-    RefreshSelectedPatchDisplayDoors {
-        selected_patch_idx: Option<u32>,
-    },
     /// `UNBLIP` console cheat — reveal all blipped entities.
     RevealAllBlips,
     /// Select (or clear with `None`) the next mission to play.

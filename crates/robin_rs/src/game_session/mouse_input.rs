@@ -6,8 +6,9 @@
 //! the macro recorder).
 
 use super::{
-    HandlerAction, center_on_reselected_allied_portrait, center_on_reselected_portrait_pc,
-    dispatch_local_command, dispatch_local_commands, required_menu_resources,
+    HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
+    center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
+    required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -1441,8 +1442,6 @@ pub(super) async fn handle_pause_menu_events(
                             game.reshow_campaign_map();
                         }
 
-                        engine.change_detail_level();
-
                         if options_outcome.key_config_changed {
                             host.application_context
                                 .with_key_configs_mut(|store| {
@@ -1920,8 +1919,9 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    frame_cmds: &mut FrameCommands,
+    frame: &mut MissionFrame,
     assets: &engine_api::LevelAssets,
+    dev: &mut engine_api::DevState,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
@@ -2084,7 +2084,22 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         "Pseudo-mission debriefing: menu resources unavailable — dropping dialog"
                     );
                 }
-                engine.campaign_reset_last_pseudo_mission_status();
+                let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
+                let mut display = std::mem::take(&mut host.engine_display);
+                let result = mission_description::admit_paused_campaign_action(
+                    engine,
+                    &mut display,
+                    &mut host.input,
+                    assets,
+                    dev,
+                    action.clone(),
+                );
+                host.engine_display = display;
+                assert!(matches!(
+                    result,
+                    engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
+                ));
+                frame.record_applied_external_action(action);
                 let ares_after = engine.campaign().get_ares();
                 if ares_after == 0 {
                     return Ok(HandlerAction::Exit(GameCode::Quit));
@@ -2115,6 +2130,8 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                             })
                     };
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let mut admitted_campaign_actions = Vec::new();
+                    let mut display = std::mem::take(&mut host.engine_display);
                     let (choice, men_to_blazon) = mission_description::show_mission_description(
                         event_pump,
                         renderer,
@@ -2122,11 +2139,20 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         cursor,
                         idx,
                         engine,
+                        &mut display,
+                        &mut host.input,
+                        assets,
+                        dev,
+                        &mut admitted_campaign_actions,
                         &assets.profile_manager,
                         mission_descriptors.as_ref(),
                         text_res,
                     )
                     .await;
+                    host.engine_display = display;
+                    for action in admitted_campaign_actions {
+                        frame.record_applied_external_action(action);
+                    }
                     Some((choice, men_to_blazon))
                 } else {
                     tracing::warn!(
@@ -2144,7 +2170,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            frame_cmds,
+                            &mut frame.commands,
                             assets,
                             &PlayerCommand::CampaignSelectNextMission {
                                 mission_idx: Some(idx),
@@ -2160,7 +2186,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            frame_cmds,
+                            &mut frame.commands,
                             assets,
                             &PlayerCommand::CampaignSelectNextMission {
                                 mission_idx: Some(idx),
@@ -2170,7 +2196,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            frame_cmds,
+                            &mut frame.commands,
                             assets,
                             &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
                         );
@@ -2183,7 +2209,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            frame_cmds,
+                            &mut frame.commands,
                             assets,
                             &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
                         );
@@ -2220,15 +2246,10 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
 
         // Non-Quit tail: clear `campaign_map_displayed` (the Quit
         // arm above early-returned so we only hit this on the
-        // non-emergency-exit path), and re-queue the HUD info-bar
-        // refresh so the script side picks up the newly-selected
-        // mission's requirements/blazons.  The live Sherwood HUD's
-        // mission-team refresh re-runs at the top of the next frame
-        // via `handle_sherwood_buttons` — leaving a known
-        // low-severity one-frame lag.
+        // non-emergency-exit path). Information bars are immediate-mode and
+        // read campaign state directly; there is no Engine mutation to queue.
         if !redisplay_requested {
             game.persistent.campaign_map_displayed = false;
-            engine.queue_update_information_bars();
         }
     }
 

@@ -229,8 +229,9 @@ pub(crate) fn drain_net_inputs(
                                     net.send_ready_to_sim(frame);
                                 }
                             } else {
-                                match manager.engine.try_adopt_snapshot(snapshot, assets) {
-                                    Ok(()) => {
+                                match Engine::adopt_authoritative_snapshot(snapshot, assets) {
+                                    Ok(adopted) => {
+                                        manager.engine = adopted;
                                         host.transport.reconnecting = false;
                                         admission_events.push(
                                             MultiplayerAdmissionEvent::InitialSnapshotAdopted {
@@ -277,8 +278,9 @@ pub(crate) fn drain_net_inputs(
                     bincode::config::standard(),
                 ) {
                     Ok((snapshot, _)) => {
-                        match manager.engine.try_adopt_snapshot(snapshot, assets) {
-                            Ok(()) => {
+                        match Engine::adopt_authoritative_snapshot(snapshot, assets) {
+                            Ok(adopted) => {
+                                manager.engine = adopted;
                                 host.transport.reconnecting = false;
                                 admission_events.push(
                                     MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
