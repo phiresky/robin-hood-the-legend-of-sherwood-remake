@@ -145,6 +145,52 @@ fn seed_macro_slot(
     titbit
 }
 
+/// Seed a macro whose interaction target no longer exists. Original's
+/// StartQuickAction rejects the cloned sequence, fizzles the portrait, and
+/// leaves both the slot and its titbit available for a later retry.
+#[cfg(test)]
+fn seed_invalid_interaction_macro_slot(
+    engine: &mut EngineInner,
+    pc: crate::element::EntityId,
+    slot: u8,
+) -> crate::titbit::TitbitId {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::{Command, EntityId};
+    use crate::macro_store::{QaReplayCommand, QuickActionStep};
+    use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
+
+    let pc_handle = ElementHandle(pc.index());
+    let titbit_id = engine.feedback.titbit_manager.add_titbit(
+        WorldPoint3D::ZERO,
+        0,
+        TitbitKind::QuickAction,
+        pc_handle,
+        QuickAction::Take as u16,
+        pc_handle,
+        false,
+        INVALID_ID,
+        true,
+        Some(0.0),
+        Some(0),
+    );
+    let missing_target = EntityId::Pc(crate::entity_id::PcId(u32::MAX));
+    let state = engine.players.macro_store.get_or_insert(pc);
+    state.begin_recording(slot);
+    state.append_if_recording(QuickActionStep {
+        action: crate::profiles::Action::NoAction,
+        position: MapPoint::new(20.0, 20.0),
+        replay: QaReplayCommand::Interaction {
+            target: missing_target,
+            command: Command::Take,
+            double_click: false,
+        },
+    });
+    state.stop_recording();
+    let titbit = crate::titbit::TitbitId::new(titbit_id).unwrap();
+    state.set_slot_titbit(slot as usize, titbit);
+    titbit
+}
+
 #[test]
 fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
     let mut engine = EngineInner::new();
@@ -706,6 +752,177 @@ fn start_macro_empty_slot_is_noop() {
     assert!(engine.has_quick_action(pc, 2));
     assert!(!engine.has_quick_action(pc, 0));
     assert!(!engine.has_quick_action(pc, 1));
+}
+
+#[test]
+fn start_macro_stops_recording_before_cloning_and_launching() {
+    use crate::player_command::PlayerCommand;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let pc = add_test_pc(&mut engine);
+    seed_macro_slot(&mut engine, pc, 0, vec![(50.0, 60.0)]);
+
+    // Re-arming an occupied slot retains its old QA until the first new
+    // action is captured. StartMacro must STOP that recording first, which
+    // restores the retained macro before playback snapshots it.
+    engine
+        .players
+        .macro_store
+        .get_mut(pc)
+        .unwrap()
+        .begin_recording(0);
+    engine.players.qa_recording_slot = 0;
+    engine.players.qa_recording_for = vec![pc];
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::StartMacro {
+            pc: Some(pc),
+            slot: 0,
+        },
+    );
+
+    assert!(!engine.is_recording_macro());
+    assert!(!engine.has_quick_action(pc, 0));
+    assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+}
+
+#[test]
+fn start_macro_mixed_success_fizzle_preserves_failed_slot_and_skips_tetris() {
+    use crate::player_command::PlayerCommand;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let succeeds = add_test_pc(&mut engine);
+    let fizzles = add_test_pc(&mut engine);
+    let empty_at_target_slot = add_test_pc(&mut engine);
+
+    let succeeded_titbit = seed_macro_slot(&mut engine, succeeds, 0, vec![(50.0, 60.0)]);
+    seed_macro_slot(&mut engine, succeeds, 1, vec![(70.0, 80.0)]);
+    let failed_titbit = seed_invalid_interaction_macro_slot(&mut engine, fizzles, 0);
+    seed_macro_slot(&mut engine, fizzles, 1, vec![(90.0, 100.0)]);
+    seed_macro_slot(&mut engine, empty_at_target_slot, 1, vec![(110.0, 120.0)]);
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::StartMacro { pc: None, slot: 0 },
+    );
+
+    // Successful PCs consume only their launched slot. The invalid slot and
+    // titbit survive, and one fizzle prevents the global tetris pass for all
+    // PCs, including the PC that was empty at the targeted level.
+    assert!(!engine.has_quick_action(succeeds, 0));
+    assert!(engine.has_quick_action(succeeds, 1));
+    assert!(engine.has_quick_action(fizzles, 0));
+    assert!(engine.has_quick_action(fizzles, 1));
+    assert!(!engine.has_quick_action(empty_at_target_slot, 0));
+    assert!(engine.has_quick_action(empty_at_target_slot, 1));
+    assert!(
+        !engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .any(|titbit| titbit.id == u32::from(succeeded_titbit))
+    );
+    assert!(
+        engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .any(|titbit| titbit.id == u32::from(failed_titbit))
+    );
+
+    // Blink starts on Original's visible phase and flips after one phase.
+    assert!(!display.macro_titbit_blink_hidden(fizzles, 0));
+    for _ in 0..crate::macro_store::BLINK_PHASE_LENGTH {
+        display.tick_macro_blink_phases(&engine.world.pc_ids);
+    }
+    assert!(display.macro_titbit_blink_hidden(fizzles, 0));
+}
+
+#[test]
+fn start_macro_all_success_tetrises_even_pc_with_empty_target_slot() {
+    use crate::player_command::PlayerCommand;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let launches = add_test_pc(&mut engine);
+    let empty_at_target_slot = add_test_pc(&mut engine);
+    seed_macro_slot(&mut engine, launches, 0, vec![(50.0, 60.0)]);
+    seed_macro_slot(&mut engine, empty_at_target_slot, 1, vec![(70.0, 80.0)]);
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::StartMacro { pc: None, slot: 0 },
+    );
+
+    assert!(!engine.has_quick_action(launches, 0));
+    assert!(engine.has_quick_action(empty_at_target_slot, 0));
+    assert!(!engine.has_quick_action(empty_at_target_slot, 1));
+}
+
+#[test]
+fn manual_start_macro_does_not_consume_independent_auto_queue() {
+    use crate::macro_store::{QaReplayCommand, QuickActionStep};
+    use crate::player_command::PlayerCommand;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let pc = add_test_pc(&mut engine);
+    seed_macro_slot(&mut engine, pc, 0, vec![(50.0, 60.0)]);
+    let queued_destination = crate::coordinates::MapPoint::new(90.0, 100.0);
+    engine.players.auto_queues.push(
+        pc,
+        QuickActionStep {
+            action: crate::profiles::Action::NoAction,
+            position: queued_destination,
+            replay: QaReplayCommand::Move {
+                destination: queued_destination,
+                running: false,
+                route: None,
+            },
+        },
+    );
+    engine.players.auto_queue_active.push(pc);
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::StartMacro {
+            pc: Some(pc),
+            slot: 0,
+        },
+    );
+
+    assert!(!engine.has_quick_action(pc, 0));
+    assert_eq!(engine.players.auto_queues.len(pc), 1);
+    assert!(engine.players.auto_queue_active.contains(&pc));
 }
 
 #[test]

@@ -2367,6 +2367,12 @@ impl EngineInner {
 
         for pc_id in &targets {
             self.replay_macro_slot(sim, display, input, assets, *pc_id, slot);
+            if self.has_quick_action(*pc_id, slot) {
+                // Original StartQuickAction posts MSG_FIZZLE_MACRO when its
+                // validity/launch gate fails. RHGame consumes that message
+                // synchronously and blinks this PC's still-live QA slot.
+                display.blink_qa(*pc_id, slot as usize);
+            }
         }
 
         // When at least one PC tried to launch a macro, jingle either
