@@ -7186,6 +7186,7 @@ impl EngineInner {
     ///
     /// When `this_actor` is `Some`, the standalone frame binds `ThisActor`
     /// for the duration of the call. Pass `None` for a receiver-free frame.
+    #[cfg(test)]
     pub(crate) fn call_external_native(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

@@ -391,6 +391,7 @@ impl EngineInner {
 
     /// Queue concrete speech sample resolutions produced by the logical sound
     /// manager after the preceding engine frame.
+    #[cfg(test)]
     #[doc(hidden)]
     pub(crate) fn queue_resolved_exclamations(
         &mut self,
@@ -406,6 +407,7 @@ impl EngineInner {
     /// and may describe Original-only speech for which Rust has no logical AI
     /// request. The tick boundary preserves their completion timing without
     /// synthesizing a Rust speech latch.
+    #[cfg(test)]
     #[doc(hidden)]
     pub(crate) fn queue_replay_resolved_exclamations(
         &mut self,
@@ -489,6 +491,7 @@ impl EngineInner {
         self.control.engine_locked()
     }
 
+    #[cfg(any(test, feature = "test-helpers"))]
     pub(crate) fn set_engine_locked(&mut self, locked: bool) {
         self.control.set_engine_locked(locked);
     }
@@ -5445,6 +5448,7 @@ impl EngineInner {
     /// RANSOM emits the `CashWon` jingle when the new value is greater
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
+    #[cfg(test)]
     pub(crate) fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
         let old = self.mission_domain.campaign.values[name];
         self.mission_domain.campaign.values[name] = value;
@@ -5483,6 +5487,7 @@ impl EngineInner {
         }
     }
 
+    #[cfg(test)]
     fn apply_value_set_side_effects(
         side_effects: &mut SideEffects,
         frame_counter: u32,
@@ -5645,6 +5650,7 @@ impl EngineInner {
     // of the public API and never called from production code.
 
     /// Test helper: set `mission_won` / `quit_won` / `quit_lost` flags.
+    #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub(crate) fn test_set_mission_flags(
         &mut self,
@@ -5658,6 +5664,7 @@ impl EngineInner {
     }
 
     /// Test helper: seed `frame_counter` (save-round-trip tests).
+    #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub(crate) fn test_set_frame_counter(&mut self, frame: u32) {
         self.control.frame_counter = frame;
@@ -5665,6 +5672,7 @@ impl EngineInner {
 
     /// Test helper: seed miscellaneous scalar engine fields used by
     /// save-round-trip tests.
+    #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub(crate) fn test_set_engine_scalars(
         &mut self,
@@ -5684,6 +5692,7 @@ impl EngineInner {
     }
 
     /// Test helper: seed the mission stat without running a mission.
+    #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub(crate) fn test_set_mission_stat(&mut self, stat: MissionStat) {
         self.mission_domain.mission_stat = stat;

@@ -144,9 +144,9 @@ pub enum PlayerCommand {
         target: EntityId,
         command: Command,
         with_seek: bool,
-        /// Exact tolerance resolved by the input source. Older commands did
-        /// not carry it and retain the historical strike-specific fallback.
-        #[serde(default)]
+        /// Exact tolerance resolved by the input source. Explicitly null for
+        /// a direct strike and required in every current Rust command.
+        #[serde(deserialize_with = "deserialize_required_option")]
         seek_distance: Option<f32>,
     },
     /// Promote `opponent_id` to `actor`'s principal opponent (front of
@@ -717,7 +717,7 @@ mod tests {
     use crate::element::EntityIdKind;
 
     #[test]
-    fn sword_seek_distance_roundtrips_and_missing_field_defaults_to_legacy_none() {
+    fn sword_seek_distance_roundtrips_and_rejects_legacy_field_omission() {
         let command = PlayerCommand::SwordStrikeCmd {
             actor: EntityId::new(3, EntityIdKind::Pc),
             target: EntityId::new(7, EntityIdKind::Soldier),
@@ -742,15 +742,10 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
             .expect("externally tagged sword command")
             .remove("seek_distance");
-        let decoded: PlayerCommand =
-            serde_json::from_value(legacy).expect("deserialize legacy sword command");
-        assert!(matches!(
-            decoded,
-            PlayerCommand::SwordStrikeCmd {
-                seek_distance: None,
-                ..
-            }
-        ));
+        assert!(
+            serde_json::from_value::<PlayerCommand>(legacy).is_err(),
+            "a Rust sword command without seek_distance must not enter the current schema"
+        );
     }
 }
 

@@ -305,64 +305,13 @@ impl EngineInner {
             .push(noise);
     }
 
-    /// Broadcast a one-shot noise event to all nearby NPCs.
-    ///
-    /// Called by projectile impacts, trap activations, scripted bridges,
-    /// etc.  Filters to `is_civilian() || camp == Lacklandists` —
-    /// royalist soldiers (player-controlled) do not receive broadcast
-    /// noise stimuli.  Per-NPC subjective volume follows the
-    /// `get_hear_volume` formula (volume×hearing_factor − iso-stretched
-    /// distance − deafness).
-    pub(crate) fn broadcast_noise(
-        &mut self,
-        noise_type: crate::ai::NoiseType,
-        origin: crate::coordinates::MapPoint,
-        origin_layer: u16,
-        volume: u16,
-        elevation: u16,
-        source_entity: Option<EntityId>,
-    ) {
-        use crate::ai::{Stimulus, StimulusType};
-
-        let noise = self.one_shot_noise(
-            noise_type,
-            origin,
-            origin_layer,
-            volume,
-            elevation,
-            source_entity,
-        );
-        for npc_id in self.one_shot_noise_listener_ids() {
-            let Some(subjective_noise) = self.subjective_one_shot_noise_for(npc_id, noise) else {
-                continue;
-            };
-            let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
-            self.world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "one-shot noise listener {} lost its required AI controller",
-                        npc_id.index()
-                    )
-                })
-                .outbox
-                .detection
-                .stimuli
-                .push(stimulus);
-        }
-        self.display_one_shot_noise(noise);
-    }
-
     /// Broadcast a one-shot noise and synchronously run each listener's new
     /// `EVENT_HEAR`, in Original NPC registration order.
     ///
     /// Original `RHElementActorNPC::Noise` calls `Think` inside the broadcast
     /// loop. Script natives and other in-frame callbacks therefore observe
     /// the listeners' RNG draws, state transitions, and launched sequences
-    /// before returning. The ordinary queued form remains available to owner
-    /// phases that already provide their own synchronous drain boundary.
+    /// before returning.
     pub(in crate::engine) fn broadcast_noise_synchronously(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

@@ -181,8 +181,9 @@ pub enum QaReplayCommand {
         command: Command,
         with_seek: bool,
         /// Exact seek tolerance captured with the resolved player command.
-        /// Missing legacy macro state retains the strike-specific fallback.
-        #[serde(default)]
+        /// Explicitly null for a direct strike and required in every current
+        /// Rust macro payload.
+        #[serde(deserialize_with = "deserialize_required_optional_f32")]
         seek_distance: Option<f32>,
     },
     /// Shield two-click completion. Original records the concrete
@@ -199,6 +200,13 @@ pub enum QaReplayCommand {
     /// `MSG_STAND_UP.GetValue()` which is 1 for the down-arrow widget
     /// and 0 for the up-arrow.
     PostureToggle { to_crouch: bool },
+}
+
+fn deserialize_required_optional_f32<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f32>::deserialize(deserializer)
 }
 
 /// One recorded action inside a macro slot.  One entry per appended
@@ -321,7 +329,6 @@ pub struct PcMacroState {
     /// This replaces the old serialized `recording_backup` representation.
     /// It is not wire-compatible with SAVE53/NET17/REPLAY11; this state layout
     /// starts at SAVE54/NET18/REPLAY12.
-    #[serde(default)]
     recording_replaces_existing: bool,
 }
 
@@ -723,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn sword_macro_preserves_resolved_seek_distance_and_defaults_legacy_field() {
+    fn sword_macro_preserves_resolved_seek_distance_and_rejects_legacy_field_omission() {
         let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
         let replay = QaReplayCommand::SwordStrike {
             target,
@@ -748,15 +755,10 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
             .expect("externally tagged sword macro")
             .remove("seek_distance");
-        let decoded: QaReplayCommand =
-            serde_json::from_value(legacy).expect("deserialize legacy sword macro");
-        assert!(matches!(
-            decoded,
-            QaReplayCommand::SwordStrike {
-                seek_distance: None,
-                ..
-            }
-        ));
+        assert!(
+            serde_json::from_value::<QaReplayCommand>(legacy).is_err(),
+            "a Rust sword macro without seek_distance must not enter current QA state"
+        );
 
         let direct = QaReplayCommand::SwordStrike {
             target,
@@ -1312,5 +1314,15 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: PcMacroState = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+
+        let mut obsolete = serde_json::to_value(&s).unwrap();
+        obsolete
+            .as_object_mut()
+            .expect("PC macro state object")
+            .remove("recording_replaces_existing");
+        assert!(
+            serde_json::from_value::<PcMacroState>(obsolete).is_err(),
+            "SAVE53-era Rust macro state must not enter the current schema"
+        );
     }
 }

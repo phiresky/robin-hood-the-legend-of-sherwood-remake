@@ -533,7 +533,7 @@ pub(crate) fn render_debug_surfaces_outline(
 ///    scrolls via `dev.noise_display_start_radius`, which the engine
 ///    advances each tick so the rings animate outward.
 /// 2. For every punctual noise active in `dev.displayed_noises`
-///    (populated by `broadcast_noise`), draw concentric rings from
+///    (populated by one-shot noise broadcasts), draw concentric rings from
 ///    `start_radius` up to the effective volume; those entries retire
 ///    on the sim side once the ring has outgrown the volume.
 /// 3. For the currently view-selected NPC (or the first NPC if none

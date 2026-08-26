@@ -5,7 +5,9 @@
 //! state immutably; this module executes them.
 
 use super::movement::{GoalShape, PlannedRecordedGroupMoveOutcome};
-use super::{CameraDisplayState, EngineInner, HostDisplayState, InputState, LevelAssets};
+use super::{CameraDisplayState, EngineInner, LevelAssets};
+#[cfg(test)]
+use super::{HostDisplayState, InputState};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
 use crate::player_command::{PlayerCommand, PlayerInput};
@@ -210,6 +212,7 @@ impl EngineInner {
     /// rollback path calls `apply_commands` in a batch; both paths
     /// must dedupe identically, and the display-state tick still needs
     /// to see which directions were pressed this frame.
+    #[cfg(test)]
     pub(crate) fn apply_commands(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -238,6 +241,7 @@ impl EngineInner {
     /// [`PlayerInput`]s with their `Host::local_seat` and call
     /// [`Self::apply_commands`] directly so the seat tag is
     /// data-driven.
+    #[cfg(test)]
     pub(crate) fn apply_local_commands(
         &mut self,
         display: &mut HostDisplayState,
@@ -257,8 +261,9 @@ impl EngineInner {
     /// Apply a single [`PlayerCommand`] as if it came from
     /// [`crate::player_command::PlayerId::HOST`].
     ///
-    /// Thin wrapper around [`Self::apply_command_for_seat`] used by
-    /// the single-player input path and by tests.
+    /// Test adapter over the same authoritative batch dispatcher used by
+    /// [`crate::engine::Engine::advance_frame`].
+    #[cfg(test)]
     pub(crate) fn apply_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -274,32 +279,6 @@ impl EngineInner {
             assets,
             &[PlayerInput::host(cmd.clone())],
         );
-    }
-
-    /// Apply a single player command issued by `seat`.
-    ///
-    /// `seat` is the index returned by [`Self::ensure_seat`].
-    /// Selection-mutating handlers index `self.players.seats[seat]` so
-    /// different players don't clobber each other's selections.
-    pub(crate) fn apply_command_for_seat(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        seat: usize,
-        cmd: &PlayerCommand,
-    ) {
-        let event_start = self.feedback.pending_side_effects.host_events.len();
-        let mut camera = self.feedback.cutscene_camera.display.clone();
-        self.apply_command_for_seat_with_replay_context(sim, &mut camera, assets, seat, cmd, false);
-        self.feedback.cutscene_camera.display = camera;
-        for event in self.feedback.pending_side_effects.host_events[event_start..]
-            .iter()
-            .cloned()
-        {
-            display.apply_host_event(input, event);
-        }
     }
 
     fn apply_command_for_seat_with_replay_context(
