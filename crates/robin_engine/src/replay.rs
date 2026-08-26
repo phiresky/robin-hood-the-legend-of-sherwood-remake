@@ -54,14 +54,10 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 10 builds on version 9 (complete
-/// campaign + [`crate::engine::SimConfig`] for frame-0 construction, typed
-/// script effects in one global emission order, synchronous sequence
-/// continuation state, fully-resolved minimap command inputs, first-owner
-/// active-ability and actor Execute initialization snapshots) and adds
-/// in-mission save markers (`sv`) and load-back records (`lb`), keeping the
-/// recording a single linear timeline across in-mission saves and loads.
-pub const REPLAY_SCHEMA_VERSION: u32 = 10;
+/// On-disk replay schema version. Version 11 adds the automatic quick-action
+/// queue commands introduced after version 10's in-mission save markers (`sv`)
+/// and load-back records (`lb`).
+pub const REPLAY_SCHEMA_VERSION: u32 = 11;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -550,6 +546,11 @@ impl ReplayPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_schema_version_includes_auto_queue_commands() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 11);
+    }
     use crate::player_command::PlayerCommand;
 
     fn unique_replay_path(label: &str) -> String {

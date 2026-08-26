@@ -451,7 +451,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v52** (2026-07-22, specialized AI continuations): AI state records
 ///   result-bearing cross-NPC callback continuations, alert scan progress and
 ///   the final report-before-formation barrier.
-pub const SAVE_FORMAT_VERSION: u32 = 52;
+/// - **v53** (2026-08-26, automatic quick-action queue): player state records
+///   the active automatic queue and its serialized commands.
+pub const SAVE_FORMAT_VERSION: u32 = 53;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -703,6 +705,11 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn save_format_version_includes_auto_queue_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 53);
+    }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
         use robin_engine::campaign::Campaign;
