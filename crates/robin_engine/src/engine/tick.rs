@@ -7063,6 +7063,149 @@ impl EngineInner {
         }
     }
 
+    fn apply_helper_driven_shoulder_dismount(
+        &mut self,
+        dismount: super::animation::ShoulderHelperDismount,
+    ) {
+        use crate::element::{ActionState, Posture};
+        use crate::order::OrderType;
+        use crate::sprite::MotionState;
+
+        let helper_direction = self
+            .get_entity(dismount.helper_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "shoulder-dismount helper {:?} vanished during Execute",
+                    dismount.helper_id
+                )
+            })
+            .element_data()
+            .direction();
+        let carried_direction = (helper_direction + 8) & 15;
+
+        if dismount.initialising {
+            // FreezeExecution interrupts the rider's selected sequence. Its
+            // cached installed order is the Rust mirror of Original's
+            // detached mpOrder and must disappear at the same owner boundary.
+            self.actor_freeze_execution(dismount.carried_id);
+            if let Some(carried) = self.get_entity_mut(dismount.carried_id)
+                && let Some(actor) = carried.actor_data_mut()
+            {
+                actor.installed_order = None;
+            }
+        }
+
+        let Some(carried) = self.get_entity_mut(dismount.carried_id) else {
+            // Original permits mpCarried to become null while the transition
+            // runs and simply finishes the helper animation in that case.
+            return;
+        };
+        carried
+            .element_data_mut()
+            .set_direction_goal(carried_direction);
+        let carried_sprite_direction = u16::try_from(carried.element_data().direction())
+            .expect("PC shoulder rider has a negative direction");
+        let sprite = &mut carried.element_data_mut().sprite;
+        sprite.force_sprite_row(
+            OrderType::ClimbingDownFromShoulders,
+            carried_sprite_direction,
+        );
+        sprite.synchronize_anim(dismount.helper_frame, dismount.helper_frame_count);
+        sprite.display_order_ref = Some(dismount.helper_id);
+        sprite.behind_display_order_ref = false;
+
+        if dismount.motion == MotionState::Done {
+            carried.set_posture(Posture::Upright);
+            carried
+                .actor_data_mut()
+                .expect("PC has actor data")
+                .action_state = ActionState::Waiting;
+        }
+        if dismount.motion != MotionState::Terminated {
+            return;
+        }
+
+        let helper_position = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before termination")
+            .element_data()
+            .position_map();
+        let helper_current_point = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before landing search")
+            .cxx_current_point_map()
+            .unwrap_or_else(|| {
+                panic!(
+                    "shoulder-dismount helper {:?} has no current action point",
+                    dismount.helper_id
+                )
+            });
+        let helper_layer = self
+            .get_entity(dismount.helper_id)
+            .expect("shoulder-dismount helper vanished before termination")
+            .element_data()
+            .layer();
+        let landing_position = {
+            let carried_box = self
+                .get_entity(dismount.carried_id)
+                .expect("shoulder rider vanished before landing search")
+                .position_iface()
+                .get_move_box()
+                .to_owned();
+            if carried_box.is_somewhere() {
+                // Original translates the upright rider box from the
+                // helper's live animation hotspot (`GetCurrentPointMap`),
+                // while using the helper's map origin as the directional
+                // reference for the three-argument authorization search.
+                let mut box_at_helper = carried_box.translated(helper_current_point);
+                if self.world.fast_grid.find_authorized_position_toward(
+                    &mut box_at_helper,
+                    helper_position,
+                    helper_layer,
+                ) {
+                    box_at_helper.center()
+                } else {
+                    helper_position
+                }
+            } else {
+                helper_position
+            }
+        };
+
+        if let Some(carried) = self.get_entity_mut(dismount.carried_id) {
+            carried
+                .element_data_mut()
+                .set_position_map_delayed(landing_position);
+            carried.set_posture(Posture::Upright);
+            // RHElementActorHuman::SetCarrier(NULL) restores the old
+            // carrier's heading as the released rider's direction goal
+            // before clearing the back-reference
+            // (RHelementactorhuman.cpp:5990-6017).
+            carried
+                .element_data_mut()
+                .set_direction_goal(helper_direction);
+            if let Some(human) = carried.human_data_mut() {
+                human.carrier = None;
+            }
+            if let Some(actor) = carried.actor_data_mut() {
+                actor.execution_frozen = false;
+                actor.action_state = ActionState::Waiting;
+            }
+            let sprite = &mut carried.element_data_mut().sprite;
+            sprite.display_order_ref = None;
+            sprite.behind_display_order_ref = false;
+        }
+        if let Some(helper) = self.get_entity_mut(dismount.helper_id)
+            && let Some(pc) = helper.pc_data_mut()
+        {
+            pc.carried = None;
+            pc.set_live_carried_posture(Posture::Lying);
+        }
+        // Original invokes mpCarried->Wait(), not helper->Wait(), before
+        // releasing the final carrier/carried references.
+        self.actor_wait(dismount.carried_id);
+    }
+
     /// Post-animation hook that drains outcomes collected by
     /// [`EngineInner::tick_actor_animation_for`] for non-`EventDone`
     /// completion variants.
@@ -7094,6 +7237,7 @@ impl EngineInner {
             play_anim_frozen,
             corpse_drop_done,
             shoulder_carried_waits,
+            shoulder_helper_dismounts,
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
@@ -7129,6 +7273,9 @@ impl EngineInner {
         self.drain_corpse_drop_done(assets, corpse_drop_done);
         for carried_id in shoulder_carried_waits {
             self.actor_wait(carried_id);
+        }
+        for dismount in shoulder_helper_dismounts {
+            self.apply_helper_driven_shoulder_dismount(dismount);
         }
         self.drain_seq_advance(seq_advance);
         self.drain_wasp_next_cycle(wasp_next_cycle);

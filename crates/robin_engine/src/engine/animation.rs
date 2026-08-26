@@ -4559,9 +4559,22 @@ pub(super) struct AnimCompletionOutcomes {
     /// `WaitingCarryingOnShoulders` idle. Original calls `mpCarried->Wait()`
     /// from that initialization arm (RHelementactorpc.cpp:4648-4658).
     pub shoulder_carried_waits: Vec<EntityId>,
+    /// Helper-driven shoulder dismount ticks. These must drain before the
+    /// helper advances from the lowering order to its stand-up order.
+    pub shoulder_helper_dismounts: Vec<ShoulderHelperDismount>,
     /// Soldier-style side effects that touch other entities —
     /// accumulated from `apply_soldier_execute_side_effects`.
     pub execute_sides: ExecuteSideOutcomes,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ShoulderHelperDismount {
+    pub helper_id: EntityId,
+    pub carried_id: EntityId,
+    pub initialising: bool,
+    pub motion: MotionState,
+    pub helper_frame: u16,
+    pub helper_frame_count: u16,
 }
 
 /// The base-Actor completion control that must remain unresolved until every
@@ -5537,6 +5550,17 @@ impl EngineInner {
                     {
                         completion_outcomes.shoulder_carried_waits.push(carried_id);
                     }
+                    if anim_type == OrderType::TransitionHelpingClimbingDown
+                        && entity.pc_data().is_some_and(|pc| pc.carried.is_some())
+                    {
+                        // RHelementactorpc.cpp:4795-4809 sets the helper's
+                        // states before playing the lowering animation.
+                        entity.set_posture(crate::element::Posture::HelpingToClimb);
+                        entity
+                            .actor_data_mut()
+                            .expect("PC has actor data")
+                            .action_state = crate::element::ActionState::Waiting;
+                    }
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
@@ -6169,6 +6193,21 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
+                        if anim_type == OrderType::TransitionHelpingClimbingDown
+                            && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
+                        {
+                            let sprite = entity.sprite();
+                            completion_outcomes.shoulder_helper_dismounts.push(
+                                ShoulderHelperDismount {
+                                    helper_id: entity_id,
+                                    carried_id,
+                                    initialising: order_is_initialising,
+                                    motion: motion_state,
+                                    helper_frame: sprite.current_frame,
+                                    helper_frame_count: sprite.frame_count,
+                                },
+                            );
+                        }
                         if let Entity::Soldier(soldier) = entity {
                             match anim_type {
                                 OrderType::WaitingUpright => {
