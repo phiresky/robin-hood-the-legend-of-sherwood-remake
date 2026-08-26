@@ -466,11 +466,10 @@ impl EngineInner {
                     let tgt_handle = crate::titbit::ElementHandle(target.index());
                     let pc_handle = crate::titbit::ElementHandle(actor.index());
                     let titbit_id = self.feedback.titbit_manager.add_titbit(
-                        crate::coordinates::WorldPoint3D {
-                            x: pos.x,
-                            y: pos.y,
-                            z: 0.0,
-                        },
+                        // AddInteractionWithSeek passes a zero point: the
+                        // target supplier owns both the rendered position and
+                        // layer in Original.
+                        crate::coordinates::WorldPoint3D::ZERO,
                         tgt_layer,
                         crate::titbit::TitbitKind::QuickAction,
                         tgt_handle,
@@ -479,7 +478,7 @@ impl EngineInner {
                         *running,
                         crate::titbit::INVALID_ID,
                         true,
-                        None,
+                        Some(pos.y),
                         Some(tgt_layer),
                     );
                     // Write the new titbit id into the slot.  Only
@@ -566,17 +565,17 @@ impl EngineInner {
                 titbit_layer,
             } => {
                 if self.players.qa_recording_for.contains(actor) {
-                    let action = self
-                        .get_entity(*actor)
-                        .and_then(|e| e.pc_data().map(|pc| pc.current_action))
-                        .unwrap_or(crate::profiles::Action::NoAction);
-                    // Ground-target moves: Run icon for running
-                    // animations, Walk otherwise.  We don't have the
-                    // animation here yet, so default to Walk;
-                    // action-specific icons win when the PC is acting
-                    // with a known Action.
-                    let quick = crate::macro_store::action_to_qa_frame(action)
-                        .unwrap_or(crate::titbit::QuickAction::Walk as u16);
+                    // Each Original ground-target input handler authors its
+                    // dedicated phase directly; it does not derive the icon
+                    // from mutable actor action state.
+                    let quick = match command {
+                        Command::ThrowNet => crate::titbit::QuickAction::Net as u16,
+                        Command::ThrowWaspNest => crate::titbit::QuickAction::Wasp as u16,
+                        Command::ThrowPurse => crate::titbit::QuickAction::Purse as u16,
+                        _ => panic!(
+                            "recorded ground-target command {command:?} has no Original QA titbit"
+                        ),
+                    };
                     // Drop any titbit still sitting in this QA slot.
                     let slot = self.players.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
@@ -673,20 +672,18 @@ impl EngineInner {
                         .map(|e| e.element_data().layer())
                         .unwrap_or(0);
                     let titbit_id = self.feedback.titbit_manager.add_titbit(
-                        crate::coordinates::WorldPoint3D {
-                            x: pos.x,
-                            y: pos.y,
-                            z: 0.0,
-                        },
+                        // AddGenericWithSeek passes a zero point and lets the
+                        // antagonist supplier drive rendered placement.
+                        crate::coordinates::WorldPoint3D::ZERO,
                         target_layer,
                         crate::titbit::TitbitKind::QuickAction,
                         crate::titbit::ElementHandle(target.index()),
-                        crate::titbit::QuickAction::Search as u16,
+                        crate::titbit::QuickAction::Speak as u16,
                         pc_handle,
                         false,
                         crate::titbit::INVALID_ID,
                         true,
-                        None,
+                        Some(pos.y),
                         Some(target_layer),
                     );
                     if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
@@ -1472,6 +1469,21 @@ impl EngineInner {
         use crate::macro_store::QuickActionStep;
         use PlayerCommand::*;
 
+        // These commands finish recording in their dispatch arms, where all
+        // of the Original AddTitbit arguments have already been resolved.
+        // The shared recorder still owns the semantic macro step, but must
+        // not allocate a provisional titbit that the dispatch arm immediately
+        // removes and replaces. Besides being dead work, that advances the
+        // serialized TitbitManager::current_id twice for one Original titbit.
+        // Auto-queue recording supplies `action_override` and calls this
+        // helper without dispatching the nested command, so it must still
+        // allocate here.
+        let dispatch_arm_records_titbit = action_override.is_none()
+            && matches!(
+                cmd,
+                LaunchInteraction { .. } | LaunchGroundTarget { .. } | LaunchScrollRead { .. }
+            );
+
         // Helper: read the acting PC's current action.  Returns
         // NoAction if the entity isn't a PC or doesn't exist.
         let pc_action = |engine: &EngineInner, pc: EntityId| -> crate::profiles::Action {
@@ -1811,6 +1823,10 @@ impl EngineInner {
                     Some(self.players.auto_queues.len(actor) - 1)
                 }
             };
+
+        if dispatch_arm_records_titbit {
+            return;
+        }
 
         // Register a QuickAction titbit once per macro slot and feed
         // the id into the slot.
@@ -7192,6 +7208,71 @@ mod tests {
         (engine, assets, pc_id, target_id)
     }
 
+    fn assert_single_recorded_titbit(
+        engine: &EngineInner,
+        actor: EntityId,
+        supplier: Option<EntityId>,
+        phase: crate::titbit::QuickAction,
+        position: crate::coordinates::WorldPoint3D,
+        layer: u16,
+        running: bool,
+    ) {
+        let manager = &engine.feedback.titbit_manager;
+        assert_eq!(
+            manager.parity_current_id(),
+            1,
+            "one Original AddTitbit call must advance current_id exactly once"
+        );
+        assert_eq!(manager.titbits().len(), if running { 2 } else { 1 });
+        let titbit = &manager.titbits()[0];
+        assert_eq!(titbit.id, 0);
+        assert_eq!(titbit.kind, crate::titbit::TitbitKind::QuickAction);
+        assert_eq!(titbit.phase, phase as u16);
+        assert_eq!(
+            titbit.sprite_row,
+            crate::titbit::SpriteRow::QuickActionTitbits as u16
+        );
+        assert_eq!(titbit.sprite_frame, 0);
+        assert_eq!(titbit.frame_count, 0);
+        assert!(!titbit.blinking);
+        assert_eq!(
+            titbit.element_supplier,
+            supplier
+                .map(|id| crate::titbit::ElementHandle(id.index()))
+                .unwrap_or(crate::titbit::ElementHandle::INVALID)
+        );
+        assert_eq!(
+            titbit.element_manager,
+            crate::titbit::ElementHandle(actor.index())
+        );
+        assert_eq!(titbit.position, position);
+        assert_eq!(titbit.layer, layer);
+        let expected_display_y = if let Some(supplier) = supplier {
+            engine
+                .get_entity(supplier)
+                .map(|entity| entity.element_data().position_map().y)
+                .expect("titbit supplier remains live")
+        } else {
+            position.y
+        };
+        assert_eq!(titbit.display_order, expected_display_y + 0.01);
+        assert_eq!(
+            engine
+                .players
+                .macro_store
+                .get(actor)
+                .and_then(|state| state.get_slot_titbit(0))
+                .map(crate::titbit::TitbitId::get),
+            Some(0),
+            "the QA slot must retain the sole allocated titbit id"
+        );
+        if running {
+            let run = &manager.titbits()[1];
+            assert_eq!(run.id, titbit.id);
+            assert_eq!(run.kind, crate::titbit::TitbitKind::QuickActionRun);
+        }
+    }
+
     #[test]
     fn recording_strangle_stores_macro_without_launching_live_interaction() {
         let sim = crate::sim_rng::test_context();
@@ -7241,6 +7322,15 @@ mod tests {
             }
         );
         assert!(state.get_slot_titbit(0).is_some());
+        assert_single_recorded_titbit(
+            &engine,
+            pc_id,
+            Some(target_id),
+            crate::titbit::QuickAction::Strangle,
+            crate::coordinates::WorldPoint3D::ZERO,
+            0,
+            false,
+        );
 
         // Playback happens after recording has stopped and must take the live
         // route rather than being suppressed by the recording-only guard.
@@ -7307,6 +7397,72 @@ mod tests {
             .get_slot_titbit(0)
             .expect("running Strangle records a replacement titbit");
         assert!(engine.feedback.titbit_manager.is_running_for_qa(titbit_id));
+    }
+
+    #[test]
+    fn recording_ground_target_allocates_one_original_faithful_titbit() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::WaspNest, 1)]);
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::WaspNest;
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        let target = crate::coordinates::WorldPoint3D::new(25.0, 40.0, 7.0);
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchGroundTarget {
+                actor: pc_id,
+                target_pos: target,
+                command: Command::ThrowWaspNest,
+                target_field: Field::WaspNestTarget,
+                titbit_layer: 9,
+            },
+        );
+
+        assert!(!engine.is_recording_macro());
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        let step = &engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.slot(0))
+            .expect("ground target was stored in slot zero")
+            .steps[0];
+        assert_eq!(
+            step.replay,
+            QaReplayCommand::GroundTarget {
+                target_pos: target,
+                command: Command::ThrowWaspNest,
+                target_field: Field::WaspNestTarget,
+                titbit_layer: 9,
+            }
+        );
+        assert_single_recorded_titbit(
+            &engine,
+            pc_id,
+            None,
+            crate::titbit::QuickAction::Wasp,
+            target,
+            9,
+            false,
+        );
     }
 
     #[test]
@@ -8008,6 +8164,15 @@ mod tests {
                 target: npc_id,
                 running: false,
             }
+        );
+        assert_single_recorded_titbit(
+            &engine,
+            pc_id,
+            Some(npc_id),
+            crate::titbit::QuickAction::Speak,
+            crate::coordinates::WorldPoint3D::ZERO,
+            0,
+            false,
         );
     }
 
