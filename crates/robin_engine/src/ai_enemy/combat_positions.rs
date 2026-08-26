@@ -4767,20 +4767,37 @@ mod tests {
     }
 
     #[test]
-    fn combat_neighbour_distance_ulong_rejects_invalid_geometry() {
+    fn combat_neighbour_distance_ulong_truncates_valid_geometry() {
         assert_eq!(combat_neighbour_distance_ulong(151.99), 151);
         let largest_below_two_to_32 = f32::from_bits(0x4f7f_ffff);
         assert_eq!(
             combat_neighbour_distance_ulong(largest_below_two_to_32),
             4_294_967_040
         );
+    }
 
-        for invalid in [f32::NAN, -1.0, f32::INFINITY, 4_294_967_296.0_f32] {
-            assert!(
-                std::panic::catch_unwind(|| combat_neighbour_distance_ulong(invalid)).is_err(),
-                "invalid distance {invalid:?} must not silently saturate"
-            );
-        }
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_invalid_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_negative_geometry() {
+        let _ = combat_neighbour_distance_ulong(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_infinite_geometry() {
+        let _ = combat_neighbour_distance_ulong(f32::INFINITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the Original ULONG domain")]
+    fn combat_neighbour_distance_ulong_rejects_two_to_32() {
+        let _ = combat_neighbour_distance_ulong(4_294_967_296.0_f32);
     }
 
     #[test]
