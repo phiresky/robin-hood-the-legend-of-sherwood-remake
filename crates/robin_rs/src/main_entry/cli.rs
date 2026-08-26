@@ -761,8 +761,7 @@ mod tests {
         malformed.current_mission_idx = Some(0);
         malformed
             .snapshot_preselected_with_simulation(7, robin_engine::engine::SimConfig::default());
-        let mut host = crate::host::Host::scratch(800.0, 600.0);
-        let mut display = std::mem::take(&mut host.engine_display);
+        let host = crate::host::Host::scratch(800.0, 600.0);
         engine
             .advance_frame(
                 &assets,
@@ -773,7 +772,6 @@ mod tests {
                 ),
             )
             .expect("malformed campaign fixture admission");
-        host.engine_display = display;
         let save = crate::save_file::GameSaveFile::capture(&engine, &host, 10, "malformed".into());
 
         let error = validate_save_mission(&save, &profiles).unwrap_err();

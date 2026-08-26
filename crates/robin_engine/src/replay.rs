@@ -105,7 +105,7 @@ pub struct ReplayFrame {
     pub timeline_before: u32,
     pub timeline_after: u32,
     pub input: SimulationFrameInput,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub host_controls: Vec<ReplayHostControl>,
 }
 
@@ -371,7 +371,7 @@ impl ReplayData {
             }
         }
         // During streaming the header cannot know the final frame count.
-        if header.total_frames == 0 && !frames.is_empty() {
+        if header.total_frames == 0 && max_frame > 0 {
             header.total_frames = max_frame;
         }
         let data = Self {
@@ -687,14 +687,11 @@ impl ReplayPlayer {
                     .range(segment_start..self.current_frame)
                     .next_back()
                     .and_then(|(_, frame)| {
-                        (frame.timeline_after == timeline_frame)
-                            .then_some(self.current_frame)
+                        (frame.timeline_after == timeline_frame).then_some(self.current_frame)
                     })
             })
             .ok_or_else(|| {
-                format!(
-                    "replay has no host transaction at timeline frame {timeline_frame}"
-                )
+                format!("replay has no host transaction at timeline frame {timeline_frame}")
             })?;
         self.current_frame = ordinal;
         Ok(ordinal)
@@ -826,12 +823,37 @@ mod tests {
 
     #[test]
     fn old_schema_jsonl_is_rejected() {
-        let input = r#"{"mission_id":"old","rng_seed":7,"version":2,"total_frames":0,"campaign":null}
+        let input = r#"{"mission_id":"old","rng_seed":7,"version":10,"total_frames":0,"campaign":null}
 "#;
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
             .expect_err("old replay schemas are not current snapshots");
         assert!(
-            error.contains("unsupported replay schema version 2"),
+            error.contains("unsupported replay schema version 10"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn metadata_without_its_forced_frame_is_rejected_as_truncated() {
+        let header = serde_json::json!({
+            "mission_id": "truncated-marker",
+            "rng_seed": 7,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 0,
+            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+        });
+        let input = format!(
+            "{header}\n{}\n",
+            serde_json::json!({
+                "f": 0,
+                "sv": { "state_hash": 123, "timeline_frame": 0 }
+            })
+        );
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("marker metadata without its forced transaction is truncated");
+        assert!(
+            error.contains("missing authoritative simulation input for frame 0"),
             "{error}"
         );
     }
@@ -876,9 +898,8 @@ mod tests {
 
         let input = SimulationFrameInput::new(vec![PlayerCommand::CrouchDown.into()])
             .with_external_facts(
-                crate::engine::ExternalFacts::default().with_sound_boundary(
-                    crate::engine::SoundBoundary::replay(Vec::new()),
-                ),
+                crate::engine::ExternalFacts::default()
+                    .with_sound_boundary(crate::engine::SoundBoundary::replay(Vec::new())),
             )
             .with_external_actions(vec![crate::engine::ExternalAction::Native {
                 name: "Before".into(),
@@ -977,9 +998,7 @@ mod tests {
                     left_mouse_down: true,
                     continuing_drag: true,
                 }),
-                PlayerInput::host(PlayerCommand::MinimapMouseUp {
-                    on_minimap: true,
-                }),
+                PlayerInput::host(PlayerCommand::MinimapMouseUp { on_minimap: true }),
                 PlayerInput::host(PlayerCommand::CenterCameraOnPoint {
                     point: crate::coordinates::MapPoint::new(333.0, 444.0),
                 }),
@@ -1393,6 +1412,17 @@ mod tests {
         assert_eq!(data.load_back_for_frame(29), None);
         assert_eq!(data.frame(30).expect("frame 30").input.commands.len(), 1);
         assert_eq!(data.frame_count(), 31);
+
+        // The same timeline boundary exists before and after load-back. Seek
+        // must stay on the current linear segment instead of jumping across
+        // the discontinuity to an older branch.
+        let mut player = ReplayPlayer::new(data.clone());
+        player.seek_ordinal(30);
+        assert_eq!(player.seek_timeline_frame(10).unwrap(), 10);
+        player.seek_ordinal(31);
+        assert_eq!(player.seek_timeline_frame(10).unwrap(), 30);
+        player.seek_ordinal(31);
+        assert_eq!(player.seek_timeline_frame(11).unwrap(), 31);
 
         // Timeline records survive the compact-format struct conversion.
         let file = ReplayFile::from(&data);

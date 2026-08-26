@@ -1088,8 +1088,6 @@ mod required_state_tests {
             checkpoint,
         )
         .unwrap();
-        let mut display = robin_engine::engine::HostDisplayState::default();
-        let mut input = robin_engine::engine::InputState::default();
         engine
             .advance_frame(
                 &assets,

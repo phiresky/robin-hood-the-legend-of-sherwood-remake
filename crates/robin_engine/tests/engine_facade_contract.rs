@@ -140,6 +140,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
 
     let mut allowed = vec![
         "advance_frame",
+        "host_console",
         "mission_setup",
         "parity_replay_setup",
         "test_add_entity",

@@ -90,9 +90,6 @@ fn fixture_engine(assets: &mut LevelAssets) -> Engine {
 fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() {
     let mut assets = LevelAssets::new();
     let mut engine = fixture_engine(&mut assets);
-    let mut display = HostDisplayState::default();
-    let mut input = robin_engine::engine::InputState::default();
-    let mut dev = DevState::default();
     let before = engine.frame_counter();
 
     let output = engine

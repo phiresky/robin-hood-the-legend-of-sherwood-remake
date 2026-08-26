@@ -56,6 +56,7 @@ impl EngineInner {
 
     /// Apply an engine state request against the internal camera display
     /// state instead of the host's local presentation scratch.
+    #[cfg(test)]
     pub(crate) fn change_state_with_camera_display(
         &mut self,
         seat: usize,

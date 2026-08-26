@@ -235,6 +235,35 @@ pub struct EngineArgs<'a> {
     pub sim_config: SimConfig,
 }
 
+/// Narrow capability for parsed developer commands that are guaranteed not
+/// to mutate authoritative simulation state.
+pub struct HostConsoleDispatch<'a> {
+    engine: &'a mut Engine,
+}
+
+impl HostConsoleDispatch<'_> {
+    pub fn dispatch(
+        &mut self,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        selected_view_element: &mut Option<EntityId>,
+        command: &crate::console::ConsoleCommand,
+    ) -> ConsoleResponse {
+        assert!(
+            command.is_host_only(),
+            "simulation console command bypassed frame admission"
+        );
+        let sim = self.engine.inner.control.simulation_context();
+        self.engine.inner.dispatch_console_command(
+            &sim,
+            assets,
+            dev,
+            selected_view_element,
+            command,
+        )
+    }
+}
+
 impl Engine {
     /// Open the capability used exclusively by Original parity replay tools.
     pub fn parity_replay_setup(&mut self) -> ParityReplaySetup<'_> {
@@ -244,6 +273,11 @@ impl Engine {
     /// Open the one-shot mission bootstrap capability.
     pub fn mission_setup(&mut self) -> MissionSetup<'_> {
         MissionSetup { engine: self }
+    }
+
+    /// Open the host-only developer-console capability.
+    pub fn host_console(&mut self) -> HostConsoleDispatch<'_> {
+        HostConsoleDispatch { engine: self }
     }
 
     /// Restore an Original schema-16 session-boundary transient before the
@@ -3205,28 +3239,6 @@ impl Engine {
         self.inner.set_external_director_completion_replay(enabled);
     }
 
-    /// Apply one recorded director completion at the pre-Hourglass boundary.
-    ///
-    /// This validates the currently latched sequence command, terminates it,
-    /// and synchronously runs immediate successors before returning.
-    #[cfg(test)]
-    pub(crate) fn apply_external_director_completion(
-        &mut self,
-        completion: DirectorCompletion,
-        display: &mut super::HostDisplayState,
-        assets: &LevelAssets,
-    ) -> Result<(), String> {
-        self.require_live_campaign("applying an external director completion");
-        let result = self
-            .inner
-            .apply_frame_external_director_completion(completion, assets);
-        let camera = &self.inner.feedback.cutscene_camera.display;
-        display.background_transform = camera.background_transform.clone();
-        display.display_op = camera.display_op;
-        display.frame_scrolled = camera.frame_scrolled;
-        result
-    }
-
     /// The per-frame simulation tick. The ONLY per-frame sim-state
     /// mutation point; rollback replay re-runs this on a cloned engine
     /// and must see bit-identical results.
@@ -3322,25 +3334,6 @@ impl Engine {
 
     fn require_live_campaign(&self, context: &str) {
         self.inner.mission_domain.required_campaign(context);
-    }
-
-    /// Apply a parsed host-only developer command outside authoritative frame
-    /// admission. Simulation-affecting commands are rejected here so callers
-    /// cannot accidentally bypass the journaled transaction.
-    pub fn dispatch_host_console_command(
-        &mut self,
-        assets: &LevelAssets,
-        dev: &mut DevState,
-        selected_view_element: &mut Option<EntityId>,
-        command: &crate::console::ConsoleCommand,
-    ) -> ConsoleResponse {
-        assert!(
-            command.is_host_only(),
-            "simulation console command bypassed frame admission"
-        );
-        let sim = self.inner.control.simulation_context();
-        self.inner
-            .dispatch_console_command(&sim, assets, dev, selected_view_element, command)
     }
 
     /// Complete deterministic configuration currently owned by this Engine.

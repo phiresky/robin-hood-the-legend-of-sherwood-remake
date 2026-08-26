@@ -1549,7 +1549,6 @@ mod tests {
     use robin_engine::element::{
         ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
     };
-    use robin_engine::engine::{HostDisplayState, InputState};
     use robin_engine::player_command::PlayerCommand;
     use robin_engine::resource_ids::*;
 
@@ -1583,8 +1582,6 @@ mod tests {
                 ..Default::default()
             },
         }));
-        let mut display = HostDisplayState::default();
-        let mut input = InputState::default();
         engine
             .advance_frame(
                 assets,
@@ -1662,8 +1659,6 @@ mod tests {
                 RHMOUSE_BIG_SHIELD_POINT,
             ),
         ] {
-            let mut display = HostDisplayState::default();
-            let mut input = InputState::default();
             engine
                 .advance_frame(
                     &assets,

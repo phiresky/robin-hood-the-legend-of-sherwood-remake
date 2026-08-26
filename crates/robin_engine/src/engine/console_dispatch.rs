@@ -91,28 +91,6 @@ impl EngineInner {
         self.dispatch_console_command(sim, assets, dev, selected_view_element, &cmd)
     }
 
-    /// Dev-forced entry for out-of-band cheat sources (HTTP RPC, debug
-    /// overlays) that need access to the full dev cheat set even in a
-    /// `_FINAL`-style build.  Saves `use_final`, forces it to `false`
-    /// around the dispatch, and restores it afterwards — gives the
-    /// WASM GUI access to the full cheat list even in `_FINAL` builds
-    /// (the help array otherwise hides the developer cheats).
-    #[cfg(test)]
-    pub(crate) fn run_cheat_string(
-        &mut self,
-        assets: &LevelAssets,
-        dev: &mut DevState,
-        selected_view_element: &mut Option<EntityId>,
-        input: &str,
-    ) -> ConsoleResponse {
-        let saved = dev.console.use_final;
-        dev.console.use_final = false;
-        let sim = self.control.simulation_context();
-        let resp = self.run_console_command(&sim, assets, dev, selected_view_element, input);
-        dev.console.use_final = saved;
-        resp
-    }
-
     /// Dispatch an already-parsed console command.  Exposed for tests
     /// that want to bypass the parser.
     ///

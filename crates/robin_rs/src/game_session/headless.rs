@@ -503,7 +503,7 @@ mod tests {
 
         // This is the ordering enforced by run_frame: publish the normal
         // frame before run_forward_ticks opens and commits its own frame.
-        mission.commit_simulation_history(&mut frame, false);
+        mission.commit_simulation_history(&mut frame, true);
         let advanced = {
             let MissionRuntime {
                 world, timeline, ..
@@ -516,13 +516,7 @@ mod tests {
                 dev,
             } = world.simulation_phase();
             crate::game_session::tick::run_forward_ticks(
-                manager,
-                host,
-                assets,
-                dev,
-                game,
-                timeline,
-                1,
+                manager, host, assets, dev, game, timeline, 1,
             )
             .expect("forward step after outer commit")
             .0

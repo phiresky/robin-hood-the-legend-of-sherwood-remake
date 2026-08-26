@@ -74,8 +74,8 @@ pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use frame::{
     ExternalAction, ExternalActionResult, ExternalFacts, FrameAdvanceError, FrameConsoleResponse,
-    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput, SoundBoundary,
-    SoundBoundaryPolicy, SimulationTick,
+    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput, SimulationTick,
+    SoundBoundary, SoundBoundaryPolicy,
 };
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
@@ -84,8 +84,9 @@ pub(crate) use movement::{
 };
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
-    Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup, MissionSetup,
-    ParityReplaySetup, SnapshotGridComponent, SnapshotRestoreError,
+    Engine, EngineArgs, GroundMarkSpriteData, HostConsoleDispatch, LevelLoadArgs,
+    MinimapWidgetSetup, MissionSetup, ParityReplaySetup, SnapshotGridComponent,
+    SnapshotRestoreError,
 };
 pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
 pub use seat::SeatState;

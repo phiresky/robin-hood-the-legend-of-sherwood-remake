@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 
-use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
+use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
 
@@ -112,25 +112,14 @@ fn main() {
     })
     .expect("load level");
 
-    let mut dev = DevState::new();
-    let mut display = HostDisplayState::default();
-    let mut input = InputState::default();
-
-    let mut history: VecDeque<(Engine, LevelAssets, DevState, HostDisplayState, InputState)> =
-        VecDeque::with_capacity(WINDOW + 1);
+    let mut history: VecDeque<(Engine, LevelAssets)> = VecDeque::with_capacity(WINDOW + 1);
 
     let mut desyncs = 0usize;
     let mut checks = 0usize;
 
     for frame in 0..TOTAL_FRAMES {
         // Snapshot pre-tick state.
-        history.push_back((
-            engine.clone(),
-            assets.clone(),
-            dev.clone(),
-            display.clone(),
-            input.clone(),
-        ));
+        history.push_back((engine.clone(), assets.clone()));
         if history.len() > WINDOW {
             history.pop_front();
         }
@@ -145,12 +134,9 @@ fn main() {
         if frame >= WARMUP_FRAMES && history.len() == WINDOW {
             // Re-simulate from the oldest snapshot forward WINDOW ticks
             // and compare the resulting state to the live engine.
-            let (start_engine, start_assets, start_dev, start_display, start_input) = &history[0];
+            let (start_engine, start_assets) = &history[0];
             let mut sim_engine = start_engine.clone();
             let sim_assets = start_assets.clone();
-            let mut sim_dev = start_dev.clone();
-            let mut sim_display = start_display.clone();
-            let mut sim_input = start_input.clone();
             for _ in 0..WINDOW {
                 sim_engine
                     .advance_frame(

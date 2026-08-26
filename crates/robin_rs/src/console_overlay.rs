@@ -475,7 +475,7 @@ impl ConsoleOverlay {
         } else if let Some(command) = parse_with_final(trimmed, dev.console.use_final) {
             dev.console.push_history(trimmed);
             if command.is_host_only() {
-                FrameConsoleResponse::from(engine.dispatch_host_console_command(
+                FrameConsoleResponse::from(engine.host_console().dispatch(
                     assets,
                     dev,
                     &mut host.frontend.selected_view_element,

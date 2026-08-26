@@ -2542,7 +2542,7 @@ impl EngineInner {
         // Host-local viewport scroll is host-side and never enters engine
         // state, so peer-2's held scroll doesn't gate the host's, and vice
         // versa.
-        self.feedback.cutscene_camera.display.frame_scrolled = [false; 4];
+        display.frame_scrolled = [false; 4];
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = code;
@@ -2980,7 +2980,7 @@ impl EngineInner {
     fn hourglass_phase_mission_and_messages(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _display: &mut CameraDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         pc_guarded: bool,
         simulation_body_allowed: bool,
@@ -3115,18 +3115,8 @@ impl EngineInner {
         self.advance_mission_clock();
 
         // ── Skip logic if engine is locked (zoom, sequence, etc) ─
-        if self
-            .feedback
-            .cutscene_camera
-            .display
-            .background_transform
-            .zoom_to_up
-            || self
-                .feedback
-                .cutscene_camera
-                .display
-                .background_transform
-                .zoom_to_down
+        if display.background_transform.zoom_to_up
+            || display.background_transform.zoom_to_down
             || self.engine_locked()
             || !simulation_body_allowed
         {

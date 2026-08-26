@@ -1894,7 +1894,6 @@ mod tests {
         ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, HumanData,
         NpcData, ObjectData, PcData, SoldierData,
     };
-    use robin_engine::engine::{HostDisplayState, InputState};
 
     /// `PlayerCommand` intentionally has no `PartialEq` (it carries f32
     /// payloads); command sequences are compared via their exhaustive
@@ -1990,8 +1989,6 @@ mod tests {
     }
 
     fn apply(engine: &mut Engine, assets: &LevelAssets, cmd: PlayerCommand) {
-        let mut display = HostDisplayState::default();
-        let mut input = InputState::default();
         engine
             .advance_frame(
                 assets,

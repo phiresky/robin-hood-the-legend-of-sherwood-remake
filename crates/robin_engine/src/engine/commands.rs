@@ -1014,7 +1014,7 @@ impl EngineInner {
             MakePcCrouched { pc_id } => self.actor_make_crouched(sim, *pc_id),
 
             ChangeState(req) => {
-                self.change_state_with_camera_display(seat, *req);
+                self.change_state(display, seat, *req);
             }
 
             // ── Speed / pacing ──────────────────────────────────

@@ -1481,6 +1481,13 @@ impl TimelineRuntime {
         if player.is_finished() {
             return Ok(());
         }
+        if player.current_frame() != self.replay_ordinal.number() {
+            return Err(format!(
+                "replay player ordinal {} diverged from timeline runtime ordinal {}",
+                player.current_frame(),
+                self.replay_ordinal.number()
+            ));
+        }
         let adopted_timeline = apply_replay_timeline_events_at_boundary(
             player,
             self.current_frame,
@@ -1662,9 +1669,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             })?;
         adopted_timeline = Some(TimelineFrame::from_wire(
             player
-            .save_marker_for_frame(load_back.to_frame)
-            .expect("validated load-back target marker")
-            .timeline_frame,
+                .save_marker_for_frame(load_back.to_frame)
+                .expect("validated load-back target marker")
+                .timeline_frame,
         ));
         game.apply_post_load_sync(load_back.is_continue);
         game.post_load_resolution_resync();
@@ -1746,18 +1753,15 @@ mod tests {
         host.input.draw_hidden = true;
         game.persistent.campaign_map_displayed = true;
         game.persistent.campaign_map_active = false;
-        {
-            let frontend = &mut host.frontend;
-            engine
-                .advance_frame(
-                    &assets,
-                    robin_engine::engine::SimulationFrameInput::new(vec![
-                        PlayerCommand::SetFastForward.into(),
-                    ])
-                    .with_hourglass(false),
-                )
-                .expect("fast-forward command admission");
-        }
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetFastForward.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("fast-forward command admission");
         assert!(engine.is_fast_forward());
         let marker_engine = engine.clone();
         let marker_hash = robin_engine::replay::state_hash(&engine);
@@ -1800,6 +1804,7 @@ mod tests {
             &assets,
         );
         for _ in 0..5 {
+            live.begin_execution_trace(FrameContractStage::TimelineBegin);
             let mut frame = MissionFrame::new(0);
             frame.bind_timeline(live.current_frame());
             live.begin_recording(&mut frame, true);
@@ -1810,18 +1815,15 @@ mod tests {
         // Exercise the real restore path. Engine post-load fixups intentionally
         // normalize transient state, so its resulting hash differs from the raw
         // payload hash. Identity matching must still find the frame-0 save.
-        {
-            let frontend = &mut host.frontend;
-            engine
-                .advance_frame(
-                    &assets,
-                    robin_engine::engine::SimulationFrameInput::new(vec![
-                        PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
-                    ])
-                    .with_hourglass(false),
-                )
-                .expect("speech command admission");
-        }
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("speech command admission");
         host.input.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
         save.apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
@@ -1843,6 +1845,7 @@ mod tests {
             &assets,
         );
         assert_eq!(live.current_frame(), TimelineFrame::ZERO);
+        live.begin_execution_trace(FrameContractStage::TimelineBegin);
         live.begin_recording(&mut frame, true);
         let after = live.advance_frame();
         frame.commit_timeline_after(after);
@@ -1893,22 +1896,24 @@ mod tests {
             .expect("pin replay save");
         assert!(playback.playback_pinned_saves.contains_key(&0));
         for _ in 0..5 {
-            playback.replay_player.as_mut().unwrap().next_frame();
+            let recorded = playback
+                .consume_replay_frame_for_step()
+                .expect("consume replay transaction")
+                .expect("five replay transactions remain");
+            assert_eq!(recorded.timeline_before, playback.current_frame().number());
+            playback.current_frame = TimelineFrame::from_wire(recorded.timeline_after);
         }
         // Diverge the playback engine, then let the load-back restore it.
-        {
-            let frontend = &mut playback_host.frontend;
-            manager
-                .engine
-                .advance_frame(
-                    &assets,
-                    robin_engine::engine::SimulationFrameInput::new(vec![
-                        PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
-                    ])
-                    .with_hourglass(false),
-                )
-                .expect("speech command admission");
-        }
+        manager
+            .engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetAmountOfSpeaking { amount: 3 }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("speech command admission");
         playback_host.input.draw_hidden = false;
         playback_game.persistent.campaign_map_displayed = false;
         playback_game.persistent.campaign_map_active = false;

@@ -23,8 +23,7 @@ use crate::gfx_types::Keycode;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine::{
-    DevState, Engine, ExternalAction, ExternalActionResult, HostDisplayState, InputState,
-    LevelAssets, SimulationFrameInput,
+    Engine, ExternalAction, ExternalActionResult, LevelAssets, SimulationFrameInput,
 };
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
@@ -66,18 +65,12 @@ const ID_CANCEL: u32 = 4;
 /// execution does not apply it twice when the enclosing frame advances.
 pub(crate) fn admit_paused_campaign_action(
     engine: &mut Engine,
-    display: &mut HostDisplayState,
-    input: &mut InputState,
     assets: &LevelAssets,
-    dev: &mut DevState,
     action: ExternalAction,
 ) -> ExternalActionResult {
     let output = engine
         .advance_frame(
-            display,
-            input,
             assets,
-            dev,
             SimulationFrameInput::no_hourglass().with_external_actions(vec![action.clone()]),
         )
         .unwrap_or_else(|error| panic!("paused campaign action admission failed: {error}"));
@@ -134,10 +127,7 @@ pub async fn show_mission_description(
     mut cursor: Option<ModalCursor<'_>>,
     mission_index: usize,
     engine: &mut Engine,
-    display: &mut HostDisplayState,
-    input: &mut InputState,
     assets: &LevelAssets,
-    dev: &mut DevState,
     admitted_actions: &mut Vec<ExternalAction>,
     profiles: &engine_profiles::ProfileManager,
     level_descriptors: Option<&LevelDescriptors>,
@@ -344,10 +334,7 @@ pub async fn show_mission_description(
                     resources,
                     cursor.as_mut().map(|c| c.reborrow()),
                     engine,
-                    display,
-                    input,
                     assets,
-                    dev,
                     admitted_actions,
                     profiles,
                     mission_index,
@@ -547,10 +534,7 @@ async fn dispatch_convert_money(
     resources: &mut IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     engine: &mut Engine,
-    display: &mut HostDisplayState,
-    input: &mut InputState,
     assets: &LevelAssets,
-    dev: &mut DevState,
     admitted_actions: &mut Vec<ExternalAction>,
     profiles: &engine_profiles::ProfileManager,
     mission_index: usize,
@@ -588,12 +572,10 @@ async fn dispatch_convert_money(
         let mission_index = u32::try_from(mission_index)
             .expect("campaign mission index does not fit authoritative action");
         let action = ExternalAction::CampaignBuyBlazon { mission_index };
-        let closed_by_cascade =
-            match admit_paused_campaign_action(engine, display, input, assets, dev, action.clone())
-            {
-                ExternalActionResult::CampaignBuyBlazon { closed_by_cascade } => closed_by_cascade,
-                result => panic!("campaign buy admission returned unexpected result {result:?}"),
-            };
+        let closed_by_cascade = match admit_paused_campaign_action(engine, assets, action.clone()) {
+            ExternalActionResult::CampaignBuyBlazon { closed_by_cascade } => closed_by_cascade,
+            result => panic!("campaign buy admission returned unexpected result {result:?}"),
+        };
         admitted_actions.push(action);
         if closed_by_cascade {
             screen.on_cancel();

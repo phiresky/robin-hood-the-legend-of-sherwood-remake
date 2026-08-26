@@ -623,32 +623,9 @@ impl EngineInner {
         true
     }
 
-    /// Set the pending action for a PC via the select-action path.
-    ///
-    /// - If `pc_id` is not currently selected, only sets `current_action` on
-    ///   that one PC.
-    /// - A targeted non-NoAction message with a multi-selection first reduces
-    ///   the selection to `pc_id`; otherwise the selected branch applies the
-    ///   action to every selected PC.
-    ///
-    /// The selected branch also updates the seat's messenger-level armed
-    /// action. The not-selected branch deliberately leaves it untouched.
-    #[cfg(test)]
-    pub(crate) fn set_pc_action(
-        &mut self,
-        assets: &LevelAssets,
-        input: &mut InputState,
-        seat: usize,
-        pc_id: EntityId,
-        action: Action,
-    ) {
-        self.set_pc_action_inner(assets, Some(input), seat, pc_id, action);
-    }
-
     /// Deliver a simulation-originated `MSG_SELECT_ACTION` when no mutable
-    /// host input borrow is available. The gameplay mutations are identical
-    /// to [`Self::set_pc_action`]; host-only rubber-band cleanup is emitted as
-    /// a side effect for the host to consume after the tick.
+    /// host input borrow is available. Host-only rubber-band cleanup is
+    /// emitted as a side effect for the host to consume after the tick.
     pub(crate) fn set_pc_action_from_message(
         &mut self,
         assets: &LevelAssets,
@@ -1127,66 +1104,6 @@ impl EngineInner {
         !(disabled_persistent || disabled_temp)
     }
 
-    /// Select an action slot on a PC by index (0..=2).
-    ///
-    /// Looks up `profile.actions[index]`, checks the button is enabled
-    /// (`!disabled_actions[index] && !disabled_actions_temp[index]`), and
-    /// forwards through [`Self::set_pc_action`].
-    ///
-    /// Used by both portrait action-button clicks and the keyboard 1/2/3
-    /// shortcut.
-    ///
-    /// Returns `true` if the action was dispatched (i.e. the button maps to
-    /// a real action and is enabled), `false` otherwise.
-    #[cfg(test)]
-    pub(crate) fn select_pc_action_by_index(
-        &mut self,
-        assets: &LevelAssets,
-        input: &mut InputState,
-        seat: usize,
-        pc_id: EntityId,
-        index: u8,
-    ) -> bool {
-        let idx = index as usize;
-
-        let profile_idx = match self.get_entity(pc_id).and_then(|e| e.pc_data()) {
-            Some(pc) => pc.profile_index,
-            None => return false,
-        };
-
-        let action = match assets.profile_manager.get_character(profile_idx) {
-            Some(profile) => profile
-                .actions
-                .get(idx)
-                .copied()
-                .unwrap_or(Action::NoAction),
-            None => return false,
-        };
-
-        if action == Action::NoAction {
-            return false;
-        }
-
-        // The widget enable bit is gated on **both** `disabled_actions` and
-        // `disabled_actions_temp` being clear, so OR both masks together.
-        let (disabled_persistent, disabled_temp) = self
-            .get_entity(pc_id)
-            .and_then(|e| e.pc_data())
-            .map(|pc| {
-                (
-                    pc.disabled_actions.get(idx).copied().unwrap_or(false),
-                    pc.disabled_actions_temp.get(idx).copied().unwrap_or(false),
-                )
-            })
-            .unwrap_or((false, false));
-        if disabled_persistent || disabled_temp {
-            return false;
-        }
-
-        self.set_pc_action(assets, input, seat, pc_id, action);
-        true
-    }
-
     pub(crate) fn select_pc_action_by_index_from_message(
         &mut self,
         assets: &LevelAssets,
@@ -1216,36 +1133,6 @@ impl EngineInner {
         true
     }
 
-    /// Perform multi-selection: select all PCs whose position falls inside
-    /// the drag-box defined by `multi_selection_pt1` and
-    /// `multi_selection_pt2`.
-    ///
-    /// When `shift_held` is true, adds to the existing selection. Each newly
-    /// added PC barks `HERO_SELECT`. Sets `next_left_double_is_simple` to
-    /// suppress the next left-double promotion.
-    #[cfg(test)]
-    pub(crate) fn perform_multi_selection(
-        &mut self,
-        assets: &LevelAssets,
-        input: &mut InputState,
-        seat: usize,
-        shift_held: bool,
-    ) {
-        if !input.draw_multi_selection {
-            // Drag was too small — treat as a click, not a box select
-            input.multi_selection_active = false;
-            return;
-        }
-
-        let p1 = input.multi_selection_pt1;
-        let p2 = input.multi_selection_pt2;
-        self.perform_box_selection(assets, seat, p1, p2, shift_held);
-
-        input.multi_selection_active = false;
-        input.draw_multi_selection = false;
-        input.next_left_double_is_simple = true;
-    }
-
     pub(crate) fn perform_box_selection(
         &mut self,
         assets: &LevelAssets,
@@ -1267,8 +1154,8 @@ impl EngineInner {
             }
             if let Some(entity) = self.get_entity(pc_id) {
                 // Sprite-AABB-vs-drag-box overlap, matching the same
-                // hit-test already used by `perform_multi_unselection`
-                // below.
+                // hit-test also used by the corresponding box-unselection
+                // path below.
                 let map_pos = entity.element_data().position_map();
                 let map_pt = crate::coordinates::ScreenPoint::new(map_pos.x, map_pos.y);
                 let sprite_box = entity
@@ -1295,22 +1182,6 @@ impl EngineInner {
     }
 
     // ─── Multi-UN-selection (right-drag red box) ────────────────
-
-    /// Perform multi-UNselection: deselect every selected, playable PC whose
-    /// sprite bounding-box intersects the right-drag box.
-    #[cfg(test)]
-    pub(crate) fn perform_multi_unselection(&mut self, input: &mut InputState, seat: usize) {
-        if !input.draw_multi_selection {
-            input.multi_unselection_active = false;
-            return;
-        }
-
-        let p1 = input.multi_selection_pt1;
-        let p2 = input.multi_selection_pt2;
-        self.perform_box_unselection(seat, p1, p2);
-        input.multi_unselection_active = false;
-        input.draw_multi_selection = false;
-    }
 
     pub(crate) fn perform_box_unselection(
         &mut self,

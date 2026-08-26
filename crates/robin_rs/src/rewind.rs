@@ -277,7 +277,7 @@ mod tests {
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
         use crate::sim_timeline::{run_engine_tick_core, run_post_initialize_stage};
         use robin_engine::campaign::Campaign;
-        use robin_engine::engine::{EngineStateRequest, InputState};
+        use robin_engine::engine::EngineStateRequest;
         use robin_engine::messenger::SimpleMessage;
         use robin_engine::player_command::PlayerCommand;
 
@@ -292,7 +292,6 @@ mod tests {
         )
         .expect("fixture engine");
         let mut display = HostDisplayState::default();
-        let mut input = InputState::default();
         engine
             .advance_frame(
                 &assets,

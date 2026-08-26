@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn enable_mask_gates_on_is_zoom_possible() {
         use robin_engine::campaign::Campaign;
-        use robin_engine::engine::{EngineStateRequest, HostDisplayState, InputState, LevelAssets};
+        use robin_engine::engine::{EngineStateRequest, HostDisplayState, LevelAssets};
 
         let mut assets = LevelAssets::new();
         let mut engine = engine_api::Engine::new_for_test_with_level_size(
@@ -417,7 +417,7 @@ mod tests {
             4096.0,
         )
         .expect("engine");
-        let mut display = HostDisplayState::default();
+        let display = HostDisplayState::default();
 
         // Idle state: both directions available at zoom_factor = 1.0.
         let mask = ZoomButtonEnable::from_engine(&engine, &display);
@@ -429,7 +429,6 @@ mod tests {
         // Kick off a zoom-up transition — `is_zoom_possible` flips
         // false for the duration. The active direction stays enabled
         // + latched to selected; the inactive direction disables.
-        let mut input = InputState::default();
         engine
             .advance_frame(
                 &assets,

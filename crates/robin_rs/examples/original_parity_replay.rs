@@ -29,7 +29,7 @@ use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
 use robin_engine::engine::{
-    DevState, Engine, HostDisplayState, InputState, LegacyGridSectorAsset, LevelAssets,
+    Engine, HostDisplayState, InputState, LegacyGridSectorAsset, LevelAssets,
 };
 use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
@@ -4023,13 +4023,7 @@ fn append_legacy_retained_terminal_success_repair(
     true
 }
 
-fn cross_post_initialize_frame(
-    engine: &mut Engine,
-    display: &mut HostDisplayState,
-    input: &mut InputState,
-    assets: &LevelAssets,
-    dev: &mut DevState,
-) {
+fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
     engine
         .advance_frame(
             assets,
@@ -4706,7 +4700,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     engine
         .parity_replay_setup()
         .use_external_director_completions(true);
-    let mut dev = DevState::new();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     let mut selected_view_element = None;
@@ -5369,13 +5362,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 // PerformHourglass, then runs the one-shot PostInitialize
                 // hook after refresh/sound. Apply that boundary only after
                 // comparing this frame, before advancing to the next one.
-                cross_post_initialize_frame(
-                    &mut engine,
-                    &mut display,
-                    &mut input,
-                    &assets,
-                    &mut dev,
-                );
+                cross_post_initialize_frame(&mut engine, &assets);
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -5472,7 +5459,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
-        cross_post_initialize_frame(&mut engine, &mut display, &mut input, &assets, &mut dev);
+        cross_post_initialize_frame(&mut engine, &assets);
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
             if step.remaining == 0 {

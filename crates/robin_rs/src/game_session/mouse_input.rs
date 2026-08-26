@@ -1921,7 +1921,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     host: &mut Host,
     frame: &mut MissionFrame,
     assets: &engine_api::LevelAssets,
-    dev: &mut engine_api::DevState,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
@@ -2085,16 +2084,11 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     );
                 }
                 let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
-                let mut display = std::mem::take(&mut host.engine_display);
                 let result = mission_description::admit_paused_campaign_action(
                     engine,
-                    &mut display,
-                    &mut host.input,
                     assets,
-                    dev,
                     action.clone(),
                 );
-                host.engine_display = display;
                 assert!(matches!(
                     result,
                     engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
@@ -2131,7 +2125,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     };
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     let mut admitted_campaign_actions = Vec::new();
-                    let mut display = std::mem::take(&mut host.engine_display);
                     let (choice, men_to_blazon) = mission_description::show_mission_description(
                         event_pump,
                         renderer,
@@ -2139,17 +2132,13 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         cursor,
                         idx,
                         engine,
-                        &mut display,
-                        &mut host.input,
                         assets,
-                        dev,
                         &mut admitted_campaign_actions,
                         &assets.profile_manager,
                         mission_descriptors.as_ref(),
                         text_res,
                     )
                     .await;
-                    host.engine_display = display;
                     for action in admitted_campaign_actions {
                         frame.record_applied_external_action(action);
                     }
