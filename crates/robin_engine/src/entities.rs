@@ -23,7 +23,16 @@ macro_rules! typed_entity_accessors {
     };
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct Entities(
     Vec<Option<Entity>>,
@@ -551,7 +560,16 @@ impl Entities {
 /// wrote is its authoritative value, and recomputing the other one back rounds.
 /// Recording the pair keeps a later reader on the same value the element
 /// itself would have reported.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BoundaryPosition {
     pub map: crate::coordinates::MapPoint,
     pub world: crate::coordinates::WorldPoint3D,

@@ -7,7 +7,14 @@ use super::super::{LevelAssets, MissionScript};
 /// Native calls still borrow the world, AI, campaign, orders, and feedback
 /// state they operate on. Keeping those capabilities outside this owner is
 /// important: this type owns the script runtime, not a second engine model.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct ScriptRuntime {
     pub(crate) globals: Vec<i32>,
     pub(crate) mission: Option<MissionScript>,

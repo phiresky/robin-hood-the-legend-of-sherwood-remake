@@ -201,12 +201,30 @@ fn substitute_printf(template: &str, values: &[&str]) -> String {
 ///
 /// A pure presenter with no data members — required data is passed
 /// explicitly to [`SherwoodStat::get_text`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SherwoodStat;
 
 /// Player-profile data needed by the score section of the report.
 /// Separates the data dependency so callers don't need a full profile type.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScoreInfo {
     pub score: i32,
     pub preserved_lives: i32,

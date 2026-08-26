@@ -20,7 +20,16 @@ use crate::profiles::Action;
 use serde::{Deserialize, Serialize};
 
 /// Sim-tracked state owned by one player seat.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SeatState {
     /// Whether the seat currently has a player attached.  Cleared by
     /// [`crate::player_command::PlayerCommand::DisconnectSeat`] but

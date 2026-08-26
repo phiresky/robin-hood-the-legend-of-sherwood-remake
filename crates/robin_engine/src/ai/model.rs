@@ -17,6 +17,8 @@ use crate::coordinates::MapVec;
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum AiState {
@@ -212,6 +214,8 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 #[allow(non_camel_case_types)] // preserve original naming for clarity
@@ -727,6 +731,8 @@ impl Substate {
     Default,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum EmoticonType {
@@ -756,6 +762,8 @@ pub enum EmoticonType {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum ProbabilityDistribution {
@@ -781,6 +789,8 @@ pub enum ProbabilityDistribution {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum StimulusType {
@@ -979,6 +989,8 @@ pub enum StimulusCategory {
     Deserialize,
     robin_state_hash_derive::StateHash,
     num_enum::TryFromPrimitive,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Remark {
@@ -1284,6 +1296,8 @@ impl std::fmt::Display for Remark {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Question {
@@ -1321,6 +1335,8 @@ pub enum Question {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Decision {
@@ -1392,7 +1408,15 @@ impl Decision {
 /// drains these after each think() and applies them to the targets.
 /// Used for patterns like calling `InstructGatherPosition` then
 /// delivering `CALL_INSTRUCTION`, and recursive `BreakPhalanx`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum CrossNpcAction {
     /// Synchronously deliver `CALL_ALERT` and resume the caller with the
     /// recipient's actual `Think` result. The original uses the returned bool
@@ -1621,14 +1645,32 @@ pub enum CrossNpcAction {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AlertContinuation {
     CivilianReachedSoldier,
     CivilianSawSoldier,
     SoldierSawOfficer,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AlertSoldiersFailureContinuation {
     None,
     ReturnToDuty,
@@ -1640,7 +1682,16 @@ pub enum AlertSoldiersFailureContinuation {
 
 /// The tail of a procedure that broadcast `CALL_LOOKTHERE`, parked until the
 /// broadcast's synchronous delivery has finished.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum LookThereContinuation {
     EventView {
         enemy: HumanHandle,
@@ -1655,7 +1706,16 @@ pub enum LookThereContinuation {
     SeekingArrowReactiontime,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum ThinkResultContinuation {
     /// Resume the reporting soldier only after the officer's direct
     /// `CALL_YOURTALK_1` stack has closed. The officer may synchronously call
@@ -1687,7 +1747,16 @@ pub enum ThinkResultContinuation {
 /// engine consumes it at post-think time and performs the door lookup
 /// against `ai_global.door_seek_infos` (which the AI layer doesn't
 /// see on its call stack).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PanicRequest {
     /// Point to flee *away from*.  `None` means undirected panic — the
     /// engine picks any reachable door and runs in random directions.
@@ -1709,7 +1778,16 @@ pub struct PanicRequest {
 /// `SetAIState(actor, STATE_SEEKING)` script natives. The engine
 /// consumes it post-think by dispatching into `EnemyAi::seek_area`
 /// (soldier-only).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptSeekAreaRequest {
     /// Seek center — typically the NPC's current position.
     pub center: Position,
@@ -1756,6 +1834,8 @@ pub enum PatrolAssignment {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum LookDirection {
@@ -1780,6 +1860,8 @@ pub enum LookDirection {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum LogLineType {
@@ -1794,7 +1876,16 @@ pub enum LogLineType {
 }
 
 /// A single AI log entry for debug display.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LogLine {
     pub line_type: LogLineType,
     pub info: u16,
@@ -1817,6 +1908,8 @@ pub struct LogLine {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum NoiseType {
@@ -1839,7 +1932,15 @@ pub enum NoiseType {
 
 /// A noise event with origin, type, volume, and elevation.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Noise {
     pub origin: Position,
@@ -1860,6 +1961,8 @@ pub struct Noise {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Detection {
@@ -1885,6 +1988,8 @@ pub enum Detection {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum AlertLevel {
@@ -1907,6 +2012,8 @@ pub enum AlertLevel {
     Deserialize,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Attitude {
@@ -1930,6 +2037,8 @@ pub enum Attitude {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum ViewCone {
@@ -1966,6 +2075,8 @@ pub enum ViewCone {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Curiosity {
@@ -1994,6 +2105,8 @@ impl Curiosity {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum TargetType {
@@ -2015,6 +2128,8 @@ pub enum TargetType {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum ReportType {
@@ -2032,7 +2147,15 @@ pub enum ReportType {
 
 /// Hint passed between NPCs (e.g. "look over there").
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Hint {
     pub seek_point: Position,
@@ -2042,7 +2165,15 @@ pub struct Hint {
 
 /// Info about a stolen object.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct StolenObject {
     pub object: ObjectHandle,
@@ -2051,7 +2182,15 @@ pub struct StolenObject {
 
 /// Info about a friend in trouble.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct CombatInfo {
     pub actor_npc: NpcHandle,
@@ -2060,7 +2199,15 @@ pub struct CombatInfo {
 
 /// Info about a door combat event.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct DoorCombatInfo {
     pub delay: u16,
@@ -2079,6 +2226,8 @@ pub struct DoorCombatInfo {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum StimulusInfo {
     #[default]
@@ -2113,11 +2262,14 @@ pub(crate) enum SelfStimulusOrigin {
 /// A queued self-stimulus. The transparent representation preserves the
 /// existing serialized `Vec<StimulusType>` shape; provenance exists only
 /// while the live engine is closing the same-frame callback stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct QueuedSelfStimulus {
     pub stimulus_type: StimulusType,
     #[serde(skip)]
+    #[bitcode(skip)]
     pub(crate) origin: SelfStimulusOrigin,
 }
 
@@ -2161,13 +2313,14 @@ impl PartialEq<QueuedSelfStimulus> for StimulusType {
 // ---------------------------------------------------------------------------
 
 /// An event or call that is dispatched to an NPC's AI for processing.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct Stimulus {
     pub stimulus_type: StimulusType,
     pub info: StimulusInfo,
     pub owner: NpcHandle,
     pub to_whole_patrol: bool,
     #[serde(skip)]
+    #[bitcode(skip)]
     pub(crate) self_origin: SelfStimulusOrigin,
 }
 
@@ -2283,7 +2436,15 @@ impl Stimulus {
 // Screen remark (HUD display)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScreenRemark {
     pub timer: u16,
     pub prefix: String,
@@ -2291,7 +2452,15 @@ pub struct ScreenRemark {
 }
 
 /// A forbidden remark entry — prevents the same line from being repeated.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ForbiddenRemark {
     pub remark: Remark,
     pub flags: u16,
@@ -2305,7 +2474,15 @@ pub struct ForbiddenRemark {
 // Reconnaissance report
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
@@ -2365,7 +2542,15 @@ impl ReconnaissanceReport {
 /// field tracks when the point will be "fresh" again (100% interest).
 /// Multiple NPCs avoid investigating the same point simultaneously via
 /// the `locked` flag.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SeekPoint {
     pub position: Position,
     /// Frame at which interest will be 100% again.
@@ -2516,7 +2701,15 @@ mod seek_point_tests {
 }
 
 /// A seek-point direction from the level file (position + facing).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SeekPointDirection {
     pub position: Position,
     pub direction: u16,
@@ -2527,7 +2720,15 @@ pub struct SeekPointDirection {
 // ---------------------------------------------------------------------------
 
 /// A tactical ambush point that NPCs check while patrolling.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AmbushPoint {
     pub position: Position,
     pub direction: u16,
@@ -2569,7 +2770,15 @@ impl AmbushPoint {
 // ---------------------------------------------------------------------------
 
 /// A waypoint along an archery path (entry point or shooting point).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PointArchery {
     pub position: Position,
     pub direction: u16,
@@ -2585,7 +2794,15 @@ pub struct PointArchery {
 
 /// An archery sector where archers can set up, with ordered waypoints
 /// leading to shooting positions.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SectorArchery {
     pub points: Vec<PointArchery>,
     /// Polygon vertices for the `is_inside` check (f32 coords).
@@ -2652,7 +2869,15 @@ impl SectorArchery {
 // ---------------------------------------------------------------------------
 
 /// A point that NPCs try to avoid during pathfinding.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RepulsivePoint {
     pub id: i32,
     pub position: Position,
@@ -2709,7 +2934,15 @@ impl RepulsivePoint {
 /// Populated at level load from the canonical interactable door table.
 /// Serialized with `AiGlobalState`; includes cached authorization data that
 /// should match the exact door state at the save point.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct DoorSeekInfo {
     /// Index into the canonical interactable door array. Carried so AI
     /// helpers (e.g. `RunAndAlertSoldiers`) can stash a door reference

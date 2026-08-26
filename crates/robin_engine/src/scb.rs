@@ -23,6 +23,8 @@ pub const SCB_MAGIC: &[u8; 8] = b"SBSCRIPT";
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum TypeTag {
     NotDefined = 0,
@@ -62,6 +64,8 @@ impl TypeTag {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ScType {
     pub tag: TypeTag,
@@ -77,6 +81,8 @@ pub struct ScType {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct MemberVariable {
     pub ty: ScType,
@@ -93,6 +99,8 @@ pub struct MemberVariable {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Function {
     pub name: String,
@@ -113,6 +121,8 @@ pub struct Function {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ClassEntry {
     pub source_file: String,
@@ -125,7 +135,13 @@ pub struct ClassEntry {
 
 /// A parsed `.scb` file.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ScbFile {
     pub version: f32,

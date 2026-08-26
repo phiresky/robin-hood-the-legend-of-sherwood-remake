@@ -14,7 +14,15 @@ use crate::{
 const COMMAND_MOBILE_SPEED: u8 = 129;
 const COMMAND_MOBILE_ACCELERATION: u8 = 130;
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MobileElement {
     pub sprite_ids: Vec<EntityId>,
     pub motion_polygon: Vec<MapPoint>,

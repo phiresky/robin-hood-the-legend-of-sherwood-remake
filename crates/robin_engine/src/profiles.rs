@@ -39,6 +39,8 @@ pub const INVALID_PROFILE_ID: u32 = 0xFFFFFFFF;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct CharacterProfileIdx(pub u32);
 
@@ -80,6 +82,8 @@ impl std::fmt::Display for CharacterProfileIdx {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SoldierProfileIdx(pub u32);
 
@@ -121,6 +125,8 @@ impl std::fmt::Display for SoldierProfileIdx {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct CivilianProfileIdx(pub u32);
 
@@ -167,6 +173,8 @@ impl std::fmt::Display for CivilianProfileIdx {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Action {
     #[default]
@@ -226,6 +234,8 @@ impl Action {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[allow(missing_docs)]
 pub enum ScriptAction {
@@ -310,6 +320,8 @@ impl ScriptAction {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ProfileRank {
     #[default]
@@ -331,6 +343,8 @@ pub enum ProfileRank {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum WeaponMaterial {
     #[default]
@@ -352,6 +366,8 @@ pub enum WeaponMaterial {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ArmorMaterial {
     #[default]
@@ -372,6 +388,8 @@ pub enum ArmorMaterial {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum CivilianType {
     #[default]
@@ -395,6 +413,8 @@ pub enum CivilianType {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Attitude {
     #[default]
@@ -414,6 +434,8 @@ pub enum Attitude {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum WeaponTarget {
     #[default]
@@ -437,6 +459,8 @@ pub enum WeaponTarget {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum WeaponThrustKind {
     #[default]
@@ -462,6 +486,8 @@ pub enum WeaponThrustKind {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum WeaponThrustDirection {
     #[default]
@@ -482,6 +508,8 @@ pub enum WeaponThrustDirection {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionType {
     Historical = 0,
@@ -516,6 +544,8 @@ impl MissionType {
     Deserialize,
     TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionLocation {
     #[default]
@@ -533,7 +563,16 @@ pub enum MissionLocation {
 
 // ─── Profile Structs ─────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ThrustProfile {
     pub target: WeaponTarget,
     pub kind: WeaponThrustKind,
@@ -550,7 +589,16 @@ pub struct ThrustProfile {
     pub energy: u16,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HtHWeaponProfile {
     pub distance: [u16; 4],
     pub protection_by_localization: [u16; 5],
@@ -563,7 +611,16 @@ pub struct HtHWeaponProfile {
     pub thrusts: [ThrustProfile; 10],
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CharacterProfile {
     pub index: u32,
     pub filename: String,
@@ -612,7 +669,16 @@ impl CharacterProfile {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoldierProfile {
     pub filename: String,
     pub profile_name: String,
@@ -649,7 +715,16 @@ pub struct SoldierProfile {
     pub armor_material: ArmorMaterial,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CivilianProfile {
     pub filename: String,
     pub profile_name: String,
@@ -659,7 +734,16 @@ pub struct CivilianProfile {
     pub exclamation_id: u32,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MissionProfile {
     pub id: u32,
     pub proto_level_filename: String,
@@ -703,19 +787,46 @@ pub struct MissionProfile {
 
 // ─── Bow Profile ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BowHitChance {
     pub hit_chance: [u16; 6],
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BowShootMode {
     pub range: u16,
     pub hit_chances: [BowHitChance; 3], // Beginner, Normal, Elite
     pub damage: u16,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BowProfile {
     pub normal_shoot: BowShootMode,
     pub has_long_shoot: bool,
@@ -756,7 +867,16 @@ impl BowProfile {
 /// Manages all profile data (characters, soldiers, civilians, weapons,
 /// missions). Loaded from CSV files at startup, optionally cached as
 /// compiled `.cpf` binary files.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ProfileManager {
     pub characters: Vec<CharacterProfile>,
     pub soldiers: Vec<SoldierProfile>,

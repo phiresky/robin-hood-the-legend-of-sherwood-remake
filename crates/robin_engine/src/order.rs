@@ -21,6 +21,8 @@ use std::num::NonZeroU32;
     strum_macros::Display,
     strum_macros::EnumString,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum OrderType {
@@ -502,6 +504,8 @@ impl OrderType {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum OrderCompletion {
     /// Default: `do_next_order` pops this order and advances /
@@ -538,7 +542,13 @@ pub enum OrderCompletion {
 /// Fields that are not yet needed are omitted; add them as more of the
 /// sequence system is ported.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Order {
     pub order_type: OrderType,
@@ -715,7 +725,13 @@ pub fn alloc_order_id(counter: &mut u32) -> NonZeroU32 {
 /// Same shape as [`Order`] minus `order_id` and `completion` (AI
 /// orders always use the default `AdvanceElement` completion).
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiOrderIntent {
     pub order_type: OrderType,
@@ -1006,8 +1022,8 @@ mod tests {
         assert_eq!(json, "\"ShootingWithBowAnonymous\"");
         assert_eq!(serde_json::from_str::<OrderType>(&json).unwrap(), value);
 
-        let bytes = bitcode::serialize(&value).expect("serialize high order type");
-        assert_eq!(bitcode::deserialize::<OrderType>(&bytes).unwrap(), value);
+        let bytes = bitcode::encode(&value);
+        assert_eq!(bitcode::decode::<OrderType>(&bytes).unwrap(), value);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Full game save payload — captures a snapshot of Engine + Campaign state.
 //!
 //! Logical fields are serialized through serde.  The format is JSON today
-//! for debuggability; switching to a compact binary format (e.g. bincode)
+//! for debuggability; switching to a compact binary format (e.g. bitcode)
 //! is a future option once the set of serialized fields stabilizes.  A
 //! 4-byte "RHSG" magic plus a format version are stored in the header.
 //! Readers validate that header before deserializing the version-specific

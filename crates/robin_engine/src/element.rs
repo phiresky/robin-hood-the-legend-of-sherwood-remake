@@ -68,7 +68,15 @@ pub use crate::entity_id::{
 // ═══════════════════════════════════════════════════════════════════
 
 /// Base data shared by **all** entities.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementData {
     pub kind: ElementKind,
 
@@ -473,7 +481,16 @@ impl ElementData {
 /// `door_pass.rs`). Lets the push-damage path know which sector an actor
 /// was climbing so `translate_ladder_wall_fall` can decrement that
 /// sector's occupancy counter.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActiveLiftClimb {
     /// The lift sector number the actor is currently occupying.
     pub sector_number: u16,
@@ -490,7 +507,15 @@ pub struct ActiveLiftClimb {
 /// instantly.  Each frame the position is advanced by `increment`; on the
 /// final frame the entity snaps to `goal`.
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum FlightGeometry {
     /// Movement is expressed in projected map coordinates; the current
@@ -503,7 +528,15 @@ pub enum FlightGeometry {
 }
 
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ActiveFlight {
     pub geometry: FlightGeometry,
@@ -558,7 +591,15 @@ pub struct ActiveFlight {
 /// The Original keeps only the candidate list between calls to
 /// `ExecuteRiderCharge`; origin, direction, layer, and animation frame are
 /// sampled live on every owner movement slot.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActiveRiderCharge {
     /// Candidate victims (entities inside the initial large hit zone).
     /// Removed as they get hit.
@@ -569,7 +610,15 @@ pub struct ActiveRiderCharge {
 ///
 /// Built by `translate_pass_door_*`. Each door type produces a specific
 /// sequence of walk/transition/trigger steps.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum DoorPassStep {
     /// Walk to destination with the given animation.
     Walk {
@@ -613,7 +662,15 @@ pub enum DoorPassStep {
 /// - Walk steps set waypoints on the actor path
 /// - PassingDoor steps fire the layer/sector swap callback
 /// - Transition steps play animations in place
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActiveDoorPass {
     /// Door index in the global door table.
     pub door_index: crate::gate::DoorIndex,
@@ -655,7 +712,16 @@ pub struct ActiveDoorPass {
 /// can clear the pointer for the remainder of an actor slot even if later
 /// manager work has already selected a fallback element.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct InstalledActorOrder {
     pub order_id: std::num::NonZeroU32,
@@ -663,7 +729,15 @@ pub struct InstalledActorOrder {
 }
 
 /// Actor-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActorData {
     pub continuation: crate::actor_state::ActorContinuationState,
     pub old_action: Animation,
@@ -929,6 +1003,8 @@ impl ActorData {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SmalltalkHint {
     #[default]
@@ -945,7 +1021,15 @@ pub enum SmalltalkHint {
 /// state here lets a mid-frame load resume before that refresh without
 /// inventing geometry or dropping the Original affect-mask.
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct HumanRepulsivePointState {
     pub position: MapPoint,
@@ -964,14 +1048,31 @@ pub struct HumanRepulsivePointState {
 }
 
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct HumanShieldPointState {
     pub obstacle: [f32; 4],
     pub polygon: MapPoint,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HumanPlaneState {
     pub a: WorldPoint3D,
     pub b: WorldPoint3D,
@@ -986,7 +1087,15 @@ pub struct HumanPlaneState {
 }
 
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct HumanBoundingBox2State {
     pub top_left: MapPoint,
@@ -995,7 +1104,16 @@ pub struct HumanBoundingBox2State {
 }
 
 /// Exact serialized `RHSightObstacle` owned by a Human.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HumanShieldState {
     pub points: [HumanShieldPointState; 4],
     pub top_plane: HumanPlaneState,
@@ -1007,7 +1125,16 @@ pub struct HumanShieldState {
 }
 
 /// Serialized progress of a Human's in-flight multi-victim sword strike.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HumanSwordSweepState {
     pub victims: Vec<EntityId>,
     pub initial_angle: f32,
@@ -1020,7 +1147,9 @@ pub struct HumanSwordSweepState {
 /// The jump line belongs to this human's side of a table swordfight. Keeping
 /// it in the same record as the opponent prevents principal promotion,
 /// removal, and insertion from desynchronizing the two values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct SwordfightOpponent {
     opponent: EntityId,
     jump_line: Option<JumpLineIndex>,
@@ -1055,7 +1184,9 @@ impl SwordfightOpponent {
 /// type's `StateHash` implementation retain that wire shape and hash byte
 /// order while the live representation enforces the Original's one-record
 /// invariant.
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Default, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct SwordfightOpponents {
     entries: Vec<SwordfightOpponent>,
@@ -1311,7 +1442,7 @@ impl robin_util::state_hash::StateHash for SwordfightOpponents {
 }
 
 /// Human-level data.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash)]
+#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
 pub struct HumanData {
     pub carrier: Option<EntityId>,
 
@@ -1378,9 +1509,8 @@ pub struct HumanData {
 }
 
 /// Compatibility view of [`HumanData`]. The two opponent vectors deliberately
-/// remain adjacent and in their historical order for JSON saves and bincode
-/// multiplayer snapshots.
-#[derive(Serialize, Deserialize)]
+/// remain adjacent and in their historical order for JSON saves.
+#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct HumanDataWire {
     carrier: Option<EntityId>,
     concussion_of_the_brain: u16,
@@ -1691,7 +1821,16 @@ impl HumanData {
 /// also persists the same values in [`crate::campaign::PcDescription`], but a
 /// script call must not depend on a campaign object being installed.
 #[derive(
-    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PcAmmoData {
     pub ales: u16,
@@ -1739,7 +1878,16 @@ impl PcAmmoData {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PcPortraitQuickIconState {
     pub titbit_id: u32,
     pub running: bool,
@@ -1758,7 +1906,16 @@ impl Default for PcPortraitQuickIconState {
 ///
 /// The renderer may project this into a host widget, but simulation adoption
 /// must not lose it merely because no widget exists in a headless replay.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PcPortraitState {
     pub quantities: [u16; 3],
     pub two_buttons_mode: bool,
@@ -1771,7 +1928,15 @@ pub struct PcPortraitState {
 }
 
 /// PC-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PcData {
     /// Life points stored directly.
     pub life_points: i16,
@@ -2054,7 +2219,15 @@ impl PcData {
 }
 
 /// A detectable entity tracked by NPC vision.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Detectable {
     pub element: Option<EntityId>,
     pub detectable_type: DetectableType,
@@ -2083,7 +2256,16 @@ impl Default for Detectable {
 
 /// AI brain enum.  Each NPC owns one of these; soldiers get
 /// [`EnemyAi`], civilians get [`FriendlyAi`].
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AiBrain {
     #[default]
     None,
@@ -2148,7 +2330,15 @@ impl AiBrain {
 }
 
 /// NPC-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct NpcData {
     /// Persistent NPC-only construction ordinal.
     ///
@@ -2343,6 +2533,8 @@ pub struct NpcData {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u8)]
 pub enum EyeStatus {
@@ -2579,7 +2771,16 @@ impl NpcData {
 }
 
 /// Soldier-specific data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoldierData {
     pub apple_smell: u32,
     /// References soldier profile data.
@@ -2593,7 +2794,16 @@ pub struct SoldierData {
 }
 
 /// Civilian-specific data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CivilianData {
     pub current_scroll_set: u32,
     /// References civilian profile data.
@@ -2609,7 +2819,15 @@ pub struct CivilianData {
 }
 
 /// FX-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FxData {
     pub restore_background: bool,
     pub force_display: bool,
@@ -2658,7 +2876,15 @@ impl Default for FxData {
 }
 
 /// Target-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TargetData {
     pub animation: Animation,
     /// Raw frame-progression ordinal from level data.
@@ -2724,7 +2950,16 @@ impl Default for TargetData {
 /// point, including those dormant bytes. Keep their exact IEEE-754 storage
 /// without exposing non-finite values to runtime geometry or JSON snapshots.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct LegacyV48ObjectRepulsivePointState {
     pub position_bits: [u32; 2],
@@ -2743,7 +2978,15 @@ pub struct LegacyV48ObjectRepulsivePointState {
 }
 
 /// Object-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ObjectData {
     pub associated_action: Action,
     pub terminate: bool,
@@ -2787,21 +3030,45 @@ impl Default for ObjectData {
 /// The projectile moves linearly from its current position to
 /// `position` over `time` frames before popping the next point from
 /// the trajectory list.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TrajectoryPoint {
     pub position: WorldPoint3D,
     /// Number of frames to reach this point from the previous position.
     pub time: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TrajectoryPointRuntime {
     pub bounce: bool,
     pub material: u32,
 }
 
 /// Projectile-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ProjectileData {
     /// 3D launch point.  Read by the trajectory-arc debug overlay
     /// (`game_render::draw_trajectories`) to render from the launch
@@ -2943,7 +3210,16 @@ impl Default for ProjectileData {
 }
 
 /// Net-specific data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct NetData {
     pub victims: Vec<EntityId>,
     /// Pre-landing countdown (frames). Set at spawn time to
@@ -2973,7 +3249,16 @@ pub struct NetData {
 /// [`ProjectileData`] so it travels with the existing
 /// `Entity::Projectile(ElementProjectile)` payload — no extra entity
 /// variant needed.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PurseData {
     /// On a coin: handle of the purse it was ejected from.  On a
     /// purse: always `None`.
@@ -3011,7 +3296,16 @@ pub struct PurseData {
 ///
 /// Wasp AI (chase/sting soldiers) lives in `engine::wasp_nest`; when a
 /// wasp dies it decrements the nest's counter through `source_nest`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct WaspData {
     /// On a wasp nest: remaining wasps in flight.  Incremented to
     /// `NUMBER_OF_WASPS` on burst, decremented when each wasp dies.
@@ -3045,7 +3339,15 @@ pub struct WaspData {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Player character entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActorPc {
     pub element: ElementData,
     pub actor: ActorData,
@@ -3054,7 +3356,15 @@ pub struct ActorPc {
 }
 
 /// Soldier NPC entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActorSoldier {
     pub element: ElementData,
     pub actor: ActorData,
@@ -3064,7 +3374,15 @@ pub struct ActorSoldier {
 }
 
 /// Civilian NPC entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActorCivilian {
     pub element: ElementData,
     pub actor: ActorData,
@@ -3074,14 +3392,30 @@ pub struct ActorCivilian {
 }
 
 /// Basic visual effect entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementFx {
     pub element: ElementData,
     pub fx: FxData,
 }
 
 /// Target / activator entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementTarget {
     pub element: ElementData,
     pub fx: FxData,
@@ -3089,14 +3423,31 @@ pub struct ElementTarget {
 }
 
 /// Bonus / pickup object entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementBonus {
     pub element: ElementData,
     pub object: ObjectData,
 }
 
 /// Scroll (mission pickup) entity.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementScroll {
     pub element: ElementData,
     pub object: ObjectData,
@@ -3114,7 +3465,15 @@ pub struct ElementScroll {
 }
 
 /// Projectile entity (arrows, stones, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementProjectile {
     pub element: ElementData,
     pub object: ObjectData,
@@ -3122,7 +3481,15 @@ pub struct ElementProjectile {
 }
 
 /// Net (trap net) entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ElementNet {
     pub element: ElementData,
     pub object: ObjectData,
@@ -3135,7 +3502,15 @@ pub struct ElementNet {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Any game entity.  Provides enum-based dispatch over all concrete types.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum Entity {
     Pc(ActorPc),
     Soldier(ActorSoldier),
@@ -5959,16 +6334,8 @@ mod tests {
             opponents
         );
 
-        let config = bincode::config::standard();
-        let binary = bincode::serde::encode_to_vec(&opponents, config).unwrap();
-        assert_eq!(
-            binary,
-            bincode::serde::encode_to_vec(&entries, config).unwrap(),
-            "transparent aggregate must keep standalone record-sequence bytes"
-        );
-        let (decoded, consumed): (SwordfightOpponents, usize) =
-            bincode::serde::decode_from_slice(&binary, config).unwrap();
-        assert_eq!(consumed, binary.len());
+        let binary = bitcode::encode(&opponents);
+        let decoded: SwordfightOpponents = bitcode::decode(&binary).unwrap();
         assert_eq!(decoded, opponents);
     }
 
@@ -6018,29 +6385,9 @@ mod tests {
             vec![(first, None), (second, None)]
         );
 
-        let config = bincode::config::standard();
-        let binary = bincode::serde::encode_to_vec(&human, config).unwrap();
-        let legacy_binary =
-            bincode::serde::encode_to_vec(HumanDataWire::from(human.clone()), config).unwrap();
-        assert_eq!(binary, legacy_binary);
-        let (binary_round_trip, consumed): (HumanData, usize) =
-            bincode::serde::decode_from_slice(&binary, config).unwrap();
-        assert_eq!(consumed, binary.len());
+        let binary = bitcode::encode(&human);
+        let binary_round_trip: HumanData = bitcode::decode(&binary).unwrap();
         assert_eq!(binary_round_trip.opponents, human.opponents);
-
-        let mut short_binary_wire = HumanDataWire::from(human.clone());
-        short_binary_wire.opponent_jump_lines.truncate(1);
-        let short_binary = bincode::serde::encode_to_vec(short_binary_wire, config).unwrap();
-        let (normalized, consumed): (HumanData, usize) =
-            bincode::serde::decode_from_slice(&short_binary, config).unwrap();
-        assert_eq!(consumed, short_binary.len());
-        assert_eq!(
-            normalized
-                .opponents
-                .iter_with_jump_lines()
-                .collect::<Vec<_>>(),
-            vec![(first, Some(line)), (second, None)]
-        );
 
         value["opponent_jump_lines"] = serde_json::json!([]);
         let normalized: HumanData = serde_json::from_value(value.clone()).unwrap();

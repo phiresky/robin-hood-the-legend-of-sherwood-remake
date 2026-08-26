@@ -59,7 +59,7 @@ mod suite {
                 .actor_data_mut()
                 .unwrap();
             actor.seek_target = Some(target);
-            actor.post_seek_sequence = Some(Box::new(post_seek));
+            actor.post_seek_sequence = Some(post_seek.into_post_seek());
         }
 
         let movement = SequenceElement::new_movement(
@@ -1147,7 +1147,7 @@ mod suite {
                 .actor_data_mut()
                 .unwrap();
             actor.seek_target = Some(owner);
-            actor.post_seek_sequence = Some(Box::new(Sequence::new()));
+            actor.post_seek_sequence = Some(Sequence::new().into_post_seek());
         }
         let mut outgoing = SequenceElement::new_movement(
             1,
@@ -1638,7 +1638,7 @@ mod suite {
             .unwrap();
         actor.seek_target = Some(target);
         actor.last_seek_target_position = MapPoint::new(100.0 + distance, 100.0);
-        actor.post_seek_sequence = Some(Box::new(interaction));
+        actor.post_seek_sequence = Some(interaction.into_post_seek());
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -2062,7 +2062,7 @@ mod suite {
                 Some(crate::actor_state::ActorSeekSector::Position(seek_sector));
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
-            actor.post_seek_sequence = Some(Box::new(post_seek));
+            actor.post_seek_sequence = Some(post_seek.into_post_seek());
             (
                 actor.active_movement.sequence_id.unwrap(),
                 actor.active_movement.element_index,
@@ -2156,7 +2156,7 @@ mod suite {
         *stored_destination = destination;
         *sector = Some(seek_sector);
         *layer = seek_layer;
-        *post_seek_sequence = Some(Box::new(post_seek));
+        *post_seek_sequence = Some(post_seek.into_post_seek());
 
         let transient = engine.orders.sequence_manager.launch_element(seek);
         engine.hourglass_phase_sequences(

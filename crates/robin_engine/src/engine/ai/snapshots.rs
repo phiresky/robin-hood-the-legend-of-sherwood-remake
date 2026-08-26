@@ -25,7 +25,7 @@ pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> b
 // now so the per-phase methods (extracted progressively in this module)
 // can share them without nesting type definitions.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct PcSnapshot {
     pub(super) id: EntityId,
     /// Raw `RHElement::IsActive()` analogue. Living inactive PCs stay in
@@ -148,7 +148,7 @@ pub(super) struct PcSnapshot {
     pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct SoldierSnapshot {
     pub(super) id: EntityId,
     /// Raw element activity. Inactive soldiers remain in this snapshot for
@@ -300,7 +300,7 @@ pub(super) struct SoldierSnapshot {
 /// kind needs (e.g. `able_to_help` for Friend, dead/unconscious flags
 /// for MissedFriend / Beggar, `is_true_or_false_beggar` for the
 /// Beggar cleanup-detectables predicate).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct HumanTarget {
     pub(super) position: MapPoint,
     /// Original `GetPositionGround()`, i.e. stored world-space X/Y.  This is
@@ -356,7 +356,7 @@ pub(super) struct HumanTarget {
 /// appear in an NPC's `DetectableType::Object` list (coins, ales,
 /// money bags, etc.).  Captures the data the object-visibility
 /// computation reads.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct ObjectTarget {
     pub(super) position: MapPoint,
     /// Original `GetPositionGround()` used by RefreshDetection's outer box.
@@ -380,7 +380,7 @@ fn object_detection_world_position(
 /// `RHElementActorNPC::RefreshDetection` call. PC data is captured once because
 /// building it also updates produced-noise state. Volatile NPC human/object
 /// target data is intentionally rebuilt at each NPC creation slot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct AiWorldView {
     pub(super) pcs: Vec<PcSnapshot>,
     /// `RHArtificialIntelligence::Position(entity)` resolved at this owner

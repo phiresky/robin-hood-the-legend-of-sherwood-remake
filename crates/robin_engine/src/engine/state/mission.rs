@@ -9,7 +9,14 @@ use crate::{
 ///
 /// `Domain` distinguishes this engine-owned state from the host-side
 /// `robin_rs::MissionRuntime` lifecycle object.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct MissionDomain {
     pub(crate) state: MissionState,
     pub(crate) cheat_used_flags: u32,

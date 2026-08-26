@@ -64,7 +64,16 @@ impl From<i32> for LevelError {
 
 /// Level file format variant.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum LevelFormat {
     /// Demo / original release (no `_NEW_LEVELS`).
@@ -719,7 +728,15 @@ fn tag_str(tag: &[u8; 4]) -> String {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Mission header from the HEAD/FOOT chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MissionHeader {
     pub control_crc: u32,
     pub ambiance: u32,
@@ -728,7 +745,15 @@ pub struct MissionHeader {
 }
 
 /// Beam-me spawn point from the GOOD/SCOT chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BeamMe {
     pub position: MapPoint,
     pub direction: u32,
@@ -744,7 +769,16 @@ pub struct BeamMe {
 }
 
 /// Action requirement flags for beam-me spawn points.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BeamMeActions {
     pub climb: bool,
     pub jump: bool,
@@ -759,7 +793,15 @@ pub struct BeamMeActions {
 }
 
 /// Raw soldier data from the EVIL/BORG sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawSoldier {
     pub position_x: u16,
     pub position_y: u16,
@@ -782,7 +824,15 @@ pub struct RawSoldier {
 }
 
 /// Raw civilian data from the CIVI/OILE sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawCivilian {
     pub position_x: u16,
     pub position_y: u16,
@@ -803,7 +853,15 @@ pub struct RawCivilian {
 }
 
 /// Raw target data from the TGET/BOOM sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawTarget {
     pub position_x: i16,
     pub position_y: i16,
@@ -826,7 +884,15 @@ pub struct RawTarget {
 }
 
 /// Raw bonus data from the BONU/ZORG chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawBonus {
     pub bonus_type: u16,
     pub quantity: u16,
@@ -840,7 +906,15 @@ pub struct RawBonus {
 }
 
 /// Raw PC-to-rescue data from the PRIS/TOTO sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawPcRescue {
     pub position_x: i16,
     pub position_y: i16,
@@ -856,7 +930,15 @@ pub struct RawPcRescue {
 }
 
 /// Raw scroll data from the PARC/SKRO chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawScroll {
     pub position_x: u16,
     pub position_y: u16,
@@ -877,7 +959,15 @@ pub struct RawScroll {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Reinforcement door spawn point from the REIN/POW sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawReinforcementPoint {
     pub x: i16,
     pub y: i16,
@@ -889,7 +979,15 @@ pub struct RawReinforcementPoint {
 }
 
 /// Ambush trigger point from the AMBU/BUSH sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawAmbushPoint {
     pub x: i16,
     pub y: i16,
@@ -898,7 +996,15 @@ pub struct RawAmbushPoint {
 }
 
 /// Seek/search point from the SEAR/HOLE sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawSeekPoint {
     pub x: i16,
     pub y: i16,
@@ -908,7 +1014,15 @@ pub struct RawSeekPoint {
 }
 
 /// Archery point within an archery sector, from the ARCH/NLIP sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawArcheryPoint {
     pub x: u16,
     pub y: u16,
@@ -918,7 +1032,15 @@ pub struct RawArcheryPoint {
 }
 
 /// Archery sector (a path with shooting positions) from the ARCH/NLIP sub-chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawArcherySector {
     pub sector_ref: u16,
     pub polygon: SectorPolygon,
@@ -926,7 +1048,15 @@ pub struct RawArcherySector {
 }
 
 /// All tactic data from the TACTIC (AI /HIRN) chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawTacticData {
     pub reinforcement_points: Vec<RawReinforcementPoint>,
     pub ambush_points: Vec<RawAmbushPoint>,
@@ -940,20 +1070,45 @@ pub struct RawTacticData {
 
 /// A polygon read from a sector — just a list of 2D points (the sector
 /// boundary).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SectorPolygon {
     pub points: Vec<(i16, i16)>,
 }
 
 /// A motion obstacle within a motion area.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMotionObstacle {
     pub state_id: u32,
     pub polygon: SectorPolygon,
 }
 
 /// A motion area (walkable polygon + skeleton + obstacles).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMotionArea {
     pub is_lift: bool,
     pub state_id: u32,
@@ -966,7 +1121,15 @@ pub struct RawMotionArea {
 
 /// Motion data loaded from the MOTION chunk.
 /// Contains the raw motion obstacle geometry and the pathfinder graph bytes.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMotionData {
     /// Motion areas per layer: `layers[layer][area]`.
     pub layers: Vec<Vec<RawMotionArea>>,
@@ -978,7 +1141,15 @@ pub struct RawMotionData {
 ///
 /// Stores just the names needed to look up the sprite — the actual frame
 /// data is loaded later via the sprite scriptor.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawSpriteRef {
     /// Sprite file name (e.g. "trap01.rhs").
     pub frame_profile_name: String,
@@ -993,7 +1164,15 @@ pub struct RawSpriteRef {
 }
 
 /// Data for a single FX element loaded from the proto-level stream.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawElementFx {
     pub sprite: RawSpriteRef,
     /// Shadow/rendering mode: 0 = blocky, non-zero = needs shadow.
@@ -1005,14 +1184,31 @@ pub struct RawElementFx {
 }
 
 /// Reference to a mask in the grid by layer + index.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MaskRef {
     pub layer: u16,
     pub index: u16,
 }
 
 /// A single patch (interactive terrain area) loaded from the proto-level.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawPatch {
     pub element_fx: RawElementFx,
     pub active: bool,
@@ -1059,7 +1255,15 @@ pub struct RawPatch {
 }
 
 /// CHUNK_MISC data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ProtoMisc {
     pub control_crc: u32,
     pub forest_level: bool,
@@ -1069,14 +1273,30 @@ pub struct ProtoMisc {
 // ── Proto-level chunk structs ────────────────────────────────────
 
 /// Material sector from the MAT/TEXT chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMaterialSector {
     pub material: u8,
     pub polygon: SectorPolygon,
 }
 
 /// Light/shadow sector from the LZ/DARK chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawLightSector {
     pub layer: u16,
     pub polygon: SectorPolygon,
@@ -1084,7 +1304,15 @@ pub struct RawLightSector {
 }
 
 /// Elevation line from the BOND/007 chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawElevationLine {
     pub point_a: (i16, i16),
     pub point_b: (i16, i16),
@@ -1100,7 +1328,15 @@ pub const MASK_VIEW: u8 = 4;
 pub const MASK_OBSTACLE: u8 = 16;
 
 /// Mask data from the MASK/FACE chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMask {
     pub layer: u16,
     pub mask_type: u8,
@@ -1119,7 +1355,15 @@ pub struct RawMask {
 }
 
 /// 3D obstacle point used by sight obstacles.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawObstaclePoint {
     pub x: f32,
     pub y: f32,
@@ -1128,7 +1372,15 @@ pub struct RawObstaclePoint {
 }
 
 /// Sight obstacle from the SGHT/WOAW chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawSightObstacle {
     pub points: Vec<RawObstaclePoint>,
     /// Projection area (sector, layer) if this is a projection area.
@@ -1146,7 +1398,15 @@ pub struct RawSightObstacle {
 const SOUND_KIND_DELAYED: u8 = 2;
 
 /// Sound source from the SND/LOUD chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawSoundSource {
     pub id: i32,
     pub active: bool,
@@ -1165,7 +1425,15 @@ pub struct RawSoundSource {
 }
 
 /// Jump zone from the JZ/PPPP chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawJumpZone {
     pub polygon: SectorPolygon,
     pub sector: u16,
@@ -1174,7 +1442,15 @@ pub struct RawJumpZone {
 }
 
 /// 3D jump line from the JZ/PPPP chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawJumpLine {
     pub point_a: (i16, i16, i16),
     pub point_b: (i16, i16, i16),
@@ -1182,7 +1458,15 @@ pub struct RawJumpLine {
 }
 
 /// Jump line pair from the JZ/PPPP chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawJumpLinePair {
     pub line1: RawJumpLine,
     pub line2: RawJumpLine,
@@ -1190,7 +1474,15 @@ pub struct RawJumpLinePair {
 }
 
 /// Door data (shared between BUILDING and LIFT chunks).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawDoor {
     pub door_type: u8,
     pub active: bool,
@@ -1213,7 +1505,15 @@ pub struct RawDoor {
 }
 
 /// Lift data from the LIFT/AZ chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawLift {
     /// Index of the associated motion area.
     pub motion_area_index: u16,
@@ -1223,7 +1523,15 @@ pub struct RawLift {
 }
 
 /// Building entry from the BUIL/FARM chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum RawBuildingEntry {
     /// A full building sector with doors.
     Building { doors: Vec<RawDoor> },
@@ -1234,7 +1542,15 @@ pub enum RawBuildingEntry {
 // ── Mission-only chunk structs ───────────────────────────────────
 
 /// Script point from the SCRP/GULP chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawScriptPoint {
     pub x: i16,
     pub y: i16,
@@ -1243,7 +1559,15 @@ pub struct RawScriptPoint {
 }
 
 /// Script sector from the SCRP/GULP chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawScriptSector {
     pub polygon: SectorPolygon,
     pub sector_ref: u16,
@@ -1260,7 +1584,15 @@ pub struct RawScriptSector {
 /// `[points][lines][sectors]` layout literally, and so
 /// `script_location_count` cannot off-by-N if a future SCRIPT-chunk version
 /// reintroduces lines.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawScriptLine {
     pub x1: i16,
     pub y1: i16,
@@ -1275,7 +1607,15 @@ pub struct RawScriptLine {
 /// via `GetLocationScript(id)` where id indexes the combined array in the
 /// declared field order — `[points][lines][sectors]`.  `lines` is always
 /// empty on shipped missions (see `RawScriptLine`).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawScriptObjects {
     pub points: Vec<RawScriptPoint>,
     pub lines: Vec<RawScriptLine>,
@@ -1283,7 +1623,15 @@ pub struct RawScriptObjects {
 }
 
 /// Building tenant data from the GUYS/CAVE chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawBuildingTenants {
     pub tenant_element_indices: Vec<u16>,
     pub arrow_reserve: bool,
@@ -1292,7 +1640,15 @@ pub struct RawBuildingTenants {
 // ── Hiking path data (PATH/PWAY/RAIL chunk) ───────────────────
 
 /// Command attached to a waypoint — either a script class name or raw macro data.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum WaypointCommand {
     None,
     Script(String),
@@ -1300,7 +1656,15 @@ pub enum WaypointCommand {
 }
 
 /// A single waypoint in a hiking/patrol path.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawWaypoint {
     pub x: i16,
     pub y: i16,
@@ -1310,7 +1674,15 @@ pub struct RawWaypoint {
 }
 
 /// A hiking/patrol path consisting of ordered waypoints.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawHikingPath {
     pub waypoints: Vec<RawWaypoint>,
 }
@@ -1319,7 +1691,15 @@ pub struct RawHikingPath {
 /// the five horse-cart/chariot animations; the broader Spellbound mobile
 /// subsystem (hookable trailers, barrels, trains, and embedded sight
 /// obstacles) is not present in shipped missions.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RawMobileElement {
     pub sprites: Vec<RawElementFx>,
     pub motion_polygon: SectorPolygon,
@@ -1337,7 +1717,16 @@ pub struct RawMobileElement {
 
 /// Data loaded from a proto-level file (.rhp).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ProtoElementChunk {
     Animation,
@@ -1349,7 +1738,16 @@ pub enum ProtoElementChunk {
 /// those arrays, so preserving this order is required to reconstruct their
 /// exact serialization topology.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ProtoGridChunk {
     Patch,
@@ -1366,7 +1764,16 @@ pub enum ProtoGridChunk {
 
 /// Source-file order of mission chunks which extend Original's grid arrays.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionGridChunk {
     Tactic,
@@ -1376,7 +1783,16 @@ pub enum MissionGridChunk {
 
 /// Source order of mission chunks which construct `RHElement` instances.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionElementChunk {
     Element,
@@ -1388,7 +1804,16 @@ pub enum MissionElementChunk {
 
 /// Source order of groups nested inside the mission ELEMENT chunk.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionElementGroup {
     Civilian,
@@ -1399,7 +1824,15 @@ pub enum MissionElementGroup {
     Animal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LoadedProtoLevel {
     pub format: LevelFormat,
     pub misc: Option<ProtoMisc>,
@@ -1433,7 +1866,15 @@ pub struct LoadedProtoLevel {
 }
 
 /// Data loaded from a mission file (.rhm).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LoadedMission {
     pub format: LevelFormat,
     pub header: MissionHeader,
@@ -1468,7 +1909,15 @@ pub struct LoadedMission {
 }
 
 /// Complete loaded level (proto-level + mission).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LoadedLevel {
     pub proto: LoadedProtoLevel,
     pub mission: LoadedMission,
@@ -1490,7 +1939,7 @@ pub fn hackable_level_exists(mission_filename: &str) -> bool {
 /// This deliberately describes gameplay geometry rather than mirroring the
 /// legacy RHP/RHM serialization. It is loaded through the normal datadir
 /// overlay and expanded into the same raw structs as an original level.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 pub struct HackableLevelDescriptor {
     /// Display name shown in menus; falls back to the mission filename.
@@ -1504,7 +1953,7 @@ pub struct HackableLevelDescriptor {
 }
 
 /// One simplified, convex architectural volume in a hackable level descriptor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 pub struct HackableLevelVolume {
     pub name: String,

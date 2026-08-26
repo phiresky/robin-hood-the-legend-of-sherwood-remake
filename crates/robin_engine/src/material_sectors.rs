@@ -31,7 +31,15 @@ impl AspectPoint {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MaterialSector {
     pub points: Vec<MapPoint>,
     pub bounding_box: MapBBox,
@@ -215,13 +223,30 @@ impl MaterialSector {
 /// (`RHsightobstacle.cpp:469-470`, `muwLayer == 0xFFFF` for non
 /// projection areas, `RHsightobstacle.cpp:412-415`).  A grid query therefore
 /// only ever sees the sectors registered on the querying actor's own layer.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MaterialSectorRegistration {
     pub layer: u16,
     pub sector: MaterialSector,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MaterialSectors {
     pub sectors: Vec<MaterialSector>,
     /// Every `AddSector( sector, layer, true )` registration, in the order the

@@ -31,6 +31,8 @@ use crate::geo2d::{self, Polygon2D, pt, segment};
 )]
 pub struct SightObstacleIndex(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(SightObstacleIndex, u32);
+
 impl SightObstacleIndex {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -179,7 +181,15 @@ impl<'a> ObstacleList<'a> {
 /// Same `Arc<HashMap>` pattern used for
 /// [`crate::ai_entity_view::SharedAiEntityViews`]: cloning is a single
 /// atomic increment per `AiContext`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SharedSightObstacles {
     pub static_obstacles: std::sync::Arc<Vec<SightObstacle>>,
     pub dynamic_obstacles: std::sync::Arc<Vec<SightObstacle>>,
@@ -223,7 +233,9 @@ pub const SIGHTOBSTACLE_SHOW_SHADOW_POLYGON: u32 = 32;
 /// One authoritative opaque reachability call observed while replay parity
 /// capture is active. The game uses only the ordered endpoints and boolean
 /// result; obstacle/cache diagnostics remain recorder-side explanation.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ParityVisibilityQuery {
     pub origin: [f32; 3],
     pub destination: [f32; 3],
@@ -294,7 +306,15 @@ fn record_parity_visibility_query(
 
 /// A vertex of the obstacle with ground (x, y) and height range (z_bottom..z_top).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ObstaclePoint {
     pub x: f32,
@@ -329,6 +349,42 @@ pub(crate) fn obstacle_vertices_intersect_ground_bbox(
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GroundPolygon(Polygon2D<f32>);
 
+type PolygonWire = (Vec<[f32; 2]>, Vec<Vec<[f32; 2]>>);
+
+fn polygon_to_wire(polygon: &Polygon2D<f32>) -> PolygonWire {
+    let ring = |line: &geo::LineString<f32>| line.0.iter().map(|p| [p.x, p.y]).collect();
+    (
+        ring(polygon.exterior()),
+        polygon.interiors().iter().map(ring).collect(),
+    )
+}
+
+fn polygon_from_wire((exterior, interiors): PolygonWire) -> Polygon2D<f32> {
+    let ring = |points: Vec<[f32; 2]>| {
+        geo::LineString::new(
+            points
+                .into_iter()
+                .map(|[x, y]| geo::Coord { x, y })
+                .collect(),
+        )
+    };
+    Polygon2D::new(ring(exterior), interiors.into_iter().map(ring).collect())
+}
+
+impl crate::bitcode_adapters::NativeBitcode for GroundPolygon {
+    type Wire = PolygonWire;
+
+    fn to_wire(&self) -> Self::Wire {
+        polygon_to_wire(&self.0)
+    }
+
+    fn from_wire(wire: Self::Wire) -> Self {
+        Self(polygon_from_wire(wire))
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(GroundPolygon);
+
 impl GroundPolygon {
     pub fn empty() -> Self {
         Self(Polygon2D::new(geo::LineString::new(vec![]), vec![]))
@@ -351,6 +407,20 @@ impl GroundPolygon {
 /// also stores a projected polygon for projection-area clipping/lookup.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ProjectionPolygon(Polygon2D<f32>);
+
+impl crate::bitcode_adapters::NativeBitcode for ProjectionPolygon {
+    type Wire = PolygonWire;
+
+    fn to_wire(&self) -> Self::Wire {
+        polygon_to_wire(&self.0)
+    }
+
+    fn from_wire(wire: Self::Wire) -> Self {
+        Self(polygon_from_wire(wire))
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(ProjectionPolygon);
 
 impl ProjectionPolygon {
     pub fn empty() -> Self {
@@ -375,7 +445,15 @@ impl ProjectionPolygon {
 /// ground-plane projection forms `polygon`.  Each vertex carries independent
 /// top / bottom Z heights; two 3D planes (`top_plane`, `bottom_plane`)
 /// describe the cap surfaces.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SightObstacle {
     /// Unique ID (monotonically increasing, assigned at construction).
     pub id: u32,

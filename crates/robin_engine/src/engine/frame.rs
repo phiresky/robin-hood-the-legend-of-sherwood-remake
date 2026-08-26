@@ -51,7 +51,15 @@ use crate::sound::ResolvedExclamation;
 /// [`PlayerCommand`] enum and the simulation-frame API. Raw platform/UI
 /// actions must be resolved before constructing it. Its transparent wire
 /// representation preserves the existing [`PlayerInput`] schema.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct SimCommand(PlayerInput);
 
@@ -104,7 +112,15 @@ impl From<SimCommand> for PlayerInput {
 /// TODO(architecture): replace this free-form vector with phase-typed fields,
 /// or validate its phase ordering, so callers cannot encode a sound boundary
 /// before a director completion or more than one host sound boundary.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ExternalFact {
     /// A camera-director command completed during the preceding render pass.
@@ -128,7 +144,15 @@ pub enum ExternalFact {
 /// execute an action immediately in its own no-hourglass admission to produce a
 /// synchronous reply, then place the same value in the enclosing host frame's
 /// journal record.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExternalAction {
     Native {
@@ -156,7 +180,15 @@ pub enum ExternalAction {
 }
 
 /// Serializable result of an admitted host action.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ExternalActionResult {
     Native(Result<i32, String>),
@@ -174,7 +206,15 @@ pub enum ExternalActionResult {
 }
 
 /// Owned/serializable form of [`ConsoleResponse`] used at the frame boundary.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum FrameConsoleResponse {
     Ok(String),
@@ -208,7 +248,15 @@ impl From<ConsoleResponse> for FrameConsoleResponse {
 /// gate; mission scripts/messages and the mission clock still advance. It must
 /// not represent a host iteration where `PerformHourglass` was skipped
 /// entirely; use `run_hourglass` for that host gate.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SimulationFrameInput {
     pub external_facts: Vec<ExternalFact>,
     /// Host actions admitted before player commands and the hourglass.
@@ -341,7 +389,16 @@ impl SimulationFrameInput {
 /// adapter-only `SideEffects::pending_minimap_position`; that field can depend
 /// on [`super::HostDisplayState`] and is deliberately skipped by `SideEffects`
 /// serialization. It is available through [`Self::side_effects`] in memory.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct SimEvents(SideEffects);
 
@@ -372,7 +429,15 @@ impl From<SimEvents> for SideEffects {
 }
 
 /// Result of one admitted engine-hourglass transaction.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SimulationFrameOutput {
     /// Engine frame counter on entry.
     pub frame_before: u32,
@@ -402,7 +467,17 @@ impl SimulationFrameOutput {
 
 /// An authoritative external fact was incompatible with the current
 /// deterministic state.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum FrameAdvanceError {
     #[error("external fact {index} rejected {completion:?}: {reason}")]
     DirectorCompletionRejected {

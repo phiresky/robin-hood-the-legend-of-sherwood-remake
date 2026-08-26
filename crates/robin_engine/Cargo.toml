@@ -36,7 +36,6 @@ robin_util.workspace = true
 robin_state_hash_derive.workspace = true
 nonmax = { workspace = true, features = ["serde"] }
 bitcode.workspace = true
-bincode.workspace = true
 zip.workspace = true
 enum-map = { workspace = true, features = ["serde"] }
 indexmap = { workspace = true, features = ["serde"] }

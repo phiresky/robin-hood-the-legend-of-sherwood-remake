@@ -51,7 +51,9 @@ pub const NORMAL_BLAZON_SUB: usize = 1;
 pub const CASTLE_BLAZON_SUB: usize = 2;
 
 /// Per-slot classification from the three-sprite split.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub enum BlazonSlotKind {
     /// Already-owned blazon.
     Normal,
@@ -74,7 +76,9 @@ impl BlazonSlotKind {
 
 /// One blazon slot, laid out in screen-space with its kind already
 /// resolved (blink latch applied).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct BlazonSlotState {
     pub kind: BlazonSlotKind,
     /// Top-left x of the slot's bbox, in the same coordinate space as
@@ -85,7 +89,9 @@ pub struct BlazonSlotState {
 }
 
 /// Full immediate-mode snapshot of the blazon set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, bitcode::Encode, bitcode::Decode,
+)]
 pub struct BlazonSetState {
     /// `true` when huge (32×42) sprites are in use; `false` for tiny
     /// (9×14).

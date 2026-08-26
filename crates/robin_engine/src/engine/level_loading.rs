@@ -16,7 +16,7 @@ mod stage_tests;
 /// The builder owns the mission identity and explicit script mode; stage inputs
 /// and outputs are explicit values so transient proto data cannot leak into
 /// gameplay state.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 struct MissionLevelBuilder {
     mission_name: String,
     script_enabled: bool,
@@ -69,25 +69,39 @@ fn debug_view_radius_light(
     );
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct DoorStageOutput {
     authored_door_count: usize,
     building_gates: Vec<Vec<i32>>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 struct LiftPreflight {
     authored_door_count: usize,
 }
 
 use crate::gate::lift_endpoint_door_indices;
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 struct PatchStageOutput {
     patch_count: usize,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 struct BuildingTenantAttachment {
     building_index: usize,
     first_door_index: Option<crate::gate::DoorIndex>,
@@ -95,12 +109,16 @@ struct BuildingTenantAttachment {
     arrow_reserve: bool,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 struct BuildingStageOutput {
     attachments: Vec<BuildingTenantAttachment>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 struct MissionLevelBuildPlan {
     buildings: BuildingStageOutput,
     building_gates: Vec<Vec<i32>>,

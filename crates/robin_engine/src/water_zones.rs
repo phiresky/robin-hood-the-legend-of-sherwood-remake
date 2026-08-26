@@ -17,7 +17,15 @@ use crate::level_data::RawMaterialSector;
 use crate::sound_cache::Material;
 
 /// A single water or hole polygon loaded from the proto material chunk.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct WaterZone {
     pub points: Vec<MapPoint>,
     pub bounding_box: MapBBox,
@@ -56,7 +64,16 @@ impl WaterZone {
 ///
 /// Populated from [`robin_assets::level_loader::ProtoData::material_sectors`] at
 /// level-load time. Empty before any level is loaded.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct WaterZones {
     pub zones: Vec<WaterZone>,
 }

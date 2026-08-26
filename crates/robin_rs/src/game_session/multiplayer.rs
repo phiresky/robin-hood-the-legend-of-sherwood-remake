@@ -203,7 +203,7 @@ pub(crate) fn drain_net_inputs(
                 // rejoin without advancing the frame cursor.
                 if frame == 0 && manager.sim_frame == 0 {
                     let local_hash = robin_engine::replay::state_hash(&manager.engine);
-                    match bitcode::deserialize::<Engine>(&engine_bytes) {
+                    match bitcode::decode::<Engine>(&engine_bytes) {
                         Ok(snapshot) => {
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
@@ -262,7 +262,7 @@ pub(crate) fn drain_net_inputs(
                 // Mid-mission rejoin (frame > 0): atomically adopt the host's
                 // snapshot after attaching immutable script/grid/sprite data
                 // once from the locally loaded LevelAssets.
-                match bitcode::deserialize::<Engine>(&engine_bytes) {
+                match bitcode::decode::<Engine>(&engine_bytes) {
                     Ok(snapshot) => match manager.engine.try_adopt_snapshot(snapshot, assets) {
                         Ok(()) => {
                             host.transport.reconnecting = false;
@@ -896,7 +896,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("snapshot command admission");
-        let engine_bytes = bitcode::serialize(&snapshot).expect("serialize snapshot");
+        let engine_bytes = bitcode::encode(&snapshot);
         incoming
             .send(NetEvent::InitialSnapshot {
                 frame: 0,

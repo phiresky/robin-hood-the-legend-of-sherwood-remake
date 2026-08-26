@@ -190,7 +190,7 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// `Serialize`, `Deserialize`, and `StateHash` all follow the current nested
 /// ownership layout. Multiplayer peers, rollback, and current-format replays
 /// therefore observe the same deterministic state boundaries.
-#[derive(Clone, robin_state_hash_derive::StateHash)]
+#[derive(Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
 pub struct EngineInner {
     /// Deterministic mission outcome, campaign, objective, and stats state.
     pub(crate) mission_domain: MissionDomain,
@@ -300,7 +300,13 @@ pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 /// patch just transitioned. `restore_only = true` removes the decal
 /// without adding the current frame.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PendingBgBlit {
     pub entity_id: EntityId,
@@ -316,7 +322,13 @@ pub struct PendingBgBlit {
 /// result without mutating the live sprite; the hardware renderer consumes
 /// the concrete frame id and destination later.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PendingBgBlitDecal {
     pub bank_id: u32,

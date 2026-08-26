@@ -182,6 +182,24 @@ impl<'de> Deserialize<'de> for SimulationRng {
     }
 }
 
+impl crate::bitcode_adapters::NativeBitcode for SimulationRng {
+    type Wire = u64;
+
+    fn to_wire(&self) -> Self::Wire {
+        assert!(
+            self.original_replay.is_none(),
+            "original RNG parity replay cannot be encoded in an Engine snapshot"
+        );
+        self.seed()
+    }
+
+    fn from_wire(seed: Self::Wire) -> Self {
+        Self::with_seed(seed)
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(SimulationRng);
+
 impl robin_util::state_hash::StateHash for SimulationRng {
     fn state_hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
         robin_util::state_hash::StateHash::state_hash(
@@ -210,6 +228,8 @@ impl robin_util::state_hash::StateHash for SimulationRng {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u8)]
 pub enum DisplayOpCode {
@@ -241,6 +261,8 @@ pub enum DisplayOpCode {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(usize)]
 pub enum ScrollDirection {
@@ -263,7 +285,16 @@ impl ScrollDirection {
 
 /// State change requests that can be sent to the engine.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(i32)]
 pub enum EngineStateRequest {
@@ -300,6 +331,8 @@ pub enum EngineStateRequest {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Ambiance {
     #[default]
@@ -414,7 +447,15 @@ impl Ambiance {
 // ─── Background transform ────────────────────────────────────────────
 
 /// All state related to background scrolling and zoom transitions.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BackgroundTransform {
     // Scrolling state
     pub scroll_to_left: bool,
@@ -528,7 +569,15 @@ where
 }
 
 /// Script/director camera state.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CameraState {
     /// Top-left corner of the view in map coordinates.
     pub view_position: MapPoint,
@@ -649,8 +698,6 @@ impl Default for CameraState {
     Eq,
     Serialize,
     Deserialize,
-    bincode::Encode,
-    bincode::Decode,
     bitcode::Encode,
     bitcode::Decode,
     robin_state_hash_derive::StateHash,
@@ -735,6 +782,8 @@ impl CameraState {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct FadeToBlack {
     /// Total frames per phase (fade-out + fade-in each last `speed` frames).
@@ -938,7 +987,9 @@ pub struct LevelAssets {
 /// Script-facing immutable level data, grouped separately from rendering and
 /// navigation assets. It is populated only while constructing a mission and is
 /// borrowed read-only after [`Engine`](super::Engine) creation.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct LevelScriptAssets {
     /// Pre-decoded bytecode in host load order, keyed by mission base name.
     pub mission_programs: std::sync::Arc<
@@ -973,7 +1024,9 @@ pub struct LevelScriptAssets {
 }
 
 /// Immutable entity bindings created while loading a mission.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct LevelEntityAssets {
     /// Number of authored mobile elements required by compatible snapshots.
     pub mobile_element_count: usize,
@@ -996,7 +1049,16 @@ pub struct LevelEntityAssets {
 
 /// Source-derived identity for a patch in Original's per-layer serialization
 /// walk.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LegacyGridPatchAsset {
     pub patch_index: u32,
     pub layer: u16,
@@ -1006,19 +1068,48 @@ pub struct LegacyGridPatchAsset {
     pub fx_entity_handle: Option<i32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum LegacyGridGateAsset {
     Door,
     Stateless,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum LegacyGridScriptObjectAsset {
     NonSector,
     Sector { associated_class: Option<String> },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum LegacyGridSectorAsset {
     NullOrOrdinary,
     Door { gate_index: u32 },
@@ -1027,7 +1118,17 @@ pub enum LegacyGridSectorAsset {
 }
 
 /// Exact ordered arrays traversed by `RHFastFindGrid::Serialize`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LegacyGridTopologyAssets {
     pub patches: Vec<LegacyGridPatchAsset>,
     pub gates: Vec<LegacyGridGateAsset>,
@@ -1164,7 +1265,9 @@ impl Default for SimScratch {
 /// These fields are transient: populated during the level load sequence,
 /// fully drained before the first tick runs, and empty for the rest of
 /// the mission. They are not simulation state and are never serialized.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct LevelLoadStaging {
     /// Proto geometry that must wait until map dimensions are known.
     pub motion: MotionStageInput,
@@ -1174,7 +1277,9 @@ pub struct LevelLoadStaging {
 }
 
 /// Typed input to the motion/grid construction stage.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct MotionStageInput {
     /// Motion data loaded from proto level, processed when background is loaded.
     pub motion_data: Option<crate::level_data::RawMotionData>,
@@ -1202,14 +1307,16 @@ pub struct MotionStageInput {
 }
 
 /// Typed late attachments that depend on both grid geometry and script domains.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct DeferredLevelAttachments {
     /// Jump gates produced by proto geometry in exact jump-pair order.
     pub jump_gates: Vec<JumpGateAttachment>,
 }
 
 /// Deferred jump-gate attachment produced by the motion stage.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct JumpGateAttachment {
     pub point_out: crate::coordinates::MapPoint,
     pub point_in: crate::coordinates::MapPoint,
@@ -1381,8 +1488,8 @@ impl Serialize for MissionScript {
     }
 }
 
-#[derive(Deserialize)]
-struct MissionScriptSnapshot {
+#[derive(Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct MissionScriptSnapshot {
     script_name: String,
     manager: ScriptManager,
     state: ScriptState,
@@ -1397,13 +1504,39 @@ struct MissionScriptSnapshot {
     post_initialized: bool,
 }
 
-impl<'de> Deserialize<'de> for MissionScript {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let snapshot = MissionScriptSnapshot::deserialize(deserializer)?;
-        Ok(Self {
+impl crate::bitcode_adapters::NativeBitcode for MissionScript {
+    type Wire = MissionScriptSnapshot;
+
+    fn to_wire(&self) -> Self::Wire {
+        assert!(
+            self.call_stack.is_empty(),
+            "cannot snapshot MissionScript during an active script callback"
+        );
+        MissionScriptSnapshot {
+            script_name: self.script_name.clone(),
+            manager: self.manager.clone(),
+            state: self.state.clone(),
+            script_effects: self.script_effects.clone(),
+            instance: self.instance.clone(),
+            actor_instances: self.actor_instances.clone(),
+            zone_instances: self.zone_instances.clone(),
+            target_instances: self.target_instances.clone(),
+            scroll_instances: self.scroll_instances.clone(),
+            waypoint_instances: self.waypoint_instances.clone(),
+            post_initialized: self.post_initialized,
+        }
+    }
+
+    fn from_wire(snapshot: Self::Wire) -> Self {
+        Self::from_snapshot(snapshot)
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(MissionScript);
+
+impl MissionScript {
+    fn from_snapshot(snapshot: MissionScriptSnapshot) -> Self {
+        Self {
             script_name: snapshot.script_name,
             manager: snapshot.manager,
             state: snapshot.state,
@@ -1417,7 +1550,17 @@ impl<'de> Deserialize<'de> for MissionScript {
             scroll_instances: snapshot.scroll_instances,
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
-        })
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MissionScript {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let snapshot = MissionScriptSnapshot::deserialize(deserializer)?;
+        Ok(Self::from_snapshot(snapshot))
     }
 }
 
@@ -1937,7 +2080,9 @@ impl MissionScript {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ScriptInstanceCounts {
     pub actors: usize,
     pub zones: usize,
@@ -1949,7 +2094,16 @@ pub struct ScriptInstanceCounts {
 // ─── Mission state ───────────────────────────────────────────────────
 
 /// Tracks win/lose/interrupted conditions for the current mission.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MissionState {
     /// The mission has been won (objective completed).
     pub mission_won: bool,
@@ -2188,7 +2342,16 @@ impl InputState {
 // ─── Weather ─────────────────────────────────────────────────────────
 
 /// Weather and environmental state.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct WeatherState {
     /// Night shadow color (16-bit packed).
     pub night_color: u16,
@@ -2207,7 +2370,16 @@ impl WeatherState {
 // ─── Shield protection state ─────────────────────────────────────────
 
 /// State for the shield protection mechanic.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ShieldState {
     pub is_protected: bool,
     /// The PC whose defensive arc is being honoured. `None` means no
@@ -2233,7 +2405,15 @@ pub type ElementIndex = u32;
 ///
 /// One entry per sequence element with a timer countdown property that
 /// decrements each frame.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TimerEntry {
     /// Frames remaining, mirroring the Original's `RHFIELD_TIMER` **signed**
     /// `int` property. Decremented every frame; the entry is removed only when
@@ -2251,7 +2431,13 @@ pub struct TimerEntry {
 /// lets rollback replay the tick N times without triggering duplicate
 /// playback — the queue is cleared each frame regardless of replay count.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundCommand {
     /// Stop any currently-playing or queued exclamation for this actor.
@@ -2325,7 +2511,13 @@ pub enum SoundCommand {
 
 /// Changes the PC-info hover overlay applied post-tick by the host.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum OverlayChange {
     Show { pc_id: crate::element::EntityId },
@@ -2341,7 +2533,14 @@ pub enum OverlayChange {
 /// the host. Rollback replay discards the produced `SideEffects` so
 /// audio/UI aren't duplicated when a frame is re-simulated.
 #[derive(
-    Debug, Default, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Default,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SideEffects {
     /// The game-state code returned by the tick (in-progress / succeeded / failed / interrupted).
@@ -2488,7 +2687,17 @@ pub enum EngineError {
 }
 
 /// Validation failures raised by the staged mission-level builder.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    thiserror::Error,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum MissionLevelBuildError {
     #[error(
         "mission '{mission}' has scripting enabled, but its mission VM with StartUp binding was not loaded"

@@ -52,6 +52,8 @@ pub const INVALID_ID: u32 = 0xFFFF_FFFF;
 )]
 pub struct TitbitId(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(TitbitId, u32);
+
 impl TitbitId {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -97,6 +99,8 @@ impl std::fmt::Display for TitbitId {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum TitbitKind {
@@ -131,6 +135,8 @@ pub enum TitbitKind {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum QuickAction {
@@ -193,7 +199,16 @@ pub enum QuickAction {
 
 /// Sprite row indices for the titbit sprite sheet.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum SpriteRow {
@@ -239,7 +254,16 @@ pub enum SpriteRow {
 
 /// Character indices for the "hidden in disguise" titbit.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum HiddenCharacter {
@@ -301,7 +325,16 @@ impl HiddenCharacter {
 
 /// Work icons displayed above PCs in Sherwood camp.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum WorkIcon {
@@ -337,6 +370,8 @@ pub enum WorkIcon {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ElementHandle(pub u32);
 
@@ -354,7 +389,15 @@ impl ElementHandle {
 // ---------------------------------------------------------------------------
 
 /// Data for a single floating indicator.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TitbitInfo {
     pub kind: TitbitKind,
     pub phase: u16,
@@ -396,7 +439,15 @@ impl PartialOrd for TitbitInfo {
 ///
 /// This struct owns the data and the per-frame update logic; rendering
 /// is handled separately.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct TitbitManager {
     /// The live titbit list, kept sorted by `display_order`.
     titbits: Vec<TitbitInfo>,

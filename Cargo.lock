@@ -5897,7 +5897,6 @@ dependencies = [
 name = "robin_engine"
 version = "0.0.0"
 dependencies = [
- "bincode",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bitflags 2.13.1",
  "enum-map",
@@ -5946,7 +5945,6 @@ dependencies = [
  "anyhow",
  "async-channel",
  "base64 0.22.1",
- "bincode",
  "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bitflags 2.13.1",

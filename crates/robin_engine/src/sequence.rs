@@ -54,6 +54,8 @@ use crate::order::{Order, OrderType};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SequenceId(pub u32);
 
@@ -78,6 +80,8 @@ pub struct SequenceId(pub u32);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SequenceElementRef {
     pub sequence_id: SequenceId,
@@ -108,6 +112,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(CascadeFlags, u16);
+
 // ═══════════════════════════════════════════════════════════════════
 //  State & priority enums
 // ═══════════════════════════════════════════════════════════════════
@@ -124,6 +130,8 @@ bitflags! {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceState {
     Terminated,
@@ -151,6 +159,8 @@ pub enum SequenceState {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequencePriority {
     NonInterruptable,
@@ -280,7 +290,16 @@ pub fn decide_priorities(current: SequencePriority, new: SequencePriority) -> Pr
 /// These represent high-level script actions that are built on top of
 /// the core sequence infrastructure.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceElementKind {
     // Camera
@@ -368,6 +387,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(MoveFlags, u32);
+
 // ═══════════════════════════════════════════════════════════════════
 //  Script recording session
 // ═══════════════════════════════════════════════════════════════════
@@ -375,7 +396,16 @@ bitflags! {
 /// Cached origin for an actor that already has an in-flight script
 /// move target (point + sector + level).  Used by
 /// `RecordingSession::moving_actors`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RecordingMotionTarget {
     pub x: f32,
     pub y: f32,
@@ -391,7 +421,15 @@ pub struct RecordingMotionTarget {
 /// Each `Then()` bumps the level, so the next batch of `Record*` calls gets
 /// a higher level (executed sequentially after the previous level completes).
 /// Elements added at the *same* level execute in parallel.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RecordingSession {
     /// Current command level (starts at 1 after `Start()`, incremented by `Then()`).
     pub command_level: u16,
@@ -499,6 +537,8 @@ impl RecordingSession {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Field {
     Direction,
@@ -605,7 +645,16 @@ impl Field {
 }
 
 /// Polymorphic value stored in a generic sequence element's property map.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum FieldValue {
     Bool(bool),
     Integer(u32),
@@ -695,7 +744,15 @@ impl std::error::Error for SequenceInvariantError {}
 
 /// Element subtypes — variants for simple, movement, generic, damage,
 /// and interaction elements.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum SequenceElementData<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Base type with no extra data.
     Simple,
@@ -927,7 +984,15 @@ impl SequenceElementData {
 ///  └──→ Interrupted
 ///  └──→ Impossible
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: u32,
@@ -1069,6 +1134,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
 }
 
 impl SequenceElement<()> {
+    /// Generic property access for elements in a flat post-seek sequence.
     pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
         match &self.data {
             SequenceElementData::Generic { properties } => properties.get(&field),
@@ -1077,12 +1143,28 @@ impl SequenceElement<()> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct LegacyV48OrderState {
     pub legacy_id: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct LegacyV48SequenceElementState {
     pub deleted: bool,
     pub script_driven: bool,
@@ -1726,7 +1808,15 @@ impl TryFrom<&SequenceElement> for SequenceCommand {
 /// Level 2: [Pass door]                     ← waits for level 1 to finish
 /// Level 3: [Move to goal]                  ← waits for level 2 to finish
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Sequence<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: SequenceId,
@@ -1750,11 +1840,16 @@ pub struct Sequence<P: robin_util::state_hash::StateHash = Option<PostSeekSequen
     started: bool,
 }
 
-/// A continuation attached to a root movement element. Its elements use a
-/// unit post-seek slot, so the continuation cannot recursively contain one.
+/// A continuation attached to a root movement element.
+///
+/// Its elements instantiate the post-seek slot with `()`, so they cannot
+/// attach another continuation. This matches every live construction path in
+/// the Original while keeping native bitcode's coder graph finite.
 pub type PostSeekSequence = Sequence<()>;
 
 impl Sequence {
+    /// Convert a newly built or legacy-decoded sequence into a one-level
+    /// continuation. Nested continuations are rejected explicitly.
     pub fn try_into_post_seek(self) -> Result<PostSeekSequence, SequenceInvariantError> {
         let Self {
             id,
@@ -1788,6 +1883,8 @@ impl Sequence {
         })
     }
 
+    /// Infallible convenience for gameplay-authored continuations. A nested
+    /// continuation here is a construction bug, not recoverable input.
     pub fn into_post_seek(self) -> PostSeekSequence {
         self.try_into_post_seek()
             .unwrap_or_else(|error| panic!("invalid gameplay post-seek sequence: {error}"))
@@ -1815,6 +1912,8 @@ impl PostSeekSequence {
         self.elements.last()
     }
 
+    /// Promote a detached continuation to an ordinary sequence immediately
+    /// before it is launched.
     pub fn into_sequence(self) -> Sequence {
         let Self {
             id,
@@ -2154,7 +2253,15 @@ pub(crate) fn take_goal_owner_terminal_provenance(
 
 /// Result of a state change on a sequence element.
 /// The caller (SequenceManager) must process these effects.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct StateChangeEffects {
     /// Loaded movement element's exact `mpsqeLinkedSeekSequenceElement`.
     /// Original interrupts this target with `CASCADE_FOLLOWING` before the
@@ -2708,7 +2815,15 @@ impl Sequence {
 /// An action the engine needs to perform on behalf of the sequence system.
 /// Returned by [`SequenceManager::hourglass`].
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceAction {
     /// Dispatch this element to its owner entity via `Instruct()`.
@@ -2756,7 +2871,15 @@ pub enum SequenceAction {
 /// follow.  Draining the buffer resumes the loop at exactly the point the
 /// original call stack would have returned to.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PendingSyncEntry {
     /// An action the engine must dispatch.
@@ -2792,6 +2915,82 @@ impl PendingSyncEntry {
 /// - Maintains a deferred "to go" queue processed each frame
 /// - Handles launching, termination, and cleanup
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(transparent)]
+struct OrderedSequences(IndexMap<SequenceId, Sequence>);
+
+impl std::ops::Deref for OrderedSequences {
+    type Target = IndexMap<SequenceId, Sequence>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for OrderedSequences {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<IndexMap<SequenceId, Sequence>> for OrderedSequences {
+    fn from(sequences: IndexMap<SequenceId, Sequence>) -> Self {
+        Self(sequences)
+    }
+}
+
+impl IntoIterator for OrderedSequences {
+    type Item = (SequenceId, Sequence);
+    type IntoIter = indexmap::map::IntoIter<SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a OrderedSequences {
+    type Item = (&'a SequenceId, &'a Sequence);
+    type IntoIter = indexmap::map::Iter<'a, SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut OrderedSequences {
+    type Item = (&'a SequenceId, &'a mut Sequence);
+    type IntoIter = indexmap::map::IterMut<'a, SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl crate::bitcode_adapters::NativeBitcode for OrderedSequences {
+    type Wire = Vec<(SequenceId, Sequence)>;
+
+    fn to_wire(&self) -> Self::Wire {
+        self.0
+            .iter()
+            .map(|(&id, sequence)| (id, sequence.clone()))
+            .collect()
+    }
+
+    fn from_wire(wire: Self::Wire) -> Self {
+        Self(wire.into_iter().collect())
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(OrderedSequences);
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SequenceManager {
     /// All active sequences, keyed by `SequenceId` in Original manager
     /// insertion order. `IndexMap` preserves that scan order while retaining
@@ -2803,7 +3002,7 @@ pub struct SequenceManager {
     /// Fresh sequences normally have monotonic IDs, but loaded Original
     /// managers can legitimately contain non-monotonic IDs in launch order.
     /// Several first-match scans depend on preserving that order exactly.
-    sequences: IndexMap<SequenceId, Sequence>,
+    sequences: OrderedSequences,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// live (`Todo`, `InProgress`, or `Postponed`) and owned by that
@@ -2927,7 +3126,16 @@ pub(crate) struct SequenceManagerV48State {
 
 /// Pending entity cleanup emitted by the sequence manager when an
 /// element finishes.  Drained by the engine after each `hourglass`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingCondolation {
     pub owner: EntityId,
     pub command: Command,
@@ -2968,7 +3176,15 @@ pub struct PendingCondolation {
 /// performs only after `SendCondolationCard` returns.  Keeping the
 /// continuation beside the card preserves the depth-first order across
 /// Rust's borrow-safe dispatch boundary.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingCondolationDispatch {
     pub card: PendingCondolation,
     effects_after_card: StateChangeEffects,
@@ -3034,7 +3250,7 @@ impl SequenceManager {
 
     pub fn new() -> Self {
         Self {
-            sequences: IndexMap::new(),
+            sequences: IndexMap::new().into(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
@@ -3056,7 +3272,8 @@ impl SequenceManager {
                 .sequences
                 .into_iter()
                 .map(|sequence| (sequence.id, sequence))
-                .collect(),
+                .collect::<IndexMap<_, _>>()
+                .into(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),

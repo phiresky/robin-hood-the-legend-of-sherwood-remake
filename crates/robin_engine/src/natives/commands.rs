@@ -15,7 +15,13 @@
 /// after script execution. [`EngineCommand::domain`] distinguishes genuine
 /// presentation from deterministic follow-up barriers.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum EngineCommand {
     /// Smooth-scroll camera to a location's position.
@@ -163,7 +169,13 @@ impl EngineCommand {
 /// Commands queued by script natives for the engine's sound system.
 /// The engine drains these after each script execution step.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundCommand {
     SuspendAll,
@@ -177,7 +189,13 @@ pub enum SoundCommand {
 /// Commands queued by script natives for the engine to process after
 /// script execution. Analogous to `SoundCommand` but for game logic.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DeferredCommand {
     /// Complete `RHArtificialIntelligence::AddPatrolMember` by running the

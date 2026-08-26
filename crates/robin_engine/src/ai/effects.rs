@@ -59,7 +59,16 @@ pub struct InitStateSideEffects {
 /// payloads or hide the barrier and insertion order behind construction
 /// boilerplate. Direct constructors for the few multi-field payloads keep the
 /// production order visible at the call site.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiOutbox {
     /// Drained by `tick_patrol_coordination` before per-NPC thinking.
     pub patrol: AiPatrolOutbox,
@@ -75,18 +84,45 @@ pub struct AiOutbox {
     pub music: AiMusicOutbox,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiPatrolOutbox {
     pub direction_broadcast: Option<u16>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiDetectionOutbox {
     pub stimuli: Vec<Stimulus>,
     pub mark_alerted: bool,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiReentrantOutbox {
     #[serde(skip)]
     #[state_hash(skip)]
@@ -161,7 +197,15 @@ pub struct AiReentrantOutbox {
     pub brawl_hitting_completion_pending: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
     /// Actor calls completed before a later synchronous owner statement.
@@ -330,7 +374,16 @@ pub enum AiOwnerWork {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiSpeechAttempt {
     pub remark: Remark,
@@ -343,7 +396,15 @@ pub struct AiSpeechAttempt {
 /// borrow, so the engine records both sides of the transition. The callback
 /// barrier temporarily restores `outgoing_*`, invokes `FilterAIEvent`, then
 /// re-resolves the typed AI owner and commits `incoming_*`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiStateChangeNotification {
     pub outgoing_state: AiState,
     pub outgoing_substate: Substate,
@@ -357,13 +418,31 @@ pub struct AiStateChangeNotification {
     pub actor_effects_before_callback: Option<AiActorOutbox>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiRecoveryOutbox {
     pub inform_resurrection: bool,
     pub set_eye_status: Option<crate::element::EyeStatus>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiMusicOutbox {
     pub instant_change: bool,
 }
@@ -371,7 +450,16 @@ pub struct AiMusicOutbox {
 /// Named, serializable payload for the attentive-mode barrier. This is a
 /// deliberately local replacement for the opaque
 /// `(target, fast_officer_variant)` tuple.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AttentiveModeEffect {
     pub target: bool,
     pub fast_officer_variant: bool,
@@ -386,7 +474,16 @@ pub struct AttentiveModeEffect {
 /// `None` is the original null-pointer case; using `PcId` prevents an NPC or
 /// object handle from entering this PC-only relationship channel.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GuardedPcEffect {
     pub old: Option<crate::entity_id::PcId>,
@@ -395,7 +492,16 @@ pub struct GuardedPcEffect {
 
 /// Typed location of an owned shooting point in the global archery tables.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ReservedShootingPoint {
     pub sector_index: u16,
@@ -423,6 +529,8 @@ impl From<(u16, u16)> for ReservedShootingPoint {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ArcheryReservationRelease {
     pub shooting_point: Option<ReservedShootingPoint>,
@@ -444,7 +552,16 @@ impl AttentiveModeEffect {
 /// Fields remain separated where the engine deliberately re-enters AI between
 /// applications. The `take_*` methods below are the ordered drain API; callers
 /// do not manually clear the underlying channels.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiActorOutbox {
     pub orders: Vec<AiOrderIntent>,
     pub quit_swordfight: bool,

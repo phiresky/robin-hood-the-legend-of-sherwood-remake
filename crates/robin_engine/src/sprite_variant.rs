@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum SpriteVariant {

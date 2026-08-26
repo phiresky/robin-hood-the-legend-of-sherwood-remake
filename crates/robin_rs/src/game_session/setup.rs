@@ -1636,10 +1636,7 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
         "bootstrap ConnectSeat applied to local engine",
     );
     if let Some(net) = host.transport.net.as_ref() {
-        net.publish_initial_snapshot(0, engine)
-            .unwrap_or_else(|error| {
-                panic!("multiplayer: failed to publish frame-0 host snapshot: {error}")
-            });
+        net.publish_initial_snapshot(0, engine);
         net.send_ready_to_sim(0);
         tracing::info!("multiplayer: cached and published frame-0 host snapshot");
     }
@@ -1800,7 +1797,7 @@ mod tests {
                 sim_config: engine_api::SimConfig::default(),
                 version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
                 total_frames: 0,
-                campaign: bitcode::serialize(&Campaign::default()).unwrap(),
+                campaign: bitcode::encode(&Campaign::default()),
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),

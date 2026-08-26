@@ -14,6 +14,8 @@ use std::ffi::c_void;
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(i32)]
 pub enum GameCode {

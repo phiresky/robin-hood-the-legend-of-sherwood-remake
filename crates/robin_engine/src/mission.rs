@@ -9,7 +9,16 @@ use serde::{Deserialize, Serialize};
 /// Mission completion status.
 #[repr(u32)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionStatus {
     Available = 0,
@@ -18,7 +27,15 @@ pub enum MissionStatus {
 }
 
 /// Runtime state of a mission.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Mission {
     pub age: u16,
     pub blazon_price: u16,

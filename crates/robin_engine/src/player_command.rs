@@ -17,10 +17,19 @@ use crate::profiles::Action;
 use crate::sequence::Field;
 use serde::{Deserialize, Serialize};
 
-/// The deliberately restricted payload accepted by
-/// [`PlayerCommand::QueueQuickAction`]. A separate enum makes the command
-/// graph non-recursive and prevents queued commands from nesting queues.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+/// The deliberately restricted command payload accepted by
+/// [`PlayerCommand::QueueQuickAction`]. Keeping this as a separate enum makes
+/// the player-command wire graph non-recursive and prevents queue commands
+/// from nesting other queue commands.
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum QueuedQuickActionCommand {
     GroupMove {
         actors: Vec<EntityId>,
@@ -297,7 +306,15 @@ impl From<PlayerCommand> for QueuedQuickActionCommand {
 }
 
 /// A single player-issued command that affects simulation state.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum PlayerCommand {
     /// No-op — signals that the input was consumed (e.g. an
     /// unrecognised swordfight gesture) without producing an action.
@@ -998,6 +1015,31 @@ mod tests {
     use crate::element::EntityIdKind;
 
     #[test]
+    fn queued_quick_action_is_non_recursive_and_native_bitcode_roundtrips() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Whistle,
+            command: PlayerCommand::LaunchSelfAbility {
+                actor,
+                command: Command::WhistleCmd,
+            }
+            .into(),
+        };
+        let bytes = bitcode::encode(&command);
+        let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode queued command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                command: QueuedQuickActionCommand::LaunchSelfAbility {
+                    actor: decoded_actor,
+                    command: Command::WhistleCmd,
+                },
+            } if decoded_actor == actor
+        ));
+    }
+
+    #[test]
     fn sword_seek_distance_roundtrips_and_missing_field_defaults_to_legacy_none() {
         let command = PlayerCommand::SwordStrikeCmd {
             actor: EntityId::new(3, EntityIdKind::Pc),
@@ -1044,7 +1086,16 @@ mod tests {
 /// (short-briefings pane, other mission-state popups) share the same
 /// pattern — add new variants as they get wired up.
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DebriefingTextId {
     Lose { index: usize },
@@ -1062,7 +1113,15 @@ impl DebriefingTextId {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ModalKind {
     /// Two-button dialogue window (`show_dialogue`), keyed by the
@@ -1086,7 +1145,15 @@ pub enum ModalKind {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionStateModalKind {
     /// First-time mission-won prompt asking whether to leave now.
@@ -1102,7 +1169,16 @@ pub enum MissionStateModalKind {
 /// play-through-all-sentences OK from an early Stop / Escape
 /// (currently just `show_dialogue`).
 #[derive(
-    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DialogResult {
     /// Player saw every sentence / pressed OK / pressed Return.
@@ -1133,6 +1209,8 @@ pub enum DialogResult {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PlayerId(pub u8);
 
@@ -1167,7 +1245,15 @@ impl Default for PlayerId {
 /// requested; the wrapper records *who* requested it so replay,
 /// rollback, network sync, and (eventually) per-seat state mutation
 /// all see the same authoritative tag.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayerInput {
     pub player_id: PlayerId,
     pub command: PlayerCommand,
@@ -1199,7 +1285,16 @@ impl From<PlayerCommand> for PlayerInput {
 }
 
 /// All player commands for a single frame.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FrameCommands {
     pub commands: Vec<PlayerInput>,
 }

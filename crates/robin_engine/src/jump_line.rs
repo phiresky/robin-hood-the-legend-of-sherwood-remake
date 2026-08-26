@@ -45,6 +45,8 @@ use crate::coordinates::{MapPoint, MapVec};
 )]
 pub struct JumpLineIndex(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(JumpLineIndex, u32);
+
 impl JumpLineIndex {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -74,7 +76,15 @@ impl std::fmt::Display for JumpLineIndex {
 }
 
 /// A jump line with 3D endpoints and paired-line / sector metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct JumpLine {
     /// Map-space position of endpoint A.
     pub point_a: MapPoint,

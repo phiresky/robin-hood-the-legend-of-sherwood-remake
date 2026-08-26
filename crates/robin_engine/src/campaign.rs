@@ -33,7 +33,16 @@ pub const COEFFICIENT_RESERVIST_LIFE: f32 = 1.5;
 
 #[repr(u32)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum LevelResult {
     Completed = 0,
@@ -52,6 +61,8 @@ pub enum LevelResult {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum CampaignValue {
     Amulets = 0,
@@ -125,7 +136,16 @@ pub const MAXIMUM_AMULETS_NUMBER: i32 = 10;
 
 /// A player character's dynamic state. The static profile data is
 /// referenced by index into the ProfileManager.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PcDescription {
     /// Index into ProfileManager.characters (None = unlinked).
     pub character_profile_idx: Option<CharacterProfileIdx>,
@@ -137,9 +157,70 @@ pub struct PcDescription {
 // ─── Campaign ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(transparent)]
+pub struct CampaignValues(EnumMap<CampaignValue, i32>);
+
+impl Default for CampaignValues {
+    fn default() -> Self {
+        Self(EnumMap::default())
+    }
+}
+
+impl From<EnumMap<CampaignValue, i32>> for CampaignValues {
+    fn from(values: EnumMap<CampaignValue, i32>) -> Self {
+        Self(values)
+    }
+}
+
+impl std::ops::Deref for CampaignValues {
+    type Target = EnumMap<CampaignValue, i32>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CampaignValues {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl crate::bitcode_adapters::NativeBitcode for CampaignValues {
+    type Wire = Vec<i32>;
+
+    fn to_wire(&self) -> Self::Wire {
+        self.0.values().copied().collect()
+    }
+
+    fn from_wire(wire: Self::Wire) -> Self {
+        let mut values = EnumMap::default();
+        assert_eq!(
+            wire.len(),
+            values.values().len(),
+            "native bitcode campaign-value count does not match this build"
+        );
+        for (slot, value) in values.values_mut().zip(wire) {
+            *slot = value;
+        }
+        Self(values)
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(CampaignValues);
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapshot>> {
     // ── Values / currency ──
-    pub values: EnumMap<CampaignValue, i32>,
+    pub values: CampaignValues,
     pub ares: i8,
 
     // ── Missions ──
@@ -182,8 +263,8 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
     /// start and consumed by [`Campaign::restore_snapshot`] when the
     /// player abandons / restarts.  Stored with campaign state so
     /// abandon/restart behavior survives save/load and rollback
-    /// snapshots. `CampaignSnapshot` instantiates this field with `()`, so a
-    /// restart image cannot recursively contain another restart image.
+    /// snapshots. The stored `CampaignSnapshot` instantiates this field with
+    /// `()`, so snapshots cannot recursively contain another snapshot.
     pub pre_mission_snapshot: S,
     /// Authoritative simulation state immediately before mission selection.
     /// Kept beside the existing campaign restart snapshot so save-loaded
@@ -276,7 +357,7 @@ impl Default for Campaign {
         let mut values = enum_map! { _ => 0 };
         values[CampaignValue::Ransom] = INITIAL_RANSOM;
         Campaign {
-            values,
+            values: values.into(),
             ares: -1,
             missions: Vec::new(),
             accessible_mission_indices: Vec::new(),
@@ -1874,7 +1955,7 @@ impl Campaign {
         self.pre_mission_was_preselected = false;
 
         // Reset values, set initial ransom
-        self.values = enum_map! { _ => 0 };
+        self.values = enum_map! { _ => 0 }.into();
         self.values[CampaignValue::Ransom] = INITIAL_RANSOM;
 
         // Recreate missions and gang from profiles
@@ -2464,6 +2545,20 @@ impl Campaign {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_snapshot_is_finite_and_native_bitcode_roundtrips() {
+        let mut campaign = Campaign::default();
+        campaign.set_value(CampaignValue::Score, 17);
+        campaign.snapshot();
+        campaign.set_value(CampaignValue::Score, 99);
+
+        let bytes = bitcode::encode(&campaign);
+        let mut restored: Campaign = bitcode::decode(&bytes).expect("decode campaign snapshot");
+        assert!(restored.restore_snapshot());
+        assert_eq!(restored.get_value(CampaignValue::Score), 17);
+        assert!(restored.pre_mission_snapshot.is_none());
+    }
 
     fn profile_manager_with_robin_party() -> ProfileManager {
         let mut profiles = ProfileManager::new();

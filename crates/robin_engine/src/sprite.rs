@@ -34,6 +34,8 @@ use crate::sprite_script::{
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MotionState {
     /// The action-done frame was reached.
@@ -71,6 +73,8 @@ impl Default for MotionState {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MotionMethod {
     None,
@@ -130,6 +134,8 @@ pub enum MotionOrderStateMismatch {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum FrameProgression {
     /// Normal: loop when reaching the end, report terminated on last frame.
@@ -250,6 +256,8 @@ impl FrameProgression {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum FlightStyle {
     Default,
@@ -262,7 +270,15 @@ pub enum FlightStyle {
 
 /// Axis-aligned pixel bounding box (top-left, bottom-right).
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct BBox {
     pub min: ScreenPoint,
@@ -455,8 +471,8 @@ struct SpriteSnapshotRef<'a> {
     center: SpriteAnchor,
 }
 
-#[derive(Deserialize)]
-struct SpriteSnapshot {
+#[derive(Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct SpriteSnapshot {
     position_iface: PositionInterface,
     current_row: u16,
     current_frame: u16,
@@ -482,7 +498,78 @@ struct SpriteSnapshot {
     center: SpriteAnchor,
 }
 
+impl crate::bitcode_adapters::NativeBitcode for Sprite {
+    type Wire = SpriteSnapshot;
+
+    fn to_wire(&self) -> Self::Wire {
+        SpriteSnapshot {
+            position_iface: self.position_iface.clone(),
+            current_row: self.current_row,
+            current_frame: self.current_frame,
+            frame_count: self.frame_count,
+            flight_frame_countdown: self.flight_frame_countdown,
+            current_width: self.current_width,
+            current_height: self.current_height,
+            last_action: self.last_action,
+            last_processed_order_id: self.last_processed_order_id,
+            masked: self.masked,
+            use_alternate_profile: self.use_alternate_profile,
+            action_done_frame: self.action_done_frame,
+            action_done_counter: self.action_done_counter,
+            last_sound_id: self.last_sound_id,
+            splitch_count: self.splitch_count,
+            behind_display_order_ref: self.behind_display_order_ref,
+            display_order_ref: self.display_order_ref,
+            anims_to_be_replaced: self.anims_to_be_replaced.clone(),
+            replacing_anims: self.replacing_anims.clone(),
+            frame_profile_name: self.frame_profile_name.clone(),
+            profile_cache_key: self.profile_cache_key.clone(),
+            alternate_profile_cache_key: self.alternate_profile_cache_key.clone(),
+            center: self.center,
+        }
+    }
+
+    fn from_wire(snapshot: Self::Wire) -> Self {
+        Self::from_snapshot(snapshot)
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(Sprite);
+
 impl Sprite {
+    fn from_snapshot(snapshot: SpriteSnapshot) -> Self {
+        Self {
+            position_iface: snapshot.position_iface,
+            current_row: snapshot.current_row,
+            current_frame: snapshot.current_frame,
+            frame_count: snapshot.frame_count,
+            flight_frame_countdown: snapshot.flight_frame_countdown,
+            current_width: snapshot.current_width,
+            current_height: snapshot.current_height,
+            last_action: snapshot.last_action,
+            last_processed_order_id: snapshot.last_processed_order_id,
+            masked: snapshot.masked,
+            use_alternate_profile: snapshot.use_alternate_profile,
+            action_done_frame: snapshot.action_done_frame,
+            action_done_counter: snapshot.action_done_counter,
+            last_sound_id: snapshot.last_sound_id,
+            splitch_count: snapshot.splitch_count,
+            behind_display_order_ref: snapshot.behind_display_order_ref,
+            display_order_ref: snapshot.display_order_ref,
+            anims_to_be_replaced: snapshot.anims_to_be_replaced,
+            replacing_anims: snapshot.replacing_anims,
+            scripts: std::sync::Arc::new(Vec::new()),
+            alternate_scripts: None,
+            conversion: std::sync::Arc::new(Vec::new()),
+            alternate_conversion: None,
+            frame_profile_name: snapshot.frame_profile_name,
+            profile_cache_key: snapshot.profile_cache_key,
+            alternate_profile_cache_key: snapshot.alternate_profile_cache_key,
+            center: snapshot.center,
+            last_motion_state: None,
+        }
+    }
+
     pub(crate) fn sprite_row_diagnostic_pre(&self) -> SpriteRowDiagnosticPre {
         let num_frames = self.num_frames_for_row(self.current_row);
         let current_frame = self.current_frame.min(num_frames.saturating_sub(1));
@@ -583,36 +670,7 @@ impl<'de> Deserialize<'de> for Sprite {
         D: serde::Deserializer<'de>,
     {
         let snapshot = SpriteSnapshot::deserialize(deserializer)?;
-        Ok(Self {
-            position_iface: snapshot.position_iface,
-            current_row: snapshot.current_row,
-            current_frame: snapshot.current_frame,
-            frame_count: snapshot.frame_count,
-            flight_frame_countdown: snapshot.flight_frame_countdown,
-            current_width: snapshot.current_width,
-            current_height: snapshot.current_height,
-            last_action: snapshot.last_action,
-            last_processed_order_id: snapshot.last_processed_order_id,
-            masked: snapshot.masked,
-            use_alternate_profile: snapshot.use_alternate_profile,
-            action_done_frame: snapshot.action_done_frame,
-            action_done_counter: snapshot.action_done_counter,
-            last_sound_id: snapshot.last_sound_id,
-            splitch_count: snapshot.splitch_count,
-            behind_display_order_ref: snapshot.behind_display_order_ref,
-            display_order_ref: snapshot.display_order_ref,
-            anims_to_be_replaced: snapshot.anims_to_be_replaced,
-            replacing_anims: snapshot.replacing_anims,
-            scripts: std::sync::Arc::new(Vec::new()),
-            alternate_scripts: None,
-            conversion: std::sync::Arc::new(Vec::new()),
-            alternate_conversion: None,
-            frame_profile_name: snapshot.frame_profile_name,
-            profile_cache_key: snapshot.profile_cache_key,
-            alternate_profile_cache_key: snapshot.alternate_profile_cache_key,
-            center: snapshot.center,
-            last_motion_state: None,
-        })
+        Ok(Self::from_snapshot(snapshot))
     }
 }
 

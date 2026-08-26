@@ -21,7 +21,16 @@ pub const RHID_HA: u32 = 10002;
 /// (the menu-text lookup is deferred because the native context doesn't carry a
 /// `MenuTextLookup`).
 #[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PcStatName {
     /// Profile name used as the removal key and as the displayed string
@@ -45,7 +54,16 @@ impl PcStatName {
 
 /// Per-mission debriefing statistics.
 #[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct MissionStat {
     /// Money collected by the player during the mission.

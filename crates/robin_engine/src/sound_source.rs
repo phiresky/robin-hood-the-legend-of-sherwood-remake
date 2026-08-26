@@ -17,7 +17,16 @@ use crate::sound_geometry::{SoundSourceAltitude, SoundSourceInfo};
 
 /// How a sound source is played.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundSourceKind {
     /// Played once then stopped.
@@ -49,7 +58,15 @@ impl SoundSourceKind {
 /// A positioned sound emitter in the game world.
 ///
 /// All fields are included in save/load state via serde.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundSource {
     /// Ambience bitmask filter — determines which level ambiences include this source.
     pub ambiences: u32,
@@ -314,7 +331,16 @@ impl SoundSource {
 ///
 /// Sound sources are stored in a flat vector. Deleted sources become `None`
 /// slots so existing indices stay stable.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundSourceManager {
     sources: Vec<Option<SoundSource>>,
 }

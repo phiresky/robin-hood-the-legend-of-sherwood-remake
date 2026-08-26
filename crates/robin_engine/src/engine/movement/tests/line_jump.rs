@@ -1339,7 +1339,7 @@ mod suite {
             if self_seek {
                 let mut post_seek = Sequence::new();
                 post_seek.append_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-                *post_seek_sequence = Some(Box::new(post_seek));
+                *post_seek_sequence = Some(post_seek.into_post_seek());
             }
         } else {
             *flags |= MoveFlags::MAP;

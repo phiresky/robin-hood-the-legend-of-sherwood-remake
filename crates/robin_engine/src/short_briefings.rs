@@ -6,14 +6,32 @@
 use serde::{Deserialize, Serialize};
 
 /// A single short briefing entry.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ShortBriefing {
     pub id: u32,
     pub done: bool,
 }
 
 /// Collection of short briefings split into primary and secondary objectives.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ShortBriefings {
     primaries: Vec<ShortBriefing>,
     secondaries: Vec<ShortBriefing>,

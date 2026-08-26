@@ -28,7 +28,15 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 
 /// Header metadata for a replay file.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ReplayHeader {
     /// Mission identifier: the mission's base `.rhm` filename without
     /// extension (e.g. `"Dem_Lei_MP"`, `"Sherwood"`). Used by the
@@ -62,7 +70,16 @@ pub const REPLAY_SCHEMA_VERSION: u32 = 13;
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ReplayLoadBack {
     /// Earlier save-marker frame whose captured state must be restored.
@@ -75,7 +92,15 @@ pub struct ReplayLoadBack {
 /// One JSONL line.  Carries per-frame commands, a periodic engine-state
 /// hash used for desync detection on replay, and/or in-mission
 /// save-marker / load-back timeline records.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct FrameRecord {
     /// Frame number (0-based).
     f: u32,
@@ -120,7 +145,7 @@ pub struct ReplayData {
 /// payload for the compact `rhrec-{hash}-{base64}` sharing format.
 /// Kept separate from `ReplayData` so the in-memory representation
 /// can evolve without breaking binary compatibility.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ReplayFile {
     pub header: ReplayHeader,
     pub frames: BTreeMap<u32, Vec<PlayerInput>>,
@@ -329,7 +354,7 @@ impl ReplayRecorder {
         campaign: &crate::campaign::Campaign,
     ) -> std::io::Result<Self> {
         let mut writer = std::io::BufWriter::new(writer);
-        let campaign = bitcode::serialize(campaign).map_err(std::io::Error::other)?;
+        let campaign = bitcode::encode(campaign);
         let header = ReplayHeader {
             mission_id,
             rng_seed,
@@ -874,7 +899,7 @@ mod tests {
 
         let replay = ReplayData::from_file(&path).unwrap();
         let replay_campaign: crate::campaign::Campaign =
-            bitcode::deserialize(&replay.header.campaign).unwrap();
+            bitcode::decode(&replay.header.campaign).unwrap();
         assert_eq!(replay_campaign.mission_team_indices, vec![0]);
         let (_, replay_assets, replay_loaded) = sherwood_fixture();
         let (reconstructed, _replay_assets) = construct_sherwood_frame_zero(
@@ -918,7 +943,7 @@ mod tests {
 
         let data = ReplayData::from_file(&path).unwrap();
         let bytes = &data.header.campaign;
-        let restored: Campaign = bitcode::deserialize(bytes).unwrap();
+        let restored: Campaign = bitcode::decode(bytes).unwrap();
         assert_eq!(restored.values[CampaignValue::Score], 12_345);
         assert_eq!(restored.ares, 4);
         assert_eq!(data.commands_for_frame(0).len(), 1);
@@ -1148,7 +1173,7 @@ mod tests {
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 0,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let input =
             format!("{header}\n{{\"f\":30,\"lb\":{{\"to_frame\":10,\"is_continue\":false}}}}\n");
@@ -1174,7 +1199,7 @@ mod tests {
                 sim_config: crate::engine::SimConfig::default(),
                 version: REPLAY_SCHEMA_VERSION,
                 total_frames: 1,
-                campaign: bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+                campaign: bitcode::encode(&crate::campaign::Campaign::default()),
             },
             frames,
             hashes: BTreeMap::new(),

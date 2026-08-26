@@ -59,7 +59,13 @@ impl From<scb::Error> for ScriptError {
 /// only mutable script state and require the host to reattach this program
 /// after deserialization.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ScriptProgram {
     pub scb: ScbFile,
@@ -123,10 +129,29 @@ pub struct ScriptManager {
     pub static_area: Vec<u8>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ScriptManagerSnapshot {
+#[derive(serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ScriptManagerSnapshot {
     static_area: Vec<u8>,
 }
+
+impl crate::bitcode_adapters::NativeBitcode for ScriptManager {
+    type Wire = ScriptManagerSnapshot;
+
+    fn to_wire(&self) -> Self::Wire {
+        ScriptManagerSnapshot {
+            static_area: self.static_area.clone(),
+        }
+    }
+
+    fn from_wire(snapshot: Self::Wire) -> Self {
+        Self {
+            program: std::sync::Arc::new(ScriptProgram::default()),
+            static_area: snapshot.static_area,
+        }
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(ScriptManager);
 
 impl serde::Serialize for ScriptManager {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -257,7 +282,14 @@ impl ScriptManager {
 /// `ScriptInstance` with its own heap. The heap stores the class's member
 /// variables — each instance has independent state.
 ///
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptInstance {
     /// Index into the ScriptManager's class/program arrays.
     class_idx: usize,

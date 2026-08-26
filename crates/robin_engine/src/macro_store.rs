@@ -92,7 +92,16 @@ pub use crate::titbit::DISTANCE_DOT;
 /// speech.  It does not save the common click and run formation placement a
 /// second time when the quick action is played.
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct RecordedQaMoveRoute {
     pub goal_sector: crate::sector::SectorNumber,
@@ -104,7 +113,16 @@ pub struct RecordedQaMoveRoute {
 /// rebuild a [`PlayerCommand`](crate::player_command::PlayerCommand) at
 /// playback time.  Replay clones each recorded sequence element and
 /// relaunches it as a fresh command.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum QaReplayCommand {
     /// Group-move to a destination — relayed as `PlayerCommand::GroupMove`
     /// with a single-element `actors` vec (the replay target PC).
@@ -220,7 +238,16 @@ pub enum QaReplayCommand {
 /// can re-dispatch each step.  **There is no per-step titbit id**:
 /// titbits are registered once per *slot* via `maul_titbits[level]`,
 /// not once per step.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct QuickActionStep {
     pub action: Action,
     /// Captured world position of the interaction target (the titbit's
@@ -246,7 +273,16 @@ mod map_point_tuple_serde {
 }
 
 /// One macro slot (one recorded sequence).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct QuickActionSlot {
     pub steps: Vec<QuickActionStep>,
     /// Exact owner-local sequences restored from an Original v48 save.
@@ -259,7 +295,16 @@ pub struct QuickActionSlot {
 }
 
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct LegacyQuickito {
     pub kind: QuickAction,
@@ -316,7 +361,16 @@ impl QuickActionSlot {
 /// `recording_slot` is the slot index currently being appended to when
 /// the messenger's macro-recording flag is on and this PC is the target
 /// (`qa_recording_for == Some(this pc)`).  `None` means "not recording".
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PcMacroState {
     slots: Vec<QuickActionSlot>,
     /// One titbit ID per QA slot, `None` when empty.  Set at the
@@ -501,7 +555,16 @@ impl PcMacroState {
 
 /// One automatic Shift-click item. Unlike an Original macro slot, a queue
 /// item always contains exactly one resolved command.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AutoQueueEntry {
     pub step: QuickActionStep,
     pub titbit: Option<crate::titbit::TitbitId>,
@@ -513,7 +576,15 @@ pub struct AutoQueueEntry {
 /// and an automatic item at queue position 0 are different state, even when
 /// their commands happen to be identical.
 #[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AutoQueueStore {
     entries: Vec<(EntityId, Vec<AutoQueueEntry>)>,
@@ -592,7 +663,16 @@ impl AutoQueueStore {
 /// A flat map instead of a field on a PC struct because entities are
 /// id-keyed and there isn't a central per-PC struct to hang this off
 /// of.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MacroStore {
     entries: Vec<(EntityId, PcMacroState)>,
 }
@@ -796,28 +876,11 @@ mod tests {
             serde_json::from_value(json).expect("roundtrip shield macro JSON");
         assert_eq!(from_json, step);
 
-        let encoded = bitcode::serialize(&step).expect("serialize shield macro as bitcode");
+        let encoded = bitcode::encode(&step);
         let from_bitcode: QuickActionStep =
-            bitcode::deserialize(&encoded).expect("roundtrip shield macro bitcode");
+            bitcode::decode(&encoded).expect("roundtrip shield macro bitcode");
         assert_eq!(from_bitcode, step);
-        assert_eq!(
-            bitcode::serialize(&from_bitcode).expect("re-encode shield macro bitcode"),
-            encoded
-        );
-
-        let bincode_config = bincode::config::standard();
-        let encoded = bincode::serde::encode_to_vec(&step, bincode_config)
-            .expect("serialize shield macro as bincode");
-        let (from_bincode, consumed): (QuickActionStep, usize) =
-            bincode::serde::decode_from_slice(&encoded, bincode_config)
-                .expect("roundtrip shield macro bincode");
-        assert_eq!(consumed, encoded.len());
-        assert_eq!(from_bincode, step);
-        assert_eq!(
-            bincode::serde::encode_to_vec(from_bincode, bincode_config)
-                .expect("re-encode shield macro bincode"),
-            encoded
-        );
+        assert_eq!(bitcode::encode(&from_bitcode), encoded);
 
         let command = crate::player_command::PlayerCommand::RaiseShieldWithDanger {
             actor: EntityId::new(10, crate::element::EntityIdKind::Pc),
@@ -840,25 +903,10 @@ mod tests {
                 && *danger_point == crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0)
         ));
 
-        let encoded = bitcode::serialize(&command).expect("serialize shield command as bitcode");
+        let encoded = bitcode::encode(&command);
         let from_bitcode: crate::player_command::PlayerCommand =
-            bitcode::deserialize(&encoded).expect("roundtrip shield command bitcode");
-        assert_eq!(
-            bitcode::serialize(&from_bitcode).expect("re-encode shield command bitcode"),
-            encoded
-        );
-
-        let encoded = bincode::serde::encode_to_vec(&command, bincode_config)
-            .expect("serialize shield command as bincode");
-        let (from_bincode, consumed): (crate::player_command::PlayerCommand, usize) =
-            bincode::serde::decode_from_slice(&encoded, bincode_config)
-                .expect("roundtrip shield command bincode");
-        assert_eq!(consumed, encoded.len());
-        assert_eq!(
-            bincode::serde::encode_to_vec(&from_bincode, bincode_config)
-                .expect("re-encode shield command bincode"),
-            encoded
-        );
+            bitcode::decode(&encoded).expect("roundtrip shield command bitcode");
+        assert_eq!(bitcode::encode(&from_bitcode), encoded);
 
         let changed_layer = QuickActionStep {
             replay: QaReplayCommand::ShieldRaise {
@@ -917,20 +965,12 @@ mod tests {
                 .expect("roundtrip recorded group move JSON"),
             replay
         );
-        let bitcode = bitcode::serialize(&replay).expect("serialize recorded group move bitcode");
+        let bitcode = bitcode::encode(&replay);
         assert_eq!(
-            bitcode::deserialize::<QaReplayCommand>(&bitcode)
+            bitcode::decode::<QaReplayCommand>(&bitcode)
                 .expect("roundtrip recorded group move bitcode"),
             replay
         );
-        let config = bincode::config::standard();
-        let bincode = bincode::serde::encode_to_vec(&replay, config)
-            .expect("serialize recorded group move bincode");
-        let (decoded, consumed): (QaReplayCommand, usize) =
-            bincode::serde::decode_from_slice(&bincode, config)
-                .expect("roundtrip recorded group move bincode");
-        assert_eq!(consumed, bincode.len());
-        assert_eq!(decoded, replay);
 
         let mut legacy = json;
         legacy
@@ -972,28 +1012,11 @@ mod tests {
         let decoded_json: QaReplayCommand =
             serde_json::from_value(json.clone()).expect("roundtrip resolved DropAle macro JSON");
         assert_eq!(decoded_json, replay);
-        let bytes = bitcode::serialize(&replay).expect("serialize resolved DropAle macro bitcode");
+        let bytes = bitcode::encode(&replay);
         let decoded_bitcode: QaReplayCommand =
-            bitcode::deserialize(&bytes).expect("roundtrip resolved DropAle macro bitcode");
+            bitcode::decode(&bytes).expect("roundtrip resolved DropAle macro bitcode");
         assert_eq!(decoded_bitcode, replay);
-        assert_eq!(
-            bitcode::serialize(&decoded_bitcode).expect("re-encode resolved DropAle macro bitcode"),
-            bytes
-        );
-
-        let bincode_config = bincode::config::standard();
-        let bytes = bincode::serde::encode_to_vec(&replay, bincode_config)
-            .expect("serialize resolved DropAle macro bincode");
-        let (decoded_bincode, consumed): (QaReplayCommand, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode_config)
-                .expect("roundtrip resolved DropAle macro bincode");
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(decoded_bincode, replay);
-        assert_eq!(
-            bincode::serde::encode_to_vec(&decoded_bincode, bincode_config)
-                .expect("re-encode resolved DropAle macro bincode"),
-            bytes
-        );
+        assert_eq!(bitcode::encode(&decoded_bitcode), bytes);
 
         let mut changed_route = replay.clone();
         let QaReplayCommand::DropAle {

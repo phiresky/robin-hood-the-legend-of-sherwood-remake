@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
     Eq,
     Hash,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Type {
     MakeArrow,
@@ -72,7 +74,16 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Point {
     pub x: f32,
     pub y: f32,
@@ -84,7 +95,16 @@ pub struct Point {
 /// A PC captured in a production sector when the player exits Sherwood,
 /// restored to the same position on the next Sherwood visit.  A
 /// `(pc_description, position, obstacle)` triple.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Occupant {
     /// Index into `Campaign::characters`.
     pub pc_description_idx: usize,
@@ -94,7 +114,16 @@ pub struct Occupant {
     pub obstacle: u16,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SectorProduction {
     pub prod_type: Type,
     /// Canonical script-zone attachment. The original stores a non-null

@@ -117,7 +117,15 @@ use util::soldier_detects_position_180;
 
 /// Enemy/soldier AI state. Extends [`AiController`] with villain-specific
 /// fields.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct EnemyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,

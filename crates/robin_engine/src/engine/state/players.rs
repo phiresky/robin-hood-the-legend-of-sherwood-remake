@@ -9,7 +9,14 @@ use crate::{
 };
 
 /// Deterministic per-player selection, input-mode, and quick-action state.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct PlayerRuntime {
     pub(crate) seats: Vec<SeatState>,
     pub(crate) macro_store: MacroStore,
@@ -96,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_queue_json_and_bincode_roundtrip_and_participates_in_player_state_hash() {
+    fn automatic_queue_json_and_bitcode_roundtrip_and_participates_in_player_state_hash() {
         let pc = EntityId::Pc(crate::entity_id::PcId(1));
         let mut queued = PlayerRuntime::new();
         queued.auto_queues.push(
@@ -127,12 +134,9 @@ mod tests {
             robin_util::state_hash::compute(&PlayerRuntime::new())
         );
 
-        let bytes = bincode::serde::encode_to_vec(&queued, bincode::config::standard())
-            .expect("encode queued multiplayer snapshot state");
-        let (binary, consumed): (PlayerRuntime, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .expect("decode queued multiplayer snapshot state");
-        assert_eq!(consumed, bytes.len());
+        let bytes = bitcode::encode(&queued);
+        let binary: PlayerRuntime =
+            bitcode::decode(&bytes).expect("decode queued multiplayer snapshot state");
         assert_eq!(binary.auto_queues.len(pc), 1);
         assert_eq!(binary.auto_queue_active, vec![pc]);
         assert_eq!(

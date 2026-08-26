@@ -9,7 +9,14 @@ use super::super::{PendingScrollAmulet, TimerEntry, movement};
 /// Owning these values together does not make their effects asynchronous:
 /// every queue is still drained at its pre-existing point in the ten-phase
 /// tick, and sequence/script callbacks remain same-call operations.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
     pub(crate) messenger: Messenger,

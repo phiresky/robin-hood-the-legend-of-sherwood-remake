@@ -4,7 +4,16 @@ use serde::{Deserialize, Serialize};
 
 /// Gameplay extensions which intentionally differ from the original game.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GameplayConfig {
     /// Use the intended Hard-difficulty reaction-time multiplier instead of

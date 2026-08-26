@@ -6165,7 +6165,7 @@ mod tests {
         assert_eq!(*tolerance, 50.0);
         assert!(flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD));
         let raise = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .and_then(|post_seek| post_seek.get(0))
             .expect("shield QA Seek owns RaiseShield continuation");
         assert_eq!(raise.command, Command::RaiseShield);
@@ -6451,13 +6451,14 @@ mod tests {
             &assets,
             &PlayerCommand::QueueQuickAction {
                 action: Action::Hit,
-                command: Box::new(PlayerCommand::SwordStrikeCmd {
+                command: PlayerCommand::SwordStrikeCmd {
                     actor: pc_id,
                     target,
                     command: Command::SwordstrikeThrustA,
                     with_seek: false,
                     seek_distance: Some(0.0),
-                }),
+                }
+                .into(),
             },
         );
 
@@ -6502,10 +6503,11 @@ mod tests {
             &assets,
             &PlayerCommand::QueueQuickAction {
                 action: Action::Whistle,
-                command: Box::new(PlayerCommand::LaunchSelfAbility {
+                command: PlayerCommand::LaunchSelfAbility {
                     actor: pc_id,
                     command: Command::WhistleCmd,
-                }),
+                }
+                .into(),
             },
         );
         engine.apply_command(
@@ -6604,10 +6606,11 @@ mod tests {
             &assets,
             &PlayerCommand::QueueQuickAction {
                 action: Action::Whistle,
-                command: Box::new(PlayerCommand::LaunchSelfAbility {
+                command: PlayerCommand::LaunchSelfAbility {
                     actor: pc_id,
                     command: Command::WhistleCmd,
-                }),
+                }
+                .into(),
             },
         );
         engine.apply_command(
@@ -6627,12 +6630,9 @@ mod tests {
             .expect("occupied armed manual slot")
             .clone();
 
-        let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
-            .expect("save engine with automatic and manual QA state");
-        let (mut engine, consumed): (EngineInner, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .expect("restore engine with automatic and manual QA state");
-        assert_eq!(consumed, bytes.len());
+        let bytes = bitcode::encode(&engine);
+        let mut engine: EngineInner =
+            bitcode::decode(&bytes).expect("restore engine with automatic and manual QA state");
         assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
 
         engine
@@ -6699,10 +6699,11 @@ mod tests {
         manual.stop_recording();
         let queued = PlayerCommand::QueueQuickAction {
             action: Action::Whistle,
-            command: Box::new(PlayerCommand::LaunchSelfAbility {
+            command: PlayerCommand::LaunchSelfAbility {
                 actor: pc_id,
                 command: Command::WhistleCmd,
-            }),
+            }
+            .into(),
         };
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
@@ -6820,10 +6821,11 @@ mod tests {
 
         let queued = PlayerCommand::QueueQuickAction {
             action: Action::Whistle,
-            command: Box::new(PlayerCommand::LaunchSelfAbility {
+            command: PlayerCommand::LaunchSelfAbility {
                 actor: pc_id,
                 command: Command::WhistleCmd,
-            }),
+            }
+            .into(),
         };
         let sim = crate::sim_rng::test_context();
         let mut display = HostDisplayState::default();
@@ -6886,12 +6888,13 @@ mod tests {
             &assets,
             &PlayerCommand::QueueQuickAction {
                 action: Action::Bow,
-                command: Box::new(PlayerCommand::LaunchInteraction {
+                command: PlayerCommand::LaunchInteraction {
                     actor: pc_id,
                     target,
                     command: Command::ShootBow,
                     running: false,
-                }),
+                }
+                .into(),
             },
         );
         assert_eq!(engine.players.auto_queues.len(pc_id), 1);
@@ -6974,7 +6977,7 @@ mod tests {
                 &assets,
                 &PlayerCommand::QueueQuickAction {
                     action,
-                    command: Box::new(command),
+                    command: command.into(),
                 },
             );
         }
@@ -7000,12 +7003,13 @@ mod tests {
             &assets,
             &PlayerCommand::QueueQuickAction {
                 action: Action::NoAction,
-                command: Box::new(PlayerCommand::LaunchInteraction {
+                command: PlayerCommand::LaunchInteraction {
                     actor: pc_id,
                     target,
                     command: Command::Take,
                     running: false,
-                }),
+                }
+                .into(),
             },
         );
 
@@ -7404,7 +7408,7 @@ mod tests {
             panic!("TakeCorpse macro route must begin with movement");
         };
         let post_seek = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("TakeCorpse remains attached to Seek");
         let commands: Vec<_> = post_seek
             .elements
@@ -7500,7 +7504,7 @@ mod tests {
             panic!("DropAle route must begin with movement");
         };
         post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("DropAle remains attached to Seek")
             .elements
             .iter()
@@ -8893,7 +8897,7 @@ mod tests {
         assert_eq!(*action, crate::order::OrderType::RunningUpright);
         assert_eq!(*element, Some(target_id));
         let post_seek = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("recorded route retains its interaction continuation");
         assert_eq!(post_seek.len(), 1);
         assert_eq!(post_seek.get(0).unwrap().command, Command::StrangleCmd);
@@ -9016,7 +9020,7 @@ mod tests {
             panic!("live Strangle route must begin with movement");
         };
         let post_seek = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("live Strangle seek retains its interaction");
         assert_eq!(post_seek.len(), 1);
         assert_eq!(post_seek.get(0).unwrap().command, Command::StrangleCmd);
@@ -9164,7 +9168,7 @@ mod tests {
         assert!(!flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT));
 
         let post_seek = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("strike seek retains its post-seek strike");
         assert_eq!(post_seek.len(), 1);
         let strike = post_seek.get(0).expect("post-seek strike exists");
@@ -9320,7 +9324,7 @@ mod tests {
         assert_eq!(actor.seek_distance, 40.0);
         let post_seek = actor
             .post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("EnterSwordfight remains owned by the active entity seek");
         assert_eq!(post_seek.len(), 1);
         let enter = post_seek.get(0).expect("post-seek swordfight entry exists");
@@ -9517,23 +9521,23 @@ mod tests {
         (engine, assets, pc_id, npc_id, scroll_id)
     }
 
-    fn assert_scroll_read_composite(
-        sequence: &Sequence,
+    fn assert_scroll_read_composite<P: robin_util::state_hash::StateHash>(
+        sequence: &Sequence<P>,
         pc_id: EntityId,
         npc_id: EntityId,
         scroll_id: EntityId,
     ) {
-        assert_eq!(sequence.len(), 5);
-        assert_eq!(sequence.get(0).unwrap().command, Command::LockAi);
-        assert_eq!(sequence.get(0).unwrap().owner, Some(npc_id));
-        assert_eq!(sequence.get(1).unwrap().command, Command::TurnElement);
-        assert_eq!(sequence.get(1).unwrap().owner, Some(pc_id));
-        assert_eq!(sequence.get(2).unwrap().command, Command::TurnElement);
-        assert_eq!(sequence.get(2).unwrap().owner, Some(npc_id));
-        assert_eq!(sequence.get(3).unwrap().command, Command::UnlockAi);
-        assert_eq!(sequence.get(3).unwrap().owner, Some(npc_id));
+        assert_eq!(sequence.elements.len(), 5);
+        assert_eq!(sequence.elements.get(0).unwrap().command, Command::LockAi);
+        assert_eq!(sequence.elements.get(0).unwrap().owner, Some(npc_id));
+        assert_eq!(sequence.elements.get(1).unwrap().command, Command::TurnElement);
+        assert_eq!(sequence.elements.get(1).unwrap().owner, Some(pc_id));
+        assert_eq!(sequence.elements.get(2).unwrap().command, Command::TurnElement);
+        assert_eq!(sequence.elements.get(2).unwrap().owner, Some(npc_id));
+        assert_eq!(sequence.elements.get(3).unwrap().command, Command::UnlockAi);
+        assert_eq!(sequence.elements.get(3).unwrap().owner, Some(npc_id));
 
-        let open = sequence.get(4).unwrap();
+        let open = sequence.elements.get(4).unwrap();
         assert_eq!(open.command, Command::OpenScroll);
         assert_eq!(open.command_level, 2);
         let SequenceElementData::Generic { properties } = &open.data else {
@@ -9735,7 +9739,7 @@ mod tests {
         assert_eq!(*element, Some(npc_id));
         assert_scroll_read_composite(
             post_seek_sequence
-                .as_deref()
+                .as_ref()
                 .expect("recorded scroll route retains its continuation"),
             pc_id,
             npc_id,
@@ -10185,7 +10189,7 @@ mod tests {
         assert_eq!(*action, crate::order::OrderType::WalkingCrouched);
 
         let post_seek = post_seek_sequence
-            .as_deref()
+            .as_ref()
             .expect("recorded seek retains Turn and interaction");
         assert_eq!(post_seek.len(), 2);
         let turn = post_seek.get(0).expect("Turn follows seek");

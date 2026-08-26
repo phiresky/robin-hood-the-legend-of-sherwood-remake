@@ -12,7 +12,14 @@ use crate::{
 ///
 /// Local viewport/UI animation remains host-owned; every field here is part of
 /// rollback and deterministic hashing.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct FeedbackRuntime {
     pub(crate) sound_sim: SoundSimState,
     pub(crate) ground_mark: GroundMark,

@@ -45,6 +45,8 @@ use crate::sector_production;
 )]
 pub struct BuildingIdx(pub nonmax::NonMaxU16);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(BuildingIdx, u16);
+
 impl BuildingIdx {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
@@ -106,6 +108,8 @@ impl std::fmt::Display for BuildingIdx {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SectorNumber(pub i16);
 
@@ -235,6 +239,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(SectorType, u32);
+
 impl SectorType {
     pub fn is_area(self) -> bool {
         self.contains(Self::AREA)
@@ -285,6 +291,8 @@ impl SectorType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum LiftType {
     #[default]
@@ -404,7 +412,16 @@ impl LiftType {
 
 /// Classification of NPC occupants in a building sector.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum OccupantKind {
     Villains,
@@ -434,6 +451,8 @@ pub enum OccupantKind {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ArcheryPointIdx(pub u16);
 
@@ -472,7 +491,15 @@ impl std::fmt::Display for ArcheryPointIdx {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Script-triggered zone sector with enter/leave events.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptSectorData {
     /// Sector index within the fast-find grid.  `None` until the
     /// owning sector is registered with the grid.
@@ -610,7 +637,15 @@ impl ScriptSectorData {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Shadow sector with computed barycentre and average radius.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ShadowData {
     /// 2D barycentre (centroid) of the shadow polygon.
     pub barycentre_2d: MapPoint,

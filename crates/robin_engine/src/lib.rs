@@ -18,6 +18,8 @@ pub mod ai_friendly;
 pub mod ai_vision;
 pub mod alert_colors;
 pub mod allied_control;
+#[doc(hidden)]
+pub mod bitcode_adapters;
 pub mod bow_shot;
 pub mod campaign;
 pub mod change;

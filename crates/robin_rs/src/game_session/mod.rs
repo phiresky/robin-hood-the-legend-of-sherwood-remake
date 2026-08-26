@@ -150,7 +150,7 @@ pub(crate) fn prepare_replay_mission(
 > {
     crate::replay_format::validate_replay_data(&data)
         .map_err(|error| format!("invalid replay: {error}"))?;
-    let campaign: Campaign = bitcode::deserialize(&data.header.campaign)
+    let campaign: Campaign = bitcode::decode(&data.header.campaign)
         .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
     let mission_id = data.header.mission_id.clone();
     let mission_idx = campaign
@@ -1022,7 +1022,7 @@ mod required_state_tests {
                 sim_config,
                 version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
                 total_frames: 0,
-                campaign: bitcode::serialize(&campaign).unwrap(),
+                campaign: bitcode::encode(&campaign),
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),

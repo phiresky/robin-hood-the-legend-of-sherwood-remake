@@ -3925,7 +3925,7 @@ mod tests {
             actor.wait_time = 1;
             actor.seek_refresh_wait = 24;
             actor.seek_target = Some(victim);
-            actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+            actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
         }
         install_falling_ladder_order(&mut engine, victim);
 

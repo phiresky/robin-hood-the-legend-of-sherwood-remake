@@ -12,7 +12,16 @@ use serde::{Deserialize, Serialize};
 /// on-disk layout.  Additional fields are appended for the Rust-side
 /// feature set.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundConfig {
     // --- ABI-compatible fields (must remain first, in this order) ---
     pub music_volume: u16,

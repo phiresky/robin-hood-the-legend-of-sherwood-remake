@@ -192,6 +192,8 @@ pub(crate) fn debug_view_radius_target_event(
     serde::Deserialize,
     serde::Serialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct ViewRadiusCacheEntry {
     pub(crate) viewer: EntityId,
@@ -213,6 +215,8 @@ pub(crate) struct ViewRadiusCacheEntry {
     serde::Deserialize,
     serde::Serialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct ViewRadiusCache {
     pub(crate) ground: Option<ViewRadiusCacheEntry>,

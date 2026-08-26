@@ -590,13 +590,14 @@ pub(super) struct PreparedAiEntityViewCache {
 /// target geometry is still rebuilt at each NPC slot from live entities; doing
 /// the full all-soldier tactical extraction for every owner made large maps
 /// quadratic without providing fresher optical inputs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct PreparedNpcOwnerPass {
     world: Option<snapshots::AiWorldView>,
     /// Derived AI views reused across consecutive creation-order owners.
     /// Mutable entity borrows and the small set of non-entity view inputs
     /// invalidate individual entries before the next synchronous Think.
     #[serde(skip)]
+    #[bitcode(skip)]
     entity_views: PreparedAiEntityViewCache,
 }
 

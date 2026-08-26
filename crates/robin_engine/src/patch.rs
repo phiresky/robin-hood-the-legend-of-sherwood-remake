@@ -34,6 +34,8 @@ use crate::coordinates::MapPoint;
 )]
 pub struct PatchIndex(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(PatchIndex, u32);
+
 impl PatchIndex {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -68,7 +70,16 @@ impl std::fmt::Display for PatchIndex {
 
 /// Which animation phase a patch FX element should play.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PatchAnimation {
     /// Idle loop shown before the patch is triggered.
@@ -95,6 +106,8 @@ pub enum PatchAnimation {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PatchState {
     /// The patch is inactive (definitive patch already used, or deactivated).
@@ -124,6 +137,8 @@ pub enum PatchState {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AnimationFlags {
     pub start_valid: bool,
@@ -146,6 +161,8 @@ pub struct AnimationFlags {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct OccupantId(pub u32);
 
@@ -158,7 +175,16 @@ pub struct OccupantId(pub u32);
 /// The engine must execute these after the patch's state has been updated.
 /// This decouples the state machine from the rendering, pathfinder, and
 /// animation systems.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum PatchEffect {
     /// Swap masks, obstacles, sectors, and lines.
     SwapObjects { applied: bool, forced_reset: bool },
@@ -184,7 +210,15 @@ pub enum PatchEffect {
 ///
 /// Patch state and level-static references used by the script host and
 /// patch transition logic.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Patch {
     // -- Serialized (save game state) --
     /// Whether the patch is currently active (can be interacted with).

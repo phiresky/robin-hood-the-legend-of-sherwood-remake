@@ -166,7 +166,18 @@ impl<'a> NativeSessionCapabilities<'a> {
 /// `RHElementScroll::pScrollExecutingScript` values. Frames are copied into a
 /// [`NativeContext`] for one VM resume, but are owned and stacked by
 /// `MissionScript`; they are never part of a mission snapshot or state hash.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptCallFrame {
     script_this: i32,
     current_scroll: i32,

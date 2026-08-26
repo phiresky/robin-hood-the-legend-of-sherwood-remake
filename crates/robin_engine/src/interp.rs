@@ -32,7 +32,14 @@ const REGION_TEMP: u16 = 0xC000;
 /// One activation-record's locals + incoming parameters + saved
 /// return address and return value.
 #[derive(
-    Default, Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Default,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Frame {
     /// Bytes received from the caller. Sized by the number of
@@ -275,7 +282,14 @@ impl NativeCallOutcome {
 /// each; the native function `pop_i32`s its own parameters in reverse
 /// push order.
 #[derive(
-    Debug, Default, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Default,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct NativeStack {
     buffer: Vec<u8>,
@@ -331,7 +345,14 @@ impl<T: HostFunctions + ?Sized> HostFunctions for Box<T> {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Vm {
     /// Static area, shared across VM instances in the real engine. For
     /// single-function test harnesses we give each Vm its own.
@@ -362,7 +383,14 @@ pub struct Vm {
 /// the duration of the interpreter run, so A→A and A→B→A calls cannot clear
 /// their suspended caller's frames or instruction pointer.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct VmActivationState {
     pub frames: Vec<Frame>,

@@ -215,7 +215,15 @@ pub(crate) struct GotoActionStateTeardown {
 
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiController {
     // -- Owner --
     /// The NPC that owns this brain (legacy u32 handle).

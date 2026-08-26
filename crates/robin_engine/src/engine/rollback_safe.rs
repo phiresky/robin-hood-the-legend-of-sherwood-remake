@@ -41,7 +41,9 @@ use crate::player_command::PlayerInput;
 /// Canonical gameplay-authoritative engine scalars emitted by schema-13
 /// Original parity traces. Presentation camera/surface/backend state is
 /// deliberately absent.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ParityEngineState {
     pub cheat_used_flags: u32,
     pub next_creation_order: u32,
@@ -108,7 +110,14 @@ pub enum SnapshotRestoreError {
 /// Internally (inside `robin_engine`) code still uses `EngineInner`
 /// directly — the safety invariant is between the crate and its
 /// downstream consumers, not a per-module check.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct Engine {
     inner: EngineInner,
