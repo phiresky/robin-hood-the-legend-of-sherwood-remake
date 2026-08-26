@@ -4692,7 +4692,7 @@ impl EnemyAi {
     // Port of RHArtificialMalignity::React
     // -----------------------------------------------------------------------
 
-    pub fn react(&mut self, max_reactiontime: u16, ctx: &AiContext, _tick: &AiPerTickData) {
+    pub fn react(&mut self, max_reactiontime: u16, ctx: &AiContext, tick: &AiPerTickData) {
         if self.is_merry_man_forest(ctx) {
             self.base.launch_timer(3, ctx.frame);
             return;
@@ -4701,11 +4701,15 @@ impl EnemyAi {
         // The slowdown only
         // applies when the NPC is Lacklandist *and* difficulty is Easy or Hard.
         // Royalist soldiers (also EnemyAi-driven) and Medium difficulty leave
-        // the modifier at 1.0. The Easy==Hard copy-paste bug is preserved.
+        // the modifier at 1.0. The original's Easy==Hard copy-paste bug is
+        // optional: the gameplay tweak selects the intended Hard constant.
         let modifier = if ctx.camp == crate::element::Camp::Lacklandists {
             match ctx.difficulty {
-                crate::player_profile::DifficultyLevel::Easy
-                | crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
+                crate::player_profile::DifficultyLevel::Easy => difficulty::EASY_REACTIONTIME,
+                crate::player_profile::DifficultyLevel::Hard if tick.fix_hard_reaction_times => {
+                    difficulty::HARD_REACTIONTIME
+                }
+                crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
                 crate::player_profile::DifficultyLevel::Medium => 1.0,
             }
         } else {
@@ -8030,16 +8034,25 @@ mod tests {
     }
 
     #[test]
-    fn react_computes_timer() {
-        let mut ai = EnemyAi::new(1);
-        ai.soldier_profile_iq = 50;
-        let ctx = AiContext::default();
-        let tick = AiPerTickData::stub();
-        ai.react(100, &ctx, &tick);
-        // Timer should have been launched: (100-50)*0.01*100*2.0+1 = 101
-        assert!(
-            ai.base.timer_is_running || ai.base.substate_at_last_timer_launch != Substate::None
-        );
+    fn hard_reaction_time_fix_selects_the_intended_multiplier() {
+        let ctx = AiContext {
+            difficulty: crate::player_profile::DifficultyLevel::Hard,
+            camp: crate::element::Camp::Lacklandists,
+            frame: 10,
+            ..AiContext::default()
+        };
+
+        let mut original = EnemyAi::new(1);
+        original.soldier_profile_iq = 50;
+        original.react(100, &ctx, &AiPerTickData::stub());
+        assert_eq!(original.base.when_does_timer_ring, 111);
+
+        let mut fixed_tick = AiPerTickData::stub();
+        fixed_tick.fix_hard_reaction_times = true;
+        let mut fixed = EnemyAi::new(1);
+        fixed.soldier_profile_iq = 50;
+        fixed.react(100, &ctx, &fixed_tick);
+        assert_eq!(fixed.base.when_does_timer_ring, 36);
     }
 
     #[test]

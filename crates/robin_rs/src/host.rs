@@ -108,6 +108,7 @@ impl ApplicationContext {
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
         let amount_of_speaking = active.sound_config.amount_of_speaking;
+        let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -121,6 +122,7 @@ impl ApplicationContext {
 
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
+        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -136,6 +138,7 @@ impl ApplicationContext {
         let existing = self.sim_config();
         let mut sim_config = engine_api::SimConfig::from_options(&options, existing.difficulty);
         sim_config.amount_of_speaking = existing.amount_of_speaking;
+        sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         *self
             .sim_config
             .lock()
@@ -188,7 +191,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, amount_of_speaking) = {
+        let (result, difficulty, amount_of_speaking, fix_hard_reaction_times) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -202,9 +205,14 @@ impl ApplicationContext {
                 result,
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
+                active.gameplay_config.fix_hard_reaction_times,
             )
         };
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking)?;
+        self.refresh_profile_derived_state(
+            difficulty,
+            amount_of_speaking,
+            fix_hard_reaction_times,
+        )?;
         Ok(result)
     }
 
@@ -218,7 +226,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, amount_of_speaking) = {
+        let (profile_id, difficulty, amount_of_speaking, fix_hard_reaction_times) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -265,6 +273,7 @@ impl ApplicationContext {
             let profile_id = active.id;
             let difficulty = active.difficulty;
             let amount_of_speaking = active.sound_config.amount_of_speaking;
+            let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
 
             profiles.save().map_err(|error| {
                 format!("failed to persist first-launch player profile: {error}")
@@ -272,10 +281,19 @@ impl ApplicationContext {
             key_configs.save().map_err(|error| {
                 format!("failed to persist first-launch key configuration: {error}")
             })?;
-            (profile_id, difficulty, amount_of_speaking)
+            (
+                profile_id,
+                difficulty,
+                amount_of_speaking,
+                fix_hard_reaction_times,
+            )
         };
 
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking)?;
+        self.refresh_profile_derived_state(
+            difficulty,
+            amount_of_speaking,
+            fix_hard_reaction_times,
+        )?;
         Ok(profile_id)
     }
 
@@ -350,9 +368,11 @@ impl ApplicationContext {
         &self,
         difficulty: robin_engine::player_profile::DifficultyLevel,
         amount_of_speaking: u16,
+        fix_hard_reaction_times: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
+        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         *self
             .sim_config
             .lock()

@@ -622,6 +622,10 @@ pub enum PlayerCommand {
         /// Sound-menu slider value in the original 0..=9 range.
         amount: u16,
     },
+    /// Toggle the fix for the original Hard reaction-time multiplier bug.
+    SetFixHardReactionTimes {
+        enabled: bool,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input

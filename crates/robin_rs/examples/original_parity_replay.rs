@@ -282,6 +282,8 @@ impl TraceSimConfig {
     fn to_sim_config(&self, synchronous_pathfinding: bool) -> robin_engine::engine::SimConfig {
         robin_engine::engine::SimConfig {
             difficulty: self.difficulty.into(),
+            // Original-parity traces deliberately retain the shipped bug.
+            fix_hard_reaction_times: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
