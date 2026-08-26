@@ -63,7 +63,8 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
     );
     replacement.append_element(new_animation);
     let replacement_id = engine.launch_sequence(replacement);
-    engine.drain_pending_immediate_actions_sync(&sim, &mut display, &assets);
+    let mut camera_display = crate::engine::CameraDisplayState::default();
+    engine.drain_pending_immediate_actions_sync(&sim, &mut camera_display, &assets);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let manager = &engine.orders.sequence_manager;
@@ -289,7 +290,7 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
     ));
     engine.orders.sequence_manager.launch_sequence(sequence);
 
-    let mut display = crate::engine::HostDisplayState::default();
+    let mut display = crate::engine::CameraDisplayState::default();
     engine.drain_pending_immediate_actions_sync(
         &crate::sim_rng::test_context(),
         &mut display,
@@ -466,7 +467,7 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
 
     engine.drain_pending_immediate_actions_sync(
         &crate::sim_rng::test_context(),
-        &mut crate::engine::HostDisplayState::default(),
+        &mut crate::engine::CameraDisplayState::default(),
         &LevelAssets::new(),
     );
 
@@ -560,7 +561,7 @@ fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
     ));
     let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
 
-    let mut display = crate::engine::HostDisplayState::default();
+    let mut display = crate::engine::CameraDisplayState::default();
     engine.drain_pending_immediate_actions_sync(
         &crate::sim_rng::test_context(),
         &mut display,
