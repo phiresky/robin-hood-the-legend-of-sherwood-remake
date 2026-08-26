@@ -34,7 +34,6 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::resource_ids;
 use robin_engine::sbfile as engine_sbfile;
-use robin_engine::sbfile::SbFile;
 use robin_engine::scb as engine_scb;
 use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sound::ExclamationGroup;
@@ -248,149 +247,24 @@ pub(super) fn setup_mission_audio(
 ) {
     let loader = crate::audio_backend::create_sample_loader(std::path::PathBuf::from(sound_dir));
 
-    // Load FX bank.
-    {
-        let fx_bank_path = "Data/Sounds/robin hood.fxg";
-        match SbFile::read_all(fx_bank_path) {
-            Ok(data) => match robin_engine::sound_cache::parse_fx_bank(&data) {
-                Ok(elements) => {
-                    host.audio.sound.sound_cache.initialize_fx_cache(&elements);
-                    tracing::info!("Loaded FX bank: {} elements", elements.len());
-                }
-                Err(e) => tracing::warn!("Failed to parse FX bank: {}", e),
-            },
-            Err(e) => tracing::warn!("Failed to read FX bank '{}': error {}", fx_bank_path, e),
-        }
+    // FX bank, menu bank, and exclamation cache come pre-parsed from
+    // the process-wide asset cache (warmed on a background thread at
+    // startup); only the registration into this mission's sound cache
+    // happens here.
+    let asset_cache = crate::process_asset_cache::get_or_build(host.shipping.as_deref(), profiles);
+    if let Some(elements) = asset_cache.fx_bank.as_ref() {
+        host.audio.sound.sound_cache.initialize_fx_cache(elements);
+        tracing::info!("Loaded FX bank: {} elements", elements.len());
     }
-
-    // Load menu sound bank.
-    {
-        let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
-        match SbFile::read_all(menu_bank_path) {
-            Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
-                Ok(entries) => {
-                    host.audio.sound.sound_cache.initialize_menu_cache(&entries);
-                    tracing::info!("Loaded menu sound bank: {} entries", entries.len());
-                }
-                Err(e) => tracing::warn!("Failed to parse menu sound bank: {}", e),
-            },
-            Err(e) => tracing::warn!(
-                "Failed to read menu sound bank '{}': error {}",
-                menu_bank_path,
-                e
-            ),
-        }
+    if let Some(entries) = asset_cache.menu_bank.as_ref() {
+        host.audio.sound.sound_cache.initialize_menu_cache(entries);
+        tracing::info!("Loaded menu sound bank: {} entries", entries.len());
     }
-
-    // Initialize exclamation cache: load actors.res for variant-index
-    // → WAV-filename resolution, then parse each profile's .dat file
-    // and register speech entries.
-    {
-        let mut excl_res = ResourceManager::new();
-        let shipping = host.shipping.as_deref();
-        let res_loaded = excl_res
-            .attach_or_from_shipping("Data/Sounds/Exclamations/actors.res", shipping)
-            .is_ok();
-
-        if res_loaded {
-            // Collect unique exclamation IDs from all profile types
-            let mut files_needed = std::collections::BTreeMap::<u32, String>::new();
-            for ch in &profiles.characters {
-                if ch.exclamation_id != 0 {
-                    let bytes = ch.exclamation_id.to_le_bytes();
-                    let name: String = bytes
-                        .iter()
-                        .filter(|&&b| b != 0)
-                        .map(|&b| b as char)
-                        .collect();
-                    files_needed.insert(ch.exclamation_id, format!("actor{name}.dat"));
-                }
-            }
-            for s in &profiles.soldiers {
-                if s.exclamation_id != 0 {
-                    let bytes = s.exclamation_id.to_le_bytes();
-                    let name: String = bytes
-                        .iter()
-                        .filter(|&&b| b != 0)
-                        .map(|&b| b as char)
-                        .collect();
-                    files_needed.insert(s.exclamation_id, format!("actor{name}.dat"));
-                }
-            }
-            for c in &profiles.civilians {
-                if c.exclamation_id != 0 {
-                    let bytes = c.exclamation_id.to_le_bytes();
-                    let name: String = bytes
-                        .iter()
-                        .filter(|&&b| b != 0)
-                        .map(|&b| b as char)
-                        .collect();
-                    files_needed.insert(c.exclamation_id, format!("actor{name}.dat"));
-                }
-            }
-
-            let mut total_exclamations = 0usize;
-            for (&excl_id, dat_filename) in &files_needed {
-                let dat_path = format!("Data/Sounds/Exclamations/{dat_filename}");
-
-                let data = match SbFile::read_all(&dat_path) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to read exclamation file '{}': error {}",
-                            dat_path,
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-                let prefix_id = excl_id & 0xFFFF_0000;
-                let (table_id, exclamations) =
-                    match robin_engine::sound_cache::parse_exclamation_file(&data, prefix_id) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to parse exclamation file '{}': {}",
-                                dat_filename,
-                                e
-                            );
-                            continue;
-                        }
-                    };
-
-                // Resolve variant indices to WAV file paths via resource manager
-                let resolved: Vec<(u32, Vec<String>)> = exclamations
-                    .into_iter()
-                    .map(|(action_id, variant_indices)| {
-                        let paths: Vec<String> = variant_indices
-                            .into_iter()
-                            .filter_map(|vi| {
-                                excl_res
-                                    .get_sample(table_id as i32, vi as usize)
-                                    .ok()
-                                    .map(|s| s.to_string())
-                            })
-                            .collect();
-                        (action_id, paths)
-                    })
-                    .collect();
-
-                total_exclamations += resolved.len();
-                host.audio
-                    .sound
-                    .sound_cache
-                    .initialize_exclamations_for_profile(&resolved);
-            }
-
-            tracing::info!(
-                "Loaded exclamation cache: {} profiles, {} exclamations",
-                files_needed.len(),
-                total_exclamations,
-            );
-        } else {
-            tracing::warn!("Failed to load actors.res — exclamation cache not initialized");
-        }
+    for resolved in &asset_cache.exclamations {
+        host.audio
+            .sound
+            .sound_cache
+            .initialize_exclamations_for_profile(resolved);
     }
 
     // Initialize music pools from the mission profile.
@@ -454,7 +328,8 @@ fn populate_sound_duration_tables(
     // the persistent one-file cache; the loader (a full sample read) is
     // only hit for files the cache hasn't seen.
     let mut duration_cache = crate::audio_duration_cache::AudioDurationCache::load();
-    let sample_base = std::path::Path::new(sound_dir);
+    let sample_base =
+        crate::audio_duration_cache::SampleResolver::new(std::path::Path::new(sound_dir));
 
     fn frames_from_ms(ms: u32) -> u32 {
         ((ms.saturating_add(39)) / 40).max(1)
@@ -500,7 +375,7 @@ fn populate_sound_duration_tables(
             .entry_indices
             .iter()
             .filter_map(|&idx| host.audio.sound.sound_cache.speech_cache.entries.get(idx))
-            .filter_map(|entry| duration_cache.duration_ms(sample_base, &entry.file_name, loader))
+            .filter_map(|entry| duration_cache.duration_ms(&sample_base, &entry.file_name, loader))
             .max();
         let Some(duration_ms) = duration_ms else {
             continue;
@@ -518,7 +393,8 @@ fn populate_sound_duration_tables(
 
     let mut source_durations = BTreeMap::new();
     for (&sample_id, entry) in &host.audio.sound.sound_cache.source_cache.entries {
-        if let Some(duration_ms) = duration_cache.duration_ms(sample_base, &entry.file_name, loader)
+        if let Some(duration_ms) =
+            duration_cache.duration_ms(&sample_base, &entry.file_name, loader)
         {
             source_durations.insert(sample_id, frames_from_ms(duration_ms));
         }
@@ -1276,39 +1152,23 @@ pub(super) fn load_level_and_sprite_bank(
     let mut dev = engine_api::DevState::new();
     dev.debug.surface_display = game.global_options.options().debug_surfaces;
 
-    // Load sprite bank (robinhood.dic + robinhood.bks) — must happen
-    // before entity sprite loading in initialize_for_mission.
-    // The `.bks` file is big enough that plain I/O dominates the first
-    // few seconds of load, so pass progress+phase updates in to keep the
-    // bar moving and the status text alive during this 3-6s phase.
-    //
-    // Sub-phase labels emitted from inside the loader (Reading, Decoding,
-    // Parsing, Unpacking) get mapped from local 0..1 fractions onto the
-    // overall sprite-bank range 0.09 → 0.51.
-    let shipping = host.shipping.clone();
-    const SPRITE_BANK_START: f32 = 0.12;
-    const SPRITE_BANK_END: f32 = 0.56;
+    // Install the sprite bank — must happen before entity sprite
+    // loading in initialize_for_mission. The parsed bank comes from the
+    // process-wide asset cache (warmed on a background thread at
+    // startup); the mission gets a clone so its runtime overlay sprites
+    // don't leak into later missions. Bank sprites carry mmap spans,
+    // not pixel data, so the clone is cheap.
+    if let Some(ls) = loading_screen.as_mut() {
+        ls.set_status("Loading sprite bank...", 0.56);
+    }
     {
-        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
-            assets_frame_holder::ProgressUpdate::Tick(d) => {
-                tick_progress(loading_screen, event_pump.as_deref_mut(), d);
-            }
-            assets_frame_holder::ProgressUpdate::Phase(text, local) => {
-                if let Some(ls) = loading_screen.as_mut() {
-                    let overall = SPRITE_BANK_START + local * (SPRITE_BANK_END - SPRITE_BANK_START);
-                    // Use the end-of-local-phase target for the ceiling
-                    // so intra-phase ticks still advance smoothly between
-                    // sub-phase changes.
-                    ls.set_status(text, overall);
-                }
-            }
-        };
-        if let Err(e) = host
-            .frame_holder_mut()
-            .initialize_sprite_bank_with_progress(".", &mut update, shipping.as_deref())
-        {
-            tracing::warn!("Failed to load sprite bank: {}", e);
+        let asset_cache =
+            crate::process_asset_cache::get_or_build(host.shipping.as_deref(), profiles);
+        match asset_cache.sprite_bank.as_ref() {
+            Some(bank) => *host.frame_holder_mut() = bank.clone(),
+            None => tracing::warn!("Sprite bank unavailable in process asset cache"),
         }
+        tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }
     preload_hackable_character_dirs(host, &mut assets);
     // Publish the sprite-bank signature into LevelAssets so engine-side

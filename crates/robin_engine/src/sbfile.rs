@@ -358,6 +358,40 @@ pub fn resolve_data_path(path: &str) -> Option<PathBuf> {
 }
 
 impl SbFileSystem {
+    pub fn resolve_data_dir_layers(&self, rel_dir: &str) -> Vec<PathBuf> {
+        let normalised = rel_dir.replace('\\', "/");
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        {
+            let overlays = self.overlay_paths.lock().unwrap();
+            for overlay in overlays.iter() {
+                #[allow(irrefutable_let_patterns)] // wasm has no Zip variant
+                if let OverlayRoot::Directory(dir) = overlay {
+                    candidates.push(dir.join(&normalised));
+                }
+            }
+        }
+        let primary = self.primary_path.lock().unwrap().clone();
+        if let Some(primary) = &primary {
+            candidates.push(primary.join(&normalised));
+        }
+        candidates.push(PathBuf::from(&normalised));
+        for alt in self.alternate_paths.lock().unwrap().iter() {
+            if let Some(primary) = &primary {
+                candidates.push(primary.join(alt).join(&normalised));
+            }
+            candidates.push(Path::new(alt).join(&normalised));
+        }
+        candidates
+            .into_iter()
+            .filter_map(|dir| {
+                if dir.is_dir() {
+                    return Some(dir);
+                }
+                resolve_case_insensitive(&dir).filter(|p| p.is_dir())
+            })
+            .collect()
+    }
+
     pub fn resolve_data_path(&self, path: &str) -> Option<PathBuf> {
         let normalised = path.replace('\\', "/");
         let p = Path::new(&normalised);
@@ -809,6 +843,18 @@ impl SbFile {
 
     pub fn set_primary_path(path: &str) -> i32 {
         global_file_system().set_primary_path(path)
+    }
+
+    /// Resolve a relative datadir *directory* to every existing native
+    /// directory across the search order (overlays, primary, direct,
+    /// then alternates such as the language folder), case-insensitively.
+    ///
+    /// Callers that stat many files under one datadir directory resolve
+    /// the layering once with this instead of paying the full per-file
+    /// search for each name. Zip overlays have no native directories and
+    /// are skipped, matching [`SbFile::overlay_paths`].
+    pub fn resolve_data_dir_layers(rel_dir: &str) -> Vec<PathBuf> {
+        global_file_system().resolve_data_dir_layers(rel_dir)
     }
 
     pub fn remove_alternate_path(path: &str) -> i32 {

@@ -420,25 +420,78 @@ pub(super) enum ActiveModalOutcome {
 /// offset (colons replaced with `-` so the filename works on every
 /// filesystem — Windows in particular rejects `:`).  The directory
 /// is created lazily on first write.
+/// Per-frame queue of recorded modal dismissals during replay playback.
+///
+/// Serializes transparently as the plain command queue so snapshot and
+/// save formats are unchanged. `auto_dismiss` is stamped on frames fed
+/// from a replay: modals shown on those frames that have no recorded
+/// dismissal (a desynced replay spawns modals the recording never saw)
+/// dismiss themselves with a default result instead of blocking the
+/// playback on interactive input.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(super) struct ReplayModalDismissals {
+    queue: std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    #[serde(skip)]
+    pub(super) auto_dismiss: bool,
+}
+
+impl From<std::collections::VecDeque<engine_player_command::PlayerCommand>>
+    for ReplayModalDismissals
+{
+    fn from(queue: std::collections::VecDeque<engine_player_command::PlayerCommand>) -> Self {
+        Self {
+            queue,
+            auto_dismiss: false,
+        }
+    }
+}
+
+impl ReplayModalDismissals {
+    pub(super) fn push_back(&mut self, command: engine_player_command::PlayerCommand) {
+        self.queue.push_back(command);
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.queue.len()
+    }
+}
+
 /// Pop the first `ModalDismiss` whose `kind` matches the target out of
 /// the per-frame replay dismissal queue, returning the recorded result.
 ///
 /// Matching by kind keeps the queue stable even if the engine queues
 /// modals in a slightly different order within a frame (e.g. a dialog
 /// and a popup both fired), and lets an unrelated modal without a
-/// recording fall through to interactive handling.
+/// recording fall through to interactive handling — except on
+/// playback-fed frames, where it falls back to a default dismissal so
+/// replays never wait on manual input.
 pub(super) fn pop_matching_dismissal(
-    queue: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    queue: &mut ReplayModalDismissals,
     target: &engine_player_command::ModalKind,
 ) -> Option<engine_player_command::DialogResult> {
-    let pos = queue.iter().position(|c| {
+    let pos = queue.queue.iter().position(|c| {
         matches!(
             c,
             engine_player_command::PlayerCommand::ModalDismiss { kind, .. }
                 if kind == target
         )
-    })?;
-    match queue.remove(pos)? {
+    });
+    let Some(pos) = pos else {
+        if queue.auto_dismiss {
+            tracing::info!(
+                ?target,
+                "replay playback: auto-dismissing modal without recorded dismissal"
+            );
+            return Some(engine_player_command::DialogResult::Completed);
+        }
+        return None;
+    };
+    match queue.queue.remove(pos)? {
         engine_player_command::PlayerCommand::ModalDismiss { result, .. } => Some(result),
         _ => None,
     }
@@ -493,7 +546,7 @@ pub(super) fn start_active_dialogue_batch(
     text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) -> Option<ActiveDialogueBatch> {
     if host.effects.dialogue_count() == 0 {
         return None;
@@ -537,7 +590,7 @@ pub(super) async fn drain_pending_dialogues(
     text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
     headless: bool,
 ) {
     // ── Drain pending dialogues ──
@@ -631,7 +684,7 @@ pub(super) fn start_active_popup_scroll_batch(
     ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
     universal_frame: u32,
 ) -> Option<ActivePopupScrollBatch> {
     if host.effects.popup_text_count() == 0 {
@@ -698,7 +751,7 @@ pub(super) fn start_active_sherwood_report(
     ctx: &mut ModalContext<'_>,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) -> Option<ActivePopupScrollBatch> {
     if !host.effects.take_sherwood_report() {
         return None;
@@ -747,7 +800,7 @@ pub(super) fn start_active_debriefing_batch(
     ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) -> Option<ActiveDebriefingBatch> {
     if host.effects.debriefing_count() == 0 {
         return None;
@@ -924,7 +977,7 @@ pub(super) async fn drain_pending_popup_scroll(
     ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
     universal_frame: u32,
 ) {
     // ── Drain pending popup-scroll texts ──
@@ -1024,7 +1077,7 @@ pub(super) async fn drain_pending_sherwood_stat(
     ctx: &mut ModalContext<'_>,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) {
     // ── Drain pending Sherwood stat report ──
     // Script native `DisplaySherwoodReport` sets
@@ -1094,7 +1147,7 @@ pub(super) async fn drain_pending_debriefings(
     ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) {
     // ── Drain pending debriefing requests ──
     // The lose phase and win phase run as two distinct calls — each
@@ -1304,7 +1357,7 @@ fn build_dialogue_sentences(
 
 #[cfg(test)]
 mod tests {
-    use super::pop_matching_dismissal;
+    use super::{ReplayModalDismissals, pop_matching_dismissal};
     use robin_engine::player_command::{
         DebriefingTextId, DialogResult, MissionStateModalKind, ModalKind, PlayerCommand,
     };
@@ -1312,7 +1365,7 @@ mod tests {
 
     #[test]
     fn pop_matching_dismissal_removes_only_matching_modal() {
-        let mut queue = VecDeque::from([
+        let mut queue: ReplayModalDismissals = VecDeque::from([
             PlayerCommand::ModalDismiss {
                 kind: ModalKind::PopupText { text_id: 7 },
                 result: DialogResult::Completed,
@@ -1329,7 +1382,8 @@ mod tests {
                 },
                 result: DialogResult::Completed,
             },
-        ]);
+        ])
+        .into();
 
         let result = pop_matching_dismissal(
             &mut queue,
@@ -1341,14 +1395,14 @@ mod tests {
         assert_eq!(result, Some(DialogResult::Aborted));
         assert_eq!(queue.len(), 2);
         assert!(matches!(
-            queue[0],
+            queue.queue[0],
             PlayerCommand::ModalDismiss {
                 kind: ModalKind::PopupText { text_id: 7 },
                 ..
             }
         ));
         assert!(matches!(
-            queue[1],
+            queue.queue[1],
             PlayerCommand::ModalDismiss {
                 kind: ModalKind::MissionState {
                     kind: MissionStateModalKind::LeaveMissionNow,
@@ -1360,12 +1414,13 @@ mod tests {
 
     #[test]
     fn pop_matching_dismissal_leaves_unmatched_queue_intact() {
-        let mut queue = VecDeque::from([PlayerCommand::ModalDismiss {
+        let mut queue: ReplayModalDismissals = VecDeque::from([PlayerCommand::ModalDismiss {
             kind: ModalKind::Debriefing {
                 text_id: DebriefingTextId::Win { index: 1 },
             },
             result: DialogResult::Completed,
-        }]);
+        }])
+        .into();
 
         let result = pop_matching_dismissal(
             &mut queue,
@@ -1376,5 +1431,30 @@ mod tests {
 
         assert_eq!(result, None);
         assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn unrecorded_modal_auto_dismisses_on_playback_frames() {
+        let mut queue = ReplayModalDismissals::default();
+        queue.auto_dismiss = true;
+
+        let result = pop_matching_dismissal(&mut queue, &ModalKind::Dialog { dialog_id: 3 });
+
+        assert_eq!(result, Some(DialogResult::Completed));
+    }
+
+    #[test]
+    fn recorded_dismissal_wins_over_auto_dismiss() {
+        let mut queue: ReplayModalDismissals = VecDeque::from([PlayerCommand::ModalDismiss {
+            kind: ModalKind::Dialog { dialog_id: 3 },
+            result: DialogResult::Aborted,
+        }])
+        .into();
+        queue.auto_dismiss = true;
+
+        let result = pop_matching_dismissal(&mut queue, &ModalKind::Dialog { dialog_id: 3 });
+
+        assert_eq!(result, Some(DialogResult::Aborted));
+        assert!(queue.is_empty());
     }
 }

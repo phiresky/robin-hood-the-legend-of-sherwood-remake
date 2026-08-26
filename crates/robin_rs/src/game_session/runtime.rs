@@ -20,7 +20,7 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
 use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Common owned state for one loaded mission.
@@ -107,7 +107,7 @@ pub(super) struct MissionFrame {
     pub(super) simulation_body_allowed: bool,
     pub(super) run_post_initialize: bool,
     pub(super) modal_dismissals: Vec<PlayerCommand>,
-    pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
+    pub(super) replay_modal_dismissals: super::modal_state::ReplayModalDismissals,
     pub(super) recorder_hash: Option<u64>,
     recorder_state: RecorderFrameState,
 }
@@ -139,7 +139,7 @@ impl MissionFrame {
             simulation_body_allowed: true,
             run_post_initialize: true,
             modal_dismissals: Vec::new(),
-            replay_modal_dismissals: VecDeque::new(),
+            replay_modal_dismissals: super::modal_state::ReplayModalDismissals::default(),
             recorder_hash: None,
             recorder_state: RecorderFrameState::Inactive,
         }
@@ -241,6 +241,10 @@ impl MissionFrame {
             "replay injection requested after the replay finished"
         );
         let replay_commands = player.next_frame();
+        // Playback-fed frame: modals without a recorded dismissal (a
+        // desynced replay can spawn ones the recording never saw)
+        // self-dismiss instead of blocking playback on manual input.
+        self.replay_modal_dismissals.auto_dismiss = true;
         let mut simulation_commands = Vec::with_capacity(replay_commands.len());
         for command in replay_commands {
             if matches!(command.command, PlayerCommand::ModalDismiss { .. }) {

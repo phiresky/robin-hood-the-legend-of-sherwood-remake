@@ -464,7 +464,7 @@ fn bench_anim_samples(
         let mut blob_orig: Vec<u8> = Vec::new();
         for &id in &c.frame_ids {
             let s = &holder.sprites()[id as usize];
-            let Some(pd) = s.packed_data.as_ref() else {
+            let Some(pd) = holder.packed_data(id) else {
                 continue;
             };
             blob_orig.extend_from_slice(&s.width.to_le_bytes());
@@ -637,7 +637,7 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         let emit_orig = |ids: &[u32], out: &mut Vec<u8>| {
             for id in ids {
                 let s = &holder.sprites()[*id as usize];
-                let Some(pd) = s.packed_data.as_ref() else {
+                let Some(pd) = holder.packed_data(*id) else {
                     continue;
                 };
                 out.extend_from_slice(&s.width.to_le_bytes());
@@ -883,7 +883,7 @@ fn bench_whole_bank(data_dir: &Path) -> Result<()> {
         let mut out: Vec<u8> = Vec::with_capacity(256 * 1024 * 1024);
         for &id in ids {
             let s = &holder.sprites()[id as usize];
-            let Some(pd) = s.packed_data.as_ref() else {
+            let Some(pd) = holder.packed_data(id) else {
                 continue;
             };
             out.extend_from_slice(&s.width.to_le_bytes());
@@ -1064,7 +1064,7 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
     let mut unref = Bucket::empty();
     let mut empty_slots = 0u64;
     for (id, s) in holder.sprites().iter().enumerate() {
-        if s.packed_data.is_none() || s.packed_size == 0 {
+        if holder.packed_data(id as u32).is_none() || s.packed_size == 0 {
             empty_slots += 1;
             continue;
         }
@@ -1080,7 +1080,7 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
     let mut dims_by_tag: HashMap<&'static str, (u32, u32, u64)> = HashMap::new();
     let mut unref_dims = (0u32, 0u32, 0u64);
     for (id, s) in holder.sprites().iter().enumerate() {
-        if s.packed_data.is_none() {
+        if holder.packed_data(id as u32).is_none() {
             continue;
         }
         let (mw, mh, mpix) = match referenced.get(&(id as u32)) {
@@ -1144,7 +1144,7 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
     // UI panels / patches the user wants us to check.
     let mut all: Vec<(u32, u64, u16, u16, &'static str)> = Vec::new();
     for (id, s) in holder.sprites().iter().enumerate() {
-        if s.packed_data.is_none() {
+        if holder.packed_data(id as u32).is_none() {
             continue;
         }
         let tag = referenced

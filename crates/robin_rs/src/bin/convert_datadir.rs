@@ -1509,7 +1509,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     width: s.width,
                     height: s.height,
                     dictionary_index: s.dictionary_index,
-                    packed_data: s.packed_data.clone().unwrap_or_default(),
+                    packed_data: holder
+                        .packed_data(idx as u32)
+                        .map(<[u16]>::to_vec)
+                        .unwrap_or_default(),
                 })
             } else {
                 None

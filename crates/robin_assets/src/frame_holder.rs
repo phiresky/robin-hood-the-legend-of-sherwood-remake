@@ -83,9 +83,16 @@ pub struct PackedSprite {
     pub height: u16,
     /// Size of packed data in bytes.
     pub packed_size: u32,
-    /// The actual packed pixel data (owned).
+    /// Owned packed pixel data, for sprites that don't live in the bank
+    /// file (shipping datadirs, runtime-added PNG overlays). Bank-backed
+    /// sprites keep this `None` and use [`Self::bank_span`] instead —
+    /// resolve either through [`FrameHolder::packed_data`].
     #[serde(skip)]
     pub packed_data: Option<Vec<u16>>,
+    /// Word range of this sprite's packed data in the shared bank
+    /// storage, when the data is bank-backed rather than owned.
+    #[serde(skip)]
+    pub bank_span: Option<BankSpan>,
     /// Original runtime-loaded RGBA pixels, when this sprite came from a PNG
     /// overlay instead of the legacy bank.
     #[serde(skip)]
@@ -97,6 +104,90 @@ pub struct PackedSprite {
 /// Sentinel: no dictionary (run-length encoded sprite).
 pub const UNMAPPED_DICT: u16 = 0xFFFF;
 
+/// A sprite's packed-data range in the shared bank storage, in u16 words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BankSpan {
+    pub offset_words: u32,
+    pub len_words: u32,
+}
+
+/// Backing storage for the sprite bank's packed pixel data.
+///
+/// The fullgame bank is ~600 MB while a mission touches well under 1%
+/// of it (measured ~0.3% for a full Lincoln session), so the
+/// loose-datadir path memory-maps the file and sprites hold word spans
+/// into the map — pages fault in only for sprites actually drawn.
+/// Owned storage is the fallback when no native file path exists (wasm,
+/// zip-overlay datadirs).
+#[derive(Debug)]
+enum BankStorage {
+    #[cfg(not(target_arch = "wasm32"))]
+    Mapped(memmap2::Mmap),
+    Owned(Vec<u16>),
+}
+
+impl BankStorage {
+    fn words(&self) -> &[u16] {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            BankStorage::Mapped(map) => bytemuck::try_cast_slice(&map[..])
+                .expect("bank mapping was validated as even-length at load; maps are page-aligned"),
+            BankStorage::Owned(words) => words,
+        }
+    }
+}
+
+/// Open the sprite bank's backing storage: memory-map the native file
+/// when one resolves, otherwise fall back to reading it fully into
+/// memory (wasm, zip-overlay datadirs).
+fn open_bank_storage(bks_path: &str) -> Result<BankStorage> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(native) = robin_engine::sbfile::resolve_data_path(bks_path) {
+        let file = std::fs::File::open(&native)
+            .with_context(|| format!("open sprite bank '{}'", native.display()))?;
+        // SAFETY: read-only shared mapping. The datadir is treated as
+        // immutable while the game runs; truncating/rewriting the bank
+        // underneath a running game is out of contract.
+        let map = unsafe { memmap2::Mmap::map(&file) }
+            .with_context(|| format!("mmap sprite bank '{}'", native.display()))?;
+        if !map.len().is_multiple_of(2) {
+            return Err(anyhow!(
+                "sprite bank '{}' must contain 16-bit words (odd byte length {})",
+                native.display(),
+                map.len()
+            ));
+        }
+        tracing::info!(
+            "Sprite bank: memory-mapped {} ({:.0} MB)",
+            native.display(),
+            map.len() as f64 / 1e6
+        );
+        return Ok(BankStorage::Mapped(map));
+    }
+
+    let bytes = SbFile::open(bks_path, 0)
+        .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
+        .into_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return Err(anyhow!(
+            "sprite bank must contain 16-bit words (odd byte length {})",
+            bytes.len()
+        ));
+    }
+    // One copy into an owned, aligned word buffer. cast_slice assumes LE
+    // host byte order, matching the only targets we ship.
+    let words = match bytemuck::try_cast_slice::<u8, u16>(&bytes) {
+        Ok(words) => words.to_vec(),
+        Err(_) => bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
+            .collect(),
+    };
+    Ok(BankStorage::Owned(words))
+}
+
 impl Default for PackedSprite {
     fn default() -> Self {
         Self {
@@ -104,6 +195,7 @@ impl Default for PackedSprite {
             height: 0,
             packed_size: 0,
             packed_data: None,
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         }
@@ -140,11 +232,11 @@ impl BankSpriteIndex {
     pub const PACKED_SIZE: usize = 14; // 2+2+4+4+2
 }
 
-fn packed_data_for_index(
-    bank_words: &[u16],
+fn bank_span_for_index(
+    bank_len_words: usize,
     index: &BankSpriteIndex,
     sprite_index: usize,
-) -> Result<Option<Vec<u16>>> {
+) -> Result<Option<BankSpan>> {
     if !index.position.is_multiple_of(2) || !index.size.is_multiple_of(2) {
         return Err(anyhow!(
             "sprite index record {sprite_index}: bank byte range {}..+{} is not 16-bit aligned",
@@ -160,13 +252,16 @@ fn packed_data_for_index(
         .context("sprite bank word offset does not fit usize")?;
     let word_count =
         usize::try_from(index.size / 2).context("sprite bank word count does not fit usize")?;
-    let range = checked_range(
+    checked_range(
         word_offset,
         word_count,
-        bank_words.len(),
+        bank_len_words,
         format!("sprite index record {sprite_index} bank range"),
     )?;
-    Ok(Some(bank_words[range].to_vec()))
+    Ok(Some(BankSpan {
+        offset_words: index.position / 2,
+        len_words: index.size / 2,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +431,12 @@ pub struct FrameHolder {
     /// Bank file signature for validation.
     signature: u32,
 
+    /// Shared backing storage for bank-backed sprites' packed data.
+    /// `None` until a bank is loaded, or when every sprite owns its
+    /// data (shipping datadirs). Shared across clones.
+    #[serde(skip)]
+    bank: Option<Arc<BankStorage>>,
+
     /// Runtime statistics of which bank sprites actually get read.
     /// Shared across clones (the engine's pixel-opacity handle counts
     /// into the same set as the render path); replaced on bank reload.
@@ -429,7 +530,19 @@ impl FrameHolder {
     /// entries that were never populated.
     pub fn packed_data(&self, sprite_index: u32) -> Option<&[u16]> {
         self.record_usage(sprite_index as usize);
-        self.sprites[sprite_index as usize].packed_data.as_deref()
+        self.sprite_packed_slice(sprite_index as usize)
+    }
+
+    /// Resolve a sprite's packed words: owned data first, then its span
+    /// into the shared bank storage.
+    fn sprite_packed_slice(&self, sprite_index: usize) -> Option<&[u16]> {
+        let sprite = self.sprites.get(sprite_index)?;
+        if let Some(owned) = sprite.packed_data.as_deref() {
+            return Some(owned);
+        }
+        let span = sprite.bank_span?;
+        let words = self.bank.as_ref()?.words();
+        words.get(span.offset_words as usize..(span.offset_words + span.len_words) as usize)
     }
 
     /// Count `sprite_index` as touched in the shared usage statistics.
@@ -500,6 +613,7 @@ impl FrameHolder {
             height,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: Some(rgba.to_vec()),
             dictionary_index: UNMAPPED_DICT,
         });
@@ -628,6 +742,7 @@ impl FrameHolder {
     fn load_from_shipping(&mut self, bank: &crate::shipping_datadir::ShippingSpriteBank) {
         self.signature = bank.signature;
         self.dictionaries = bank.dictionaries.clone();
+        self.bank = None;
         self.sprites.clear();
         self.sprites.reserve(bank.sprites.len());
         for slot in &bank.sprites {
@@ -637,6 +752,7 @@ impl FrameHolder {
                     height: s.height,
                     packed_size: (s.packed_data.len() * 2) as u32,
                     packed_data: Some(s.packed_data.clone()),
+                    bank_span: None,
                     rgba_data: None,
                     dictionary_index: s.dictionary_index,
                 }),
@@ -651,10 +767,7 @@ impl FrameHolder {
     ///
     /// Emits [`ProgressUpdate::Tick`] deltas for smooth bar motion and
     /// [`ProgressUpdate::Phase`] sub-phase names (mapped by the caller
-    /// onto the overall loading-bar target). The `.bks` file is ~30 MB,
-    /// so reading + parsing takes several seconds with no other output
-    /// — without these updates the loading bar appears frozen at the
-    /// start of the mission load.
+    /// onto the overall loading-bar target).
     pub fn initialize_sprite_bank_with_progress(
         &mut self,
         data_dir: &str,
@@ -675,46 +788,13 @@ impl FrameHolder {
         }
 
         progress(ProgressUpdate::Phase("Reading sprite bank file...", 0.30));
-        // Tick the bar immediately so the user sees it move before the
-        // slow `.bks` read below (~600 MB fullgame, several seconds on
-        // cold cache).
         progress(ProgressUpdate::Tick(0.5));
 
         let bks_path = format!("{}/Data/robinhood.bks", data_dir);
         let dic_path = format!("{}/Data/robinhood.dic", data_dir);
 
-        // Open buffers the whole bank; take that buffer directly. Every
-        // extra in-memory copy of the bank costs hundreds of milliseconds
-        // and doubles peak RSS.
-        let bks_bytes = SbFile::open(&bks_path, 0)
-            .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
-            .into_bytes();
-        progress(ProgressUpdate::Tick(1.0));
-
-        progress(ProgressUpdate::Phase("Decoding sprite pixel data...", 0.85));
-        if !bks_bytes.len().is_multiple_of(2) {
-            return Err(anyhow!(
-                "sprite bank must contain 16-bit words (odd byte length {})",
-                bks_bytes.len()
-            ));
-        }
-        // Zero-copy view of the bank as u16 words; assumes LE host byte
-        // order, which matches the only targets we ship (x86_64 / arm64).
-        // Allocators align large buffers well past 2 bytes, so the copying
-        // fallback below is effectively dead code kept for correctness.
-        let aligned_fallback: Vec<u16>;
-        let bank_words: &[u16] = match bytemuck::try_cast_slice::<u8, u16>(&bks_bytes) {
-            Ok(words) => words,
-            Err(_) => {
-                aligned_fallback = bks_bytes
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| u16::from_le_bytes(*c))
-                    .collect();
-                &aligned_fallback
-            }
-        };
+        let storage = open_bank_storage(&bks_path)?;
+        let bank_len_words = storage.words().len();
         progress(ProgressUpdate::Tick(1.0));
 
         progress(ProgressUpdate::Phase(
@@ -723,7 +803,8 @@ impl FrameHolder {
         ));
         let dic_bytes = SbFile::read_all(&dic_path)
             .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
-        self.load_sprite_index_bytes(&dic_bytes, bank_words, progress)?;
+        self.load_sprite_index_bytes(&dic_bytes, bank_len_words, progress)?;
+        self.bank = Some(Arc::new(storage));
 
         tracing::info!(
             "Sprite bank loaded: {} dictionaries, {} sprites",
@@ -746,7 +827,7 @@ impl FrameHolder {
     fn load_sprite_index_bytes(
         &mut self,
         bytes: &[u8],
-        bank_words: &[u16],
+        bank_len_words: usize,
         progress: &mut dyn FnMut(ProgressUpdate),
     ) -> Result<()> {
         let mut reader = Reader::new(bytes);
@@ -804,13 +885,14 @@ impl FrameHolder {
                     )
                 })?;
 
-            let packed_data = packed_data_for_index(bank_words, &idx, sprite_index)?;
+            let bank_span = bank_span_for_index(bank_len_words, &idx, sprite_index)?;
 
             self.sprites.push(PackedSprite {
                 width: idx.width,
                 height: idx.height,
                 packed_size: idx.size,
-                packed_data,
+                packed_data: None,
+                bank_span,
                 rgba_data: None,
                 dictionary_index: dict_index,
             });
@@ -856,9 +938,8 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = sprite
-            .packed_data
-            .as_deref()
+        let packed = self
+            .sprite_packed_slice(idx)
             .expect("sprite data not loaded");
         let width = sprite.width as usize;
         let height = sprite.height as usize;
@@ -928,9 +1009,8 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = sprite
-            .packed_data
-            .as_deref()
+        let packed = self
+            .sprite_packed_slice(idx)
             .expect("sprite data not loaded");
         let width = sprite.width as usize;
         let height = sprite.height as usize;
@@ -972,9 +1052,8 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = sprite
-            .packed_data
-            .as_deref()
+        let packed = self
+            .sprite_packed_slice(idx)
             .expect("sprite data not loaded");
         let width = sprite.width as usize;
         let height = sprite.height as usize;
@@ -1050,7 +1129,7 @@ impl FrameHolder {
         }
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let Some(packed) = sprite.packed_data.as_deref() else {
+        let Some(packed) = self.sprite_packed_slice(idx) else {
             return false;
         };
 
@@ -1565,7 +1644,7 @@ mod tests {
 
         let mut holder = FrameHolder::new();
         let error = holder
-            .load_sprite_index_bytes(&bytes, &[], &mut |_| {})
+            .load_sprite_index_bytes(&bytes, 0, &mut |_| {})
             .unwrap_err();
         assert!(error.to_string().contains("sprite index sprite count"));
         assert!(error.to_string().contains("only 13 remain"));
@@ -1581,7 +1660,7 @@ mod tests {
 
         let mut holder = FrameHolder::new();
         let error = holder
-            .load_sprite_index_bytes(&bytes, &[0x1111, 0x2222], &mut |_| {})
+            .load_sprite_index_bytes(&bytes, 2, &mut |_| {})
             .unwrap_err();
         assert!(
             error
@@ -1595,7 +1674,7 @@ mod tests {
     fn sprite_bank_range_must_be_word_aligned() {
         let index =
             BankSpriteIndex::from_le_bytes(&sprite_index_bytes(1, 2, UNMAPPED_DICT)).unwrap();
-        let error = packed_data_for_index(&[0x1111], &index, 7).unwrap_err();
+        let error = bank_span_for_index(1, &index, 7).unwrap_err();
         assert!(error.to_string().contains("sprite index record 7"));
         assert!(error.to_string().contains("not 16-bit aligned"));
     }
@@ -1984,6 +2063,7 @@ mod tests {
             height: 2,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2014,6 +2094,7 @@ mod tests {
             height: 1,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2047,6 +2128,7 @@ mod tests {
             height: 1,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: 0,
         });
@@ -2073,6 +2155,7 @@ mod tests {
             height: 1,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2097,6 +2180,7 @@ mod tests {
             height: 1,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2127,6 +2211,7 @@ mod tests {
             height: 1,
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(packed),
+            bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
