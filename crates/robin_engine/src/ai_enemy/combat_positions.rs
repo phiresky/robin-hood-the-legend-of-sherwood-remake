@@ -5219,8 +5219,10 @@ mod tests {
     fn phalanx_night_detection_orders_light_rays_before_target_los() {
         let mut target = enemy(9, 600.0);
         target.position.y = 500.0;
+        target.world_position = crate::coordinates::WorldPoint3D::new(600.0, 500.0, 0.0);
         let mut member = member(2, 500.0, Vec::new(), vec![target]);
         member.position = position(500.0, 500.0);
+        member.world_position = crate::coordinates::WorldPoint3D::new(500.0, 500.0, 0.0);
 
         let mut ctx = AiContext {
             is_night_or_fog: true,
