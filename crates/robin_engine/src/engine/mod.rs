@@ -73,8 +73,8 @@ pub(crate) use commands::command_action_distance_animation;
 pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use frame::{
-    ExternalFact, FrameAdvanceError, SimCommand, SimEvents, SimulationFrameInput,
-    SimulationFrameOutput,
+    ExternalAction, ExternalActionResult, ExternalFact, FrameAdvanceError, FrameConsoleResponse,
+    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput,
 };
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};

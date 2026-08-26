@@ -4,7 +4,7 @@
 //! warm-up rewinds 25 frames + re-simulates.  Prints whether the
 //! replayed state matches the live state.
 //!
-//! This exercises the same `state_hash` + `perform_hourglass` path
+//! This exercises the same `state_hash` + `advance_frame` path
 //! the in-game rollback checker uses, but without rendering, input, or UI
 //! so it can run non-interactively from CI.
 //!
@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 
-use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
 
@@ -114,8 +114,9 @@ fn main() {
 
     let mut dev = DevState::new();
     let mut display = HostDisplayState::default();
+    let mut input = InputState::default();
 
-    let mut history: VecDeque<(Engine, LevelAssets, DevState, HostDisplayState)> =
+    let mut history: VecDeque<(Engine, LevelAssets, DevState, HostDisplayState, InputState)> =
         VecDeque::with_capacity(WINDOW + 1);
 
     let mut desyncs = 0usize;
@@ -123,25 +124,47 @@ fn main() {
 
     for frame in 0..TOTAL_FRAMES {
         // Snapshot pre-tick state.
-        history.push_back((engine.clone(), assets.clone(), dev.clone(), display.clone()));
+        history.push_back((
+            engine.clone(),
+            assets.clone(),
+            dev.clone(),
+            display.clone(),
+            input.clone(),
+        ));
         if history.len() > WINDOW {
             history.pop_front();
         }
 
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
-        let _ = engine.perform_post_initialize(&mut display, &assets);
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                robin_engine::engine::SimulationFrameInput::default().with_post_initialize(true),
+            )
+            .expect("advance live frame");
 
         if frame >= WARMUP_FRAMES && history.len() == WINDOW {
             // Re-simulate from the oldest snapshot forward WINDOW ticks
             // and compare the resulting state to the live engine.
-            let (start_engine, start_assets, start_dev, start_display) = &history[0];
+            let (start_engine, start_assets, start_dev, start_display, start_input) = &history[0];
             let mut sim_engine = start_engine.clone();
             let sim_assets = start_assets.clone();
             let mut sim_dev = start_dev.clone();
             let mut sim_display = start_display.clone();
+            let mut sim_input = start_input.clone();
             for _ in 0..WINDOW {
-                sim_engine.perform_hourglass(&mut sim_display, &sim_assets, &mut sim_dev);
-                let _ = sim_engine.perform_post_initialize(&mut sim_display, &sim_assets);
+                sim_engine
+                    .advance_frame(
+                        &mut sim_display,
+                        &mut sim_input,
+                        &sim_assets,
+                        &mut sim_dev,
+                        robin_engine::engine::SimulationFrameInput::default()
+                            .with_post_initialize(true),
+                    )
+                    .expect("advance reconstructed frame");
             }
 
             let live = state_hash(&engine);

@@ -97,9 +97,13 @@ impl MissionAudio {
         }
     }
 
-    pub(super) fn tick(&mut self, manager: &mut EngineManager, host: &mut Host) {
+    pub(super) fn tick(
+        &mut self,
+        manager: &mut EngineManager,
+        host: &mut Host,
+    ) -> Option<robin_engine::engine::ExternalFact> {
         if let Some(backend) = self.backend.as_mut() {
-            tick_audio(
+            return tick_audio(
                 manager,
                 host,
                 backend,
@@ -107,6 +111,7 @@ impl MissionAudio {
                 &mut self.sound_rng,
             );
         }
+        None
     }
 }
 

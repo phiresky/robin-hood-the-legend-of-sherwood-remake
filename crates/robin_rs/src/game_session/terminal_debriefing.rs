@@ -290,7 +290,7 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
     dispatch_local_command(
         context.host,
         &mut context.manager.engine,
-        &mut context.frame.commands,
+        &mut context.frame.post_commands,
         context.assets,
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,

@@ -7,29 +7,35 @@
 //! `&mut EngineInner`, so the only way to mutate simulation state from
 //! outside `robin_engine` is through an explicit method on this type.
 //!
-//! Each exposed mutator is either:
+//! [`Engine::advance_frame`] is the canonical runtime transaction. Remaining
+//! exposed mutators are compatibility/setup seams and fall into one of these
+//! categories:
 //!
-//! * a tick call (`apply_command(sim, s)`, `perform_hourglass`) — the normal
-//!   per-frame sim-state mutation point,
+//! * legacy command/hourglass calls retained for engine fixtures and migration,
 //! * a one-shot setup / level-load / lifecycle hook, or
 //! * a drain of a side-effect queue filled during the tick and consumed
 //!   host-side.
 //!
 //! Anything that doesn't fit one of those buckets should be pushed into
-//! the sim via `PlayerCommand` / a dedicated tick path, not added here.
+//! the sim via `SimulationFrameInput`, not added here.
 
 use std::ops::Deref;
 
+#[cfg(test)]
+use super::DirectorCompletion;
 use super::SimConfig;
 use super::{
-    ConsoleResponse, DevState, DirectorCompletion, EngineError, EngineInner, ExternalFact,
-    FrameAdvanceError, InputState, LevelAssets, LevelLoadStaging, SideEffects, SimEvents,
-    SimulationFrameInput, SimulationFrameOutput, SimulationRng,
+    ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
+    ExternalFact, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
+    LevelLoadStaging, SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput,
+    SimulationRng,
 };
 use crate::campaign::Campaign;
 use crate::element::EntityId;
 use crate::minimap::HitMask;
-use crate::player_command::{PlayerCommand, PlayerInput};
+#[cfg(test)]
+use crate::player_command::PlayerCommand;
+use crate::player_command::PlayerInput;
 
 /// Canonical gameplay-authoritative engine scalars emitted by schema-13
 /// Original parity traces. Presentation camera/surface/backend state is
@@ -2981,27 +2987,77 @@ impl Engine {
 
     // ── Tick ────────────────────────────────────────────────────────
 
-    /// Advance one authoritative engine-hourglass transaction.
+    fn apply_external_action(
+        &mut self,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        action: ExternalAction,
+    ) -> ExternalActionResult {
+        match action {
+            ExternalAction::Native {
+                name,
+                args,
+                this_actor,
+            } => ExternalActionResult::Native(
+                self.call_external_native_with_this(assets, &name, &args, this_actor),
+            ),
+            ExternalAction::CheatString {
+                input,
+                mut selected_view_element,
+            } => {
+                let response =
+                    self.run_cheat_string(assets, dev, &mut selected_view_element, &input);
+                ExternalActionResult::CheatString {
+                    response: FrameConsoleResponse::from(response),
+                    selected_view_element,
+                }
+            }
+            ExternalAction::ConsoleCommand {
+                input,
+                mut selected_view_element,
+            } => {
+                let response =
+                    self.run_console_command(assets, dev, &mut selected_view_element, &input);
+                ExternalActionResult::ConsoleCommand {
+                    response: FrameConsoleResponse::from(response),
+                    selected_view_element,
+                }
+            }
+            ExternalAction::SimpleMessage { message } => {
+                self.inner.send_simple_message(message);
+                ExternalActionResult::SimpleMessage
+            }
+            ExternalAction::EzekielInstakill { target } => {
+                ExternalActionResult::EzekielInstakill(self.inner.try_ezekiel_instakill(target))
+            }
+            ExternalAction::ReplaceCampaign { campaign } => {
+                self.inner.replace_campaign(campaign);
+                ExternalActionResult::ReplaceCampaign
+            }
+        }
+    }
+
+    /// Advance one authoritative host-admitted engine frame.
     ///
     /// This is the migration target for drivers that currently call external
     /// replay hooks, `apply_commands`, and `perform_hourglass` separately. It
     /// preserves the Original's boundary ordering:
     ///
     /// 1. between-frame director/sound facts,
-    /// 2. resolved player commands in recorded order,
-    /// 3. exactly one ordered `PerformHourglass`,
-    /// 4. side-effect drain and post-frame state hash.
+    /// 2. admitted pre-hourglass host actions,
+    /// 3. resolved player commands in recorded order,
+    /// 4. the explicitly gated `PerformHourglass`,
+    /// 5. admitted post-hourglass developer/native actions,
+    /// 6. post-hourglass commands,
+    /// 7. the optional one-shot `PostInitialize` stage,
+    /// 8. side-effect drain and post-frame state hash.
     ///
     /// `display`, `input`, and `dev` remain explicit host-owned adapter state
     /// while command handlers are incrementally disentangled from UI scratch;
     /// none of them is part of [`SimulationFrameInput`]. Rendering, widgets,
-    /// audio playback, and mission `PostInitialize` remain outside this call,
-    /// at their Original post-hourglass boundaries. This is not a complete
-    /// `RHGame` host-loop frame: it cannot represent a paused/gated iteration
-    /// with no `PerformHourglass`, or a parity command produced by a nested
-    /// refresh after the main hourglass body. Post-tick host native, batch,
-    /// console, and command mutations likewise need a separate journal phase
-    /// before this can own production history commits.
+    /// audio playback remain outside this call at their Original boundaries.
+    /// Graphical play can cross `PostInitialize` with a second no-hourglass
+    /// admission after presentation without exposing a separate mutation API.
     pub fn advance_frame(
         &mut self,
         display: &mut super::HostDisplayState,
@@ -3015,8 +3071,13 @@ impl Engine {
         let frame_before = self.inner.control.frame_counter;
         let SimulationFrameInput {
             external_facts,
+            external_actions,
             commands,
+            post_external_actions,
+            post_commands,
+            run_hourglass,
             simulation_body_allowed,
+            run_post_initialize,
         } = frame;
 
         // Director facts are fallible replay inputs. Stage the entire fact
@@ -3041,24 +3102,54 @@ impl Engine {
             Self::apply_frame_external_facts(&mut self.inner, display, assets, external_facts)?;
         }
 
+        let mut external_action_results = external_actions
+            .into_iter()
+            .map(|action| self.apply_external_action(assets, dev, action))
+            .collect::<Vec<_>>();
+
         let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
         self.inner
             .apply_commands(&sim, display, input, assets, &commands);
 
-        let side_effects = self.inner.perform_hourglass_with_body_gate(
-            display,
-            assets,
-            dev,
-            simulation_body_allowed,
+        let side_effects = if run_hourglass {
+            self.inner.perform_hourglass_with_body_gate(
+                display,
+                assets,
+                dev,
+                simulation_body_allowed,
+            )
+        } else {
+            let mut effects = SideEffects::default();
+            effects.code = crate::game_operation::GameCode::LevelInProgress;
+            effects
+        };
+
+        external_action_results.extend(
+            post_external_actions
+                .into_iter()
+                .map(|action| self.apply_external_action(assets, dev, action)),
         );
+
+        let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
+        let sim = self.inner.control.simulation_context();
+        self.inner
+            .apply_commands(&sim, display, input, assets, &post_commands);
+
+        let post_initialize_events = run_post_initialize
+            .then(|| self.inner.perform_post_initialize(display, assets))
+            .flatten()
+            .map(SimEvents::from);
         let frame_after = self.inner.control.frame_counter;
         let state_hash = crate::replay::state_hash(&self.inner);
 
         Ok(SimulationFrameOutput {
             frame_before,
             frame_after,
+            hourglass_ran: run_hourglass,
             events: SimEvents::from(side_effects),
+            post_initialize_events,
+            external_action_results,
             state_hash,
         })
     }
@@ -3099,44 +3190,12 @@ impl Engine {
         self.inner.set_external_director_completion_replay(enabled);
     }
 
-    /// Queue concrete speech samples resolved by the between-frame logical
-    /// sound-manager update. They are consumed by the next engine tick.
-    pub fn queue_resolved_exclamations(
-        &mut self,
-        resolutions: Vec<crate::sound::ResolvedExclamation>,
-    ) {
-        self.inner.queue_resolved_exclamations(resolutions);
-    }
-
-    /// Queue authoritative Original-host speech resolutions from a parity
-    /// trace. This is deliberately separate from live host resolutions so
-    /// only replay injection may tolerate a missing Rust logical request.
-    #[doc(hidden)]
-    pub fn queue_replay_resolved_exclamations(
-        &mut self,
-        resolutions: Vec<crate::sound::ResolvedExclamation>,
-    ) {
-        self.inner.queue_replay_resolved_exclamations(resolutions);
-    }
-
-    /// Consume the authoritative between-frame Original sound update before
-    /// replay applies the following frame's input commands.
-    ///
-    /// The normal tick also enters this boundary first; calling it here is
-    /// intentionally idempotent once the queued resolutions and matured
-    /// callbacks have been drained.
-    #[doc(hidden)]
-    pub fn apply_replay_sound_boundary(&mut self, assets: &LevelAssets) {
-        self.require_live_campaign("applying a replay sound boundary");
-        let sim = self.inner.control.simulation_context();
-        self.inner.hourglass_phase_sound_boundary(&sim, assets);
-    }
-
     /// Apply one recorded director completion at the pre-Hourglass boundary.
     ///
     /// This validates the currently latched sequence command, terminates it,
     /// and synchronously runs immediate successors before returning.
-    pub fn apply_external_director_completion(
+    #[cfg(test)]
+    pub(crate) fn apply_external_director_completion(
         &mut self,
         completion: DirectorCompletion,
         display: &mut super::HostDisplayState,
@@ -3150,7 +3209,8 @@ impl Engine {
     /// The per-frame simulation tick. The ONLY per-frame sim-state
     /// mutation point; rollback replay re-runs this on a cloned engine
     /// and must see bit-identical results.
-    pub fn perform_hourglass(
+    #[cfg(test)]
+    pub(crate) fn perform_hourglass(
         &mut self,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
@@ -3160,52 +3220,10 @@ impl Engine {
         self.inner.perform_hourglass(display, assets, dev)
     }
 
-    /// Run a simulation tick while optionally forcing the actor/world body
-    /// gate closed after the mission-script phase.
-    ///
-    /// This does not alter the engine's persistent lock state.
-    pub fn perform_hourglass_with_body_gate(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        assets: &LevelAssets,
-        dev: &mut DevState,
-        simulation_body_allowed: bool,
-    ) -> SideEffects {
-        self.require_live_campaign("performing a gated engine tick");
-        self.inner
-            .perform_hourglass_with_body_gate(display, assets, dev, simulation_body_allowed)
-    }
-
-    /// One-shot lifecycle stage matching `RHGame::GameLoop`: dispatch
-    /// mission `PostInitialize` after the first host refresh and sound
-    /// hourglass.  Replay drivers must run this after reconstructing
-    /// frame zero as well.
-    pub fn perform_post_initialize(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        assets: &LevelAssets,
-    ) -> Option<SideEffects> {
-        self.require_live_campaign("performing mission PostInitialize");
-        self.inner.perform_post_initialize(display, assets)
-    }
-
-    /// Apply one player command.  Commands are the only host → sim
-    /// channel that mutates serialised state outside `perform_hourglass`.
-    pub fn apply_command(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
-        self.require_live_campaign("applying a player command");
-        let sim = self.inner.control.simulation_context();
-        self.inner.apply_command(&sim, display, input, assets, cmd);
-    }
-
     /// Apply a batch of player commands, as used by the replay driver
     /// and the rollback checker.
-    pub fn apply_commands(
+    #[cfg(test)]
+    pub(crate) fn apply_commands(
         &mut self,
         display: &mut super::HostDisplayState,
         input: &mut InputState,
@@ -3218,47 +3236,13 @@ impl Engine {
             .apply_commands(&sim, display, input, assets, cmds);
     }
 
-    /// Apply a batch of locally-sourced commands (live single-player
-    /// host pipeline). See [`EngineInner::apply_local_commands`].
-    pub fn apply_local_commands(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        cmds: &[PlayerCommand],
-    ) {
-        self.require_live_campaign("applying local commands");
-        self.inner
-            .apply_local_commands(display, input, assets, cmds);
-    }
-
-    /// Fire the `DIES IRAE` (`EZEKIEL_2517`) cheat if active: instakill
-    /// the target when the host's alt-hover gesture lands on a live
-    /// human.  Returns `true` when the cheat consumed the gesture (the
-    /// host should NOT then set `host.selected_view_element`).
-    ///
-    /// This is a cheat shortcut — the instakill is a sim-state mutation
-    /// that bypasses the normal command recording.  Rollback replay of
-    /// frames spanning the cheat activation may desync for one
-    /// window; acceptable since EZEKIEL is a dev-only toggle rarely
-    /// triggered during normal play.
-    pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
-        self.inner.try_ezekiel_instakill(id)
-    }
-
-    /// Host-side entry point for injecting a `SimpleMessage` onto the
-    /// engine messenger.  Used by UI sites that forward messages (console
-    /// hide, switch-task, …); the drain handler in
-    /// `perform_hourglass_inner` is the sole consumer.
-    pub fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
-        self.inner.send_simple_message(msg);
+    /// Read-only predicate used by the host to choose between its view-cone
+    /// selection and an admitted `EzekielInstakill` frame action.
+    pub fn can_ezekiel_instakill(&self, id: EntityId) -> bool {
+        self.inner.can_ezekiel_instakill(id)
     }
 
     // ── Setup / lifecycle ──────────────────────────────────────────
-
-    pub fn replace_campaign_from_console(&mut self, campaign: Campaign) {
-        self.inner.replace_campaign(campaign);
-    }
 
     /// Run a host-side mission-script extension against live script effects
     /// while the Engine-owned simulation RNG is installed.
@@ -3327,7 +3311,7 @@ impl Engine {
     /// `selected_view_element` is the host's alt-hover UI selection —
     /// cheats that operate on "the NPC you're currently viewing" read
     /// (and sometimes clear) it.
-    pub fn run_console_command(
+    pub(crate) fn run_console_command(
         &mut self,
         assets: &LevelAssets,
         dev: &mut DevState,
@@ -3343,7 +3327,7 @@ impl Engine {
     /// if the console is currently in `use_final` mode.  Intended for
     /// out-of-band cheat entry points (HTTP RPC, debug overlays) whose
     /// caller contract is "always reach the full dev command table".
-    pub fn run_cheat_string(
+    pub(crate) fn run_cheat_string(
         &mut self,
         assets: &LevelAssets,
         dev: &mut DevState,
@@ -3371,26 +3355,9 @@ impl Engine {
         )
     }
 
-    /// Invoke a script `NativeFn` from outside the VM (HTTP-RPC, debug
-    /// tooling).  See [`EngineInner::call_external_native`] for the full
-    /// contract — runs through the same script-session boundary as engine
-    /// callbacks, so any
-    /// queued side-effects (camera, dialog, sequences, sound, deferred
-    /// game-logic) are drained as if a script had made the call.
-    pub fn call_external_native(
-        &mut self,
-        assets: &LevelAssets,
-        native_name: &str,
-        args: &[i32],
-    ) -> Result<i32, String> {
-        let sim = self.inner.control.simulation_context();
-        self.inner
-            .call_external_native(&sim, assets, native_name, args)
-    }
-
-    /// Like [`Self::call_external_native`], but with an explicit transient
-    /// `ThisActor` receiver.
-    pub fn call_external_native_with_this(
+    /// Invoke a script native with an explicit transient `ThisActor` receiver.
+    /// Runtime callers reach this only through [`Self::advance_frame`].
+    pub(crate) fn call_external_native_with_this(
         &mut self,
         assets: &LevelAssets,
         native_name: &str,

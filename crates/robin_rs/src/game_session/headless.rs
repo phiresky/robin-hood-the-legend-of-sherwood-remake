@@ -121,14 +121,6 @@ impl HeadlessMission {
         // them so rollback replay does not start post-command and apply the
         // journaled inputs a second time.
         let mut frame = self.runtime.begin_frame(frame_started_at_ms);
-        if !net_inputs.is_empty() {
-            self.runtime.world.manager.engine.apply_commands(
-                &mut self.runtime.world.host.frontend.engine_display,
-                &mut self.runtime.world.host.frontend.input,
-                &self.runtime.world.assets,
-                &net_inputs,
-            );
-        }
         frame.commands.commands.extend(net_inputs);
 
         if !tick_paused
@@ -156,12 +148,15 @@ impl HeadlessMission {
             &self.runtime.world.manager,
         );
         let simulation_start = super::frame_perf::start(profiling);
-        let tick_exit_code = self.runtime.run_tick(TickPolicy {
-            skip_tick: tick_paused,
-            paused: false,
-        });
+        let tick_exit_code = self.runtime.run_tick(
+            TickPolicy {
+                skip_tick: tick_paused,
+                paused: false,
+            },
+            &mut frame,
+        );
         super::frame_perf::record(super::frame_perf::Phase::Simulation, simulation_start);
-        self.runtime.drain_host_rpc();
+        self.runtime.drain_host_rpc(&mut frame);
         self.drain_headless_modals(&mut frame);
         self.runtime.timeline.trace(FrameContractStage::ModalDrain);
 
@@ -169,7 +164,7 @@ impl HeadlessMission {
         // after presentation, but headless must do so before frame-zero
         // recorder commit and before a debugger step can advance frame one.
         // See the frame-contract tests in runtime.rs.
-        self.runtime.run_post_initialize();
+        self.runtime.run_post_initialize(&frame);
         let paused = tick_paused;
         self.commit_simulation_history(&frame, paused);
         self.drain_headless_steps(!network_paused);
@@ -251,12 +246,7 @@ impl HeadlessMission {
 
     fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
         let MissionRuntime { world, .. } = &mut self.runtime;
-        let MissionWorld {
-            host,
-            manager,
-            assets,
-            ..
-        } = world;
+        let MissionWorld { host, .. } = world;
 
         if host
             .effects
@@ -274,16 +264,9 @@ impl HeadlessMission {
                 let command = PlayerCommand::QuitMissionRequested;
                 if let Some(net) = host.transport.net.as_ref() {
                     net.send_input(command.clone());
-                } else {
-                    manager.engine.apply_local_commands(
-                        &mut host.frontend.engine_display,
-                        &mut host.frontend.input,
-                        assets,
-                        std::slice::from_ref(&command),
-                    );
                 }
                 frame
-                    .commands
+                    .post_commands
                     .push(PlayerInput::new(host.transport.local_seat, command));
             }
         }
@@ -458,7 +441,7 @@ mod tests {
                 .timeline
                 .rewind_buffer
                 .commands_for(0)
-                .map(<[_]>::len),
+                .map(|commands| commands.len()),
             Some(1)
         );
     }
@@ -499,11 +482,14 @@ mod tests {
             runtime,
             policy: HeadlessPolicy::replay_runner(),
         };
-        let frame = mission.runtime.begin_frame(0);
-        mission.runtime.run_tick(super::TickPolicy {
-            skip_tick: false,
-            paused: false,
-        });
+        let mut frame = mission.runtime.begin_frame(0);
+        mission.runtime.run_tick(
+            super::TickPolicy {
+                skip_tick: false,
+                paused: false,
+            },
+            &mut frame,
+        );
 
         // This is the ordering enforced by run_frame: publish the normal
         // frame before run_forward_ticks opens and commits its own frame.

@@ -2,7 +2,7 @@
 //!
 //! Rewind, rollback checking, and multiplayer correction all need the
 //! same primitive: start from a pre-tick snapshot, apply the recorded
-//! commands for each frame, and run deterministic engine ticks until a
+//! authoritative inputs for each frame, and run deterministic engine ticks until a
 //! target pre-tick frame is reconstructed. The policies below make the
 //! places where those callers intentionally differ explicit.
 //!
@@ -121,7 +121,7 @@ pub enum ReplayError {
         checkpoint_frame: u32,
         target_frame: u32,
     },
-    #[error("missing recorded commands for replay frame {frame}")]
+    #[error("missing recorded authoritative input for replay frame {frame}")]
     MissingCommands { frame: u32 },
 }
 
@@ -143,8 +143,8 @@ pub enum RestoreError {
 /// maintaining its own `oldest_frame + VecDeque` arithmetic.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CommandJournal {
-    commands: VecDeque<Vec<PlayerInput>>,
-    /// Frame represented by `commands[0]`. When truncation empties a journal,
+    frames: VecDeque<robin_engine::engine::SimulationFrameInput>,
+    /// Frame represented by `frames[0]`. When truncation empties a journal,
     /// this remains the frame at which its next branch must begin.
     oldest_frame: u32,
     /// Required frame for the next record. `None` only for a fresh or fully
@@ -164,15 +164,22 @@ impl CommandJournal {
     /// Record one complete frame. Non-empty journals are strictly contiguous:
     /// a gap or duplicate means a caller crossed a timeline discontinuity
     /// without first clearing or truncating the journal.
-    pub fn record(&mut self, frame: u32, commands: Vec<PlayerInput>) {
+    pub fn record_frame(&mut self, frame: u32, input: robin_engine::engine::SimulationFrameInput) {
         let next_frame = self
             .validate_record(frame)
             .unwrap_or_else(|error| panic!("{error}"));
-        if self.commands.is_empty() && self.next_frame.is_none() {
+        if self.frames.is_empty() && self.next_frame.is_none() {
             self.oldest_frame = frame;
         }
-        self.commands.push_back(commands);
+        self.frames.push_back(input);
         self.next_frame = Some(next_frame);
+    }
+
+    pub fn record(&mut self, frame: u32, commands: Vec<PlayerInput>) {
+        self.record_frame(
+            frame,
+            robin_engine::engine::SimulationFrameInput::from_player_inputs(commands),
+        );
     }
 
     /// Validate a record before either the journal or an associated
@@ -191,17 +198,21 @@ impl CommandJournal {
             .ok_or(CommandRecordError::FrameOverflow)
     }
 
-    pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
+    pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
+        self.frame_for(frame).map(|frame| frame.player_inputs())
+    }
+
+    pub fn frame_for(&self, frame: u32) -> Option<&robin_engine::engine::SimulationFrameInput> {
         let index = frame.checked_sub(self.oldest_frame)? as usize;
-        self.commands.get(index).map(Vec::as_slice)
+        self.frames.get(index)
     }
 
     pub fn oldest_frame(&self) -> Option<u32> {
-        (!self.commands.is_empty()).then_some(self.oldest_frame)
+        (!self.frames.is_empty()).then_some(self.oldest_frame)
     }
 
     pub fn newest_frame(&self) -> Option<u32> {
-        (!self.commands.is_empty()).then(|| {
+        (!self.frames.is_empty()).then(|| {
             self.next_frame
                 .expect("non-empty command journal has a next frame")
                 - 1
@@ -213,11 +224,11 @@ impl CommandJournal {
     }
 
     pub fn len(&self) -> usize {
-        self.commands.len()
+        self.frames.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
+        self.frames.is_empty()
     }
 
     /// Add an input to an already-recorded frame. Returns `false` when the
@@ -226,10 +237,10 @@ impl CommandJournal {
         let Some(index) = frame.checked_sub(self.oldest_frame) else {
             return false;
         };
-        let Some(commands) = self.commands.get_mut(index as usize) else {
+        let Some(frame) = self.frames.get_mut(index as usize) else {
             return false;
         };
-        commands.push(input);
+        frame.commands.push(input.into());
         true
     }
 
@@ -240,10 +251,10 @@ impl CommandJournal {
             return;
         };
         let index = index as usize;
-        if index < self.commands.len() {
-            self.commands.truncate(index);
+        if index < self.frames.len() {
+            self.frames.truncate(index);
             self.next_frame = Some(frame);
-            if self.commands.is_empty() {
+            if self.frames.is_empty() {
                 self.oldest_frame = frame;
             }
         }
@@ -252,14 +263,14 @@ impl CommandJournal {
     /// Drop commands older than the earliest checkpoint that can still be
     /// restored.
     pub fn discard_before(&mut self, frame: u32) {
-        while !self.commands.is_empty() && self.oldest_frame < frame {
-            self.commands.pop_front();
+        while !self.frames.is_empty() && self.oldest_frame < frame {
+            self.frames.pop_front();
             self.oldest_frame += 1;
         }
     }
 
     pub fn clear(&mut self) {
-        self.commands.clear();
+        self.frames.clear();
         self.oldest_frame = 0;
         self.next_frame = None;
     }
@@ -409,7 +420,10 @@ impl TimelineHistory {
     /// Commit the open frame. Returns `false` only while the history has no
     /// checkpoint anchor yet; commands before that first checkpoint cannot be
     /// replayed and are deliberately not journaled.
-    pub fn commit_frame(&mut self, commands: Vec<PlayerInput>) -> bool {
+    pub fn commit_frame_input(
+        &mut self,
+        input: robin_engine::engine::SimulationFrameInput,
+    ) -> bool {
         let pending = self
             .pending
             .as_ref()
@@ -432,11 +446,17 @@ impl TimelineHistory {
         if let Some(checkpoint) = pending.checkpoint {
             self.checkpoints.remember(checkpoint);
         }
-        self.commands.record(pending.frame, commands);
+        self.commands.record_frame(pending.frame, input);
         if let Some(oldest_checkpoint) = self.checkpoints.oldest_frame() {
             self.commands.discard_before(oldest_checkpoint);
         }
         true
+    }
+
+    pub fn commit_frame(&mut self, commands: Vec<PlayerInput>) -> bool {
+        self.commit_frame_input(
+            robin_engine::engine::SimulationFrameInput::from_player_inputs(commands),
+        )
     }
 
     pub fn restore(
@@ -447,8 +467,12 @@ impl TimelineHistory {
         self.checkpoints.restore(target_frame, policy)
     }
 
-    pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
+    pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
         self.commands.commands_for(frame)
+    }
+
+    pub fn frame_for(&self, frame: u32) -> Option<&robin_engine::engine::SimulationFrameInput> {
+        self.commands.frame_for(frame)
     }
 
     pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
@@ -618,6 +642,45 @@ pub fn replay_to_frame<'a>(
     ))
 }
 
+/// Replay phase-complete authoritative frame records. Rollback and rewind use
+/// this path so host facts, the hourglass gate, late commands, and lifecycle
+/// stages cannot disappear during reconstruction.
+pub fn replay_frames_to_frame<'a>(
+    mut snapshot: SimSnapshot,
+    assets: &LevelAssets,
+    target_frame: u32,
+    mut frame_for: impl FnMut(u32) -> Option<&'a robin_engine::engine::SimulationFrameInput>,
+) -> Result<(SimSnapshot, ReplayTiming), ReplayError> {
+    validate_replay_boundary(snapshot.frame, target_frame)?;
+    let start = Instant::now();
+    let start_frame = snapshot.frame;
+    let mut scratch_host = Host::default();
+    let mut scratch_dev = DevState::default();
+    let mut scratch_display = HostDisplayState::default();
+
+    while snapshot.frame < target_frame {
+        let frame = frame_for(snapshot.frame).ok_or(ReplayError::MissingCommands {
+            frame: snapshot.frame,
+        })?;
+        replay_authoritative_frame(
+            &mut snapshot,
+            &mut scratch_display,
+            assets,
+            &mut scratch_host,
+            &mut scratch_dev,
+            frame,
+        );
+    }
+
+    Ok((
+        snapshot,
+        ReplayTiming {
+            replayed_frames: target_frame - start_frame,
+            replay_us: start.elapsed().as_micros(),
+        },
+    ))
+}
+
 /// Replay exactly one frame in-place, advancing the snapshot to the
 /// next pre-tick frame.
 pub fn replay_one_frame(
@@ -641,25 +704,55 @@ pub fn replay_one_frame_profiled(
     scratch_dev: &mut DevState,
     cmds: &[PlayerInput],
 ) -> ReplayFrameTiming {
+    let frame = robin_engine::engine::SimulationFrameInput::from_player_inputs(cmds.to_vec())
+        .with_post_initialize(true);
+    replay_authoritative_frame_profiled(
+        snapshot,
+        display,
+        assets,
+        scratch_host,
+        scratch_dev,
+        &frame,
+    )
+}
+
+pub fn replay_authoritative_frame(
+    snapshot: &mut SimSnapshot,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    scratch_host: &mut Host,
+    scratch_dev: &mut DevState,
+    frame: &robin_engine::engine::SimulationFrameInput,
+) {
+    let _ = replay_authoritative_frame_profiled(
+        snapshot,
+        display,
+        assets,
+        scratch_host,
+        scratch_dev,
+        frame,
+    );
+}
+
+pub fn replay_authoritative_frame_profiled(
+    snapshot: &mut SimSnapshot,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    scratch_host: &mut Host,
+    scratch_dev: &mut DevState,
+    frame: &robin_engine::engine::SimulationFrameInput,
+) -> ReplayFrameTiming {
     let apply_start = Instant::now();
-    snapshot
-        .engine
-        .apply_commands(display, &mut scratch_host.input, assets, cmds);
+    let frame = frame.clone();
     let apply_us = apply_start.elapsed().as_micros();
     let tick_start = Instant::now();
-    run_engine_tick_core(
+    run_engine_frame_core(
         scratch_host,
         display,
         assets,
         &mut snapshot.engine,
         scratch_dev,
-    );
-    run_post_initialize_stage(
-        scratch_host,
-        display,
-        assets,
-        &mut snapshot.engine,
-        scratch_dev,
+        frame,
     );
     let tick_us = tick_start.elapsed().as_micros();
     snapshot.frame += 1;
@@ -672,6 +765,33 @@ pub fn replay_one_frame_profiled(
 /// not read or mutate the outer `Game` shell. Live play wraps this to
 /// update mission-operation and UI widget state after the engine
 /// reports a result.
+pub fn run_engine_frame_core(
+    host: &mut Host,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    engine: &mut Engine,
+    dev: &mut DevState,
+    frame: robin_engine::engine::SimulationFrameInput,
+) -> robin_engine::engine::SimulationFrameOutput {
+    host.sync_sound_listener();
+    let output = engine
+        .advance_frame(display, &mut host.input, assets, dev, frame)
+        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
+    apply_engine_side_effects(
+        host,
+        display,
+        dev,
+        output.events.clone().into_side_effects(),
+    );
+    if let Some(events) = output.post_initialize_events.clone() {
+        apply_engine_side_effects(host, display, dev, events.into_side_effects());
+    }
+    output
+}
+
+/// Compatibility helper for tests and setup callers which need one empty,
+/// ungated hourglass. Production drivers pass their complete frame input to
+/// [`run_engine_frame_core`].
 pub fn run_engine_tick_core(
     host: &mut Host,
     display: &mut HostDisplayState,
@@ -679,9 +799,15 @@ pub fn run_engine_tick_core(
     engine: &mut Engine,
     dev: &mut DevState,
 ) -> GameCode {
-    host.sync_sound_listener();
-    let side_effects = engine.perform_hourglass(display, assets, dev);
-    apply_engine_side_effects(host, display, dev, side_effects)
+    run_engine_frame_core(
+        host,
+        display,
+        assets,
+        engine,
+        dev,
+        robin_engine::engine::SimulationFrameInput::default(),
+    )
+    .game_code()
 }
 
 /// Dispatch the one-shot mission `PostInitialize` hook at the host's
@@ -697,13 +823,70 @@ pub fn run_post_initialize_stage(
     assets: &LevelAssets,
     engine: &mut Engine,
     dev: &mut DevState,
+    post_commands: &[PlayerInput],
 ) -> bool {
-    if let Some(side_effects) = engine.perform_post_initialize(display, assets) {
-        apply_engine_side_effects(host, display, dev, side_effects);
-        true
-    } else {
-        false
-    }
+    run_post_initialize_stage_with_actions(
+        host,
+        display,
+        assets,
+        engine,
+        dev,
+        &[],
+        post_commands,
+        true,
+    )
+}
+
+/// Replay already-recorded post-hourglass developer actions before admitting
+/// new live RPC work at the same boundary.
+pub fn run_post_external_action_stage(
+    host: &mut Host,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    engine: &mut Engine,
+    dev: &mut DevState,
+    actions: &[robin_engine::engine::ExternalAction],
+) {
+    run_engine_frame_core(
+        host,
+        display,
+        assets,
+        engine,
+        dev,
+        robin_engine::engine::SimulationFrameInput::no_hourglass()
+            .with_post_external_actions(actions.to_vec()),
+    );
+}
+
+pub fn run_post_initialize_stage_with_actions(
+    host: &mut Host,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    engine: &mut Engine,
+    dev: &mut DevState,
+    post_external_actions: &[robin_engine::engine::ExternalAction],
+    post_commands: &[PlayerInput],
+    run_post_initialize: bool,
+) -> bool {
+    run_engine_frame_core(
+        host,
+        display,
+        assets,
+        engine,
+        dev,
+        robin_engine::engine::SimulationFrameInput::no_hourglass()
+            .with_post_external_actions(post_external_actions.to_vec())
+            .with_post_commands(
+                post_commands
+                    .iter()
+                    .cloned()
+                    .map(robin_engine::engine::SimCommand::from)
+                    .collect(),
+            )
+            .with_post_initialize(run_post_initialize),
+    )
+    .post_initialize_events
+    .is_some()
 }
 
 fn apply_engine_side_effects(
@@ -828,7 +1011,10 @@ mod tests {
 
         let late = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
         assert!(journal.append_input(41, late));
-        assert_eq!(journal.commands_for(41).map(<[_]>::len), Some(1));
+        assert_eq!(
+            journal.commands_for(41).map(|commands| commands.len()),
+            Some(1)
+        );
         assert!(
             !journal.append_input(39, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown))
         );
@@ -841,7 +1027,10 @@ mod tests {
         journal.record(42, Vec::new());
         journal.discard_before(41);
         assert_eq!(journal.oldest_frame(), Some(41));
-        assert_eq!(journal.commands_for(41).map(<[_]>::len), Some(1));
+        assert_eq!(
+            journal.commands_for(41).map(|commands| commands.len()),
+            Some(1)
+        );
     }
 
     #[test]

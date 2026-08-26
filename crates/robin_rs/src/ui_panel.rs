@@ -968,14 +968,22 @@ impl PortraitCache {
                     let full = format!("{first} {last}");
 
                     if !engine.is_peasant_name_registered(&full) {
-                        engine.apply_command(
-                            display,
-                            input,
-                            assets,
-                            &engine_player_command::PlayerCommand::RegisterPeasantName {
-                                name: full.clone(),
-                            },
-                        );
+                        engine
+                            .advance_frame(
+                                display,
+                                input,
+                                assets,
+                                &mut engine_api::DevState::default(),
+                                engine_api::SimulationFrameInput::new(vec![
+                                    engine_api::SimCommand::from(
+                                        engine_player_command::PlayerCommand::RegisterPeasantName {
+                                            name: full.clone(),
+                                        },
+                                    ),
+                                ])
+                                .with_hourglass(false),
+                            )
+                            .expect("peasant-name registration admission");
                         generated = Some(full);
                         break;
                     }

@@ -259,10 +259,7 @@ fn on_left_mouse_down(
                 | Action::Lever
                 | Action::Strangle => {
                     let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
-                    for cmd in &cmds {
-                        frame_cmds.push(cmd.clone());
-                    }
-                    dispatch_local_commands(host, engine, assets, &cmds);
+                    dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                 }
                 _ => {
                     // Other actions (Bow, Net, Purse,
@@ -391,10 +388,7 @@ fn on_mouse_move(
                     | robin_engine::profiles::Action::Strangle
             ) {
                 let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
-                for cmd in &cmds {
-                    frame_cmds.push(cmd.clone());
-                }
-                dispatch_local_commands(host, engine, assets, &cmds);
+                dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
             }
         }
     }
@@ -1053,10 +1047,7 @@ fn on_world_click(
                 host, engine, assets, map_pt, shift_held, ctrl_held, is_double,
             );
         }
-        for cmd in &cmds {
-            frame_cmds.push(cmd.clone());
-        }
-        dispatch_local_commands(host, engine, assets, &cmds);
+        dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
     }
 }
 
@@ -1231,10 +1222,7 @@ fn on_right_mouse_up(
                 // the click (don't fall through to map).
             } else {
                 let cmds = crate::game_input::resolve_right_click(engine, local_seat);
-                for cmd in &cmds {
-                    frame_cmds.push(cmd.clone());
-                }
-                dispatch_local_commands(host, engine, assets, &cmds);
+                dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
             }
         }
 

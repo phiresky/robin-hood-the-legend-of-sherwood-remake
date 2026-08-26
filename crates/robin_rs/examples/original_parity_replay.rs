@@ -3890,11 +3890,8 @@ fn is_legacy_retained_terminal_success(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_legacy_retained_terminal_success_repair(
-    engine: &mut Engine,
-    display: &mut HostDisplayState,
-    input: &mut InputState,
-    assets: &LevelAssets,
+fn append_legacy_retained_terminal_success_repair(
+    commands: &mut Vec<PlayerCommand>,
     difficulty: robin_engine::player_profile::DifficultyLevel,
     schema: u32,
     frame_before: u64,
@@ -3920,17 +3917,30 @@ fn apply_legacy_retained_terminal_success_repair(
     // Hourglass. Preserve that ordering through the existing deterministic
     // command path.
     *already_applied = true;
-    engine.apply_command(
-        display,
-        input,
-        assets,
-        &PlayerCommand::ApplyQuitMissionUpdates {
-            exit_code: GameCode::LevelSucceeded,
-            difficulty,
-        },
-    );
-    engine.apply_command(display, input, assets, &PlayerCommand::QuitMissionRequested);
+    commands.push(PlayerCommand::ApplyQuitMissionUpdates {
+        exit_code: GameCode::LevelSucceeded,
+        difficulty,
+    });
+    commands.push(PlayerCommand::QuitMissionRequested);
     true
+}
+
+fn cross_post_initialize_frame(
+    engine: &mut Engine,
+    display: &mut HostDisplayState,
+    input: &mut InputState,
+    assets: &LevelAssets,
+    dev: &mut DevState,
+) {
+    engine
+        .advance_frame(
+            display,
+            input,
+            assets,
+            dev,
+            robin_engine::engine::SimulationFrameInput::no_hourglass().with_post_initialize(true),
+        )
+        .unwrap_or_else(|error| panic!("admit Original PostInitialize boundary: {error}"));
 }
 
 struct Options {
@@ -4684,9 +4694,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             .observe(frame.frame_before, frame.frame_after)
             .unwrap_or_else(|error| panic!("invalid parity frame timeline: {error}"));
         line_index += 1;
+        let mut http_frame_commands = robin_engine::player_command::FrameCommands::new();
         if http_server.is_some() {
             loop {
-                drain_headless_http(
+                let drained = drain_headless_http(
                     &mut engine,
                     &mut display,
                     &assets,
@@ -4695,6 +4706,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut manual_pause,
                     &mut active_http_step,
                 );
+                http_frame_commands.commands.extend(drained.commands);
                 if !manual_pause || active_http_step.is_some() {
                     break;
                 }
@@ -4785,16 +4797,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         if debug_startup {
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
-        for completion in frame.director_completions.drain(..) {
-            engine
-                .apply_external_director_completion(completion, &mut display, &assets)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "apply original director completion before frame {}: {error}",
-                        frame.frame_before
-                    )
-                });
-        }
+        let mut external_facts = frame
+            .director_completions
+            .drain(..)
+            .map(robin_engine::engine::ExternalFact::DirectorCompletion)
+            .collect::<Vec<_>>();
         // `RHGame` records the engine frame before running the host sound
         // manager (`original-code/RHgame.cpp:1879-1915`). Consequently these
         // resolutions belong chronologically before the input commands stored
@@ -4814,8 +4821,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 }
             })
             .collect();
-        engine.queue_replay_resolved_exclamations(resolutions);
-        engine.apply_replay_sound_boundary(&assets);
+        external_facts.push(robin_engine::engine::ExternalFact::ReplaySoundBoundary(
+            resolutions,
+        ));
         let popup_nested_refresh = frame.popup_events.as_deref().is_some_and(|events| {
             events.iter().any(|event| {
                 event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true)
@@ -4827,6 +4835,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
         let mut consumed_drop_ale_route_ordinals = BTreeSet::new();
         let mut consumed_group_move_route_ordinals = BTreeSet::new();
+        let mut commands_before_hourglass_resolved = Vec::new();
         for command in commands_before_hourglass {
             if debug_stage_timing {
                 eprintln!(
@@ -4859,26 +4868,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 drop_ale_resolution,
                 group_move_resolution,
             ) {
-                if debug_stage_timing {
-                    eprintln!(
-                        "parity stage: applying command before frame {}: {command:?}",
-                        frame.frame_after
-                    );
-                }
-                engine.apply_command(&mut display, &mut input, &assets, &command);
-                if debug_stage_timing {
-                    eprintln!(
-                        "parity stage: applied command before frame {}: {command:?}",
-                        frame.frame_after
-                    );
-                }
+                commands_before_hourglass_resolved.push(command);
             }
         }
-        apply_legacy_retained_terminal_success_repair(
-            &mut engine,
-            &mut display,
-            &mut input,
-            &assets,
+        append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass_resolved,
             header.sim_config.difficulty.into(),
             header.schema,
             frame.frame_before,
@@ -4927,22 +4921,32 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let simulation_started = Instant::now();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let effects = engine.perform_hourglass_with_body_gate(
-                &mut display,
-                &assets,
-                &mut dev,
-                frame.simulation_body_ran,
+            let mut pre_commands = http_frame_commands
+                .commands
+                .into_iter()
+                .map(robin_engine::engine::SimCommand::from)
+                .collect::<Vec<_>>();
+            pre_commands.extend(
+                commands_before_hourglass_resolved
+                    .into_iter()
+                    .map(robin_engine::engine::SimCommand::from),
             );
-            for command in &commands_after_hourglass {
-                if debug_stage_timing {
-                    eprintln!(
-                        "parity stage: applying refresh command after frame {}: {command:?}",
-                        frame.frame_after
-                    );
-                }
-                engine.apply_command(&mut display, &mut input, &assets, command);
-            }
-            effects
+            let frame_input = robin_engine::engine::SimulationFrameInput::new(pre_commands)
+                .with_external_facts(external_facts)
+                .with_post_commands(
+                    commands_after_hourglass
+                        .into_iter()
+                        .map(robin_engine::engine::SimCommand::from)
+                        .collect(),
+                )
+                .with_simulation_body_allowed(frame.simulation_body_ran);
+            engine
+                .advance_frame(&mut display, &mut input, &assets, &mut dev, frame_input)
+                .unwrap_or_else(|error| {
+                    panic!("admit original frame {}: {error}", frame.frame_before)
+                })
+                .events
+                .into_side_effects()
         }));
         if profile_timing {
             simulation_time += simulation_started.elapsed();
@@ -5253,7 +5257,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 // PerformHourglass, then runs the one-shot PostInitialize
                 // hook after refresh/sound. Apply that boundary only after
                 // comparing this frame, before advancing to the next one.
-                let _ = engine.perform_post_initialize(&mut display, &assets);
+                cross_post_initialize_frame(
+                    &mut engine,
+                    &mut display,
+                    &mut input,
+                    &assets,
+                    &mut dev,
+                );
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -5350,7 +5360,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
-        let _ = engine.perform_post_initialize(&mut display, &assets);
+        cross_post_initialize_frame(&mut engine, &mut display, &mut input, &assets, &mut dev);
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
             if step.remaining == 0 {
@@ -5605,8 +5615,8 @@ fn drain_headless_http(
     selected_view_element: &mut Option<EntityId>,
     manual_pause: &mut bool,
     active_step: &mut Option<ActiveHttpStep>,
-) {
-    robin_rs::http_server::drain_global_headless(
+) -> robin_engine::player_command::FrameCommands {
+    let commands = robin_rs::http_server::drain_global_headless(
         engine,
         display,
         assets,
@@ -5676,6 +5686,7 @@ fn drain_headless_http(
             }
         }
     }
+    commands
 }
 
 fn serve_halted_http(
@@ -5686,7 +5697,7 @@ fn serve_halted_http(
     selected_view_element: &mut Option<EntityId>,
 ) -> ! {
     loop {
-        robin_rs::http_server::drain_global_headless(
+        let _ = robin_rs::http_server::drain_global_headless(
             engine,
             display,
             assets,
@@ -11556,12 +11567,10 @@ mod tests {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
         let mut repaired = false;
+        let mut repair_commands = Vec::new();
 
-        assert!(apply_legacy_retained_terminal_success_repair(
-            &mut engine,
-            &mut display,
-            &mut input,
-            &assets,
+        assert!(append_legacy_retained_terminal_success_repair(
+            &mut repair_commands,
             DifficultyLevel::Medium,
             16,
             9_602,
@@ -11570,11 +11579,8 @@ mod tests {
             GameCode::LevelSucceeded as i32,
             &mut repaired,
         ));
-        assert!(!apply_legacy_retained_terminal_success_repair(
-            &mut engine,
-            &mut display,
-            &mut input,
-            &assets,
+        assert!(!append_legacy_retained_terminal_success_repair(
+            &mut repair_commands,
             DifficultyLevel::Medium,
             16,
             9_602,
@@ -11584,13 +11590,22 @@ mod tests {
             &mut repaired,
         ));
 
-        let effects = engine.perform_hourglass_with_body_gate(
-            &mut display,
-            &assets,
-            &mut DevState::default(),
-            false,
-        );
-        assert_eq!(effects.code, GameCode::LevelSucceeded);
+        let output = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut DevState::default(),
+                robin_engine::engine::SimulationFrameInput::new(
+                    repair_commands
+                        .into_iter()
+                        .map(robin_engine::engine::SimCommand::from)
+                        .collect(),
+                )
+                .with_simulation_body_allowed(false),
+            )
+            .expect("repair frame");
+        assert_eq!(output.game_code(), GameCode::LevelSucceeded);
         let campaign = engine.into_campaign();
         assert_eq!(campaign.missions[0].status, MissionStatus::Won);
         assert_eq!(campaign.values[CampaignValue::Score], 1_007);

@@ -28,6 +28,7 @@ pub(super) struct FramePresentationState {
     pub(super) consumed_buffered: bool,
     pub(super) shift_held: bool,
     pub(super) modal_rendered: bool,
+    pub(super) history_commit_pending: bool,
 }
 
 /// Deterministic and presentation flags carried across the tick boundary.
@@ -101,17 +102,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // applies the journaled commands twice. The recorder hash samples this
     // same boundary so recording and playback remain in lockstep.
     runtime.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
-    if !net_inputs.is_empty() {
-        manager.engine.apply_commands(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
-            &assets,
-            &net_inputs,
-        );
-        for inp in net_inputs {
-            frame.commands.commands.push(inp);
-        }
-    }
+    frame.commands.commands.extend(net_inputs);
 
     // Re-derive the corner HUD layout every frame so resolution
     // changes triggered from nested menus (options modal, Sherwood
@@ -235,15 +226,7 @@ fn drain_pre_tick_network(
     runtime.trace(FrameContractStage::SecondNetworkDrain);
     let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms());
     *mp_clock_pause |= drain.pause_simulation;
-    if !drain.inputs.is_empty() {
-        manager.engine.apply_commands(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
-            assets,
-            &drain.inputs,
-        );
-        frame.commands.commands.extend(drain.inputs);
-    }
+    frame.commands.commands.extend(drain.inputs);
 }
 
 /// Publish or verify the periodic multiplayer state hash after the second
@@ -385,31 +368,25 @@ fn prepare_pre_tick_timeline(
             paused = true;
         } else {
             runtime.replay_finished_logged = false;
-            frame.inject_replay_commands(player, host, manager, assets);
+            frame.inject_replay_commands(player);
         }
     }
 
     let mut consumed_buffered = false;
     if !rewind_active && !paused && manager.sim_frame < runtime.rewind_buffer.next_record_frame() {
-        let Some(recorded) = runtime.rewind_buffer.commands_for(manager.sim_frame) else {
+        let Some(recorded) = runtime.rewind_buffer.frame_for(manager.sim_frame).cloned() else {
             return Err(format!(
                 "cannot replay frame {}: rewind command history starts at frame {}",
                 manager.sim_frame,
                 runtime.rewind_buffer.oldest_cmd_frame()
             ));
         };
-        if runtime.replay_player.is_some() {
+        if runtime.replay_player.is_some() && frame.external_actions.is_empty() {
+            frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Replay reused rewind-buffer frame {}", manager.sim_frame);
-        } else if frame.commands.commands.is_empty() {
-            let recorded: Vec<PlayerInput> = recorded.to_vec();
-            manager.engine.apply_commands(
-                &mut host.frontend.engine_display,
-                &mut host.frontend.input,
-                assets,
-                &recorded,
-            );
-            frame.commands.commands = recorded;
+        } else if frame.commands.commands.is_empty() && frame.external_actions.is_empty() {
+            frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Auto-replay -> frame {}", manager.sim_frame);
         } else {
@@ -774,6 +751,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 host,
                 &assets,
                 &dev,
+                &mut frame.external_actions,
                 &mut presentation.renderer,
                 &mut resources.cursor,
                 &mut presentation.sprites.cursor_renderer,

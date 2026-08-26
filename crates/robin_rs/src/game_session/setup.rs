@@ -1607,15 +1607,21 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
     }
 
     let nickname = args.mp_nickname.clone();
-    engine.apply_command(
-        &mut host.frontend.engine_display,
-        &mut host.frontend.input,
-        assets,
-        &PlayerCommand::ConnectSeat {
-            player_id: host.transport.local_seat,
-            nickname,
-        },
-    );
+    engine
+        .advance_frame(
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
+            assets,
+            &mut engine_api::DevState::default(),
+            engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
+                PlayerCommand::ConnectSeat {
+                    player_id: host.transport.local_seat,
+                    nickname,
+                },
+            )])
+            .with_hourglass(false),
+        )
+        .expect("bootstrap ConnectSeat admission");
     tracing::info!(
         seat = ?host.transport.local_seat,
         "bootstrap ConnectSeat applied to local engine",

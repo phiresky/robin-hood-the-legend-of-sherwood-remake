@@ -4,7 +4,7 @@
 
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
-use crate::sim_timeline::{RestorePolicy, SnapshotHistory, replay_one_frame_profiled};
+use crate::sim_timeline::{RestorePolicy, SnapshotHistory, replay_authoritative_frame_profiled};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
@@ -594,15 +594,15 @@ fn rewind_from_recent_timeline_history(
         corrected_history.remember(snapshot.clone());
         replay_remember_us += remember_start.elapsed().as_micros();
         let command_lookup_start = web_time::Instant::now();
-        let cmds = rewind_buffer.commands_for(snapshot.frame)?;
+        let frame = rewind_buffer.frame_for(snapshot.frame)?;
         replay_command_lookup_us += command_lookup_start.elapsed().as_micros();
-        let frame_timing = replay_one_frame_profiled(
+        let frame_timing = replay_authoritative_frame_profiled(
             &mut snapshot,
             &mut scratch_display,
             assets,
             &mut scratch_host,
             &mut scratch_dev,
-            cmds,
+            frame,
         );
         replay_apply_us += frame_timing.apply_us;
         replay_tick_us += frame_timing.tick_us;
@@ -894,12 +894,18 @@ mod tests {
     fn snapshot_is_adopted_before_ready_is_announced() {
         let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
         let mut snapshot = manager.engine.clone();
-        snapshot.apply_command(
-            &mut robin_engine::engine::HostDisplayState::default(),
-            &mut robin_engine::engine::InputState::default(),
-            &assets,
-            &PlayerCommand::SetAmountOfSpeaking { amount: 9 },
-        );
+        snapshot
+            .advance_frame(
+                &mut robin_engine::engine::HostDisplayState::default(),
+                &mut robin_engine::engine::InputState::default(),
+                &assets,
+                &mut robin_engine::engine::DevState::default(),
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetAmountOfSpeaking { amount: 9 }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("snapshot command admission");
         let engine_bytes = bincode::serde::encode_to_vec(&snapshot, bincode::config::standard())
             .expect("serialize snapshot");
         incoming

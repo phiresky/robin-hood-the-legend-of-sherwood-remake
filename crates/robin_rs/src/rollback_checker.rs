@@ -23,7 +23,7 @@ use std::sync::{
 use std::thread::JoinHandle;
 use web_time::Instant;
 
-use crate::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_to_frame};
+use crate::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_frames_to_frame};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerInput;
 
@@ -49,7 +49,7 @@ pub struct RollbackChecker {
     assets: Arc<LevelAssets>,
     /// Pending pre-tick snapshot for the frame currently in progress.
     /// Only populated for the first frame in each check window; the rest
-    /// of the frames only need their commands.
+    /// of the frames retain their complete authoritative transactions.
     pending_start: Option<Snapshot>,
     /// Frames recorded since the last replay check.  Gates
     /// `check_and_trim` to every `ROLLBACK_CHECK_INTERVAL` live frames.
@@ -110,6 +110,19 @@ impl RollbackChecker {
     /// applied this frame), then — if the history is full — replays
     /// the window and compares against `current_engine`.
     pub fn end_frame(&mut self, host: &mut Host, cmds: Vec<PlayerInput>, current_engine: &Engine) {
+        self.end_frame_input(
+            host,
+            robin_engine::engine::SimulationFrameInput::from_player_inputs(cmds),
+            current_engine,
+        );
+    }
+
+    pub fn end_frame_input(
+        &mut self,
+        host: &mut Host,
+        input: robin_engine::engine::SimulationFrameInput,
+        current_engine: &Engine,
+    ) {
         let end_start = Instant::now();
         let frame = if self.history.is_empty() {
             let Some(snapshot) = self.pending_start.take() else {
@@ -123,7 +136,7 @@ impl RollbackChecker {
         } else {
             self.history.next_frame()
         };
-        self.history.record(frame, cmds);
+        self.history.record_frame(frame, input);
         self.frames_since_check += 1;
         self.perf.end_bookkeeping_us += end_start.elapsed().as_micros();
 
@@ -245,8 +258,8 @@ impl RollbackCheckJob {
         let clone_us = clone_start.elapsed().as_micros();
         let replay_start = Instant::now();
         let replayed = tracing::dispatcher::with_default(&silent, || {
-            replay_to_frame(start, &self.assets, end_frame.saturating_add(1), |frame| {
-                self.history.commands_for(frame)
+            replay_frames_to_frame(start, &self.assets, end_frame.saturating_add(1), |frame| {
+                self.history.frame_for(frame)
             })
         });
         let (sim_snapshot, _timing) = match replayed {

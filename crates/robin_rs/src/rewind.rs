@@ -6,7 +6,7 @@
 //! (≈25, 33, 42, 55, 72, 93, 121, 157, 204, 265, … frames back).  While the rewind key is held, the main loop asks the
 //! buffer for the state at `sim_frame - 1`; the buffer locates the
 //! nearest snapshot at or before the target frame, clones it, and
-//! replays commands forward to reconstruct the exact pre-tick state at
+//! replays complete authoritative frames to reconstruct the exact pre-tick state at
 //! the target frame.
 //!
 //! The per-frame command journal is an instance of the same shared timeline
@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 
 use crate::sim_timeline::{
     CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, TimelineHistory,
-    replay_one_frame,
+    replay_authoritative_frame,
 };
 use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use robin_engine::player_command::PlayerInput;
@@ -122,6 +122,10 @@ impl RewindBuffer {
         self.history.commit_frame(cmds);
     }
 
+    pub fn end_frame_input(&mut self, input: robin_engine::engine::SimulationFrameInput) {
+        self.history.commit_frame_input(input);
+    }
+
     /// Reconstruct the pre-tick sim state at `target_frame` by
     /// locating the closest starting point at or before `target_frame`
     /// — a session-cached state if one exists, otherwise the nearest
@@ -168,14 +172,14 @@ impl RewindBuffer {
         let mut scratch_dev = DevState::default();
         let mut scratch_display = HostDisplayState::default();
         while snapshot.frame < target_frame {
-            let cmds = self.history.commands_for(snapshot.frame)?;
-            replay_one_frame(
+            let frame = self.history.frame_for(snapshot.frame)?;
+            replay_authoritative_frame(
                 &mut snapshot,
                 &mut scratch_display,
                 assets,
                 &mut scratch_host,
                 &mut scratch_dev,
-                cmds,
+                frame,
             );
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.
@@ -200,8 +204,8 @@ impl RewindBuffer {
     ///
     /// Used by the main loop to detect the "auto-replay" window: any
     /// `sim_frame < next_record_frame()` is a frame the buffer
-    /// already has commands for, so the player is currently replaying
-    /// forward through previously-recorded inputs after a rewind.
+    /// already has a transaction for, so the player is currently replaying
+    /// forward through previously-recorded authoritative input after a rewind.
     pub fn next_record_frame(&self) -> u32 {
         self.history.next_record_frame()
     }
@@ -213,9 +217,13 @@ impl RewindBuffer {
         self.history.oldest_command_frame().unwrap_or(0)
     }
 
-    /// Recorded commands for `frame`, if present.
-    pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
+    /// Compatibility view of the recorded pre-hourglass commands.
+    pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
         self.history.commands_for(frame)
+    }
+
+    pub fn frame_for(&self, frame: u32) -> Option<&robin_engine::engine::SimulationFrameInput> {
+        self.history.frame_for(frame)
     }
 
     /// Append a late-arriving input into the buffer's command log at
@@ -285,18 +293,36 @@ mod tests {
         .expect("fixture engine");
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
-        engine.apply_command(
-            &mut display,
-            &mut input,
-            &assets,
-            &PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp),
-        );
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut DevState::default(),
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp).into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("zoom command admission");
         assert!(engine.is_zoom_up_in_progress(&display));
 
         // LockAlt is handled after the zoom gate in PerformHourglass. It
         // therefore remains pending throughout these active transition
         // frames, making an incorrectly defaulted replay display observable.
-        engine.send_simple_message(SimpleMessage::LockAlt);
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut DevState::default(),
+                robin_engine::engine::SimulationFrameInput::no_hourglass().with_external_actions(
+                    vec![robin_engine::engine::ExternalAction::SimpleMessage {
+                        message: SimpleMessage::LockAlt,
+                    }],
+                ),
+            )
+            .expect("LockAlt message admission");
 
         let mut rewind = RewindBuffer::new();
         let mut host = crate::host::Host::default();
@@ -309,7 +335,7 @@ mod tests {
             display.background_transform.zoom_to_up = false;
             display.background_transform.zoom_to_down = true;
             run_engine_tick_core(&mut host, &mut display, &assets, &mut engine, &mut dev);
-            run_post_initialize_stage(&mut host, &mut display, &assets, &mut engine, &mut dev);
+            run_post_initialize_stage(&mut host, &mut display, &assets, &mut engine, &mut dev, &[]);
 
             rewind.end_frame(Vec::new());
         }

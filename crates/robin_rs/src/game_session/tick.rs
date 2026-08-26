@@ -5,7 +5,6 @@
 use super::modal_state::ActiveModal;
 use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
-use crate::game_render::clear_status_bar_flags;
 use crate::host::Host;
 use crate::host::{DeferredAudioRequest, HostSignal};
 use crate::rewind::RewindBuffer;
@@ -33,7 +32,7 @@ pub(super) fn tick_audio(
     backend: &mut KiraAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
-) {
+) -> Option<engine_api::ExternalFact> {
     let alert_status = match manager.engine.ai_global().overall_alert_status {
         AlertLevel::Green => AlertStatus::Green,
         AlertLevel::Yellow => AlertStatus::Yellow,
@@ -93,19 +92,15 @@ pub(super) fn tick_audio(
         &manager.engine.sound_sim().sources,
         &mut pending_play_delayed_sources,
     );
-    if !resolved_exclamations.is_empty() {
-        manager.engine.queue_resolved_exclamations(
-            resolved_exclamations
-                .into_iter()
-                .map(|resolved| robin_engine::sound::ResolvedExclamation {
-                    actor_id: resolved.actor_id,
-                    identifier: resolved.identifier,
-                    exclamation_id: resolved.exclamation_id,
-                    duration_frames: resolved.length_ms.saturating_add(39) / 40,
-                })
-                .collect(),
-        );
-    }
+    let resolved_exclamations: Vec<_> = resolved_exclamations
+        .into_iter()
+        .map(|resolved| robin_engine::sound::ResolvedExclamation {
+            actor_id: resolved.actor_id,
+            identifier: resolved.identifier,
+            exclamation_id: resolved.exclamation_id,
+            duration_frames: resolved.length_ms.saturating_add(39) / 40,
+        })
+        .collect();
     // The hourglass drains the queue; whatever it left behind
     // (nothing today, but defensive) goes back on host for next frame.
     host.audio.deferred.extend(
@@ -113,6 +108,9 @@ pub(super) fn tick_audio(
             .into_iter()
             .map(DeferredAudioRequest::PlayDelayedSource),
     );
+    (!resolved_exclamations.is_empty()).then_some(engine_api::ExternalFact::LiveSoundBoundary(
+        resolved_exclamations,
+    ))
 }
 
 /// Apply every pending engine mutation that conceptually belongs with
@@ -166,16 +164,13 @@ pub(super) fn drain_pending_console_output(
 /// Post-render bookkeeping: clear the one-shot `display_double_status_bar`
 /// NPC flag after `render_combat_status_bars` has observed it.
 pub(super) fn post_render_engine_cleanup(
-    manager: &mut engine_manager_api::EngineManager,
+    frame: &mut super::runtime::MissionFrame,
     host: &mut Host,
-    assets: &engine_api::LevelAssets,
 ) {
-    clear_status_bar_flags(
-        &mut manager.engine,
-        &mut host.frontend.engine_display,
-        &mut host.frontend.input,
-        assets,
-    );
+    frame.post_commands.push(PlayerInput::new(
+        host.transport.local_seat,
+        PlayerCommand::ClearNpcDoubleStatusBarFlags,
+    ));
 }
 
 /// Process every queued `/step-forward` / `/step-back` HTTP request,
@@ -403,14 +398,14 @@ pub(super) fn run_forward_ticks(
                 assets,
             )?;
         }
-        let buffered_cmds = if frame < rewind_buffer.next_record_frame() {
-            let Some(recorded) = rewind_buffer.commands_for(frame) else {
+        let buffered_frame = if frame < rewind_buffer.next_record_frame() {
+            let Some(recorded) = rewind_buffer.frame_for(frame).cloned() else {
                 return Err(format!(
                     "cannot step frame {frame}: rewind command history starts at frame {}",
                     rewind_buffer.oldest_cmd_frame()
                 ));
             };
-            Some(recorded.to_vec())
+            Some(recorded)
         } else {
             None
         };
@@ -438,31 +433,32 @@ pub(super) fn run_forward_ticks(
                 }
                 frame_cmds.push(cmd.clone());
             }
-        } else if let Some(buffered_cmds) = buffered_cmds.as_ref() {
-            // Seeking forward across a previously simulated span reuses the
-            // commands already owned by the rewind buffer. Re-recording the
-            // same span would append older checkpoints after newer ones.
-            frame_cmds.clone_from(buffered_cmds);
         }
-        engine.apply_commands(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
-            assets,
-            &frame_cmds,
-        );
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
         // point of the endpoint.
         let mut display = std::mem::take(&mut host.engine_display);
-        game.run_engine_tick(host, &mut display, assets, engine, dev, false, false);
-        crate::sim_timeline::run_post_initialize_stage(host, &mut display, assets, engine, dev);
+        let simulation_frame = buffered_frame.clone().unwrap_or_else(|| {
+            robin_engine::engine::SimulationFrameInput::from_player_inputs(frame_cmds)
+                .with_post_initialize(true)
+        });
+        game.run_engine_tick(
+            host,
+            &mut display,
+            assets,
+            engine,
+            dev,
+            simulation_frame.clone(),
+            false,
+            false,
+        );
         host.engine_display = display;
         if let Some(checker) = rollback_checker.as_mut() {
-            checker.end_frame(host, frame_cmds.clone(), engine);
+            checker.end_frame_input(host, simulation_frame.clone(), engine);
         }
-        if buffered_cmds.is_none() {
-            rewind_buffer.end_frame(frame_cmds);
+        if buffered_frame.is_none() {
+            rewind_buffer.end_frame_input(simulation_frame);
         }
         manager.sim_frame += 1;
 

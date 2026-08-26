@@ -124,12 +124,19 @@ impl InteractiveMission {
         // PostInitialize dispatch around lines 1835-1841).
         if let Some(output_path) = args.mission_start_map_output.as_deref() {
             if args.mission_start_reveal_all {
-                manager.engine.apply_commands(
-                    &mut host.frontend.engine_display,
-                    &mut host.frontend.input,
+                let mut display = std::mem::take(&mut host.engine_display);
+                crate::sim_timeline::run_engine_frame_core(
+                    host,
+                    &mut display,
                     &assets,
-                    &[engine_player_command::PlayerCommand::RevealAllBlips.into()],
+                    &mut manager.engine,
+                    dev,
+                    engine_api::SimulationFrameInput::from_player_inputs(vec![
+                        engine_player_command::PlayerCommand::RevealAllBlips.into(),
+                    ])
+                    .with_hourglass(false),
                 );
+                host.engine_display = display;
                 tracing::info!("Mission-start map: revealed all blipped NPCs");
             }
             host.draw_order = manager.engine.compute_display_order();
@@ -240,9 +247,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let FramePresentationState {
             mut frame,
             rewind_active,
-            consumed_buffered: _,
+            consumed_buffered,
             shift_held,
             modal_rendered: modal_rendered_this_frame,
+            history_commit_pending,
         } = state;
         let InteractiveMission { runtime, frontend } = mission;
         let MissionRuntime {
@@ -299,6 +307,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 host,
                 &assets,
                 &dev,
+                &mut frame.post_external_actions,
                 &mut presentation.renderer,
                 &mut resources.cursor,
                 &mut presentation.sprites.cursor_renderer,
@@ -379,7 +388,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             if let Some(mut fade) = host.fade_to_black {
                 host.fade_to_black = fade.advance_presented_frame().then_some(fade);
             }
-            post_render_engine_cleanup(manager, host, &assets);
+            post_render_engine_cleanup(&mut frame, host);
         } // end if draw_result == 0 (skip render in fast-forward)
 
         // Transient-message countdown: the render pass drew the
@@ -403,8 +412,19 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // completed.  Script mutations and emitted sound/UI effects first
         // become observable on the next frame, matching the original.
         let phase_start = super::frame_perf::start(profiling);
-        run_interactive_post_initialize(runtime, host, manager, assets, dev);
+        run_interactive_post_initialize(runtime, host, manager, assets, dev, &frame);
         super::frame_perf::record(super::frame_perf::Phase::PostInitialize, phase_start);
+
+        if history_commit_pending {
+            runtime.commit_simulation_history(
+                host,
+                manager,
+                &frame,
+                FrameCommitPolicy {
+                    store_rewind_commands: !consumed_buffered,
+                },
+            );
+        }
 
         let phase_start = super::frame_perf::start(profiling);
         pace_interactive_frame(runtime, host, manager, &frame, args).await;
@@ -471,6 +491,7 @@ impl InteractiveMission {
                         consumed_buffered: handoff.consumed_buffered,
                         shift_held: handoff.shift_held,
                         modal_rendered: handoff.modal_rendered,
+                        history_commit_pending: handoff.history_commit_pending,
                     },
                 )
                 .await;
@@ -517,7 +538,9 @@ fn finish_interactive_audio(
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
     runtime.trace(FrameContractStage::AppEffects);
-    frontend.audio.tick(&mut world.manager, &mut world.host);
+    if let Some(fact) = frontend.audio.tick(&mut world.manager, &mut world.host) {
+        runtime.queue_external_fact(fact);
+    }
     runtime.trace(FrameContractStage::Audio);
 }
 
@@ -529,15 +552,19 @@ fn run_interactive_post_initialize(
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
     dev: &mut robin_engine::engine::DevState,
+    frame: &MissionFrame,
 ) {
     let mut display = std::mem::take(&mut host.engine_display);
     let post_initialized = runtime.cross_post_initialize(|| {
-        crate::sim_timeline::run_post_initialize_stage(
+        crate::sim_timeline::run_post_initialize_stage_with_actions(
             host,
             &mut display,
             assets,
             &mut manager.engine,
             dev,
+            frame.unapplied_post_external_actions(),
+            &frame.post_commands.commands,
+            frame.run_post_initialize,
         )
     });
     host.engine_display = display;

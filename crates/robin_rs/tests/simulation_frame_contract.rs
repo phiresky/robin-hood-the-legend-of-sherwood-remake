@@ -1,5 +1,5 @@
-//! Black-box contract tests for the current command + hourglass transaction
-//! and timeline replay equivalence.
+//! Black-box contracts for the authoritative frame transaction and timeline
+//! replay equivalence.
 //!
 //! Original anchors:
 //! - `original-code/RHengine.cpp`, `RHEngine::PerformHourglass`: commands are
@@ -7,21 +7,72 @@
 //! - `original-code/RHgame.cpp`, `RHGame::GameLoop`: `PostInitialize` is a
 //!   distinct one-shot stage after the first refresh and sound hourglass.
 //!
-//! This is deliberately not a complete Original host-frame model. The current
-//! journal cannot represent fact-only/paused host iterations, a closed body
-//! gate, or commands dispatched after `PerformHourglass` by nested refresh or
-//! popup work. The fixture covers only the command-first, body-allowed
-//! transaction that both public APIs currently support, plus the one-shot
-//! post-initialize normalization required by replay.
+//! The journal retains the complete transaction: external facts, pre/late
+//! commands, the hourglass/body gates, and the PostInitialize boundary.
 
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
-    DevState, Engine, HostDisplayState, LevelAssets, SimConfig, SimulationFrameInput,
+    DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostDisplayState,
+    LevelAssets, SimConfig, SimulationFrameInput,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
-use robin_rs::sim_timeline::{SimSnapshot, replay_to_frame, run_post_initialize_stage};
+use robin_rs::sim_timeline::{SimSnapshot, replay_frames_to_frame, run_engine_frame_core};
+
+#[test]
+fn production_drivers_do_not_bypass_advance_frame() {
+    fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read source directory") {
+            let path = entry.expect("source directory entry").path();
+            if path.is_dir() {
+                visit(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    visit(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    visit(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"),
+        &mut files,
+    );
+    let forbidden = [
+        ".apply_command(",
+        ".apply_commands(",
+        ".perform_hourglass(",
+        ".perform_hourglass_with_body_gate(",
+        ".perform_post_initialize(",
+        ".apply_external_director_completion(",
+        ".queue_replay_resolved_exclamations(",
+        ".apply_replay_sound_boundary(",
+        ".call_external_native_with_this(",
+        ".run_cheat_string(",
+        ".run_console_command(",
+        ".try_ezekiel_instakill(",
+        ".send_simple_message(",
+        ".replace_campaign_from_console(",
+    ];
+    let mut violations = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(&path).expect("read Rust source");
+        for needle in forbidden {
+            if source.contains(needle) {
+                violations.push(format!("{} contains {needle}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "production simulation mutations must enter Engine::advance_frame:\n{}",
+        violations.join("\n")
+    );
+}
 
 fn fixture_engine(assets: &mut LevelAssets) -> Engine {
     Engine::new_for_test_with_simulation(
@@ -33,6 +84,82 @@ fn fixture_engine(assets: &mut LevelAssets) -> Engine {
         SimConfig::default(),
     )
     .expect("construct deterministic frame-contract fixture")
+}
+
+#[test]
+fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() {
+    let mut assets = LevelAssets::new();
+    let mut engine = fixture_engine(&mut assets);
+    let mut display = HostDisplayState::default();
+    let mut input = robin_engine::engine::InputState::default();
+    let mut dev = DevState::default();
+    let before = engine.frame_counter();
+
+    let output = engine
+        .advance_frame(
+            &mut display,
+            &mut input,
+            &assets,
+            &mut dev,
+            SimulationFrameInput::new(vec![PlayerCommand::SetGoldenEyeMode { on: true }.into()])
+                .with_hourglass(false),
+        )
+        .expect("admit presentation-only frame");
+
+    assert!(!output.hourglass_ran);
+    assert_eq!(output.frame_before, before);
+    assert_eq!(output.frame_after, before);
+    assert!(engine.get_golden_eye_mode());
+}
+
+#[test]
+fn admitted_host_action_is_replayable() {
+    let mut assets = LevelAssets::new();
+    let initial = fixture_engine(&mut assets);
+    let mut replacement_campaign = Campaign::default();
+    replacement_campaign.set_ares(2);
+    let frame = SimulationFrameInput::no_hourglass().with_external_actions(vec![
+        ExternalAction::ConsoleCommand {
+            input: "GOLDENEYE".to_owned(),
+            selected_view_element: None,
+        },
+        ExternalAction::SimpleMessage {
+            message: robin_engine::messenger::SimpleMessage::LockAlt,
+        },
+        ExternalAction::ReplaceCampaign {
+            campaign: replacement_campaign,
+        },
+    ]);
+    let mut live = SimSnapshot::new(0, &initial);
+    let mut host = Host::default();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let output = run_engine_frame_core(
+        &mut host,
+        &mut display,
+        &assets,
+        &mut live.engine,
+        &mut dev,
+        frame.clone(),
+    );
+    assert!(matches!(
+        output.external_action_results.as_slice(),
+        [
+            ExternalActionResult::ConsoleCommand {
+                response: FrameConsoleResponse::Ok(_),
+                selected_view_element: None,
+            },
+            ExternalActionResult::SimpleMessage,
+            ExternalActionResult::ReplaceCampaign
+        ]
+    ));
+    assert!(live.engine.get_golden_eye_mode());
+    assert_eq!(live.engine.campaign().get_ares(), 2);
+
+    let (replayed, _) =
+        replay_frames_to_frame(SimSnapshot::new(0, &initial), &assets, 1, |_| Some(&frame))
+            .expect("replay host action");
+    assert_eq!(state_hash(&replayed.engine), state_hash(&live.engine));
 }
 
 fn command_frames() -> Vec<Vec<PlayerInput>> {
@@ -58,24 +185,22 @@ fn command_frames() -> Vec<Vec<PlayerInput>> {
     ]
 }
 
-fn advance_supported_facade_frame(
+fn advance_authoritative_frame(
     snapshot: &mut SimSnapshot,
     host: &mut Host,
     display: &mut HostDisplayState,
     assets: &LevelAssets,
     dev: &mut DevState,
-    commands: &[PlayerInput],
+    frame_input: SimulationFrameInput,
 ) {
-    // TODO(architecture): replace this command-only construction once the
-    // timeline journal can retain external facts, the body-gate decision, and
-    // post-hourglass commands from nested host work.
-    let frame_input = SimulationFrameInput::from_player_inputs(commands.to_vec());
-    assert!(frame_input.external_facts.is_empty());
-    assert!(frame_input.simulation_body_allowed);
-    let output = snapshot
-        .engine
-        .advance_frame(display, &mut host.input, assets, dev, frame_input)
-        .expect("advance through the public command + hourglass transaction");
+    let output = run_engine_frame_core(
+        host,
+        display,
+        assets,
+        &mut snapshot.engine,
+        dev,
+        frame_input,
+    );
     assert_eq!(output.frame_before, snapshot.frame);
     assert!(
         output.frame_after == output.frame_before || output.frame_after == output.frame_before + 1,
@@ -83,8 +208,6 @@ fn advance_supported_facade_frame(
     );
     assert_eq!(output.frame_after, snapshot.engine.frame_counter());
     assert_eq!(output.state_hash, state_hash(&snapshot.engine));
-    host.apply_side_effects(output.events.into_side_effects());
-    run_post_initialize_stage(host, display, assets, &mut snapshot.engine, dev);
     snapshot.frame += 1;
 }
 
@@ -92,7 +215,12 @@ fn advance_supported_facade_frame(
 fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     let mut assets = LevelAssets::new();
     let initial = fixture_engine(&mut assets);
-    let frames = command_frames();
+    let frames = command_frames()
+        .into_iter()
+        .map(|commands| {
+            SimulationFrameInput::from_player_inputs(commands).with_post_initialize(true)
+        })
+        .collect::<Vec<_>>();
 
     // Deliberately use non-default presentation scratch on the facade side.
     // It may change host output, but it must not change authoritative state.
@@ -104,14 +232,14 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
 
     let mut checkpoint = None;
     let mut facade_prefix_hashes = Vec::new();
-    for (frame, commands) in frames.iter().enumerate() {
-        advance_supported_facade_frame(
+    for (frame, input) in frames.iter().enumerate() {
+        advance_authoritative_frame(
             &mut facade,
             &mut facade_host,
             &mut facade_display,
             &assets,
             &mut facade_dev,
-            commands,
+            input.clone(),
         );
         if frame == 1 {
             checkpoint = Some(facade.clone());
@@ -124,11 +252,11 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     // would let an early ordering regression cancel itself out.
     for (index, expected_hash) in facade_prefix_hashes.iter().enumerate() {
         let target_frame = index as u32 + 1;
-        let (prefix, _) = replay_to_frame(
+        let (prefix, _) = replay_frames_to_frame(
             SimSnapshot::new(0, &initial),
             &assets,
             target_frame,
-            |frame| frames.get(frame as usize).map(Vec::as_slice),
+            |frame| frames.get(frame as usize),
         )
         .expect("replay command-journal prefix from frame zero");
         assert_eq!(
@@ -139,11 +267,11 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     }
 
     let target_frame = frames.len() as u32;
-    let (from_start, timing) = replay_to_frame(
+    let (from_start, timing) = replay_frames_to_frame(
         SimSnapshot::new(0, &initial),
         &assets,
         target_frame,
-        |frame| frames.get(frame as usize).map(Vec::as_slice),
+        |frame| frames.get(frame as usize),
     )
     .expect("replay complete command journal from frame zero");
 
@@ -164,8 +292,8 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     let checkpoint = checkpoint.expect("captured frame-two checkpoint");
     let checkpoint_frame = checkpoint.frame;
     let (from_checkpoint, suffix_timing) =
-        replay_to_frame(checkpoint, &assets, target_frame, |frame| {
-            frames.get(frame as usize).map(Vec::as_slice)
+        replay_frames_to_frame(checkpoint, &assets, target_frame, |frame| {
+            frames.get(frame as usize)
         })
         .expect("replay command-journal suffix from checkpoint");
 
@@ -190,32 +318,28 @@ fn post_hourglass_quit_command_cannot_be_replayed_as_a_pre_hourglass_command() {
     let mut before_host = Host::default();
     let mut before_display = HostDisplayState::default();
     let mut before_dev = DevState::default();
-    advance_supported_facade_frame(
+    advance_authoritative_frame(
         &mut before_hourglass,
         &mut before_host,
         &mut before_display,
         &assets,
         &mut before_dev,
-        std::slice::from_ref(&quit),
+        SimulationFrameInput::from_player_inputs(vec![quit.clone()]).with_post_initialize(true),
     );
 
     let mut after_hourglass = SimSnapshot::new(0, &initial);
     let mut after_host = Host::default();
     let mut after_display = HostDisplayState::default();
     let mut after_dev = DevState::default();
-    advance_supported_facade_frame(
+    advance_authoritative_frame(
         &mut after_hourglass,
         &mut after_host,
         &mut after_display,
         &assets,
         &mut after_dev,
-        &[],
-    );
-    after_hourglass.engine.apply_commands(
-        &mut after_display,
-        &mut after_host.input,
-        &assets,
-        std::slice::from_ref(&quit),
+        SimulationFrameInput::default()
+            .with_post_commands(vec![quit.clone().into()])
+            .with_post_initialize(true),
     );
 
     assert_ne!(
@@ -224,10 +348,13 @@ fn post_hourglass_quit_command_cannot_be_replayed_as_a_pre_hourglass_command() {
         "QuitMissionRequested placement around the hourglass is authoritative"
     );
 
-    let (journal_replay, _) = replay_to_frame(SimSnapshot::new(0, &initial), &assets, 1, |_| {
-        Some(std::slice::from_ref(&quit))
-    })
-    .expect("replay a command-only frame-zero journal");
+    let before_frame =
+        SimulationFrameInput::from_player_inputs(vec![quit]).with_post_initialize(true);
+    let (journal_replay, _) =
+        replay_frames_to_frame(SimSnapshot::new(0, &initial), &assets, 1, |_| {
+            Some(&before_frame)
+        })
+        .expect("replay an authoritative frame-zero journal");
     assert_eq!(
         state_hash(&journal_replay.engine),
         state_hash(&before_hourglass.engine)

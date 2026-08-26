@@ -742,9 +742,8 @@ impl GamePadState {
 /// One frame's worth of gamepad dispatch output.
 #[derive(Debug, Default)]
 pub struct GamepadFrame {
-    /// Sim-affecting commands produced this frame. Apply to the engine
-    /// via `engine.apply_command(...)` and also push onto the replay
-    /// recorder.
+    /// Sim-affecting commands produced this frame. Admit through the frame
+    /// transaction so replay/rollback capture the same ordered input.
     pub cmds: Vec<engine_player_command::PlayerCommand>,
     pub viewport: Vec<ViewportCommand>,
     /// QA macro event, if any.  The host decides how to route these —

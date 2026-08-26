@@ -1,7 +1,9 @@
 //! Black-box contracts for checkpoint/journal lifecycle boundaries.
 
 use robin_engine::campaign::Campaign;
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::{
+    Engine, ExternalAction, ExternalFact, LevelAssets, SimCommand, SimulationFrameInput,
+};
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_rs::sim_timeline::{
     CheckpointPolicy, CommandJournal, RestoreError, RestorePolicy, RetentionPolicy, TimelineHistory,
@@ -16,6 +18,45 @@ fn commands(label: &str) -> Vec<PlayerInput> {
     vec![PlayerInput::host(PlayerCommand::RegisterPeasantName {
         name: label.to_owned(),
     })]
+}
+
+#[test]
+fn journal_retains_the_complete_authoritative_frame() {
+    let mut assets = LevelAssets::new();
+    let engine = fixture_engine(&mut assets);
+    let mut history = TimelineHistory::new(
+        CheckpointPolicy::EveryFrame,
+        RetentionPolicy::Latest { capacity: 2 },
+    );
+    let frame =
+        SimulationFrameInput::new(vec![SimCommand::host(PlayerCommand::SetGoldenEyeMode {
+            on: true,
+        })])
+        .with_external_facts(vec![ExternalFact::ReplaySoundBoundary(Vec::new())])
+        .with_external_actions(vec![ExternalAction::ConsoleCommand {
+            input: "GOLDENEYE".to_owned(),
+            selected_view_element: None,
+        }])
+        .with_post_external_actions(vec![ExternalAction::Native {
+            name: "TestFrameAction".to_owned(),
+            args: vec![1, 2],
+            this_actor: None,
+        }])
+        .with_post_commands(vec![SimCommand::host(PlayerCommand::SetLockAlt(true))])
+        .with_simulation_body_allowed(false)
+        .with_post_initialize(true);
+
+    history.begin_frame(0, &engine);
+    assert!(history.commit_frame_input(frame));
+    let recorded = history.frame_for(0).expect("complete frame record");
+    assert_eq!(recorded.external_facts.len(), 1);
+    assert_eq!(recorded.external_actions.len(), 1);
+    assert_eq!(recorded.commands.len(), 1);
+    assert_eq!(recorded.post_external_actions.len(), 1);
+    assert_eq!(recorded.post_commands.len(), 1);
+    assert!(recorded.run_hourglass);
+    assert!(!recorded.simulation_body_allowed);
+    assert!(recorded.run_post_initialize);
 }
 
 #[test]
@@ -36,8 +77,14 @@ fn retention_prunes_commands_to_the_oldest_replayable_checkpoint() {
     assert_eq!(history.oldest_checkpoint_frame(), Some(11));
     assert_eq!(history.oldest_command_frame(), Some(11));
     assert!(history.commands_for(10).is_none());
-    assert_eq!(history.commands_for(11).map(<[_]>::len), Some(1));
-    assert_eq!(history.commands_for(12).map(<[_]>::len), Some(1));
+    assert_eq!(
+        history.commands_for(11).map(|commands| commands.len()),
+        Some(1)
+    );
+    assert_eq!(
+        history.commands_for(12).map(|commands| commands.len()),
+        Some(1)
+    );
     assert!(matches!(
         history.restore(10, RestorePolicy::LatestAtOrBefore),
         Err(RestoreError::CheckpointUnavailable {
@@ -86,7 +133,10 @@ fn truncating_at_the_command_horizon_preserves_the_branch_checkpoint() {
     assert!(history.commit_frame(commands("new-11")));
     assert_eq!(history.oldest_command_frame(), Some(11));
     assert_eq!(history.next_record_frame(), 12);
-    assert_eq!(history.commands_for(11).map(<[_]>::len), Some(1));
+    assert_eq!(
+        history.commands_for(11).map(|commands| commands.len()),
+        Some(1)
+    );
 }
 
 #[test]
@@ -138,7 +188,10 @@ fn periodic_history_starts_journaling_only_when_a_checkpoint_can_anchor_replay()
     assert_eq!(history.oldest_command_frame(), Some(5));
     assert_eq!(history.next_record_frame(), 6);
     assert!(history.commands_for(3).is_none());
-    assert_eq!(history.commands_for(5).map(<[_]>::len), Some(1));
+    assert_eq!(
+        history.commands_for(5).map(|commands| commands.len()),
+        Some(1)
+    );
 }
 
 #[test]

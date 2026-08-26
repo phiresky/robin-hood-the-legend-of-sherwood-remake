@@ -1,4 +1,4 @@
-//! Transaction boundary around one deterministic engine hourglass.
+//! Transaction boundary around one deterministic host-admitted engine frame.
 //!
 //! The Original's game loop finishes input/message translation before calling
 //! `RHEngine::PerformHourglass`, then performs widgets, rendering, and sound
@@ -6,42 +6,28 @@
 //! boundary without changing the established hourglass implementation or its
 //! phase ordering.
 //!
-//! This is an engine transaction, not a complete `RHGame` host-loop frame.
-//! [`super::Engine::advance_frame`] always admits exactly one
-//! `PerformHourglass`; host iterations that gate it off, post-hourglass
-//! callbacks, rendering, widgets, sound, and lifecycle hooks remain outside
-//! the modeled transaction.
+//! This is the authoritative engine portion of an `RHGame` host-loop frame.
+//! It can represent the Original gate skipping `PerformHourglass`, preserves
+//! distinct pre/post-hourglass command phases, and can cross the one-shot
+//! `PostInitialize` lifecycle boundary. Rendering, widgets, and audio playback
+//! remain host responsibilities, but every gameplay mutation they resolve is
+//! admitted through [`super::Engine::advance_frame`].
 //!
 //! [`SimulationFrameInput`] deliberately contains only authoritative inputs:
-//! resolved [`SimCommand`]s and host observations represented as
-//! [`ExternalFact`]s. Host UI scratch remains an adapter argument to
+//! resolved [`SimCommand`]s, host observations represented as
+//! [`ExternalFact`]s, and explicitly admitted host [`ExternalAction`]s.
+//! Host UI scratch remains an adapter argument to
 //! [`super::Engine::advance_frame`] during migration and cannot be serialized
 //! accidentally as part of the frame input.
 //!
 //! TODO(architecture): remove those host scratch arguments once remaining
 //! command/tick handlers emit sim events instead of editing presentation state.
 //!
-//! TODO(architecture): migrate replay, rewind, rollback, and multiplayer
-//! journals from command-only entries to a phase-complete record based on
-//! [`SimulationFrameInput`]. A checkpoint taken after an external fact captures
-//! that one boundary, but cannot reconstruct the same fact when replaying an
-//! earlier journal span. Before parity-trace migration, the input also needs an
-//! explicit post-hourglass command phase: a nested `Refresh` during commands
-//! such as `DisplayPopupText` can record a resolved orientation that must apply
-//! after `PerformHourglass`, not in the pre-hourglass
-//! [`SimulationFrameInput::commands`] phase. The same ordered ingress must
-//! capture current host mutation routes (HTTP native/batch/console and
-//! single-player command dispatch) that can run after the tick but before the
-//! history entry is committed; a pre-hourglass command-only journal loses
-//! those mutations too.
-//!
-//! TODO(architecture): model host-loop iterations where the Original's gate
-//! skips `PerformHourglass` but `Refresh`/director work, sound `Hourglass`, and
-//! the first `PostInitialize` still run (`original-code/RHgame.cpp:1867-1919`).
-//! `simulation_body_allowed = false` is not that boundary: it still runs the
-//! mission/script phase and advances the engine clock. Until the journal has a
-//! distinct no-hourglass boundary, this API is not a universal host-frame
-//! driver for paused, console, modal-transition, or load/next states.
+//! Journals should retain this whole value, not just
+//! [`SimulationFrameInput::commands`], so a
+//! reconstruction cannot lose host-resolved facts, an hourglass gate, or a
+//! late command. The current replay file remains command-only; its adapter
+//! constructs the explicit defaults used by that legacy format.
 //!
 //! TODO(architecture): choose one timeline owner before production migration.
 //! This transaction advances `EngineInner::frame_counter`, but the current
@@ -51,8 +37,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DirectorCompletion, SideEffects};
+use super::{ConsoleResponse, DirectorCompletion, SideEffects};
+use crate::campaign::Campaign;
+use crate::element::EntityId;
 use crate::game_operation::GameCode;
+use crate::messenger::SimpleMessage;
 use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use crate::sound::ResolvedExclamation;
 
@@ -131,26 +120,130 @@ pub enum ExternalFact {
     ReplaySoundBoundary(Vec<ResolvedExclamation>),
 }
 
+/// An explicitly admitted host action that can mutate simulation state.
+///
+/// Console submissions can run before the main hourglass; HTTP native/console
+/// RPCs run after it. Both need a deterministic journal representation so
+/// rewind and rollback do not silently omit the mutation. A live adapter may
+/// execute an action immediately in its own no-hourglass admission to produce a
+/// synchronous reply, then place the same value in the enclosing host frame's
+/// journal record.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExternalAction {
+    Native {
+        name: String,
+        args: Vec<i32>,
+        this_actor: Option<i32>,
+    },
+    CheatString {
+        input: String,
+        selected_view_element: Option<EntityId>,
+    },
+    ConsoleCommand {
+        input: String,
+        selected_view_element: Option<EntityId>,
+    },
+    SimpleMessage {
+        message: SimpleMessage,
+    },
+    EzekielInstakill {
+        target: EntityId,
+    },
+    ReplaceCampaign {
+        campaign: Campaign,
+    },
+}
+
+/// Serializable result of an admitted host action.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ExternalActionResult {
+    Native(Result<i32, String>),
+    CheatString {
+        response: FrameConsoleResponse,
+        selected_view_element: Option<EntityId>,
+    },
+    ConsoleCommand {
+        response: FrameConsoleResponse,
+        selected_view_element: Option<EntityId>,
+    },
+    SimpleMessage,
+    EzekielInstakill(bool),
+    ReplaceCampaign,
+}
+
+/// Owned/serializable form of [`ConsoleResponse`] used at the frame boundary.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum FrameConsoleResponse {
+    Ok(String),
+    Unknown,
+    NotImplemented(String),
+    LoadCampaignRequested(String),
+    DeityInvoked,
+}
+
+impl From<ConsoleResponse> for FrameConsoleResponse {
+    fn from(response: ConsoleResponse) -> Self {
+        match response {
+            ConsoleResponse::Ok(message) => Self::Ok(message),
+            ConsoleResponse::Unknown => Self::Unknown,
+            ConsoleResponse::NotImplemented(name) => Self::NotImplemented(name.to_owned()),
+            ConsoleResponse::LoadCampaignRequested(path) => Self::LoadCampaignRequested(
+                path.into_os_string()
+                    .into_string()
+                    .unwrap_or_else(|_| panic!("console campaign path is not valid UTF-8")),
+            ),
+            ConsoleResponse::DeityInvoked => Self::DeityInvoked,
+        }
+    }
+}
+
 /// Authoritative inputs modeled by one admitted engine-hourglass transaction.
 ///
-/// External facts always run before commands. `simulation_body_allowed`
-/// closes only the actor/world body gate; mission scripts/messages and the
-/// mission clock still advance, matching the existing gated-hourglass rules.
-/// It must not be used to represent a host iteration where `PerformHourglass`
-/// was skipped entirely. It also does not yet carry authoritative commands
-/// produced by a nested refresh after the main hourglass body.
+/// Ordering is external facts, pre-hourglass external actions, commands, the
+/// hourglass, post-hourglass external actions, late commands, then optional
+/// `PostInitialize`. `simulation_body_allowed` closes only the actor/world body
+/// gate; mission scripts/messages and the mission clock still advance. It must
+/// not represent a host iteration where `PerformHourglass` was skipped
+/// entirely; use `run_hourglass` for that host gate.
 #[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SimulationFrameInput {
     pub external_facts: Vec<ExternalFact>,
+    /// Host actions admitted before player commands and the hourglass.
+    #[serde(default)]
+    pub external_actions: Vec<ExternalAction>,
     /// Commands admitted before `PerformHourglass`, in dispatch order.
-    ///
-    /// TODO(architecture): add a typed post-hourglass command phase for
-    /// Original parity traces whose nested refresh records a late resolved
-    /// orientation, and route post-tick host command/native/console mutations
-    /// through it. Moving those operations into this vector changes behavior.
     pub commands: Vec<SimCommand>,
+    /// Host/native actions admitted after the hourglass and before late
+    /// player commands. Live RPC adapters record actions here after executing
+    /// them synchronously through a separate no-hourglass admission.
+    #[serde(default)]
+    pub post_external_actions: Vec<ExternalAction>,
+    /// Commands admitted after `PerformHourglass`, in dispatch order.
+    ///
+    /// Original parity uses this phase for input resolved by a nested refresh.
+    /// Live host RPC/modal ingress also belongs here when it occurs after the
+    /// main tick.
+    #[serde(default)]
+    pub post_commands: Vec<SimCommand>,
+    /// Whether this host iteration crosses `RHEngine::PerformHourglass`.
+    /// Paused, console, modal-transition, load, and level-next iterations set
+    /// this to false; this is distinct from `simulation_body_allowed`.
+    #[serde(default = "run_hourglass_default")]
+    pub run_hourglass: bool,
     #[serde(default = "simulation_body_allowed_default")]
     pub simulation_body_allowed: bool,
+    /// Cross the one-shot mission `PostInitialize` stage after late commands.
+    /// Graphical play normally does this in a separate no-hourglass admission
+    /// after presentation; headless/reconstruction may combine it.
+    #[serde(default)]
+    pub run_post_initialize: bool,
+}
+
+const fn run_hourglass_default() -> bool {
+    true
 }
 
 const fn simulation_body_allowed_default() -> bool {
@@ -161,8 +254,13 @@ impl Default for SimulationFrameInput {
     fn default() -> Self {
         Self {
             external_facts: Vec::new(),
+            external_actions: Vec::new(),
             commands: Vec::new(),
+            post_external_actions: Vec::new(),
+            post_commands: Vec::new(),
+            run_hourglass: true,
             simulation_body_allowed: true,
+            run_post_initialize: false,
         }
     }
 }
@@ -184,9 +282,53 @@ impl SimulationFrameInput {
         self
     }
 
+    pub fn with_external_actions(mut self, actions: Vec<ExternalAction>) -> Self {
+        self.external_actions = actions;
+        self
+    }
+
     pub fn with_simulation_body_allowed(mut self, allowed: bool) -> Self {
         self.simulation_body_allowed = allowed;
         self
+    }
+
+    pub fn with_post_commands(mut self, commands: Vec<SimCommand>) -> Self {
+        self.post_commands = commands;
+        self
+    }
+
+    pub fn with_post_external_actions(mut self, actions: Vec<ExternalAction>) -> Self {
+        self.post_external_actions = actions;
+        self
+    }
+
+    pub fn with_hourglass(mut self, run: bool) -> Self {
+        self.run_hourglass = run;
+        self
+    }
+
+    pub fn with_post_initialize(mut self, run: bool) -> Self {
+        self.run_post_initialize = run;
+        self
+    }
+
+    /// A host iteration which crosses no hourglass and admits no commands.
+    pub fn no_hourglass() -> Self {
+        Self::default().with_hourglass(false)
+    }
+
+    pub fn player_inputs(&self) -> Vec<PlayerInput> {
+        self.commands
+            .iter()
+            .map(|command| command.player_input().clone())
+            .collect()
+    }
+
+    pub fn post_player_inputs(&self) -> Vec<PlayerInput> {
+        self.post_commands
+            .iter()
+            .map(|command| command.player_input().clone())
+            .collect()
     }
 }
 
@@ -237,12 +379,18 @@ pub struct SimulationFrameOutput {
     /// Engine frame counter after the hourglass. A presentation-only freeze
     /// frame can leave this equal to `frame_before`.
     pub frame_after: u32,
+    /// True exactly when this admission ran `PerformHourglass`.
+    pub hourglass_ran: bool,
     /// Output for the host to consume after the transaction. Until host scratch
     /// is fully disentangled, this includes the adapter-only minimap
     /// persistence effect documented on [`SimEvents`].
     pub events: SimEvents,
-    /// Canonical deterministic engine-state hash after this modeled
-    /// transaction, before any unmodeled post-hourglass ingress.
+    /// Ordered effects produced by the optional one-shot lifecycle stage.
+    pub post_initialize_events: Option<SimEvents>,
+    /// Results for pre- then post-hourglass external actions, in order.
+    pub external_action_results: Vec<ExternalActionResult>,
+    /// Canonical deterministic engine-state hash after the full modeled
+    /// transaction.
     pub state_hash: u64,
 }
 

@@ -313,20 +313,22 @@ impl EngineInner {
 
     // ─── View cone overlay ──────────────────────────────────────
 
-    /// Check whether the `DIES IRAE` cheat (`ai_global.ezekiel_2517`) is
-    /// active and the target is a live human.  When both hold, the
-    /// host's alt-hover-an-NPC gesture launches a full-damage sequence
-    /// instead of highlighting the vision cone.
-    /// Returns `true` if the cheat fired (caller should NOT set its
-    /// host-side `selected_view_element`).
-    pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
+    /// Check whether an admitted `DIES IRAE` action would consume the
+    /// host's alt-hover gesture. This query is intentionally read-only; the
+    /// corresponding mutation is admitted through the frame transaction.
+    pub fn can_ezekiel_instakill(&self, id: EntityId) -> bool {
         if !self.ai.global.ezekiel_2517 {
             return false;
         }
         let Some(entity) = self.get_entity(id) else {
             return false;
         };
-        if !entity.is_human() {
+        entity.is_human()
+    }
+
+    /// Apply one admitted `DIES IRAE` action.
+    pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
+        if !self.can_ezekiel_instakill(id) {
             return false;
         }
         // damage=10000 is a one-shot kill.
