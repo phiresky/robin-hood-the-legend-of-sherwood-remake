@@ -465,6 +465,239 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
 }
 
 #[test]
+fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual_macros() {
+    use crate::macro_store::QaReplayCommand;
+    use crate::player_command::PlayerCommand;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let exact_sector = add_group_move_test_sector(&mut engine);
+    let pc_a = add_test_pc(&mut engine);
+    let pc_b = add_test_pc(&mut engine);
+    engine
+        .get_entity_mut(pc_a)
+        .expect("first PC")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    engine
+        .get_entity_mut(pc_b)
+        .expect("second PC")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(120.0, 100.0));
+
+    // Keep both automatic entries pending so capture can be inspected before
+    // replay, and arm manual recording to prove the planner never borrows that
+    // mechanism as scratch storage.
+    for pc in [pc_a, pc_b] {
+        let busy = crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::EnterListen,
+            Some(pc),
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+    }
+    arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
+    let manual_a = engine
+        .players
+        .macro_store
+        .get(pc_a)
+        .expect("armed first manual state")
+        .clone();
+    let manual_b = engine
+        .players
+        .macro_store
+        .get(pc_b)
+        .expect("armed second manual state")
+        .clone();
+    let sequence_count_before = engine.orders.sequence_manager.sequence_count();
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::QueueQuickAction {
+            action: crate::profiles::Action::NoAction,
+            command: Box::new(PlayerCommand::GroupMove {
+                actors: vec![pc_a, pc_b],
+                destination: MapPoint::new(500.0, 500.0),
+                running: false,
+                show_marker: true,
+                goal_override: Some((crate::sector::SectorNumber::new(1), 0)),
+                goal_sector_index_override: Some(exact_sector),
+                door_route_override: None,
+                recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
+            }),
+        },
+    );
+
+    assert_eq!(
+        engine.orders.sequence_manager.sequence_count(),
+        sequence_count_before,
+        "automatic click-time planning must not launch movement"
+    );
+    for (pc, expected_destination) in [
+        (pc_a, MapPoint::new(490.0, 500.0)),
+        (pc_b, MapPoint::new(510.0, 500.0)),
+    ] {
+        let entry = engine
+            .players
+            .auto_queues
+            .get(pc)
+            .and_then(|queue| queue.first())
+            .expect("per-PC automatic move");
+        let QaReplayCommand::Move {
+            destination,
+            running,
+            route: Some(route),
+        } = entry.step.replay
+        else {
+            panic!("automatic GroupMove was not captured as a resolved move")
+        };
+        assert_eq!(destination, expected_destination);
+        assert_eq!(entry.step.position, expected_destination);
+        assert!(!running);
+        assert_eq!(route.goal_sector, crate::sector::SectorNumber::new(1));
+        assert_eq!(route.goal_sector_index, exact_sector);
+        assert_eq!(route.goal_layer, 0);
+        assert!(entry.titbit.is_some());
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc, |command| {
+                    matches!(
+                        command,
+                        crate::element::Command::Move | crate::element::Command::Seek
+                    )
+                }),
+            "capture launched a live movement order for {pc:?}"
+        );
+    }
+    assert_eq!(engine.players.macro_store.get(pc_a), Some(&manual_a));
+    assert_eq!(engine.players.macro_store.get(pc_b), Some(&manual_b));
+    assert_eq!(engine.players.qa_recording_for, vec![pc_a, pc_b]);
+    assert!(
+        engine.orders.messenger.drain().is_empty(),
+        "automatic capture must not stop or otherwise drive manual recording"
+    );
+}
+
+#[test]
+fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
+    use crate::player_command::PlayerCommand;
+    use crate::sequence::SequenceElementData;
+
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = crate::engine::InputState::default();
+    let assets = crate::engine::LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let exact_sector = add_group_move_test_sector(&mut engine);
+    let pc_a = add_test_pc(&mut engine);
+    let pc_b = add_test_pc(&mut engine);
+    engine
+        .get_entity_mut(pc_a)
+        .expect("first PC")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    engine
+        .get_entity_mut(pc_b)
+        .expect("second PC")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(120.0, 100.0));
+
+    let mut busy_sequences = Vec::new();
+    for pc in [pc_a, pc_b] {
+        let busy = crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::EnterListen,
+            Some(pc),
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        busy_sequences.push(sequence);
+    }
+    arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
+    let manual_a = engine.players.macro_store.get(pc_a).unwrap().clone();
+    let manual_b = engine.players.macro_store.get(pc_b).unwrap().clone();
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::QueueQuickAction {
+            action: crate::profiles::Action::NoAction,
+            command: Box::new(PlayerCommand::GroupMove {
+                actors: vec![pc_a, pc_b],
+                destination: MapPoint::new(500.0, 500.0),
+                running: true,
+                show_marker: true,
+                goal_override: Some((crate::sector::SectorNumber::new(1), 0)),
+                goal_sector_index_override: Some(exact_sector),
+                door_route_override: None,
+                recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
+            }),
+        },
+    );
+    for sequence in busy_sequences {
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(sequence, 0);
+    }
+    let mut camera = crate::engine::CameraDisplayState::default();
+    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+
+    for (pc, expected_destination) in [
+        (pc_a, MapPoint::new(490.0, 500.0)),
+        (pc_b, MapPoint::new(510.0, 500.0)),
+    ] {
+        assert!(engine.players.auto_queues.is_empty(pc));
+        let seek = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(pc) && element.command == crate::element::Command::Seek
+            })
+            .expect("automatic move replay must launch an exact per-PC seek");
+        let SequenceElementData::Movement {
+            destination,
+            layer,
+            sector,
+            ..
+        } = &seek.data
+        else {
+            panic!("automatic move replay lost its movement payload")
+        };
+        assert_eq!(*destination, expected_destination);
+        assert_eq!(*layer, 0);
+        assert_eq!(
+            sector.expect("recorded goal sector").arena_index(),
+            Some(exact_sector)
+        );
+    }
+    assert_eq!(engine.players.macro_store.get(pc_a), Some(&manual_a));
+    assert_eq!(engine.players.macro_store.get(pc_b), Some(&manual_b));
+    assert_eq!(engine.players.qa_recording_for, vec![pc_a, pc_b]);
+}
+
+#[test]
 fn group_move_recording_suppresses_only_armed_actor_and_launches_live_sibling() {
     use crate::player_command::PlayerCommand;
 

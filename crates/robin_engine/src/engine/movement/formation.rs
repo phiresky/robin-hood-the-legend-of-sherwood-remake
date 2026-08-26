@@ -1,5 +1,27 @@
 use super::*;
 
+/// One actor's fully resolved movement quick action at click time.
+///
+/// The destination is the actor's authorized formation slot, while `route`
+/// retains the exact sector identity that Original passes to the per-actor
+/// `PerformMove(..., bRecordQA=true)` call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::engine) struct PlannedRecordedGroupMove {
+    pub actor: EntityId,
+    pub destination: MapPoint,
+    pub route: crate::macro_store::RecordedQaMoveRoute,
+}
+
+/// A formation slot can fail the same move-box authorization as a live move.
+/// Keep that outcome explicit so automatic capture can reject only that actor
+/// without manufacturing a destination or mutating the simulation to play an
+/// unable bark.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::engine) enum PlannedRecordedGroupMoveOutcome {
+    Resolved(PlannedRecordedGroupMove),
+    Unauthorized { actor: EntityId },
+}
+
 impl EngineInner {
     // ─── Order system ─────────────────────────────────────────────
 
@@ -83,6 +105,208 @@ impl EngineInner {
         } else {
             None
         }
+    }
+
+    /// Resolve a group click into per-PC quick-action movement records without
+    /// launching orders, adding markers, speaking, or touching either QA
+    /// store.
+    ///
+    /// Original `PerformGroupMove` first computes and authorizes every
+    /// mercenary/circular formation slot, then calls `PerformMove` separately
+    /// for each PC (`RHengine.cpp:5432-5645`). The `bRecordQA` arm retains
+    /// that actor-specific destination and exact goal sector/layer instead of
+    /// launching movement (`RHengine.cpp:10059-10139`). Automatic Shift queue
+    /// capture uses this read-only boundary rather than arming the manual
+    /// recorder or applying the nested live `GroupMove`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine) fn plan_recorded_group_move(
+        &self,
+        assets: &LevelAssets,
+        pc_ids: &[EntityId],
+        click_point: MapPoint,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        door_route_override: Option<bool>,
+    ) -> Vec<PlannedRecordedGroupMoveOutcome> {
+        if pc_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // Match PerformGroupMove's click-sector reference, including the
+        // committed far side of an in-progress non-interruptible door pass.
+        let route_sources: Vec<(EntityId, MapPoint, u16)> = pc_ids
+            .iter()
+            .map(|&pc_id| {
+                let entity = self
+                    .get_entity(pc_id)
+                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"));
+                let (position, _sector, layer) = group_move_route_source(
+                    self,
+                    pc_id,
+                    entity,
+                    &self.script_domains.interactables.doors,
+                );
+                (pc_id, position, layer)
+            })
+            .collect();
+        let src_layer = route_sources[0].2;
+        let reference = route_sources[0].1;
+
+        let hit = self
+            .world
+            .fast_grid
+            .get_sector_screen(click_point, reference);
+        let selected_grid_sector = hit
+            .sector_idx
+            .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)));
+        let (is_lift_click, is_door_click_sector, is_jump_click) = selected_grid_sector
+            .map(|sector| group_move_sector_kinds(sector.sector_type))
+            .unwrap_or((false, false, false));
+        let jump_underlying_sector = selected_grid_sector
+            .filter(|sector| sector.sector_type.is_jump())
+            .and_then(|sector| sector.underlying_sector)
+            .and_then(|index| {
+                self.world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(index))
+                    .map(|sector| (sector.sector_number, index, sector.layer))
+            });
+        let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
+        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
+            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
+        });
+        let spatial_clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
+        let spatial_is_door_click = is_door_click_sector || spatial_clicked_door_index.is_some();
+        let (_, _, bypass_formation_authorization) = group_move_door_selection(
+            spatial_clicked_door_index,
+            spatial_is_door_click,
+            door_route_override,
+        );
+        let (goal_sector, goal_layer) = group_move_route_goal(goal_override, hit.sector, hit.layer);
+        let goal_sector_index = resolve_group_move_route_goal_index(
+            goal_override,
+            goal_sector_index_override,
+            hit.sector,
+            hit.sector_idx,
+            hit.layer,
+            selected_grid_sector,
+            &self.world.fast_grid.level,
+        );
+        let (effective_click, effective_layer) = if goal_override.is_some() {
+            (click_point, goal_layer)
+        } else if hit.is_valid_for_move(&self.world.fast_grid) || is_jump_click {
+            (click_point, hit.layer)
+        } else {
+            (
+                self.snap_to_nearest_walkable(assets, click_point, src_layer)
+                    .unwrap_or(click_point),
+                src_layer,
+            )
+        };
+
+        let pc_positions: Vec<MapPoint> = pc_ids
+            .iter()
+            .map(|&pc_id| {
+                self.get_entity(pc_id)
+                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
+                    .element_data()
+                    .position_map()
+            })
+            .collect();
+        let n = pc_positions.len() as f32;
+        let mut center_x = pc_positions.iter().map(|point| point.x).sum::<f32>();
+        let mut center_y = pc_positions.iter().map(|point| point.y).sum::<f32>();
+        let reciprocal = 1.0f32 / n;
+        center_x *= reciprocal;
+        center_y *= reciprocal;
+        let center = MapPoint::new(center_x, center_y);
+        let compact = pc_positions
+            .iter()
+            .map(|point| {
+                let dx = point.x - center_x;
+                let dy = point.y - center_y;
+                dx * dx + dy * dy
+            })
+            .fold(0.0f32, f32::max)
+            <= GROUP_LIMIT_MAX * GROUP_LIMIT_MAX;
+        let circular_destinations =
+            (!compact).then(|| circular_dispatch_destinations(&pc_positions, effective_click));
+
+        pc_ids
+            .iter()
+            .enumerate()
+            .map(|(index, &actor)| {
+                let entity = self
+                    .get_entity(actor)
+                    .unwrap_or_else(|| panic!("selected group-move actor {actor:?} is missing"));
+                let destination = if compact {
+                    let position = entity.position_iface();
+                    let mut bbox = group_move_mercenary_box(
+                        *position.get_move_box_map(),
+                        *position.get_move_box(),
+                        entity.element_data().position_map(),
+                        center,
+                        effective_click,
+                        is_lift_click,
+                    );
+                    let authorized = bypass_formation_authorization
+                        || self.world.fast_grid.find_authorized_position_toward(
+                            &mut bbox,
+                            effective_click,
+                            effective_layer,
+                        );
+                    authorized.then(|| bbox.center())
+                } else {
+                    let candidate = circular_destinations
+                        .as_ref()
+                        .expect("spread group must have circular destinations")[index];
+                    if bypass_formation_authorization {
+                        Some(candidate)
+                    } else {
+                        self.authorize_group_move_destination(
+                            actor,
+                            candidate,
+                            effective_click,
+                            effective_layer,
+                            is_lift_click,
+                        )
+                    }
+                };
+                let Some(destination) = destination else {
+                    return PlannedRecordedGroupMoveOutcome::Unauthorized { actor };
+                };
+
+                let route = if is_jump_click {
+                    let (sector, sector_index, layer) = jump_underlying_sector.unwrap_or_else(|| {
+                        panic!(
+                            "recorded jump group move for {actor:?} has no underlying goal sector"
+                        )
+                    });
+                    recorded_qa_move_route(sector, sector_index, layer)
+                } else {
+                    recorded_qa_move_route(
+                        goal_sector.unwrap_or_else(|| {
+                            panic!(
+                                "recorded group move for {actor:?} has no resolved goal sector"
+                            )
+                        }),
+                        goal_sector_index.unwrap_or_else(|| {
+                            panic!(
+                                "recorded group move for {actor:?} has no exact goal-sector identity"
+                            )
+                        }),
+                        effective_layer,
+                    )
+                };
+                PlannedRecordedGroupMoveOutcome::Resolved(PlannedRecordedGroupMove {
+                    actor,
+                    destination,
+                    route,
+                })
+            })
+            .collect()
     }
 
     /// Issue movement orders for a group of selected PCs around a single

@@ -4,7 +4,7 @@
 //! The input system resolves raw events into commands by reading engine
 //! state immutably; this module executes them.
 
-use super::movement::GoalShape;
+use super::movement::{GoalShape, PlannedRecordedGroupMoveOutcome};
 use super::{CameraDisplayState, EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
@@ -1513,6 +1513,28 @@ impl EngineInner {
         route: crate::macro_store::RecordedQaMoveRoute,
         assets: &LevelAssets,
     ) {
+        self.record_resolved_group_move_step_in_store(
+            recording_pc,
+            destination,
+            running,
+            route,
+            None,
+            assets,
+            QuickActionRecordingStore::Manual,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_resolved_group_move_step_in_store(
+        &mut self,
+        recording_pc: EntityId,
+        destination: MapPoint,
+        running: bool,
+        route: crate::macro_store::RecordedQaMoveRoute,
+        action_override: Option<crate::profiles::Action>,
+        assets: &LevelAssets,
+        recording_store: QuickActionRecordingStore,
+    ) {
         let command = PlayerCommand::GroupMove {
             actors: vec![recording_pc],
             destination,
@@ -1528,10 +1550,10 @@ impl EngineInner {
             0,
             &command,
             recording_pc,
-            None,
+            action_override,
             Some(route),
             assets,
-            QuickActionRecordingStore::Manual,
+            recording_store,
         );
     }
 
@@ -2073,8 +2095,54 @@ impl EngineInner {
     ) {
         use PlayerCommand::*;
 
+        if let GroupMove {
+            actors,
+            destination,
+            running,
+            goal_override,
+            goal_sector_index_override,
+            door_route_override,
+            ..
+        } = command
+        {
+            let plans = self.plan_recorded_group_move(
+                assets,
+                actors,
+                *destination,
+                *goal_override,
+                *goal_sector_index_override,
+                *door_route_override,
+            );
+            for plan in plans {
+                let plan = match plan {
+                    PlannedRecordedGroupMoveOutcome::Resolved(plan) => plan,
+                    PlannedRecordedGroupMoveOutcome::Unauthorized { actor } => {
+                        tracing::warn!(
+                            ?actor,
+                            ?destination,
+                            "Shift group-move queue rejected unauthorized formation slot"
+                        );
+                        continue;
+                    }
+                };
+                let before_len = self.players.auto_queues.len(plan.actor);
+                self.record_resolved_group_move_step_in_store(
+                    plan.actor,
+                    plan.destination,
+                    *running,
+                    plan.route,
+                    Some(action),
+                    assets,
+                    QuickActionRecordingStore::Automatic,
+                );
+                self.finish_automatic_quick_action_capture(
+                    sim, display, assets, plan.actor, before_len, command,
+                );
+            }
+            return;
+        }
+
         let actors: Vec<EntityId> = match command {
-            GroupMove { actors, .. } => actors.clone(),
             LaunchInteraction { actor, .. }
             | LaunchGroundTarget { actor, .. }
             | DropAleAt { actor, .. }
@@ -2100,25 +2168,36 @@ impl EngineInner {
                 assets,
                 QuickActionRecordingStore::Automatic,
             );
+            self.finish_automatic_quick_action_capture(
+                sim, display, assets, actor, before_len, command,
+            );
+        }
+    }
 
-            if self.players.auto_queues.len(actor) != before_len + 1 {
-                tracing::warn!(?actor, ?command, "Shift queue command produced no QA step");
-                continue;
-            }
+    fn finish_automatic_quick_action_capture(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut CameraDisplayState,
+        assets: &LevelAssets,
+        actor: EntityId,
+        before_len: usize,
+        command: &PlayerCommand,
+    ) {
+        if self.players.auto_queues.len(actor) != before_len + 1 {
+            tracing::warn!(?actor, ?command, "Shift queue command produced no QA step");
+            return;
+        }
 
-            let was_active = self.players.auto_queue_active.contains(&actor);
-            if !was_active {
-                self.players.auto_queue_active.push(actor);
-            }
-            let actor_busy = self
-                .orders
-                .sequence_manager
-                .has_unpostponed_element_for_actor_matching(actor, |command| {
-                    command != Command::Wait
-                });
-            if !was_active && !actor_busy {
-                self.start_auto_queue_front(sim, display, assets, actor);
-            }
+        let was_active = self.players.auto_queue_active.contains(&actor);
+        if !was_active {
+            self.players.auto_queue_active.push(actor);
+        }
+        let actor_busy = self
+            .orders
+            .sequence_manager
+            .has_unpostponed_element_for_actor_matching(actor, |command| command != Command::Wait);
+        if !was_active && !actor_busy {
+            self.start_auto_queue_front(sim, display, assets, actor);
         }
     }
 

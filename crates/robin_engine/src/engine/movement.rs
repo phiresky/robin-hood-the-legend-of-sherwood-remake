@@ -16,6 +16,8 @@ mod formation;
 mod rider_charge;
 mod routing;
 
+pub(in crate::engine) use formation::PlannedRecordedGroupMoveOutcome;
+
 use combat_motion::{
     combat_directional_animation, combat_movement_angle, executes_sword_movement_action,
     is_sword_motion_context, is_sword_movement_nonanimation, sword_movement_dispatch_action,
