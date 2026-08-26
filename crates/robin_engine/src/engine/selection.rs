@@ -633,6 +633,7 @@ impl EngineInner {
     ///
     /// The selected branch also updates the seat's messenger-level armed
     /// action. The not-selected branch deliberately leaves it untouched.
+    #[cfg(test)]
     pub(crate) fn set_pc_action(
         &mut self,
         assets: &LevelAssets,
@@ -1137,6 +1138,7 @@ impl EngineInner {
     ///
     /// Returns `true` if the action was dispatched (i.e. the button maps to
     /// a real action and is enabled), `false` otherwise.
+    #[cfg(test)]
     pub(crate) fn select_pc_action_by_index(
         &mut self,
         assets: &LevelAssets,
@@ -1185,6 +1187,35 @@ impl EngineInner {
         true
     }
 
+    pub(crate) fn select_pc_action_by_index_from_message(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        pc_id: EntityId,
+        index: u8,
+    ) -> bool {
+        let idx = index as usize;
+        let Some(pc) = self.get_entity(pc_id).and_then(|entity| entity.pc_data()) else {
+            return false;
+        };
+        let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
+            return false;
+        };
+        let action = profile
+            .actions
+            .get(idx)
+            .copied()
+            .unwrap_or(Action::NoAction);
+        if action == Action::NoAction
+            || pc.disabled_actions.get(idx).copied().unwrap_or(false)
+            || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
+        {
+            return false;
+        }
+        self.set_pc_action_from_message(assets, seat, pc_id, action);
+        true
+    }
+
     /// Perform multi-selection: select all PCs whose position falls inside
     /// the drag-box defined by `multi_selection_pt1` and
     /// `multi_selection_pt2`.
@@ -1192,6 +1223,7 @@ impl EngineInner {
     /// When `shift_held` is true, adds to the existing selection. Each newly
     /// added PC barks `HERO_SELECT`. Sets `next_left_double_is_simple` to
     /// suppress the next left-double promotion.
+    #[cfg(test)]
     pub(crate) fn perform_multi_selection(
         &mut self,
         assets: &LevelAssets,
@@ -1207,6 +1239,21 @@ impl EngineInner {
 
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
+        self.perform_box_selection(assets, seat, p1, p2, shift_held);
+
+        input.multi_selection_active = false;
+        input.draw_multi_selection = false;
+        input.next_left_double_is_simple = true;
+    }
+
+    pub(crate) fn perform_box_selection(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        p1: crate::coordinates::MapPoint,
+        p2: crate::coordinates::MapPoint,
+        shift_held: bool,
+    ) {
         let box_multi_selection = crate::sprite::BBox::new(
             crate::coordinates::ScreenPoint::new(p1.x.min(p2.x), p1.y.min(p2.y)),
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
@@ -1245,19 +1292,13 @@ impl EngineInner {
         for pc_id in box_selected {
             self.select_pc(assets, seat, pc_id, true, true);
         }
-
-        input.multi_selection_active = false;
-        input.draw_multi_selection = false;
-        // Suppress the double-click promotion on the next left-click so a
-        // box-select immediately followed by a click does not run the
-        // double-click repeat path.
-        input.next_left_double_is_simple = true;
     }
 
     // ─── Multi-UN-selection (right-drag red box) ────────────────
 
     /// Perform multi-UNselection: deselect every selected, playable PC whose
     /// sprite bounding-box intersects the right-drag box.
+    #[cfg(test)]
     pub(crate) fn perform_multi_unselection(&mut self, input: &mut InputState, seat: usize) {
         if !input.draw_multi_selection {
             input.multi_unselection_active = false;
@@ -1266,6 +1307,17 @@ impl EngineInner {
 
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
+        self.perform_box_unselection(seat, p1, p2);
+        input.multi_unselection_active = false;
+        input.draw_multi_selection = false;
+    }
+
+    pub(crate) fn perform_box_unselection(
+        &mut self,
+        seat: usize,
+        p1: crate::coordinates::MapPoint,
+        p2: crate::coordinates::MapPoint,
+    ) {
         let box_multi_selection = crate::sprite::BBox::new(
             crate::coordinates::ScreenPoint::new(p1.x.min(p2.x), p1.y.min(p2.y)),
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
@@ -1306,9 +1358,6 @@ impl EngineInner {
         if self.players.seats[seat].selection.is_empty() {
             self.players.seats[seat].selected_action = Action::NoAction;
         }
-
-        input.multi_unselection_active = false;
-        input.draw_multi_selection = false;
     }
 
     /// Whether any selected PC on the host seat is currently swordfighting

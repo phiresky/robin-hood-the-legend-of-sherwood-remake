@@ -691,10 +691,10 @@ impl EngineInner {
     /// Original provenance: `original-code/RHengine.cpp:3726-3727` calls
     /// `RHSequenceManager::Hourglass` after the entity loop; its FIFO `Go()`
     /// drain is in `original-code/RHsequencemanager.cpp:931-943`.
-    pub(in crate::engine) fn hourglass_phase_sequences(
+    pub(in crate::engine) fn hourglass_phase_sequences_authoritative(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         let terminal_seek_handoffs: Vec<_> = self
@@ -3254,6 +3254,28 @@ impl EngineInner {
                 actor.installed_order = None;
             }
             actor.retained_waiting_sword_order_id = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::engine) fn hourglass_phase_sequences(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) {
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        self.hourglass_phase_sequences_authoritative(sim, &mut camera, assets);
+        self.feedback.cutscene_camera.display = camera;
+        let mut input = InputState::default();
+        for event in self
+            .feedback
+            .pending_side_effects
+            .host_events
+            .iter()
+            .cloned()
+        {
+            display.apply_host_event(&mut input, event);
         }
     }
 }

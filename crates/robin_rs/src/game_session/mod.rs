@@ -1091,10 +1091,7 @@ mod required_state_tests {
         let mut input = robin_engine::engine::InputState::default();
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut robin_engine::engine::DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     robin_engine::player_command::PlayerCommand::SetAmountOfSpeaking { amount: 9 }
                         .into(),

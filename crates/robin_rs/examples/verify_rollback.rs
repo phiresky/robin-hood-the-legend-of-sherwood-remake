@@ -137,10 +137,7 @@ fn main() {
 
         engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut dev,
                 robin_engine::engine::SimulationFrameInput::default().with_post_initialize(true),
             )
             .expect("advance live frame");
@@ -157,10 +154,7 @@ fn main() {
             for _ in 0..WINDOW {
                 sim_engine
                     .advance_frame(
-                        &mut sim_display,
-                        &mut sim_input,
                         &sim_assets,
-                        &mut sim_dev,
                         robin_engine::engine::SimulationFrameInput::default()
                             .with_post_initialize(true),
                     )

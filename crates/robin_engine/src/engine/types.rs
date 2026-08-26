@@ -2332,6 +2332,86 @@ pub enum OverlayChange {
     Hide,
 }
 
+/// Ordered host-only work emitted by authoritative command/tick handlers.
+/// These events never feed back into simulation decisions.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HostEvent {
+    SetRightMouseDown { down: bool },
+    ClearInputFocus,
+    CancelMultiSelection { suppress_next_double: bool },
+    Minimap(MinimapHostEvent),
+    MacroUi(MacroUiHostEvent),
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MinimapHostEvent {
+    Resize {
+        base: crate::coordinates::ScreenPoint,
+        corner_size: crate::coordinates::ScreenSize,
+        screen_width: f32,
+        screen_height: f32,
+    },
+    MouseDown {
+        click_pt: crate::coordinates::ScreenPoint,
+        screen_width: f32,
+        screen_height: f32,
+    },
+    MouseMove {
+        mouse_pt: crate::coordinates::ScreenPoint,
+        left_mouse_down: bool,
+        screen_width: f32,
+        screen_height: f32,
+    },
+    MouseUp {
+        on_minimap: bool,
+    },
+    RightClick,
+    Toggle,
+    DisplayMap {
+        show: bool,
+        restore_position: bool,
+    },
+    HighlightDelayed {
+        element_ids: Vec<u32>,
+        screen_width: f32,
+        screen_height: f32,
+    },
+    Tick,
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MacroUiHostEvent {
+    Tick {
+        slots: Vec<MacroSlotLengths>,
+        pc_ids: Vec<crate::element::EntityId>,
+    },
+    RearmTetris {
+        slot: usize,
+        slots: Vec<MacroSlotLengths>,
+    },
+    BlinkQa {
+        pc_id: crate::element::EntityId,
+        slot: usize,
+    },
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct MacroSlotLengths {
+    pub pc_id: crate::element::EntityId,
+    pub lengths: [u16; crate::macro_store::NUMBER_OF_QA_MEMORY],
+}
+
 /// Outputs produced by one simulation tick that must be applied to the
 /// host *after* the sim has finished. The sim never writes to the host
 /// directly — it pushes into `EngineInner::pending_side_effects`, which is
@@ -2351,6 +2431,8 @@ pub struct SideEffects {
     /// Broadcast noises emitted this tick for the developer noise
     /// overlay. Host/game-session code drains these into `DevState`.
     pub displayed_noises: Vec<crate::ai::Noise>,
+    /// Presentation/input work in exact production order.
+    pub host_events: Vec<HostEvent>,
     /// PC-info hover overlay show/hide requested by the sim this tick.
     pub overlay: Option<OverlayChange>,
     /// Sim asked the host to invalidate its cached background this tick.

@@ -366,7 +366,6 @@ impl EngineInner {
     pub fn reveal_scrolls(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         beggar: EntityId,
     ) -> Option<BeggarRemark> {
@@ -398,15 +397,23 @@ impl EngineInner {
 
         let remark = if revealable_count != 0 {
             // Reveal each scroll and queue it onto the minimap.
+            let mut highlighted = Vec::new();
             for &scroll_id in &current_set {
                 if let Some(revealed) = self.reveal_scroll(sim, assets, scroll_id) {
-                    display.minimap.set_highlighted(revealed.index());
+                    highlighted.push(revealed.index());
                 }
             }
             let screen = Self::director_camera_view_size();
-            let sw = screen.x;
-            let sh = screen.y;
-            display.minimap.display_for_delayed_elements(sw, sh);
+            self.feedback
+                .pending_side_effects
+                .host_events
+                .push(super::HostEvent::Minimap(
+                    super::MinimapHostEvent::HighlightDelayed {
+                        element_ids: highlighted,
+                        screen_width: screen.x,
+                        screen_height: screen.y,
+                    },
+                ));
 
             // The "revealable scrolls remain?" check runs BEFORE the
             // cursor advances.  The scrolls just revealed in

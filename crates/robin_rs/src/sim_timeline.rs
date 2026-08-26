@@ -775,7 +775,7 @@ pub fn run_engine_frame_core(
 ) -> robin_engine::engine::SimulationFrameOutput {
     host.sync_sound_listener();
     let output = engine
-        .advance_frame(display, &mut host.input, assets, dev, frame)
+        .advance_frame(assets, frame)
         .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
     apply_engine_side_effects(
         host,
@@ -895,6 +895,12 @@ fn apply_engine_side_effects(
     dev: &mut DevState,
     mut side_effects: robin_engine::engine::SideEffects,
 ) -> GameCode {
+    for event in side_effects.host_events.drain(..) {
+        display.apply_host_event(&mut host.input, event);
+    }
+    if let Some(top_left) = display.take_pending_minimap_position() {
+        side_effects.pending_minimap_position = Some(top_left);
+    }
     if side_effects.ui_has_focus {
         host.input.has_focus = false;
     }

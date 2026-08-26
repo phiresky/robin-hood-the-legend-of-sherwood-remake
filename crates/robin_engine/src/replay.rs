@@ -698,7 +698,9 @@ mod tests {
         }));
         recorder.push(PlayerInput::host(PlayerCommand::MinimapMouseUp {
             on_minimap: true,
-            center_on: Some(crate::coordinates::MapPoint::new(333.0, 444.0)),
+        }));
+        recorder.push(PlayerInput::host(PlayerCommand::CenterCameraOnPoint {
+            point: crate::coordinates::MapPoint::new(333.0, 444.0),
         }));
         recorder.end_frame();
         drop(recorder);
@@ -715,10 +717,12 @@ mod tests {
         ));
         assert!(matches!(
             &commands[1].command,
-            PlayerCommand::MinimapMouseUp {
-                on_minimap: true,
-                center_on: Some(point),
-            } if *point == crate::coordinates::MapPoint::new(333.0, 444.0)
+            PlayerCommand::MinimapMouseUp { on_minimap: true }
+        ));
+        assert!(matches!(
+            &commands[2].command,
+            PlayerCommand::CenterCameraOnPoint { point }
+                if *point == crate::coordinates::MapPoint::new(333.0, 444.0)
         ));
         let _ = std::fs::remove_file(&path);
     }

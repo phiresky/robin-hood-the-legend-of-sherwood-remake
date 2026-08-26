@@ -5,7 +5,7 @@
 //! state immutably; this module executes them.
 
 use super::movement::GoalShape;
-use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
+use super::{CameraDisplayState, EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
 use crate::player_command::{PlayerCommand, PlayerInput};
@@ -125,6 +125,53 @@ fn target_interaction_assert_source_sector(
 }
 
 impl EngineInner {
+    /// Apply commands admitted through the authoritative frame boundary.
+    pub(crate) fn apply_frame_commands(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        commands: &[PlayerInput],
+    ) {
+        let mut camera = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        self.apply_commands_authoritative(sim, &mut camera, assets, commands);
+        self.feedback.cutscene_camera.display = camera;
+    }
+
+    fn apply_commands_authoritative(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        camera: &mut CameraDisplayState,
+        assets: &LevelAssets,
+        commands: &[PlayerInput],
+    ) {
+        for (index, inp) in commands.iter().enumerate() {
+            let seat = self.ensure_seat(inp.player_id);
+            let recorded_nested_selection_action = matches!(
+                (&inp.command, commands.get(index + 1)),
+                (
+                    PlayerCommand::SelectPc {
+                        pc_id: selected,
+                        append: false,
+                    },
+                    Some(PlayerInput {
+                        player_id,
+                        command:
+                            PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
+                            | PlayerCommand::CancelAction { pc_id: nested },
+                    }),
+                ) if *player_id == inp.player_id && selected == nested
+            );
+            self.apply_command_for_seat_with_replay_context(
+                sim,
+                camera,
+                assets,
+                seat,
+                &inp.command,
+                recorded_nested_selection_action,
+            );
+        }
+    }
+
     fn validate_recorded_interaction_identities(
         &self,
         actor: EntityId,
@@ -159,39 +206,15 @@ impl EngineInner {
         assets: &LevelAssets,
         commands: &[PlayerInput],
     ) {
-        for (index, inp) in commands.iter().enumerate() {
-            let seat = self.ensure_seat(inp.player_id);
-            // Original RHMessenger::ForwardMessage is recursive. The parity
-            // recorder therefore retains both the root SelectPC message and
-            // its depth-2 SelectAction restitution as adjacent commands (see
-            // RHParity::ShouldRecordNestedSelection). During replay the
-            // recorded child is authoritative; synthesizing it again inside
-            // SelectPC can launch work from stale hidden action state before
-            // the recorded child corrects that state.
-            let recorded_nested_selection_action = matches!(
-                (&inp.command, commands.get(index + 1)),
-                (
-                    PlayerCommand::SelectPc {
-                        pc_id: selected,
-                        append: false,
-                    },
-                    Some(PlayerInput {
-                        player_id,
-                        command:
-                            PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
-                            | PlayerCommand::CancelAction { pc_id: nested },
-                    }),
-                ) if *player_id == inp.player_id && selected == nested
-            );
-            self.apply_command_for_seat_with_replay_context(
-                sim,
-                display,
-                input,
-                assets,
-                seat,
-                &inp.command,
-                recorded_nested_selection_action,
-            );
+        let event_start = self.feedback.pending_side_effects.host_events.len();
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        self.apply_commands_authoritative(sim, &mut camera, assets, commands);
+        self.feedback.cutscene_camera.display = camera;
+        for event in self.feedback.pending_side_effects.host_events[event_start..]
+            .iter()
+            .cloned()
+        {
+            display.apply_host_event(input, event);
         }
     }
 
@@ -211,10 +234,12 @@ impl EngineInner {
         commands: &[PlayerCommand],
     ) {
         let sim = self.control.simulation_context();
-        let sim = &sim;
-        for cmd in commands {
-            self.apply_command(sim, display, input, assets, cmd);
-        }
+        let commands = commands
+            .iter()
+            .cloned()
+            .map(PlayerInput::host)
+            .collect::<Vec<_>>();
+        self.apply_commands(&sim, display, input, assets, &commands);
     }
 
     /// Apply a single [`PlayerCommand`] as if it came from
@@ -230,7 +255,13 @@ impl EngineInner {
         assets: &LevelAssets,
         cmd: &PlayerCommand,
     ) {
-        self.apply_command_for_seat(sim, display, input, assets, 0, cmd);
+        self.apply_commands(
+            sim,
+            display,
+            input,
+            assets,
+            &[PlayerInput::host(cmd.clone())],
+        );
     }
 
     /// Apply a single player command issued by `seat`.
@@ -247,16 +278,22 @@ impl EngineInner {
         seat: usize,
         cmd: &PlayerCommand,
     ) {
-        self.apply_command_for_seat_with_replay_context(
-            sim, display, input, assets, seat, cmd, false,
-        );
+        let event_start = self.feedback.pending_side_effects.host_events.len();
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        self.apply_command_for_seat_with_replay_context(sim, &mut camera, assets, seat, cmd, false);
+        self.feedback.cutscene_camera.display = camera;
+        for event in self.feedback.pending_side_effects.host_events[event_start..]
+            .iter()
+            .cloned()
+        {
+            display.apply_host_event(input, event);
+        }
     }
 
     fn apply_command_for_seat_with_replay_context(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
@@ -720,20 +757,23 @@ impl EngineInner {
                 action_index,
             } => {
                 let selected_before = self.players.seats[seat].selection.clone();
-                if self.select_pc_action_by_index(assets, input, seat, *pc_id, *action_index as u8)
-                {
+                if self.select_pc_action_by_index_from_message(
+                    assets,
+                    seat,
+                    *pc_id,
+                    *action_index as u8,
+                ) {
                     self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
                 }
             }
             SelectResolvedAction { pc_id, action } => {
                 let selected_before = self.players.seats[seat].selection.clone();
-                self.set_pc_action(assets, input, seat, *pc_id, *action);
+                self.set_pc_action_from_message(assets, seat, *pc_id, *action);
                 self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
             }
             CancelAction { pc_id } => {
-                self.set_pc_action(
+                self.set_pc_action_from_message(
                     assets,
-                    input,
                     seat,
                     *pc_id,
                     crate::profiles::Action::NoAction,
@@ -746,10 +786,16 @@ impl EngineInner {
                 self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
             MouseRightDown => {
-                input.right_mouse_down = true;
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::SetRightMouseDown { down: true });
             }
             MouseRightUp => {
-                input.right_mouse_down = false;
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::SetRightMouseDown { down: false });
             }
             ClearShootList { pc_id } => {
                 // Clear Human::Instruct's retained pointer FIFO. Keep the
@@ -859,11 +905,11 @@ impl EngineInner {
                 }
             }
             BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(assets, input, seat, *pt1, *pt2, *shift);
+                self.apply_box_select(assets, seat, *pt1, *pt2, *shift);
                 self.update_recording_after_selection_change();
             }
             BoxUnselect { pt1, pt2 } => {
-                self.apply_box_unselect(input, seat, *pt1, *pt2);
+                self.apply_box_unselect(seat, *pt1, *pt2);
                 self.update_recording_after_selection_change();
             }
             SelectAllPcs => {
@@ -973,7 +1019,7 @@ impl EngineInner {
                 self.stop_recording_macro();
             }
             StartMacro { pc, slot } => {
-                self.apply_start_macro(sim, display, input, assets, *pc, *slot);
+                self.apply_start_macro(sim, display, assets, *pc, *slot);
             }
             DeleteMacro { pc, slot } => {
                 self.apply_delete_macro(display, *pc, *slot);
@@ -1126,24 +1172,31 @@ impl EngineInner {
             // ── Minimap ─────────────────────────────────────────
             MinimapResize { base, corner_size } => {
                 let screen = Self::director_camera_view_size();
-                let sw = screen.x;
-                let sh = screen.y;
-                display
-                    .minimap
-                    .set_widget_position(*base, *corner_size, sw, sh);
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(super::MinimapHostEvent::Resize {
+                        base: *base,
+                        corner_size: *corner_size,
+                        screen_width: screen.x,
+                        screen_height: screen.y,
+                    }));
             }
             MinimapMouseDown {
                 click_pt,
                 continuing_drag,
             } => {
-                // Begin dragging on LEFTDOWN inside widget when the map
-                // is deployed.
-                if display.minimap.is_displayed() {
-                    let screen = Self::director_camera_view_size();
-                    let sw = screen.x;
-                    let sh = screen.y;
-                    display.minimap.manage_dragging(*click_pt, sw, sh);
-                }
+                let screen = Self::director_camera_view_size();
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(
+                        super::MinimapHostEvent::MouseDown {
+                            click_pt: *click_pt,
+                            screen_width: screen.x,
+                            screen_height: screen.y,
+                        },
+                    ));
                 // The host resolves this before dispatch. Do not infer an
                 // engine message from rollback-local minimap scratch.
                 if *continuing_drag {
@@ -1152,7 +1205,10 @@ impl EngineInner {
                             crate::messenger::SimpleMessage::UiHasFocus,
                         ),
                     ));
-                    input.has_focus = false;
+                    self.feedback
+                        .pending_side_effects
+                        .host_events
+                        .push(super::HostEvent::ClearInputFocus);
                 }
             }
             MinimapMouseMove {
@@ -1160,29 +1216,18 @@ impl EngineInner {
                 left_mouse_down,
                 continuing_drag,
             } => {
-                // Hover state.
-                let over_widget = display.minimap.is_over_widget(*mouse_pt);
-                if over_widget {
-                    if !*left_mouse_down {
-                        display.minimap.ui_state = crate::minimap::UIState::Focused;
-                        display.minimap.entered_nicely = true;
-                    }
-                    display.minimap.capture = true;
-                } else if !display.minimap.drag_start {
-                    display.minimap.entered_nicely = false;
-                    display.minimap.ui_state = crate::minimap::UIState::Default;
-                    display.minimap.capture = false;
-                }
-
-                // Drag continuation: check drag_start before the
-                // inside-widget test so drags continue even when the
-                // cursor leaves the widget.
-                if *left_mouse_down && display.minimap.drag_start {
-                    let screen = Self::director_camera_view_size();
-                    let sw = screen.x;
-                    let sh = screen.y;
-                    display.minimap.manage_dragging(*mouse_pt, sw, sh);
-                }
+                let screen = Self::director_camera_view_size();
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(
+                        super::MinimapHostEvent::MouseMove {
+                            mouse_pt: *mouse_pt,
+                            left_mouse_down: *left_mouse_down,
+                            screen_width: screen.x,
+                            screen_height: screen.y,
+                        },
+                    ));
                 if *continuing_drag {
                     // Continuing-drag focus is command-derived. The host
                     // presentation mutation above may legitimately differ
@@ -1192,67 +1237,62 @@ impl EngineInner {
                             crate::messenger::SimpleMessage::UiHasFocus,
                         ),
                     ));
-                    input.has_focus = false;
+                    self.feedback
+                        .pending_side_effects
+                        .host_events
+                        .push(super::HostEvent::ClearInputFocus);
                 }
             }
-            MinimapMouseUp {
-                on_minimap,
-                center_on,
-            } => {
-                // Check the dragged flag, dead zone, and dispatch to
-                // open-map or center-on-click.
-                display.minimap.drag_start = false;
-                if !display.minimap.dragged {
-                    if *on_minimap {
-                        if !display.minimap.is_displayed() {
-                            display.minimap.manage_click();
-                        }
-                    }
-                } else {
-                    display.minimap.dragged = false;
-                }
-                display.minimap.close_after_highlight = false;
-
-                if let Some(world_pt) = center_on {
-                    let level_size = self.feedback.cutscene_camera.level_size;
-                    assert!(
-                        world_pt.x.is_finite()
-                            && world_pt.y.is_finite()
-                            && world_pt.x >= 0.0
-                            && world_pt.y >= 0.0
-                            && world_pt.x <= level_size.x
-                            && world_pt.y <= level_size.y,
-                        "MinimapMouseUp center_on point ({}, {}) is outside required level bounds ({}, {})",
-                        world_pt.x,
-                        world_pt.y,
-                        level_size.x,
-                        level_size.y
-                    );
-                    // The zoom gate and locker state are both Engine-owned;
-                    // only the projected point crosses the command boundary.
-                    if self.is_camera_zoom_possible_for_seat(seat) {
-                        self.players.seats[seat].locker_active = false;
-                        self.center_on_point(seat, *world_pt);
-                    }
+            MinimapMouseUp { on_minimap } => {
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(
+                        super::MinimapHostEvent::MouseUp {
+                            on_minimap: *on_minimap,
+                        },
+                    ));
+            }
+            CenterCameraOnPoint { point } => {
+                let level_size = self.feedback.cutscene_camera.level_size;
+                assert!(
+                    point.x.is_finite()
+                        && point.y.is_finite()
+                        && point.x >= 0.0
+                        && point.y >= 0.0
+                        && point.x <= level_size.x
+                        && point.y <= level_size.y,
+                    "camera center point ({}, {}) is outside required level bounds ({}, {})",
+                    point.x,
+                    point.y,
+                    level_size.x,
+                    level_size.y
+                );
+                if self.is_camera_zoom_possible_for_seat(seat) {
+                    self.players.seats[seat].locker_active = false;
+                    self.center_on_point(seat, *point);
                 }
             }
             MinimapRightClick => {
                 // Unconditional close animation start (no
                 // transition_counter guard) so a right-click during the
                 // opening animation immediately reverses to closing.
-                display.minimap.force_close_animation();
-                display.minimap.highlighted_elements.clear();
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(
+                        super::MinimapHostEvent::RightClick,
+                    ));
             }
             MinimapToggle => {
                 // Open if hidden, close if shown.  Both arms set the
                 // counters unconditionally so an in-flight transition
                 // reverses immediately, and the close arm also flips
                 // the UI state to Selected.
-                if display.minimap.is_displayed() {
-                    display.minimap.force_close_animation();
-                } else {
-                    display.minimap.force_open_animation();
-                }
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::Minimap(super::MinimapHostEvent::Toggle));
             }
 
             // ── Display / UI setters ────────────────────────────
@@ -1326,14 +1366,17 @@ impl EngineInner {
                 }
             }
         }
+    }
 
-        // Persist the deployed minimap top-left to the active player
-        // profile on every accepted move.  Drain the per-tick dirty
-        // flag here so any minimap command (drag, resize-revalidate)
-        // emits a single side effect for the host to persist.
-        if let Some(top_left) = display.minimap.take_pending_position() {
-            self.feedback.pending_side_effects.pending_minimap_position = Some(top_left);
-        }
+    fn apply_command_authoritative(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        camera: &mut CameraDisplayState,
+        assets: &LevelAssets,
+        seat: usize,
+        command: &PlayerCommand,
+    ) {
+        self.apply_command_for_seat_with_replay_context(sim, camera, assets, seat, command, false);
     }
 
     /// Close the `RHElementActor::Stop` cards authored by a player action
@@ -1737,8 +1780,7 @@ impl EngineInner {
     fn apply_start_macro(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         pc: Option<EntityId>,
         slot: u8,
@@ -1768,7 +1810,7 @@ impl EngineInner {
         }
 
         for pc_id in &targets {
-            self.replay_macro_slot(sim, display, input, assets, *pc_id, slot);
+            self.replay_macro_slot(sim, display, assets, *pc_id, slot);
         }
 
         // When at least one PC tried to launch a macro, jingle either
@@ -1791,7 +1833,7 @@ impl EngineInner {
         // at this slot has now fired (i.e. no PC still has one), collapse
         // the strip.
         if pc.is_none() && all_launched {
-            self.do_tetris_macro(display, slot);
+            self.do_tetris_macro(slot);
         }
     }
 
@@ -1800,8 +1842,7 @@ impl EngineInner {
     fn replay_macro_slot(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         pc: EntityId,
         slot: u8,
@@ -1894,7 +1935,7 @@ impl EngineInner {
                             command,
                             running: false,
                         };
-                        self.apply_command(sim, display, input, assets, &pre_click);
+                        self.apply_command_authoritative(sim, display, assets, 0, &pre_click);
                     }
                     PlayerCommand::LaunchInteraction {
                         actor: pc,
@@ -2092,7 +2133,7 @@ impl EngineInner {
                 );
                 posture_recovery_embedded = true;
             } else {
-                self.apply_command(sim, display, input, assets, &cmd);
+                self.apply_command_authoritative(sim, display, assets, 0, &cmd);
             }
         }
 
@@ -2141,7 +2182,7 @@ impl EngineInner {
     fn replay_legacy_quickito(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         pc: EntityId,
         slot: u8,
@@ -2175,7 +2216,7 @@ impl EngineInner {
                     // saved double-click. At this input boundary no entity
                     // phase work remains; the normal sequence phase drains
                     // precisely the newly registered click sequence.
-                    self.hourglass_phase_sequences(sim, display, assets);
+                    self.hourglass_phase_sequences_authoritative(sim, display, assets);
                     self.actor_make_fast(sim, pc);
                 }
                 succeeded
@@ -2474,7 +2515,7 @@ impl EngineInner {
     /// strip closes up.  Single-PC deletion does not tetris.
     fn apply_delete_macro(
         &mut self,
-        display: &mut HostDisplayState,
+        _display: &mut CameraDisplayState,
         pc: Option<EntityId>,
         slot: u8,
     ) {
@@ -2488,7 +2529,7 @@ impl EngineInner {
                 for id in pcs {
                     self.abort_quick_action(id, slot);
                 }
-                self.do_tetris_macro(display, slot);
+                self.do_tetris_macro(slot);
             }
         }
     }
@@ -4388,31 +4429,31 @@ impl EngineInner {
     fn apply_box_select(
         &mut self,
         assets: &LevelAssets,
-        input: &mut InputState,
         seat: usize,
         pt1: crate::coordinates::MapPoint,
         pt2: crate::coordinates::MapPoint,
         shift: bool,
     ) {
-        input.multi_selection_pt1 = pt1;
-        input.multi_selection_pt2 = pt2;
-        input.draw_multi_selection = true;
-        input.multi_selection_active = true;
-        self.perform_multi_selection(assets, input, seat, shift);
+        self.perform_box_selection(assets, seat, pt1, pt2, shift);
+        self.feedback.pending_side_effects.host_events.push(
+            super::HostEvent::CancelMultiSelection {
+                suppress_next_double: true,
+            },
+        );
     }
 
     fn apply_box_unselect(
         &mut self,
-        input: &mut InputState,
         seat: usize,
         pt1: crate::coordinates::MapPoint,
         pt2: crate::coordinates::MapPoint,
     ) {
-        input.multi_selection_pt1 = pt1;
-        input.multi_selection_pt2 = pt2;
-        input.draw_multi_selection = true;
-        input.multi_unselection_active = true;
-        self.perform_multi_unselection(input, seat);
+        self.perform_box_unselection(seat, pt1, pt2);
+        self.feedback.pending_side_effects.host_events.push(
+            super::HostEvent::CancelMultiSelection {
+                suppress_next_double: false,
+            },
+        );
     }
 }
 
@@ -6304,7 +6345,7 @@ mod tests {
 
         engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
         let mut display = HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
 
         let route = engine
             .orders
@@ -6956,7 +6997,7 @@ mod tests {
             assert_eq!(*tolerance, 0.0, "command {command:?}");
             assert!(!flags.contains(MoveFlags::SEEK), "command {command:?}");
 
-            engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+            engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
             assert_eq!(
                 engine
                     .get_entity(pc_id)
@@ -7208,7 +7249,7 @@ mod tests {
         assert_eq!(*tolerance, 13.0);
         assert!(flags.contains(MoveFlags::SEEK));
 
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
         assert_eq!(
             engine
                 .get_entity(pc_id)

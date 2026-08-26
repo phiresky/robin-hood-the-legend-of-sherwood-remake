@@ -2013,10 +2013,7 @@ fn minimap_command_outputs_are_derived_from_recorded_inputs() {
         "host drag scratch must not decide the UiHasFocus message"
     );
 
-    let mouse_up = PlayerCommand::MinimapMouseUp {
-        on_minimap: true,
-        center_on: Some(crate::coordinates::MapPoint::new(1200.0, 900.0)),
-    };
+    let mouse_up = PlayerCommand::MinimapMouseUp { on_minimap: true };
     first.apply_command(
         &sim,
         &mut first_display,
@@ -2031,6 +2028,17 @@ fn minimap_command_outputs_are_derived_from_recorded_inputs() {
         &assets,
         &mouse_up,
     );
+    let center = PlayerCommand::CenterCameraOnPoint {
+        point: crate::coordinates::MapPoint::new(1200.0, 900.0),
+    };
+    first.apply_command(&sim, &mut first_display, &mut first_input, &assets, &center);
+    replay.apply_command(
+        &sim,
+        &mut replay_display,
+        &mut replay_input,
+        &assets,
+        &center,
+    );
     assert_eq!(
         crate::replay::state_hash(&first),
         crate::replay::state_hash(&replay),
@@ -2043,7 +2051,7 @@ fn minimap_command_outputs_are_derived_from_recorded_inputs() {
 }
 
 #[test]
-#[should_panic(expected = "MinimapMouseUp center_on point")]
+#[should_panic(expected = "camera center point")]
 fn minimap_command_rejects_center_outside_required_level_bounds() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
@@ -2057,9 +2065,8 @@ fn minimap_command_rejects_center_outside_required_level_bounds() {
         &mut display,
         &mut input,
         &assets,
-        &PlayerCommand::MinimapMouseUp {
-            on_minimap: true,
-            center_on: Some(crate::coordinates::MapPoint::new(2048.0, 10.0)),
+        &PlayerCommand::CenterCameraOnPoint {
+            point: crate::coordinates::MapPoint::new(2048.0, 10.0),
         },
     );
 }

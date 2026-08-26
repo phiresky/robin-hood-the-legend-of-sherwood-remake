@@ -270,18 +270,13 @@ pub(super) fn handle_console_overlay_events(
                 let action = robin_engine::engine::ExternalAction::ReplaceCampaign {
                     campaign: loaded.engine.campaign().clone(),
                 };
-                let mut display = std::mem::take(&mut host.engine_display);
                 engine
                     .advance_frame(
-                        &mut display,
-                        &mut host.input,
                         assets,
-                        dev,
                         robin_engine::engine::SimulationFrameInput::no_hourglass()
                             .with_external_actions(vec![action.clone()]),
                     )
                     .unwrap_or_else(|error| panic!("console campaign admission failed: {error}"));
-                host.engine_display = display;
                 frame.record_applied_external_action(action);
                 tracing::info!("Loaded campaign values from {}", path.display());
                 host.pending_console_output

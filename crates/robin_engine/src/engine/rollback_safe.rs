@@ -21,15 +21,14 @@
 
 use std::ops::Deref;
 
-#[cfg(test)]
-use super::DirectorCompletion;
 use super::SimConfig;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
-    ExternalFact, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
-    LevelLoadStaging, SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput,
-    SimulationRng,
+    ExternalFact, FrameAdvanceError, FrameConsoleResponse, LevelAssets, LevelLoadStaging,
+    SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput, SimulationRng,
 };
+#[cfg(test)]
+use super::{DirectorCompletion, InputState};
 use crate::campaign::Campaign;
 use crate::element::EntityId;
 use crate::minimap::HitMask;
@@ -2990,7 +2989,6 @@ impl Engine {
     fn apply_external_action(
         &mut self,
         assets: &LevelAssets,
-        dev: &mut DevState,
         action: ExternalAction,
     ) -> ExternalActionResult {
         match action {
@@ -3001,23 +2999,21 @@ impl Engine {
             } => ExternalActionResult::Native(
                 self.call_external_native_with_this(assets, &name, &args, this_actor),
             ),
-            ExternalAction::CheatString {
-                input,
-                mut selected_view_element,
-            } => {
-                let response =
-                    self.run_cheat_string(assets, dev, &mut selected_view_element, &input);
-                ExternalActionResult::CheatString {
-                    response: FrameConsoleResponse::from(response),
-                    selected_view_element,
-                }
-            }
             ExternalAction::ConsoleCommand {
-                input,
+                command,
                 mut selected_view_element,
             } => {
-                let response =
-                    self.run_console_command(assets, dev, &mut selected_view_element, &input);
+                assert!(
+                    !command.is_host_only(),
+                    "host-only console command crossed the authoritative frame boundary"
+                );
+                let sim = self.inner.control.simulation_context();
+                let response = self.inner.dispatch_sim_console_command(
+                    &sim,
+                    assets,
+                    &mut selected_view_element,
+                    &command,
+                );
                 ExternalActionResult::ConsoleCommand {
                     response: FrameConsoleResponse::from(response),
                     selected_view_element,
@@ -3052,18 +3048,13 @@ impl Engine {
     /// 7. the optional one-shot `PostInitialize` stage,
     /// 8. side-effect drain and post-frame state hash.
     ///
-    /// `display`, `input`, and `dev` remain explicit host-owned adapter state
-    /// while command handlers are incrementally disentangled from UI scratch;
-    /// none of them is part of [`SimulationFrameInput`]. Rendering, widgets,
-    /// audio playback remain outside this call at their Original boundaries.
+    /// Rendering, widgets, input latches, developer overlays, and audio
+    /// playback remain outside this call at their Original boundaries.
     /// Graphical play can cross `PostInitialize` with a second no-hourglass
     /// admission after presentation without exposing a separate mutation API.
     pub fn advance_frame(
         &mut self,
-        display: &mut super::HostDisplayState,
-        input: &mut InputState,
         assets: &LevelAssets,
-        dev: &mut DevState,
         frame: SimulationFrameInput,
     ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
         self.require_live_campaign("advancing a simulation frame");
@@ -3089,36 +3080,24 @@ impl Engine {
             .any(|fact| matches!(fact, ExternalFact::DirectorCompletion(_)))
         {
             let mut staged_inner = self.inner.clone();
-            let mut staged_display = display.clone();
-            Self::apply_frame_external_facts(
-                &mut staged_inner,
-                &mut staged_display,
-                assets,
-                external_facts,
-            )?;
+            Self::apply_frame_external_facts(&mut staged_inner, assets, external_facts)?;
             self.inner = staged_inner;
-            *display = staged_display;
         } else {
-            Self::apply_frame_external_facts(&mut self.inner, display, assets, external_facts)?;
+            Self::apply_frame_external_facts(&mut self.inner, assets, external_facts)?;
         }
 
         let mut external_action_results = external_actions
             .into_iter()
-            .map(|action| self.apply_external_action(assets, dev, action))
+            .map(|action| self.apply_external_action(assets, action))
             .collect::<Vec<_>>();
 
         let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .apply_commands(&sim, display, input, assets, &commands);
+        self.inner.apply_frame_commands(&sim, assets, &commands);
 
         let side_effects = if run_hourglass {
-            self.inner.perform_hourglass_with_body_gate(
-                display,
-                assets,
-                dev,
-                simulation_body_allowed,
-            )
+            self.inner
+                .perform_frame_hourglass(assets, simulation_body_allowed)
         } else {
             let mut effects = SideEffects::default();
             effects.code = crate::game_operation::GameCode::LevelInProgress;
@@ -3128,16 +3107,16 @@ impl Engine {
         external_action_results.extend(
             post_external_actions
                 .into_iter()
-                .map(|action| self.apply_external_action(assets, dev, action)),
+                .map(|action| self.apply_external_action(assets, action)),
         );
 
         let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
         self.inner
-            .apply_commands(&sim, display, input, assets, &post_commands);
+            .apply_frame_commands(&sim, assets, &post_commands);
 
         let post_initialize_events = run_post_initialize
-            .then(|| self.inner.perform_post_initialize(display, assets))
+            .then(|| self.inner.perform_frame_post_initialize(assets))
             .flatten()
             .map(SimEvents::from);
         let frame_after = self.inner.control.frame_counter;
@@ -3156,14 +3135,13 @@ impl Engine {
 
     fn apply_frame_external_facts(
         inner: &mut EngineInner,
-        display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         external_facts: Vec<ExternalFact>,
     ) -> Result<(), FrameAdvanceError> {
         for (index, fact) in external_facts.into_iter().enumerate() {
             match fact {
                 ExternalFact::DirectorCompletion(completion) => inner
-                    .apply_external_director_completion(completion, display, assets)
+                    .apply_frame_external_director_completion(completion, assets)
                     .map_err(|reason| FrameAdvanceError::DirectorCompletionRejected {
                         index,
                         completion,
@@ -3202,8 +3180,14 @@ impl Engine {
         assets: &LevelAssets,
     ) -> Result<(), String> {
         self.require_live_campaign("applying an external director completion");
-        self.inner
-            .apply_external_director_completion(completion, display, assets)
+        let result = self
+            .inner
+            .apply_frame_external_director_completion(completion, assets);
+        let camera = &self.inner.feedback.cutscene_camera.display;
+        display.background_transform = camera.background_transform.clone();
+        display.display_op = camera.display_op;
+        display.frame_scrolled = camera.frame_scrolled;
+        result
     }
 
     /// The per-frame simulation tick. The ONLY per-frame sim-state
@@ -3303,39 +3287,23 @@ impl Engine {
         self.inner.mission_domain.required_campaign(context);
     }
 
-    /// Run a console-cheat input and return the dispatch response
-    /// directly.  Console cheats are dev escape-hatches outside the
-    /// command pipeline (not replay-tracked), so the response is
-    /// transient UI text — no rollback-hash concern with returning it.
-    ///
-    /// `selected_view_element` is the host's alt-hover UI selection —
-    /// cheats that operate on "the NPC you're currently viewing" read
-    /// (and sometimes clear) it.
-    pub(crate) fn run_console_command(
+    /// Apply a parsed host-only developer command outside authoritative frame
+    /// admission. Simulation-affecting commands are rejected here so callers
+    /// cannot accidentally bypass the journaled transaction.
+    pub fn dispatch_host_console_command(
         &mut self,
         assets: &LevelAssets,
         dev: &mut DevState,
         selected_view_element: &mut Option<EntityId>,
-        input: &str,
+        command: &crate::console::ConsoleCommand,
     ) -> ConsoleResponse {
+        assert!(
+            command.is_host_only(),
+            "simulation console command bypassed frame admission"
+        );
         let sim = self.inner.control.simulation_context();
         self.inner
-            .run_console_command(&sim, assets, dev, selected_view_element, input)
-    }
-
-    /// Run a console-cheat input with the dev cheat set forced on, even
-    /// if the console is currently in `use_final` mode.  Intended for
-    /// out-of-band cheat entry points (HTTP RPC, debug overlays) whose
-    /// caller contract is "always reach the full dev command table".
-    pub(crate) fn run_cheat_string(
-        &mut self,
-        assets: &LevelAssets,
-        dev: &mut DevState,
-        selected_view_element: &mut Option<EntityId>,
-        input: &str,
-    ) -> ConsoleResponse {
-        self.inner
-            .run_cheat_string(assets, dev, selected_view_element, input)
+            .dispatch_console_command(&sim, assets, dev, selected_view_element, command)
     }
 
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
@@ -3786,13 +3754,7 @@ mod tests {
         let mut framed_input = InputState::default();
         let mut framed_dev = DevState::default();
         let output = framed
-            .advance_frame(
-                &mut framed_display,
-                &mut framed_input,
-                &assets,
-                &mut framed_dev,
-                SimulationFrameInput::from_player_inputs(commands),
-            )
+            .advance_frame(&assets, SimulationFrameInput::from_player_inputs(commands))
             .expect("advance frame");
 
         assert_eq!(output.frame_before, 0);
@@ -3845,10 +3807,7 @@ mod tests {
         let mut dev = DevState::default();
         framed
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut dev,
                 SimulationFrameInput::new(vec![SimCommand::from(PlayerCommand::Noop)])
                     .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
             )
@@ -3929,10 +3888,7 @@ mod tests {
 
         let error = engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut dev,
                 SimulationFrameInput::new(vec![
                     SimCommand::from(PlayerCommand::SetMenToBlazonConversionMode { on: true }),
                     SimCommand::from(PlayerCommand::MouseRightUp),
@@ -3999,10 +3955,7 @@ mod tests {
         let mut complete_dev = DevState::default();
         let complete_output = complete_journal
             .advance_frame(
-                &mut complete_display,
-                &mut complete_input,
                 &assets,
-                &mut complete_dev,
                 SimulationFrameInput::new(vec![command.clone()])
                     .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
             )
@@ -4012,13 +3965,7 @@ mod tests {
         let mut command_only_input = InputState::default();
         let mut command_only_dev = DevState::default();
         let command_only_output = command_only_journal
-            .advance_frame(
-                &mut command_only_display,
-                &mut command_only_input,
-                &assets,
-                &mut command_only_dev,
-                SimulationFrameInput::new(vec![command]),
-            )
+            .advance_frame(&assets, SimulationFrameInput::new(vec![command]))
             .expect("advance command-only frame journal");
 
         assert_ne!(
@@ -4048,10 +3995,7 @@ mod tests {
 
         let output = engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut dev,
                 SimulationFrameInput::default().with_simulation_body_allowed(false),
             )
             .expect("advance with only the actor/world body gated");

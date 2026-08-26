@@ -16,12 +16,9 @@
 //! [`SimulationFrameInput`] deliberately contains only authoritative inputs:
 //! resolved [`SimCommand`]s, host observations represented as
 //! [`ExternalFact`]s, and explicitly admitted host [`ExternalAction`]s.
-//! Host UI scratch remains an adapter argument to
-//! [`super::Engine::advance_frame`] during migration and cannot be serialized
-//! accidentally as part of the frame input.
-//!
-//! TODO(architecture): remove those host scratch arguments once remaining
-//! command/tick handlers emit sim events instead of editing presentation state.
+//! Host UI scratch never crosses [`super::Engine::advance_frame`]. Commands
+//! carry every host-resolved fact they need, while presentation/input/dev
+//! changes leave through typed output events or action results.
 //!
 //! Journals should retain this whole value, not just
 //! [`SimulationFrameInput::commands`], so a
@@ -39,6 +36,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ConsoleResponse, DirectorCompletion, SideEffects};
 use crate::campaign::Campaign;
+use crate::console::ConsoleCommand;
 use crate::element::EntityId;
 use crate::game_operation::GameCode;
 use crate::messenger::SimpleMessage;
@@ -136,12 +134,10 @@ pub enum ExternalAction {
         args: Vec<i32>,
         this_actor: Option<i32>,
     },
-    CheatString {
-        input: String,
-        selected_view_element: Option<EntityId>,
-    },
+    /// A parsed simulation-affecting console command. Host-only developer
+    /// commands are resolved and applied before admission.
     ConsoleCommand {
-        input: String,
+        command: ConsoleCommand,
         selected_view_element: Option<EntityId>,
     },
     SimpleMessage {
@@ -160,10 +156,6 @@ pub enum ExternalAction {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ExternalActionResult {
     Native(Result<i32, String>),
-    CheatString {
-        response: FrameConsoleResponse,
-        selected_view_element: Option<EntityId>,
-    },
     ConsoleCommand {
         response: FrameConsoleResponse,
         selected_view_element: Option<EntityId>,
@@ -337,10 +329,6 @@ impl SimulationFrameInput {
 /// [`SideEffects`] remains the compatibility payload while callers migrate to
 /// the frame API. Keeping it behind this type makes the sim-to-host direction
 /// explicit without re-encoding or reordering any existing event fields.
-/// During the host-scratch migration this payload still includes the
-/// adapter-only `SideEffects::pending_minimap_position`; that field can depend
-/// on [`super::HostDisplayState`] and is deliberately skipped by `SideEffects`
-/// serialization. It is available through [`Self::side_effects`] in memory.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 #[serde(transparent)]
 pub struct SimEvents(SideEffects);
@@ -381,9 +369,7 @@ pub struct SimulationFrameOutput {
     pub frame_after: u32,
     /// True exactly when this admission ran `PerformHourglass`.
     pub hourglass_ran: bool,
-    /// Output for the host to consume after the transaction. Until host scratch
-    /// is fully disentangled, this includes the adapter-only minimap
-    /// persistence effect documented on [`SimEvents`].
+    /// Output for the host to consume after the transaction.
     pub events: SimEvents,
     /// Ordered effects produced by the optional one-shot lifecycle stage.
     pub post_initialize_events: Option<SimEvents>,

@@ -34,7 +34,7 @@ fn journal_retains_the_complete_authoritative_frame() {
         })])
         .with_external_facts(vec![ExternalFact::ReplaySoundBoundary(Vec::new())])
         .with_external_actions(vec![ExternalAction::ConsoleCommand {
-            input: "GOLDENEYE".to_owned(),
+            command: robin_engine::console::ConsoleCommand::Goldeneye,
             selected_view_element: None,
         }])
         .with_post_external_actions(vec![ExternalAction::Native {

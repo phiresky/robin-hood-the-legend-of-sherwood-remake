@@ -40,18 +40,11 @@ impl EngineInner {
 
     pub(super) fn with_camera_display_state<R>(
         &mut self,
-        f: impl FnOnce(&mut Self, &mut HostDisplayState) -> R,
+        f: impl FnOnce(&mut Self, &mut CameraDisplayState) -> R,
     ) -> R {
-        let mut display = self
-            .feedback
-            .cutscene_camera
-            .display
-            .to_host_display_state();
+        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
         let result = f(self, &mut display);
-        self.feedback
-            .cutscene_camera
-            .display
-            .update_from_host_display_state(&display);
+        self.feedback.cutscene_camera.display = display;
         result
     }
 
@@ -79,7 +72,7 @@ impl EngineInner {
     // bookkeeping (patch bake, window-regain-focus) is driven by
     // `SideEffects::invalidate_background`, and save-load
     // clears mid-zoom state via `EngineSnapshot::apply_to`.
-    pub(super) fn tick_display_state(&mut self, display: &mut HostDisplayState) -> u32 {
+    pub(super) fn tick_display_state(&mut self, display: &mut CameraDisplayState) -> u32 {
         // Director work is cinematic / script-driven; it targets the
         // single canonical cutscene camera and runs once per tick.
         self.perform_director_work(display);
@@ -117,7 +110,7 @@ impl EngineInner {
     /// Advances `seat`'s display-op/background-transform bookkeeping
     /// and mutates `cutscene_camera`, then resets display_op for the
     /// next frame.
-    fn tick_display_state_for_seat(&mut self, display: &mut HostDisplayState, seat: usize) {
+    fn tick_display_state_for_seat(&mut self, display: &mut CameraDisplayState, seat: usize) {
         // ── Scrolling deceleration ───────────────────────────────
         if display.display_op == DisplayOpCode::NoBackgroundMove
             || display.display_op == DisplayOpCode::Scroll

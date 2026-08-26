@@ -31,6 +31,7 @@ use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::render_text_screen;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
+use robin_engine::console::{ConsoleCommand, parse_with_final};
 use robin_engine::engine::{
     DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, LevelAssets,
     SimulationFrameInput,
@@ -461,30 +462,65 @@ impl ConsoleOverlay {
         }
         // Push to UI history and dispatch.
         self.push_output(OutputLine::Echo(line.clone()));
-        let action = ExternalAction::ConsoleCommand {
-            input: trimmed.to_owned(),
-            selected_view_element: host.selected_view_element,
-        };
-        let output = engine
-            .advance_frame(
-                &mut host.frontend.engine_display,
-                &mut host.frontend.input,
-                assets,
-                dev,
-                SimulationFrameInput::no_hourglass().with_external_actions(vec![action.clone()]),
-            )
-            .expect("console action frame admission");
-        let response = match output.external_action_results.into_iter().next() {
-            Some(ExternalActionResult::ConsoleCommand {
-                response,
-                selected_view_element,
-            }) => {
-                host.frontend.selected_view_element = selected_view_element;
+        let response = if dev.console.use_final
+            && trimmed
+                .split_whitespace()
+                .next()
+                .is_some_and(|token| token.eq_ignore_ascii_case("GLOIRE"))
+        {
+            dev.console.use_final = false;
+            dev.console.push_history(trimmed);
+            dev.console.push_output("Praised be His Name.");
+            FrameConsoleResponse::DeityInvoked
+        } else if let Some(command) = parse_with_final(trimmed, dev.console.use_final) {
+            dev.console.push_history(trimmed);
+            if command.is_host_only() {
+                FrameConsoleResponse::from(engine.dispatch_host_console_command(
+                    assets,
+                    dev,
+                    &mut host.frontend.selected_view_element,
+                    &command,
+                ))
+            } else {
+                // HONOLULU's remembered actor is a host UI latch. Resolve it
+                // to the concrete authoritative target before admission.
+                let selected_view_element = if matches!(command, ConsoleCommand::Honolulu) {
+                    if let Some(selected) = host.frontend.selected_view_element {
+                        dev.last_actor_in_honolulu = Some(selected);
+                    }
+                    host.frontend
+                        .selected_view_element
+                        .or(dev.last_actor_in_honolulu)
+                } else {
+                    host.frontend.selected_view_element
+                };
+                let action = ExternalAction::ConsoleCommand {
+                    command,
+                    selected_view_element,
+                };
+                let output = engine
+                    .advance_frame(
+                        assets,
+                        SimulationFrameInput::no_hourglass()
+                            .with_external_actions(vec![action.clone()]),
+                    )
+                    .expect("console action frame admission");
+                let response = match output.external_action_results.into_iter().next() {
+                    Some(ExternalActionResult::ConsoleCommand {
+                        response,
+                        selected_view_element,
+                    }) => {
+                        host.frontend.selected_view_element = selected_view_element;
+                        response
+                    }
+                    _ => panic!("console action admission returned no console result"),
+                };
+                admitted_actions.push(action);
                 response
             }
-            _ => panic!("console action admission returned no console result"),
+        } else {
+            FrameConsoleResponse::Unknown
         };
-        admitted_actions.push(action);
         // Drain any lines the cheat pushed to the engine-side output
         // queue during dispatch (STATUS PC, STATUS HARDWARE, etc.).
         // Doing this *before* we process the response means the queued

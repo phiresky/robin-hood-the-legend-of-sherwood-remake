@@ -7,6 +7,17 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::sequence::SequenceState;
 
 impl EngineInner {
+    pub(crate) fn apply_frame_external_director_completion(
+        &mut self,
+        completion: DirectorCompletion,
+        assets: &LevelAssets,
+    ) -> Result<(), String> {
+        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        let result = self.apply_external_director_completion(completion, &mut display, assets);
+        self.feedback.cutscene_camera.display = display;
+        result
+    }
+
     // ─── Script/director camera ─────────────────────────────────
 
     /// Record the loaded background's pixel dimensions.
@@ -33,7 +44,7 @@ impl EngineInner {
     /// `display_state.rs` and the end-of-zoom `NoBackgroundMove` write
     /// in `DrawZoom*` — both are intentional unconditional writes
     /// rather than priority-respecting requests.
-    pub(crate) fn set_operation(&mut self, display: &mut HostDisplayState, op: DisplayOpCode) {
+    pub(crate) fn set_operation(&mut self, display: &mut CameraDisplayState, op: DisplayOpCode) {
         if (op as u8) > (display.display_op as u8) {
             display.display_op = op;
         }
@@ -48,7 +59,7 @@ impl EngineInner {
     pub(crate) fn apply_external_director_completion(
         &mut self,
         completion: DirectorCompletion,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> Result<(), String> {
         if !self.feedback.cutscene_camera.external_completion_replay {
@@ -119,7 +130,7 @@ impl EngineInner {
     /// Script-driven camera changes: follow-cam, camera slide, zoom dispatch.
     ///
     /// Called at the start of each `draw()` frame.
-    pub(super) fn perform_director_work(&mut self, display: &mut HostDisplayState) {
+    pub(super) fn perform_director_work(&mut self, display: &mut CameraDisplayState) {
         // ── Locker follow-cam ────────────────────────────────────
         // If following an NPC with locker, cancel if it dies or is
         // knocked unconscious.
@@ -381,7 +392,7 @@ impl EngineInner {
 
     /// Apply deceleration to scrolling when no input is active.
     /// Matches the scroll deceleration logic at the top of Draw().
-    pub(super) fn decelerate_scrolling(&mut self, display: &mut HostDisplayState) {
+    pub(super) fn decelerate_scrolling(&mut self, display: &mut CameraDisplayState) {
         let already = display.frame_scrolled;
         let zoom = self.feedback.cutscene_camera.zoom_factor;
         let mut scroll_requested = false;
@@ -420,7 +431,7 @@ impl EngineInner {
     ///
     /// Returns `true` if the scroll was entirely within bounds,
     /// `false` if clamping was needed.
-    pub(super) fn perform_check_scroll(&mut self, display: &mut HostDisplayState) -> bool {
+    pub(super) fn perform_check_scroll(&mut self, display: &mut CameraDisplayState) -> bool {
         let mut valid = true;
 
         let view_x = self.feedback.cutscene_camera.view_position.x;
@@ -613,13 +624,19 @@ impl EngineInner {
             && !display.background_transform.zoom_to_down
     }
 
+    pub(crate) fn is_zoom_possible_for_camera(
+        &self,
+        display: &CameraDisplayState,
+        _seat: usize,
+    ) -> bool {
+        !self.feedback.cutscene_camera.zoom_init_done
+            && display.display_op != DisplayOpCode::InZoom
+            && !display.background_transform.zoom_to_up
+            && !display.background_transform.zoom_to_down
+    }
+
     pub(super) fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
-        let display = self
-            .feedback
-            .cutscene_camera
-            .display
-            .to_host_display_state();
-        self.is_zoom_possible_for_seat(&display, seat)
+        self.is_zoom_possible_for_camera(&self.feedback.cutscene_camera.display, seat)
     }
 
     /// Whether a zoom is currently in progress.
@@ -676,7 +693,7 @@ impl EngineInner {
     }
 
     /// Execute one step of the zoom animation and finalize when complete.
-    pub(super) fn perform_zoom_step(&mut self, display: &mut HostDisplayState) {
+    pub(super) fn perform_zoom_step(&mut self, display: &mut CameraDisplayState) {
         display.background_transform.zoom_count += 1;
         let count = display.background_transform.zoom_count;
         let steps = display.background_transform.number_of_zoom_steps;
@@ -744,7 +761,7 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn resize(
         &mut self,
-        display: &mut HostDisplayState,
+        display: &mut CameraDisplayState,
         new_width: f32,
         new_height: f32,
     ) {

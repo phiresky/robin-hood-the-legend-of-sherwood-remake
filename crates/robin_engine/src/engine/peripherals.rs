@@ -2,9 +2,7 @@ use crate::ai::Noise;
 use crate::console::Console;
 use crate::element::EntityId;
 use crate::engine::types::{BackgroundTransform, DisplayOpCode};
-use crate::macro_store::{
-    MacroStore, NUMBER_OF_QA_MEMORY, QuickActionSlot, SHIFT_FALL_PER_REFRESH, SHIFT_STEP,
-};
+use crate::macro_store::{NUMBER_OF_QA_MEMORY, SHIFT_FALL_PER_REFRESH, SHIFT_STEP};
 use crate::minimap::MinimapState;
 use crate::shadow_polygon::ViewParameters;
 
@@ -33,23 +31,6 @@ pub struct CameraDisplayState {
     pub background_transform: BackgroundTransform,
     pub display_op: DisplayOpCode,
     pub frame_scrolled: [bool; 4],
-}
-
-impl CameraDisplayState {
-    pub(crate) fn to_host_display_state(&self) -> HostDisplayState {
-        HostDisplayState {
-            background_transform: self.background_transform.clone(),
-            display_op: self.display_op,
-            frame_scrolled: self.frame_scrolled,
-            ..HostDisplayState::default()
-        }
-    }
-
-    pub(crate) fn update_from_host_display_state(&mut self, display: &HostDisplayState) {
-        self.background_transform = display.background_transform.clone();
-        self.display_op = display.display_op;
-        self.frame_scrolled = display.frame_scrolled;
-    }
 }
 
 /// Host-owned display-state machine scratch for local presentation and
@@ -81,10 +62,14 @@ impl HostDisplayState {
         self.minimap.display_map(show, restore_position);
     }
 
+    pub fn take_pending_minimap_position(&mut self) -> Option<crate::coordinates::ScreenPoint> {
+        self.minimap.take_pending_position()
+    }
+
     /// Resolve the deterministic camera target of a minimap mouse-up while
     /// all host-owned geometry and drag state are available. The returned
-    /// point is recorded on `PlayerCommand::MinimapMouseUp`; command apply
-    /// never re-reads this presentation state to decide an Engine mutation.
+    /// point is recorded as `PlayerCommand::CenterCameraOnPoint`; command
+    /// apply never re-reads presentation state to decide an Engine mutation.
     pub fn resolve_minimap_center(
         &self,
         click_pt: crate::coordinates::ScreenPoint,
@@ -137,33 +122,126 @@ impl HostDisplayState {
         self.minimap.position_dirty = false;
     }
 
-    pub(crate) fn tick_macro_shift_phases(&mut self, pc_ids: &[EntityId], macros: &MacroStore) {
-        self.macro_ui.tick_shift_phases(pc_ids, macros);
-    }
-
-    pub(crate) fn rearm_macro_tetris(
-        &mut self,
-        pc_ids: &[EntityId],
-        macros: &MacroStore,
-        slot_idx: usize,
-    ) {
-        self.macro_ui.rearm_tetris(pc_ids, macros, slot_idx);
-    }
-
-    pub(crate) fn blink_qa(&mut self, pc_id: EntityId, slot_idx: usize) {
-        self.macro_ui.blink_qa(pc_id, slot_idx);
-    }
-
-    pub(crate) fn tick_macro_blink_phases(&mut self, pc_ids: &[EntityId]) {
-        self.macro_ui.tick_blink_phases(pc_ids);
-    }
-
     pub fn macro_shift_phase(&self, pc_id: EntityId, slot_idx: usize) -> f32 {
         self.macro_ui.shift_phase(pc_id, slot_idx)
     }
 
     pub fn macro_titbit_blink_hidden(&self, pc_id: EntityId, slot_idx: usize) -> bool {
         self.macro_ui.is_blink_hidden(pc_id, slot_idx)
+    }
+
+    /// Apply one ordered presentation event emitted by the engine frame.
+    pub fn apply_host_event(&mut self, input: &mut super::InputState, event: super::HostEvent) {
+        use super::{HostEvent, MacroUiHostEvent, MinimapHostEvent};
+        match event {
+            HostEvent::SetRightMouseDown { down } => input.right_mouse_down = down,
+            HostEvent::ClearInputFocus => input.has_focus = false,
+            HostEvent::CancelMultiSelection {
+                suppress_next_double,
+            } => {
+                input.multi_selection_active = false;
+                input.multi_unselection_active = false;
+                input.draw_multi_selection = false;
+                if suppress_next_double {
+                    input.next_left_double_is_simple = true;
+                }
+            }
+            HostEvent::Minimap(event) => match event {
+                MinimapHostEvent::Resize {
+                    base,
+                    corner_size,
+                    screen_width,
+                    screen_height,
+                } => {
+                    self.minimap
+                        .set_widget_position(base, corner_size, screen_width, screen_height)
+                }
+                MinimapHostEvent::MouseDown {
+                    click_pt,
+                    screen_width,
+                    screen_height,
+                } => {
+                    if self.minimap.is_displayed() {
+                        self.minimap
+                            .manage_dragging(click_pt, screen_width, screen_height);
+                    }
+                }
+                MinimapHostEvent::MouseMove {
+                    mouse_pt,
+                    left_mouse_down,
+                    screen_width,
+                    screen_height,
+                } => {
+                    let over_widget = self.minimap.is_over_widget(mouse_pt);
+                    if over_widget {
+                        if !left_mouse_down {
+                            self.minimap.ui_state = crate::minimap::UIState::Focused;
+                            self.minimap.entered_nicely = true;
+                        }
+                        self.minimap.capture = true;
+                    } else if !self.minimap.drag_start {
+                        self.minimap.entered_nicely = false;
+                        self.minimap.ui_state = crate::minimap::UIState::Default;
+                        self.minimap.capture = false;
+                    }
+                    if left_mouse_down && self.minimap.drag_start {
+                        self.minimap
+                            .manage_dragging(mouse_pt, screen_width, screen_height);
+                    }
+                }
+                MinimapHostEvent::MouseUp { on_minimap } => {
+                    self.minimap.drag_start = false;
+                    if !self.minimap.dragged {
+                        if on_minimap && !self.minimap.is_displayed() {
+                            self.minimap.manage_click();
+                        }
+                    } else {
+                        self.minimap.dragged = false;
+                    }
+                    self.minimap.close_after_highlight = false;
+                }
+                MinimapHostEvent::RightClick => {
+                    self.minimap.force_close_animation();
+                    self.minimap.highlighted_elements.clear();
+                }
+                MinimapHostEvent::Toggle => {
+                    if self.minimap.is_displayed() {
+                        self.minimap.force_close_animation();
+                    } else {
+                        self.minimap.force_open_animation();
+                    }
+                }
+                MinimapHostEvent::DisplayMap {
+                    show,
+                    restore_position,
+                } => self.minimap.display_map(show, restore_position),
+                MinimapHostEvent::HighlightDelayed {
+                    element_ids,
+                    screen_width,
+                    screen_height,
+                } => {
+                    for id in element_ids {
+                        self.minimap.set_highlighted(id);
+                    }
+                    self.minimap
+                        .display_for_delayed_elements(screen_width, screen_height);
+                }
+                MinimapHostEvent::Tick => {
+                    self.minimap.tick_transition();
+                    self.minimap.tick_highlights();
+                }
+            },
+            HostEvent::MacroUi(event) => match event {
+                MacroUiHostEvent::Tick { slots, pc_ids } => {
+                    self.macro_ui.tick_shift_lengths(&slots);
+                    self.macro_ui.tick_blink_phases(&pc_ids);
+                }
+                MacroUiHostEvent::RearmTetris { slot, slots } => {
+                    self.macro_ui.rearm_tetris_lengths(&slots, slot);
+                }
+                MacroUiHostEvent::BlinkQa { pc_id, slot } => self.macro_ui.blink_qa(pc_id, slot),
+            },
+        }
     }
 }
 
@@ -181,6 +259,34 @@ struct PcMacroUiState {
 }
 
 impl MacroUiState {
+    fn tick_shift_lengths(&mut self, slots: &[super::MacroSlotLengths]) {
+        for state in slots {
+            let ui = self.get_or_insert(state.pc_id);
+            for (slot_idx, &cur_len) in state.lengths.iter().enumerate() {
+                let cur_len = usize::from(cur_len);
+                if ui.last_step_count[slot_idx] != cur_len {
+                    ui.last_step_count[slot_idx] = cur_len;
+                    ui.shift_phase[slot_idx] = SHIFT_STEP;
+                }
+                ui.shift_phase[slot_idx] =
+                    (ui.shift_phase[slot_idx] - SHIFT_FALL_PER_REFRESH).max(0.0);
+            }
+        }
+    }
+
+    fn rearm_tetris_lengths(&mut self, slots: &[super::MacroSlotLengths], slot_idx: usize) {
+        if slot_idx >= NUMBER_OF_QA_MEMORY {
+            return;
+        }
+        for state in slots {
+            let ui = self.get_or_insert(state.pc_id);
+            for i in slot_idx..NUMBER_OF_QA_MEMORY {
+                ui.shift_phase[i] = SHIFT_STEP;
+                ui.last_step_count[i] = usize::from(state.lengths[i]);
+            }
+        }
+    }
+
     fn get(&self, pc: EntityId) -> Option<&PcMacroUiState> {
         self.entries
             .iter()
@@ -194,40 +300,6 @@ impl MacroUiState {
         }
         self.entries.push((pc, PcMacroUiState::default()));
         &mut self.entries.last_mut().unwrap().1
-    }
-
-    fn tick_shift_phases(&mut self, pc_ids: &[EntityId], macros: &MacroStore) {
-        for &pc_id in pc_ids {
-            let Some(state) = macros.get(pc_id) else {
-                continue;
-            };
-            let ui = self.get_or_insert(pc_id);
-            for slot_idx in 0..NUMBER_OF_QA_MEMORY {
-                let cur_len = state.slot(slot_idx).map(QuickActionSlot::len).unwrap_or(0);
-                if ui.last_step_count[slot_idx] != cur_len {
-                    ui.last_step_count[slot_idx] = cur_len;
-                    ui.shift_phase[slot_idx] = SHIFT_STEP;
-                }
-                ui.shift_phase[slot_idx] =
-                    (ui.shift_phase[slot_idx] - SHIFT_FALL_PER_REFRESH).max(0.0);
-            }
-        }
-    }
-
-    fn rearm_tetris(&mut self, pc_ids: &[EntityId], macros: &MacroStore, slot_idx: usize) {
-        if slot_idx >= NUMBER_OF_QA_MEMORY {
-            return;
-        }
-        for &pc_id in pc_ids {
-            let Some(state) = macros.get(pc_id) else {
-                continue;
-            };
-            let ui = self.get_or_insert(pc_id);
-            for i in slot_idx..NUMBER_OF_QA_MEMORY {
-                ui.shift_phase[i] = SHIFT_STEP;
-                ui.last_step_count[i] = state.slot(i).map(QuickActionSlot::len).unwrap_or(0);
-            }
-        }
     }
 
     fn shift_phase(&self, pc_id: EntityId, slot_idx: usize) -> f32 {
@@ -375,7 +447,9 @@ impl DevState {
 }
 
 /// Debug visualization toggles — all default to `false`.
-#[derive(Clone, Default, Debug)]
+#[derive(
+    Clone, Default, Debug, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub struct DebugFlags {
     pub door_display: bool,
     pub motion_obstacles_display: bool,

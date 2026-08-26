@@ -896,10 +896,7 @@ mod tests {
         let mut snapshot = manager.engine.clone();
         snapshot
             .advance_frame(
-                &mut robin_engine::engine::HostDisplayState::default(),
-                &mut robin_engine::engine::InputState::default(),
                 &assets,
-                &mut robin_engine::engine::DevState::default(),
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     PlayerCommand::SetAmountOfSpeaking { amount: 9 }.into(),
                 ])

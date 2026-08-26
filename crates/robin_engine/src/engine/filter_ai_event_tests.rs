@@ -440,7 +440,11 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     // The Think boundary only registers the launched Turn with the sequence
     // manager; the manager's own Hourglass dispatches it later in the frame.
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        &sim,
+        &mut crate::engine::HostDisplayState::default(),
+        &assets,
+    );
 
     let ai = engine
         .get_entity(actor)
@@ -3366,7 +3370,11 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     ));
     let successor = engine.orders.sequence_manager.launch_element(element);
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut crate::engine::HostDisplayState::default(),
+        &assets,
+    );
 
     assert_eq!(
         engine
@@ -3407,7 +3415,11 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::Generic, Some(actor)));
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut crate::engine::HostDisplayState::default(),
+        &assets,
+    );
 
     assert_eq!(
         engine
@@ -4759,7 +4771,11 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         // element Hourglass in the frame — dispatches and completes them.
         let mut display = crate::engine::HostDisplayState::default();
         crate::sim_rng::with_seed(5, |sim| {
-            engine.hourglass_phase_sequences(sim, &mut display, &assets);
+            engine.hourglass_phase_sequences(
+                sim,
+                &mut crate::engine::HostDisplayState::default(),
+                &assets,
+            );
         });
         for actor in [pruner, mutated] {
             // QuitSwordfight is a real animated command: the manager
