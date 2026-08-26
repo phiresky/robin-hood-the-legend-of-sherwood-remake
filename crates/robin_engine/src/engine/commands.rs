@@ -22,6 +22,17 @@ enum QuickActionRecordingStore {
 }
 
 #[inline]
+/// Original `RHElementActorPC::AppendPostureRecovery` rewrites a terminal
+/// `SHOOT_BOW` to `SHOOT_BOW_ONCE` when the actor was not already aiming.
+fn quick_action_tail_command(command: Command, is_tail: bool, was_aiming: bool) -> Command {
+    if is_tail && command == Command::ShootBow && !was_aiming {
+        Command::ShootBowOnce
+    } else {
+        command
+    }
+}
+
+#[inline]
 fn group_move_actor_accepts_command(actor: EntityId, recorded_failed_routes: &[EntityId]) -> bool {
     !recorded_failed_routes.contains(&actor)
 }
@@ -2501,7 +2512,7 @@ impl EngineInner {
         let step_count = steps.len();
         let mut posture_recovery_embedded = false;
         for (step_index, step) in steps.into_iter().enumerate() {
-            let mut cmd = match step.replay {
+            let cmd = match step.replay {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
                     running,
@@ -2565,8 +2576,15 @@ impl EngineInner {
                     // click dispatcher would either launch a walking route
                     // twice or reduce the running click to MakeFast with no
                     // newly launched route.
-                    let append_recovery =
-                        step_index + 1 == step_count && command == Command::TakeCorpse;
+                    let is_tail = step_index + 1 == step_count;
+                    let was_aiming = self
+                        .get_entity(pc)
+                        .and_then(|entity| entity.actor_data())
+                        .unwrap_or_else(|| panic!("quick-action owner {pc:?} has no actor state"))
+                        .action_state
+                        .is_bow();
+                    let command = quick_action_tail_command(command, is_tail, was_aiming);
+                    let append_recovery = is_tail && command == Command::TakeCorpse;
                     self.apply_recorded_interaction_with_seek(
                         sim,
                         pc,
@@ -2734,30 +2752,6 @@ impl EngineInner {
                     continue;
                 }
             };
-            // Original `StartQuickAction` builds one sequence and then calls
-            // `AppendPostureRecovery`. If its tail is ShootBow while the PC
-            // was not already aiming, that helper rewrites the tail to
-            // ShootBowOnce. The one-shot translation includes the terminal
-            // bow-unload/unequip animation; leaving this as ShootBow reloads
-            // the bow and strands the PC in an aiming action state.
-            //
-            // Modern QA replay dispatches commands individually, so its
-            // later empty recovery sequence cannot see or rewrite this tail.
-            // Preserve the source behavior explicitly before dispatch.
-            if step_index + 1 == step_count
-                && let PlayerCommand::LaunchInteraction { command, .. } = &mut cmd
-                && *command == Command::ShootBow
-            {
-                let was_aiming = self
-                    .get_entity(pc)
-                    .and_then(|entity| entity.actor_data())
-                    .unwrap_or_else(|| panic!("quick-action owner {pc:?} has no actor state"))
-                    .action_state
-                    .is_bow();
-                if !was_aiming {
-                    *command = Command::ShootBowOnce;
-                }
-            }
             // Original StartQuickAction clones the recorded elements into a
             // single sequence and appends posture recovery to that sequence
             // before launching it.  Keep the final TakeCorpse interaction
@@ -6727,6 +6721,26 @@ mod tests {
         assert_eq!(engine.players.auto_queues.len(pc_id), 6);
         let queue = engine.players.auto_queues.get(pc_id).expect("auto queue");
         assert!(queue.iter().all(|entry| entry.titbit.is_some()));
+    }
+
+    #[test]
+    fn quick_action_tail_rewrites_only_unequipped_final_bow_shot() {
+        assert_eq!(
+            quick_action_tail_command(Command::ShootBow, true, false),
+            Command::ShootBowOnce
+        );
+        assert_eq!(
+            quick_action_tail_command(Command::ShootBow, true, true),
+            Command::ShootBow
+        );
+        assert_eq!(
+            quick_action_tail_command(Command::ShootBow, false, false),
+            Command::ShootBow
+        );
+        assert_eq!(
+            quick_action_tail_command(Command::Take, true, false),
+            Command::Take
+        );
     }
 
     #[test]
