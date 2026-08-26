@@ -58,6 +58,8 @@ pub enum FormatError {
     Io(#[from] std::io::Error),
     #[error("jsonl decode failed: {0}")]
     Jsonl(String),
+    #[error("invalid replay layout: {0}")]
+    InvalidLayout(String),
     #[error(
         "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
     )]
@@ -107,6 +109,7 @@ pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
             version: data.header.version,
         });
     }
+    data.validate_layout().map_err(FormatError::InvalidLayout)?;
     Ok(())
 }
 
@@ -152,19 +155,47 @@ fn validate_engine_hash(hash: &str) -> Result<(), FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_engine::engine::SimulationFrameInput;
     use robin_engine::player_command::{PlayerCommand, PlayerInput};
-    use robin_engine::replay::{ReplayFile, ReplayHeader};
+    use robin_engine::replay::{ReplayFile, ReplayFrame, ReplayHeader};
     use std::collections::BTreeMap;
 
     fn sample_data() -> ReplayData {
-        let mut frames = BTreeMap::new();
-        frames.insert(0, vec![PlayerInput::host(PlayerCommand::CrouchDown)]);
+        let mut frames = (0..8)
+            .map(|frame| {
+                (
+                    frame,
+                    ReplayFrame {
+                        timeline_before: frame,
+                        timeline_after: frame + 1,
+                        input: SimulationFrameInput::default(),
+                        host_controls: Vec::new(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        frames.insert(
+            0,
+            ReplayFrame {
+                timeline_before: 0,
+                timeline_after: 1,
+                input: SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                    PlayerCommand::CrouchDown,
+                )]),
+                host_controls: Vec::new(),
+            },
+        );
         frames.insert(
             7,
-            vec![
-                PlayerInput::host(PlayerCommand::SelectAllPcs),
-                PlayerInput::host(PlayerCommand::CrouchDown),
-            ],
+            ReplayFrame {
+                timeline_before: 7,
+                timeline_after: 8,
+                input: SimulationFrameInput::from_player_inputs(vec![
+                    PlayerInput::host(PlayerCommand::SelectAllPcs),
+                    PlayerInput::host(PlayerCommand::CrouchDown),
+                ]),
+                host_controls: Vec::new(),
+            },
         );
         let hashes = BTreeMap::new();
         ReplayFile {
@@ -195,8 +226,8 @@ mod tests {
         assert_eq!(back.header.rng_seed, 0xdead_beef);
         assert_eq!(back.header.campaign, vec![1, 2, 3, 4]);
         assert_eq!(back.frame_count(), 8);
-        assert_eq!(back.commands_for_frame(0).len(), 1);
-        assert_eq!(back.commands_for_frame(7).len(), 2);
+        assert_eq!(back.frame(0).expect("frame zero").input.commands.len(), 1);
+        assert_eq!(back.frame(7).expect("frame seven").input.commands.len(), 2);
     }
 
     #[test]

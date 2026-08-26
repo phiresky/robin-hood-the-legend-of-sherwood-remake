@@ -20,11 +20,9 @@
 //! carry every host-resolved fact they need, while presentation/input/dev
 //! changes leave through typed output events or action results.
 //!
-//! Journals should retain this whole value, not just
-//! [`SimulationFrameInput::commands`], so a
-//! reconstruction cannot lose host-resolved facts, an hourglass gate, or a
-//! late command. The current replay file remains command-only; its adapter
-//! constructs the explicit defaults used by that legacy format.
+//! Journals and disk replays retain this whole value, not just
+//! [`SimulationFrameInput::commands`], so reconstruction cannot lose
+//! host-resolved facts, an hourglass gate, or a late command.
 //!
 //! This transaction advances the engine's Original-compatible simulation tick
 //! counter only when the hourglass runs. The host's history/network/replay

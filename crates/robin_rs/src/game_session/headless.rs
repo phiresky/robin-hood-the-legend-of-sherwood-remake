@@ -164,11 +164,12 @@ impl HeadlessMission {
         // after presentation, but headless must do so before frame-zero
         // recorder commit and before a debugger step can advance frame one.
         // See the frame-contract tests in runtime.rs.
-        self.runtime.run_post_initialize(&frame);
+        self.runtime.run_post_initialize(&mut frame);
         let paused = tick_paused;
-        self.commit_simulation_history(&frame, paused);
+        let timeline_advances = frame.timeline_advances(!paused);
+        self.commit_simulation_history(&mut frame, timeline_advances);
+        self.finish_frame_recording(&mut frame);
         self.drain_headless_steps(!network_paused);
-        self.finish_frame_recording(&mut frame, !paused);
 
         let replay_finished = self
             .runtime
@@ -289,27 +290,31 @@ impl HeadlessMission {
     /// Commit the outer frame before any debugger-driven forward ticks reuse
     /// the rewind/checker begin/end lifecycle. Graphical already has this
     /// ordering; headless must not leave its pending frame open across steps.
-    fn commit_simulation_history(&mut self, frame: &super::runtime::MissionFrame, paused: bool) {
-        if paused {
-            return;
-        }
+    fn commit_simulation_history(
+        &mut self,
+        frame: &mut super::runtime::MissionFrame,
+        timeline_advances: bool,
+    ) {
         let MissionRuntime {
             world, timeline, ..
         } = &mut self.runtime;
-        timeline.commit_simulation_history(
-            &mut world.host,
-            &mut world.manager,
-            frame,
-            FrameCommitPolicy {
-                store_rewind_commands: true,
-            },
-        );
-        let next_frame = timeline.advance_frame().number();
-        if let Some(net) = world.host.transport.net.as_ref()
-            && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
-        {
-            net.set_initial_snapshot(next_frame, &world.manager.engine);
+        if timeline_advances {
+            timeline.commit_simulation_history(
+                &mut world.host,
+                &mut world.manager,
+                frame,
+                FrameCommitPolicy {
+                    store_rewind_commands: true,
+                },
+            );
+            let next_frame = timeline.advance_frame().number();
+            if let Some(net) = world.host.transport.net.as_ref()
+                && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+            {
+                net.set_initial_snapshot(next_frame, &world.manager.engine);
+            }
         }
+        frame.commit_timeline_after(timeline.current_frame());
     }
 
     fn drain_headless_steps(&mut self, allow_timeline_steps: bool) {
@@ -334,13 +339,9 @@ impl HeadlessMission {
         );
     }
 
-    fn finish_frame_recording(
-        &mut self,
-        frame: &mut super::runtime::MissionFrame,
-        simulation_advanced: bool,
-    ) {
-        if simulation_advanced {
-            self.runtime.timeline.record_commands(frame, true);
+    fn finish_frame_recording(&mut self, frame: &mut super::runtime::MissionFrame) {
+        if self.runtime.timeline.replay_recorder.is_some() {
+            self.runtime.timeline.begin_recording(frame, true);
         }
         self.runtime.timeline.finish_recording(frame);
     }

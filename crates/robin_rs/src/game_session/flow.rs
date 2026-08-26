@@ -410,7 +410,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // completed.  Script mutations and emitted sound/UI effects first
         // become observable on the next frame, matching the original.
         let phase_start = super::frame_perf::start(profiling);
-        run_interactive_post_initialize(runtime, host, manager, assets, dev, &frame);
+        run_interactive_post_initialize(runtime, host, manager, assets, dev, &mut frame);
         super::frame_perf::record(super::frame_perf::Phase::PostInitialize, phase_start);
 
         if history_commit_pending {
@@ -557,7 +557,7 @@ fn run_interactive_post_initialize(
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
     dev: &mut robin_engine::engine::DevState,
-    frame: &MissionFrame,
+    frame: &mut MissionFrame,
 ) {
     let mut display = std::mem::take(&mut host.engine_display);
     let post_initialized = runtime.cross_post_initialize(|| {
@@ -572,6 +572,7 @@ fn run_interactive_post_initialize(
             frame.run_post_initialize,
         )
     });
+    frame.run_post_initialize = post_initialized;
     host.engine_display = display;
     if post_initialized
         && let Some(net) = host.transport.net.as_ref()

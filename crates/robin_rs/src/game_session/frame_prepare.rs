@@ -369,7 +369,8 @@ fn prepare_pre_tick_timeline(
             paused = true;
         } else {
             runtime.replay_finished_logged = false;
-            frame.inject_replay_commands(player);
+            frame.inject_replay_input(player);
+            frame.assert_replay_timeline_before(runtime.current_frame());
         }
     }
 
