@@ -219,6 +219,7 @@ pub mod native_font;
 pub mod pc_info_overlay;
 pub mod portrait_bar;
 pub mod presentation;
+pub mod process_asset_cache;
 pub mod profiler;
 pub mod recon_report;
 pub mod renderer;
