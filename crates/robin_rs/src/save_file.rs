@@ -453,7 +453,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   the final report-before-formation barrier.
 /// - **v53** (2026-08-26, automatic quick-action queue): player state records
 ///   the active automatic queue and its serialized commands.
-pub const SAVE_FORMAT_VERSION: u32 = 53;
+/// - **v54** (2026-08-26, resolved quick-action state): records shield danger
+///   geometry, independent automatic queues, resolved group-move routes, and
+///   resolved DropAle routes.
+pub const SAVE_FORMAT_VERSION: u32 = 54;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,8 +710,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_includes_auto_queue_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 53);
+    fn save_format_version_includes_post_4297_quick_action_batch() {
+        assert_eq!(SAVE_FORMAT_VERSION, 54);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

@@ -54,10 +54,10 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 11 adds the automatic quick-action
-/// queue commands introduced after version 10's in-mission save markers (`sv`)
-/// and load-back records (`lb`).
-pub const REPLAY_SCHEMA_VERSION: u32 = 11;
+/// On-disk replay schema version. Version 12 adds the post-version-11
+/// quick-action batch: shield danger geometry, independent automatic queues,
+/// resolved group-move routes, and resolved DropAle routes.
+pub const REPLAY_SCHEMA_VERSION: u32 = 12;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -548,8 +548,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replay_schema_version_includes_auto_queue_commands() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 11);
+    fn replay_schema_version_includes_post_4297_quick_action_batch() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 12);
     }
     use crate::player_command::PlayerCommand;
 
