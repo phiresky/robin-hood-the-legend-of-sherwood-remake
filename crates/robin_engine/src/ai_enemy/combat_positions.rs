@@ -200,6 +200,19 @@ fn live_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext)
     position
 }
 
+fn swordfight_facing_target_position(
+    primary: &FighterSnapshot,
+    tick: &AiPerTickData,
+    refreshed_live_position: impl FnOnce(HumanHandle) -> Position,
+) -> Position {
+    if tick.primary_target_snapshot_handle == primary.handle {
+        tick.primary_target_live_position
+            .unwrap_or(primary.position)
+    } else {
+        refreshed_live_position(primary.handle)
+    }
+}
+
 #[track_caller]
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
@@ -3099,7 +3112,9 @@ impl EnemyAi {
         // forecast movement or a door endpoint. It is especially stale when
         // `mpPrimaryTarget` changes immediately above, because the tick's
         // owner-local live position still belongs to the preceding target.
-        let facing_target_position = live_swordfight_target_position(self.base.primary_target, ctx);
+        let facing_target_position = swordfight_facing_target_position(&primary, tick, |target| {
+            live_swordfight_target_position(target, ctx)
+        });
         let facing_primary = is_facing_swordfight_target(
             &ctx.position,
             ctx.elevation,
@@ -5304,7 +5319,9 @@ mod tests {
             &soldier,
             elevation,
             12,
-            &live_pc,
+            &swordfight_facing_target_position(&primary, &tick, |_| {
+                panic!("stable principal must use the tick-captured literal position")
+            }),
             primary.elevation,
         ));
     }
@@ -5318,6 +5335,19 @@ mod tests {
         let forecast = position(1019.0, 2089.0);
         let live = position(1022.0, 2069.0);
         let target_elevation = 6.0522804;
+        let refreshed_primary = FighterSnapshot {
+            handle: 45,
+            position: forecast,
+            elevation: target_elevation,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 152;
+        tick.primary_target_live_position = Some(position(1031.0, 2089.0));
+        let resolved = swordfight_facing_target_position(&refreshed_primary, &tick, |target| {
+            assert_eq!(target, refreshed_primary.handle);
+            live
+        });
 
         assert!(!is_facing_swordfight_target(
             &soldier,
@@ -5330,7 +5360,7 @@ mod tests {
             &soldier,
             0.0,
             4,
-            &live,
+            &resolved,
             target_elevation,
         ));
     }
