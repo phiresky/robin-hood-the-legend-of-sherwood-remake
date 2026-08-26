@@ -32,7 +32,6 @@ use robin_engine::engine::{
     Engine, HostDisplayState, InputState, LegacyGridSectorAsset, LevelAssets,
 };
 use robin_engine::fast_find_grid::LineIndex;
-use robin_engine::game_operation::GameCode;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::Action;
@@ -79,17 +78,14 @@ struct TraceHeader {
     rng_stream: String,
     visibility_queries: String,
     #[serde(default)]
-    authoritative_state: Option<String>,
-    #[serde(default)]
     random_input_seed: Option<u32>,
     sim_config: TraceSimConfig,
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
-    /// Schema-16 session-boundary state omitted by Original's RHSG payload.
-    /// Older schema-16 recordings do not contain this overlay and use the
-    /// legacy-save reconstruction fallback.
-    #[serde(default)]
-    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
+    /// Current session-boundary state omitted by Original's RHSG payload.
+    /// This field is mandatory even when the list is empty: replay must not
+    /// guess process-local NPC state from an older, incomplete recording.
+    initial_npc_transients: Vec<TraceInitialNpcTransient>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
 }
@@ -343,11 +339,17 @@ enum TraceStartState {
     LoadedSave,
 }
 
+const TRACE_SCHEMA_VERSION: u32 = 16;
+
 fn validate_trace_schema(schema: u32) {
     assert!(
-        matches!(schema, 12 | 13 | 14 | 15 | 16),
-        "unsupported parity trace schema {schema}; schemas 12 through 16 are supported"
+        trace_schema_is_current(schema),
+        "unsupported parity trace schema {schema}; expected schema {TRACE_SCHEMA_VERSION}"
     );
+}
+
+fn trace_schema_is_current(schema: u32) -> bool {
+    schema == TRACE_SCHEMA_VERSION
 }
 
 fn validate_trace_header(header: &TraceHeader) {
@@ -358,7 +360,7 @@ fn validate_trace_header(header: &TraceHeader) {
     );
     assert_eq!(
         header.simulation_hz, 25,
-        "schema-12 parity replay requires the Original's 25 Hz simulation"
+        "parity replay requires the Original's 25 Hz simulation"
     );
     assert_eq!(
         header.rng_stream, "libc_rand_raw_global_draw_order",
@@ -368,41 +370,18 @@ fn validate_trace_header(header: &TraceHeader) {
         header.visibility_queries, "opaque_is_reachable",
         "unsupported parity visibility-query contract"
     );
-    match header.schema {
-        // Schema 14 revises 12's recorder contract without adopting 13's
-        // per-frame payload, which no writer ever produced.
-        12 | 14 | 15 | 16 => assert!(
-            header.authoritative_state.is_none(),
-            "schema-{} trace unexpectedly declares per-frame authoritative state",
-            header.schema
-        ),
-        13 => assert_eq!(
-            header.authoritative_state.as_deref(),
-            Some("per_frame_v1"),
-            "unsupported per-frame authoritative-state contract"
-        ),
-        _ => unreachable!(),
-    }
-    assert!(
-        header.schema == 16 || header.initial_npc_transients.is_none(),
-        "only schema 16 may declare initial_npc_transients"
-    );
 }
 
 fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
-    match (
-        header.schema,
-        header.start_state,
-        header.initial_save.as_ref(),
-    ) {
-        (12 | 13 | 14 | 15 | 16, TraceStartState::MissionStart, None) => None,
-        (12 | 13 | 14 | 15 | 16, TraceStartState::MissionStart, Some(_)) => {
+    match (header.start_state, header.initial_save.as_ref()) {
+        (TraceStartState::MissionStart, None) => None,
+        (TraceStartState::MissionStart, Some(_)) => {
             panic!("mission_start traces must not contain initial_save")
         }
-        (12 | 13 | 14 | 15 | 16, TraceStartState::LoadedSave, None) => {
+        (TraceStartState::LoadedSave, None) => {
             panic!("loaded_save traces require initial_save")
         }
-        (12 | 13 | 14 | 15 | 16, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
@@ -420,7 +399,6 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
                     .unwrap_or_else(|error| panic!("invalid initial_save: {error}")),
             )
         }
-        (schema, _, _) => unreachable!("schema {schema} was validated before initial_save"),
     }
 }
 
@@ -438,14 +416,14 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
     assert_eq!(
         transients.len(),
         runtime_by_creation_order.len(),
-        "schema-16 initial_npc_transients must cover every NPC exactly once"
+        "schema-{TRACE_SCHEMA_VERSION} initial_npc_transients must cover every NPC exactly once"
     );
 
     let mut seen = BTreeSet::new();
     for transient in transients {
         assert!(
             seen.insert(transient.creation_order),
-            "schema-16 initial_npc_transients repeats creation order {}",
+            "schema-{TRACE_SCHEMA_VERSION} initial_npc_transients repeats creation order {}",
             transient.creation_order
         );
         let id = runtime_by_creation_order
@@ -453,7 +431,7 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
             .copied()
             .unwrap_or_else(|| {
                 panic!(
-                    "schema-16 NPC transient creation order {} is absent from the Rust engine",
+                    "schema-{TRACE_SCHEMA_VERSION} NPC transient creation order {} is absent from the Rust engine",
                     transient.creation_order
                 )
             });
@@ -461,208 +439,6 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
             .parity_replay_setup()
             .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
-}
-
-fn reconstruct_unrecorded_maximal_visibility(
-    leaning_out: bool,
-    visibilities: impl IntoIterator<Item = f32>,
-) -> u16 {
-    let view_speed = if leaning_out {
-        robin_engine::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
-    } else {
-        robin_engine::ai_vision::BASE_VIEW_SPEED
-    };
-    visibilities
-        .into_iter()
-        .map(|visibility| (view_speed as f32 * visibility) as u16)
-        .max()
-        .unwrap_or(0)
-}
-
-/// Compatibility for already-recorded multi-segment schema-16 sessions.
-///
-/// Session 1 begins in a fresh Original process, where the omitted member has
-/// its constructor value zero. Later loaded-save segments continue the same
-/// process and therefore retain the preceding value. Restrict the inference to
-/// dead/unconscious observers: Original returns before clearing the maximum,
-/// and the four known interactive failures prove that the maximum-supplying
-/// detectable remains serialized in those observers' buckets.
-fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
-    let restorations = engine
-        .npc_ids()
-        .into_iter()
-        .filter_map(|id| {
-            let entity = engine
-                .get_entity(id)
-                .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
-            let npc = entity
-                .npc_data()
-                .unwrap_or_else(|| panic!("legacy parity fallback found non-NPC {id:?}"));
-            let retains_maximum =
-                entity.is_dead() || entity.human_data().is_some_and(|human| human.unconscious);
-            retains_maximum.then(|| {
-                let value = reconstruct_unrecorded_maximal_visibility(
-                    npc.view_lean_out,
-                    npc.detectable_lists
-                        .iter()
-                        .flatten()
-                        .map(|detectable| detectable.last_visibility),
-                );
-                (id, value)
-            })
-        })
-        .collect::<Vec<_>>();
-    for &(id, value) in &restorations {
-        engine
-            .parity_replay_setup()
-            .restore_npc_maximal_visibility(id, value);
-    }
-    restorations.len()
-}
-
-/// Whether a legacy loaded-save segment can retain process-local state which
-/// the RHSG payload omits.
-///
-/// An in-game reload calls `BeginSession` immediately before `Serialize` and
-/// `CaptureCampaign` immediately afterwards, so its recorded RNG prefix is
-/// empty. A fresh `RHGame` instead captures the campaign before mission
-/// construction; the nonempty prefix contains those setup draws and the new
-/// engine's constructor-zero transient state is authoritative.
-fn legacy_loaded_save_retains_process_transients(prefix_draw_count: usize) -> bool {
-    prefix_draw_count == 0
-}
-
-fn preceding_interactive_session_path(path: &Path, session_index: u32) -> Option<PathBuf> {
-    if session_index <= 1 {
-        return None;
-    }
-    let previous = session_index.checked_sub(1)?;
-    let name = path.file_name()?.to_str()?;
-    let suffix = format!("-session-{session_index:04}.jsonl.zst");
-    let stem = name.strip_suffix(&suffix)?;
-    Some(path.with_file_name(format!("{stem}-session-{previous:04}.jsonl.zst")))
-}
-
-fn terminal_macro_waypoint(
-    element: &TraceElement,
-    paths: &[robin_engine::level_data::RawHikingPath],
-) -> Option<(robin_engine::ai::PathId, u8, usize)> {
-    let ai = element.ai.as_ref()?;
-    terminal_macro_waypoint_at(
-        (element.position_map.x.bits, element.position_map.y.bits),
-        ai.macro_cursor,
-        ai.macro_in_progress,
-        paths,
-    )
-}
-
-fn terminal_macro_waypoint_at(
-    position_bits: (u32, u32),
-    cursor: Option<Option<u16>>,
-    macro_in_progress: Option<bool>,
-    paths: &[robin_engine::level_data::RawHikingPath],
-) -> Option<(robin_engine::ai::PathId, u8, usize)> {
-    if macro_in_progress != Some(true) {
-        return None;
-    }
-    let offset = usize::from(cursor??);
-    let mut matches = paths.iter().enumerate().flat_map(|(path_index, path)| {
-        path.waypoints
-            .iter()
-            .enumerate()
-            .filter_map(move |(waypoint_index, waypoint)| {
-                let robin_engine::level_data::WaypointCommand::Macro(command) = &waypoint.command
-                else {
-                    return None;
-                };
-                (offset <= command.len()
-                    && position_bits.0 == f32::from(waypoint.x).to_bits()
-                    && position_bits.1 == f32::from(waypoint.y).to_bits())
-                .then_some((path_index, waypoint_index))
-            })
-    });
-    let (path_index, waypoint_index) = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    Some((
-        robin_engine::ai::PathId::new(u16::try_from(path_index).ok()?)?,
-        u8::try_from(waypoint_index).ok()?,
-        offset,
-    ))
-}
-
-fn apply_legacy_interactive_chain_macro_fallback(
-    trace_path: &Path,
-    header: &TraceHeader,
-    prefix_draw_count: usize,
-    engine: &mut Engine,
-    assets: &LevelAssets,
-) -> usize {
-    if header.schema != 16
-        || header.start_state != TraceStartState::LoadedSave
-        || header.initial_npc_transients.is_some()
-        || !legacy_loaded_save_retains_process_transients(prefix_draw_count)
-    {
-        return 0;
-    }
-    let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
-        .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
-    else {
-        return 0;
-    };
-    let previous_native = ensure_native_binary_trace(&previous_path);
-    let mut reader = BinaryTraceReader::open(&previous_native);
-    let previous_header = reader.read_header().trace;
-    if previous_header.schema != 16
-        || previous_header.session_index.checked_add(1) != Some(header.session_index)
-        || previous_header.mission != header.mission
-        || previous_header.proto_level != header.proto_level
-        || previous_header.rng_seed != header.rng_seed
-    {
-        return 0;
-    }
-    let mut final_frame = None;
-    loop {
-        match reader.read_record() {
-            BinaryTraceRecord::Frame(frame) => final_frame = Some(frame),
-            BinaryTraceRecord::End {
-                final_frame: end,
-                frame_count,
-                ..
-            } => {
-                reader
-                    .validate_terminator(frame_count.unwrap(), end.unwrap())
-                    .unwrap_or_else(|error| panic!("invalid preceding interactive trace: {error}"));
-                break;
-            }
-        }
-    }
-    let mut runtime = engine
-        .npc_ids()
-        .into_iter()
-        .map(|id| (engine.original_creation_order(id), id))
-        .collect::<BTreeMap<_, _>>();
-    let mut restored = 0;
-    for element in &final_frame
-        .expect("preceding interactive trace has no frames")
-        .elements
-    {
-        let Some((path_id, waypoint, offset)) =
-            terminal_macro_waypoint(element, &assets.hiking_paths)
-        else {
-            continue;
-        };
-        let Some(id) = runtime.remove(&element.creation_order) else {
-            continue;
-        };
-        restored += usize::from(
-            engine
-                .parity_replay_setup()
-                .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
-        );
-    }
-    restored
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -1242,13 +1018,10 @@ enum TraceCommand {
     SwordStrike {
         actor: TraceEntityId,
         target: TraceEntityId,
-        /// Absent only in synthetic pre-audit fixtures; the recorder always
-        /// pairs the numeric command with its name.
         original_command: u32,
         original_command_name: String,
         with_seek: bool,
-        #[serde(default)]
-        seek_distance: Option<f32>,
+        seek_distance: f32,
     },
     SelectPc {
         pc: TraceEntityId,
@@ -1709,7 +1482,7 @@ impl TraceCommand {
                 target: entity_map.translate(target),
                 command: command_from_stable_name(&original_command_name),
                 with_seek,
-                seek_distance: normalized_trace_sword_seek_distance(with_seek, seek_distance),
+                seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
                 pc_id: entity_map.translate(pc),
@@ -1883,11 +1656,8 @@ impl TraceCommand {
     }
 }
 
-fn normalized_trace_sword_seek_distance(
-    with_seek: bool,
-    seek_distance: Option<f32>,
-) -> Option<f32> {
-    if with_seek { seek_distance } else { None }
+fn trace_sword_seek_distance(with_seek: bool, seek_distance: f32) -> Option<f32> {
+    with_seek.then_some(seek_distance)
 }
 
 fn command_from_stable_name(name: &str) -> Command {
@@ -1947,8 +1717,7 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
-    #[serde(default)]
-    increment_map_valid: Option<bool>,
+    increment_map_valid: bool,
     movement_map: TracePoint,
     layer: u16,
     layer_goal: u16,
@@ -1959,8 +1728,7 @@ struct TraceElement {
     moving_map: bool,
     sprite_row: u16,
     sprite_frame: u16,
-    #[serde(default)]
-    sprite_frame_count: Option<u16>,
+    sprite_frame_count: u16,
     #[serde(default)]
     actor: Option<TraceActor>,
     #[serde(default)]
@@ -1971,10 +1739,8 @@ struct TraceElement {
     ai: Option<TraceAi>,
     #[serde(default)]
     detection: Option<TraceDetection>,
-    /// Additive v27 whole-entity serialized position/sprite frontier. Older
-    /// raw recordings omit it and therefore cannot assert this state.
-    #[serde(default)]
-    runtime: Option<TraceJsonValue>,
+    /// Whole-entity serialized position/sprite frontier.
+    runtime: TraceJsonValue,
 }
 
 #[derive(
@@ -1993,26 +1759,20 @@ struct TraceActor {
     command_name: String,
     motion_state: u32,
     wait_time: u32,
-    #[serde(default)]
-    passing_door_directly: Option<bool>,
-    /// Outer `None` means schema 14 or earlier did not record the field;
-    /// inner `None` is schema 15's explicit null for no active PassDoor.
-    #[serde(default, deserialize_with = "deserialize_present_nullable_pass_door")]
-    active_pass_door: Option<Option<TracePassDoor>>,
-    /// Retained for schema-15 diagnostics. Rust does not yet expose a stable
-    /// public current-sequence snapshot with Original's element identities.
-    /// TODO(parity-schema15): compare the remaining fields once that capture
+    passing_door_directly: bool,
+    /// Explicitly null when there is no active PassDoor.
+    #[serde(deserialize_with = "deserialize_nullable_pass_door")]
+    active_pass_door: Option<TracePassDoor>,
+    /// Rust does not yet expose a stable public current-sequence snapshot with
+    /// Original's element identities.
+    /// TODO(parity-sequence): compare the remaining fields once that capture
     /// can be produced without walking mutable sequence-manager internals.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_present_nullable_sequence_element"
-    )]
-    sequence_element: Option<Option<TraceSequenceElement>>,
-    /// Schema-16 PositionInterface diagnostics. Kept as a cache-safe JSON
+    #[serde(deserialize_with = "deserialize_nullable_sequence_element")]
+    sequence_element: Option<TraceSequenceElement>,
+    /// PositionInterface diagnostics. Kept as a cache-safe JSON
     /// tree because it is observational evidence rather than comparable
     /// engine state yet.
-    #[serde(default)]
-    position_interface: Option<TraceJsonValue>,
+    position_interface: TraceJsonValue,
 }
 
 #[derive(
@@ -2051,19 +1811,37 @@ struct TraceSequenceElement {
     priority: u32,
     posture_after_transition: u32,
     action_state_after_transition: u32,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_nullable_sequence_movement")]
     movement: Option<TraceSequenceMovement>,
-    /// Schema-16 sequence topology and active-order diagnostics. These are
+    /// Current sequence topology and active-order diagnostics. These are
     /// nullable or command-shaped in the Original recorder, so retaining the
     /// draft payload verbatim is safer than inventing a false common shape.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
     following: Option<TraceJsonValue>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
     postponed: Option<TraceJsonValue>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
     current_order: Option<TraceJsonValue>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
     movement_payload: Option<TraceJsonValue>,
+}
+
+fn deserialize_nullable_sequence_movement<'de, D>(
+    deserializer: D,
+) -> Result<Option<TraceSequenceMovement>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TraceSequenceMovement>::deserialize(deserializer)
+}
+
+fn deserialize_nullable_trace_json_value<'de, D>(
+    deserializer: D,
+) -> Result<Option<TraceJsonValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TraceJsonValue>::deserialize(deserializer)
 }
 
 #[derive(
@@ -2078,36 +1856,35 @@ struct TraceSequenceElement {
 struct TraceSequenceMovement {
     /// Absent in current schema-16 traces when the movement-element
     /// constructor does not initialize `maction` (for example WAIT_FREE_LIFT).
-    /// Older schema-15/16 traces may contain the field.
     #[serde(default)]
     action: Option<u32>,
     #[serde(default)]
     pass_door: Option<TracePassDoor>,
 }
 
-fn deserialize_present_nullable_pass_door<'de, D>(
+fn deserialize_nullable_pass_door<'de, D>(
     deserializer: D,
-) -> Result<Option<Option<TracePassDoor>>, D::Error>
+) -> Result<Option<TracePassDoor>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<TracePassDoor>::deserialize(deserializer).map(Some)
+    Option::<TracePassDoor>::deserialize(deserializer)
 }
 
-fn deserialize_present_nullable_sequence_element<'de, D>(
+fn deserialize_nullable_sequence_element<'de, D>(
     deserializer: D,
-) -> Result<Option<Option<TraceSequenceElement>>, D::Error>
+) -> Result<Option<TraceSequenceElement>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<TraceSequenceElement>::deserialize(deserializer).map(Some)
+    Option::<TraceSequenceElement>::deserialize(deserializer)
 }
 
 fn trace_pass_door_key(pass: &TracePassDoor) -> (u32, bool) {
     assert_eq!(
         pass.direct,
         pass.direction != 0,
-        "schema-15 active PassDoor direct flag disagrees with its direction"
+        "current-schema active PassDoor direct flag disagrees with its direction"
     );
     (pass.gate_id, pass.direct)
 }
@@ -2136,10 +1913,8 @@ struct TraceHuman {
     original_camp: i32,
     vip: bool,
     civilian: bool,
-    #[serde(default)]
-    opponents: Option<Vec<TraceEntityId>>,
-    #[serde(default)]
-    opponent_jump_lines: Option<Vec<Option<TraceJumpLine>>>,
+    opponents: Vec<TraceEntityId>,
+    opponent_jump_lines: Vec<Option<TraceJumpLine>>,
 }
 
 #[derive(
@@ -2204,13 +1979,11 @@ struct TraceElementAmmo {
     wasp_nests: u16,
 }
 
-fn deserialize_present_nullable_u16<'de, D>(
-    deserializer: D,
-) -> Result<Option<Option<u16>>, D::Error>
+fn deserialize_nullable_u16<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<u16>::deserialize(deserializer).map(Some)
+    Option::<u16>::deserialize(deserializer)
 }
 
 #[derive(
@@ -2225,45 +1998,32 @@ where
 struct TraceAi {
     state: u32,
     substate: u32,
-    #[serde(default)]
-    script_locked: Option<bool>,
-    #[serde(default)]
-    locked: Option<bool>,
-    #[serde(default)]
-    locks: Option<u8>,
-    #[serde(default)]
-    was_busy: Option<bool>,
-    #[serde(default)]
-    very_busy: Option<bool>,
-    #[serde(default)]
-    macro_timer_running: Option<bool>,
-    #[serde(default)]
-    macro_timer_ring: Option<u32>,
-    /// Outer `None` means the additive diagnostic was not recorded; inner
-    /// `None` is the recorded null cursor for an inactive macro.
-    #[serde(default, deserialize_with = "deserialize_present_nullable_u16")]
-    macro_cursor: Option<Option<u16>>,
-    #[serde(default)]
-    macro_remaining: Option<u16>,
-    #[serde(default)]
-    macro_in_progress: Option<bool>,
-    #[serde(default)]
-    list_us: Option<Vec<TraceEntityId>>,
-    #[serde(default)]
-    list_them: Option<Vec<TraceEntityId>>,
-    /// Outer `None` is a legacy schema-16 snapshot without this field; inner
-    /// `None` is the authoritative null `mpMyLineJump` for a soldier.
-    #[serde(default, deserialize_with = "deserialize_present_nullable_jump_line")]
-    my_line_jump: Option<Option<TraceJumpLine>>,
+    script_locked: bool,
+    locked: bool,
+    locks: u8,
+    was_busy: bool,
+    very_busy: bool,
+    macro_timer_running: bool,
+    macro_timer_ring: u32,
+    /// Explicitly null for an inactive macro.
+    #[serde(deserialize_with = "deserialize_nullable_u16")]
+    macro_cursor: Option<u16>,
+    macro_remaining: u16,
+    macro_in_progress: bool,
+    list_us: Vec<TraceEntityId>,
+    list_them: Vec<TraceEntityId>,
+    /// Authoritative `mpMyLineJump`, explicitly null when absent.
+    #[serde(deserialize_with = "deserialize_nullable_jump_line")]
+    my_line_jump: Option<TraceJumpLine>,
 }
 
-fn deserialize_present_nullable_jump_line<'de, D>(
+fn deserialize_nullable_jump_line<'de, D>(
     deserializer: D,
-) -> Result<Option<Option<TraceJumpLine>>, D::Error>
+) -> Result<Option<TraceJumpLine>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<TraceJumpLine>::deserialize(deserializer).map(Some)
+    Option::<TraceJumpLine>::deserialize(deserializer)
 }
 
 #[derive(
@@ -2559,7 +2319,7 @@ struct ReplayGroupMoveResolution {
 }
 
 /// Recover whether `AppendMoveToSequence` selected its internal
-/// `FindPathGates` or `FindPathIntoDoor` branch for a schema-16 group move.
+/// `FindPathGates` or `FindPathIntoDoor` branch for a current-schema group move.
 /// Both branches record route kind `move`; `move_to_door` belongs to the
 /// separate `AppendMoveToDoorToSequence` API and is not this discriminator.
 /// The retained Original sparse sector topology preserves that distinction:
@@ -2567,17 +2327,13 @@ struct ReplayGroupMoveResolution {
 /// even when its route happens to end across that same overlay door.
 // TODO(parity-schema): record the selected group-move route constructor on
 // TraceCommand::GroupMove so future traces do not need this event join.
-fn resolve_schema_sixteen_group_move_route(
-    schema: u32,
+fn resolve_current_group_move_route(
     command: &TraceCommand,
-    route_events: Option<&[TraceRouteConstructionEvent]>,
+    route_events: &[TraceRouteConstructionEvent],
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
     retained_sector_kinds: &[LegacyGridSectorAsset],
 ) -> Option<ReplayGroupMoveResolution> {
-    if schema != 16 {
-        return None;
-    }
     let TraceCommand::GroupMove {
         actors,
         goal_sector,
@@ -2603,7 +2359,6 @@ fn resolve_schema_sixteen_group_move_route(
     };
 
     let mut matching = route_events
-        .unwrap_or_default()
         .iter()
         .filter_map(|event| {
             let ordinal = match event
@@ -2738,7 +2493,8 @@ fn resolve_schema_sixteen_group_move_route(
 }
 
 /// Recover the goal that Original retained before authorizing a DropAle
-/// destination. Schema 16 does not yet carry that goal on `drop_ale_at`, but a
+/// destination. The current schema does not yet carry that goal on
+/// `drop_ale_at`, but a
 /// cross-sector Seek records it in the same frame's route-construction stream.
 /// Match by route ordinal plus stable actor/point identity; projected point
 /// containment is intentionally not consulted because overlapping floors can
@@ -2746,24 +2502,19 @@ fn resolve_schema_sixteen_group_move_route(
 /// caller also supplies the actor's exact current sector identity as a fallback.
 // TODO(parity-schema): record DropAle's pre-authorization goal sector/layer on
 // the command itself so replay does not have to infer same-sector destinations.
-fn resolve_schema_sixteen_drop_ale(
-    schema: u32,
+fn resolve_current_drop_ale(
     command: &TraceCommand,
-    route_events: Option<&[TraceRouteConstructionEvent]>,
+    route_events: &[TraceRouteConstructionEvent],
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
     same_sector_goal: Option<ReplayDropAleResolution>,
 ) -> Option<ReplayDropAleResolution> {
-    if schema != 16 {
-        return None;
-    }
     let TraceCommand::DropAleAt { actor, target, .. } = command else {
         return None;
     };
 
     let actor = entity_map.translate(*actor);
     let matching_events = route_events
-        .unwrap_or_default()
         .iter()
         .filter_map(|event| {
             let ordinal = match event
@@ -2794,7 +2545,7 @@ fn resolve_schema_sixteen_drop_ale(
     let Some((ordinal, event)) = matching_events.into_iter().next() else {
         // A cross-sector DropAle must have an authoritative route event. Do
         // not disguise a mismatched/corrupt event as a same-sector command.
-        let has_actor_route = route_events.unwrap_or_default().iter().any(|event| {
+        let has_actor_route = route_events.iter().any(|event| {
             event.kind == "move"
                 && entity_map.translate(event.actor) == actor
                 && event.source_sector != event.goal_sector
@@ -2862,17 +2613,13 @@ fn recorded_gate_path_from_event(
     }
 }
 
-fn collect_schema_sixteen_delayed_drop_ale_routes(
-    schema: u32,
-    route_events: Option<&[TraceRouteConstructionEvent]>,
+fn collect_current_delayed_drop_ale_routes(
+    route_events: &[TraceRouteConstructionEvent],
     consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
     consumed_group_move_route_ordinals: &BTreeSet<u64>,
     entity_map: &EntityMap,
     engine: &mut Engine,
 ) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
-    if schema != 16 {
-        return Vec::new();
-    }
     assert!(
         consumed_drop_ale_route_ordinals.is_disjoint(consumed_group_move_route_ordinals),
         "schema-16 route ordinal was consumed independently by DropAle and group-move joins"
@@ -2880,7 +2627,7 @@ fn collect_schema_sixteen_delayed_drop_ale_routes(
     let replay_setup = engine.parity_replay_setup();
     let mut seen_route_ordinals = BTreeSet::new();
     let mut routes = Vec::new();
-    for event in route_events.unwrap_or_default() {
+    for event in route_events {
         let ordinal = match event
             .draft_diagnostics
             .get("ordinal")
@@ -2940,15 +2687,11 @@ fn claim_delayed_drop_ale_route_ordinal(
     );
 }
 
-fn schema_sixteen_drop_ale_actor_goal(
-    schema: u32,
+fn current_drop_ale_actor_goal(
     command: &TraceCommand,
     entity_map: &EntityMap,
     engine: &Engine,
 ) -> Option<ReplayDropAleResolution> {
-    if schema != 16 {
-        return None;
-    }
     let TraceCommand::DropAleAt { actor, .. } = command else {
         return None;
     };
@@ -3128,7 +2871,6 @@ struct TraceAiForecastEvent {
 struct TraceAlertEligibility {
     rank: bool,
     able_to_help: Option<bool>,
-    #[serde(alias = "stay_on_post")]
     allowed_to_leave_post: Option<bool>,
     can_call: Option<bool>,
     max_radius: Option<bool>,
@@ -3447,96 +3189,33 @@ struct TraceFrame {
     simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
     director_completions: Vec<robin_engine::engine::DirectorCompletion>,
-    #[serde(default)]
-    campaign: Option<TraceCampaign>,
-    #[serde(default)]
-    engine_state: Option<TraceEngineState>,
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
     visibility_queries: Vec<TraceVisibilityQuery>,
     rng_draws: TraceRngBatch,
     motion_line_changes: Vec<TraceMotionLineChange>,
     path_events: Vec<TracePathEvent>,
-    /// Present in schema 15. Retained and printed on divergence; Rust has no
+    /// Retained and printed on divergence; Rust has no
     /// side-effect-free route-construction event capture yet.
-    /// TODO(parity-schema15): compare once the sequence builders publish the
+    /// TODO(parity-schema): compare once the sequence builders publish the
     /// same source/goal and ordered gate list.
-    #[serde(default)]
-    route_construction_events: Option<Vec<TraceRouteConstructionEvent>>,
-    #[serde(default)]
-    popup_events: Option<Vec<TracePopupEvent>>,
-    #[serde(default)]
-    ai_forecast_events: Option<Vec<TraceAiForecastEvent>>,
-    #[serde(default)]
-    alert_formation_events: Option<Vec<TraceAlertFormationEvent>>,
-    #[serde(default)]
-    goto_authorization_events: Option<Vec<TraceGoToAuthorizationEvent>>,
-    #[serde(default)]
-    strike_proposal_events: Option<Vec<TraceStrikeProposalEvent>>,
-    #[serde(default)]
-    sequence_lifecycle_events: Option<Vec<TraceSequenceLifecycleEvent>>,
-    #[serde(default)]
-    target_lifecycle_events: Option<Vec<TraceTargetLifecycleEvent>>,
+    route_construction_events: Vec<TraceRouteConstructionEvent>,
+    popup_events: Vec<TracePopupEvent>,
+    ai_forecast_events: Vec<TraceAiForecastEvent>,
+    alert_formation_events: Vec<TraceAlertFormationEvent>,
+    goto_authorization_events: Vec<TraceGoToAuthorizationEvent>,
+    strike_proposal_events: Vec<TraceStrikeProposalEvent>,
+    sequence_lifecycle_events: Vec<TraceSequenceLifecycleEvent>,
+    target_lifecycle_events: Vec<TraceTargetLifecycleEvent>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
-    #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
-    #[serde(default)]
     flight_steps: Vec<TraceFlightStep>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-#[serde(deny_unknown_fields)]
-struct TraceEngineState {
-    cheat_used_flags: u32,
-    next_creation_order: u32,
-    chorus_timer: u16,
-    force_check: bool,
-    men_to_blazon_conversion: bool,
-    #[serde(default)]
-    game_ui: Option<TraceJsonValue>,
-    #[serde(default)]
-    messenger_controller: Option<TraceJsonValue>,
-    #[serde(default)]
-    shield_controller: Option<TraceJsonValue>,
-    pc_registry: TraceJsonValue,
-    lock_engine: bool,
-    freeze_all: bool,
-    locker: bool,
-    speed: TraceFloat,
-    speed_int: u16,
-    mission_won: bool,
-    mission_won_first_time: bool,
-    quit_won: bool,
-    quit_lost: bool,
-    quit_interrupted: bool,
-    script_globals: Vec<i32>,
-    sequence_manager: TraceJsonValue,
-    script_runtime: TraceJsonValue,
-    pathfinder: TraceJsonValue,
-    view_radius_cache: TraceJsonValue,
-    sound_sources: TraceJsonValue,
-    #[serde(default)]
-    sound_completion_frontier: Option<TraceJsonValue>,
-    ai_global: TraceJsonValue,
-    engine_runtime_roots: TraceJsonValue,
-    world_interactables: TraceJsonValue,
-    repulsive_points: TraceJsonValue,
-    titbit_manager: TraceJsonValue,
-    failed_path_requests: Vec<TraceFailedPathRequest>,
-}
-
-/// Recursive JSON tree used for high-volume authoritative snapshots.
+/// Recursive JSON tree used for high-volume trace snapshots.
 ///
 /// `serde_json::Value` deliberately has no native binary-codec derives. This
-/// equivalent tree keeps schema-13 frame parsing strict; it is the serde
+/// equivalent tree keeps frame parsing strict; it is the serde
 /// (JSONL) view of [`TraceJsonValue`], which stores the same data flat.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -3691,128 +3370,39 @@ impl<'de> Deserialize<'de> for TraceJsonValue {
     }
 }
 
-fn print_schema_sixteen_events<T: Serialize>(label: &str, events: Option<&Vec<T>>) {
-    if let Some(events) = events
-        && !events.is_empty()
-    {
+fn print_current_trace_events<T: Serialize>(label: &str, events: &[T]) {
+    if !events.is_empty() {
         eprintln!(
-            "  Original schema-16 {label} this frame: {}",
-            serde_json::to_string(events).expect("serialize schema-16 event diagnostics")
+            "  Original schema-{TRACE_SCHEMA_VERSION} {label} this frame: {}",
+            serde_json::to_string(events).expect("serialize current-schema event diagnostics")
         );
     }
 }
 
-fn print_schema_sixteen_actor_diagnostics(elements: &[TraceElement]) {
+fn print_current_trace_actor_diagnostics(elements: &[TraceElement]) {
     let diagnostics = elements
         .iter()
         .filter_map(|element| {
             let actor = element.actor.as_ref()?;
-            let sequence = actor.sequence_element.as_ref().and_then(Option::as_ref);
-            (actor.position_interface.is_some()
-                || sequence.is_some_and(|sequence| {
-                    sequence.following.is_some()
-                        || sequence.postponed.is_some()
-                        || sequence.current_order.is_some()
-                        || sequence.movement_payload.is_some()
-                }))
-            .then(|| {
-                serde_json::json!({
-                    "entity": element.entity_id,
-                    "creation_order": element.creation_order,
-                    "position_interface": actor.position_interface,
-                    "following": sequence.and_then(|value| value.following.as_ref()),
-                    "postponed": sequence.and_then(|value| value.postponed.as_ref()),
-                    "current_order": sequence.and_then(|value| value.current_order.as_ref()),
-                    "movement_payload": sequence.and_then(|value| value.movement_payload.as_ref()),
-                })
-            })
+            let sequence = actor.sequence_element.as_ref();
+            Some(serde_json::json!({
+                "entity": element.entity_id,
+                "creation_order": element.creation_order,
+                "position_interface": actor.position_interface,
+                "following": sequence.and_then(|value| value.following.as_ref()),
+                "postponed": sequence.and_then(|value| value.postponed.as_ref()),
+                "current_order": sequence.and_then(|value| value.current_order.as_ref()),
+                "movement_payload": sequence.and_then(|value| value.movement_payload.as_ref()),
+            }))
         })
         .take(40)
         .collect::<Vec<_>>();
     if !diagnostics.is_empty() {
         eprintln!(
-            "  Original schema-16 actor diagnostics (up to 40): {}",
-            serde_json::to_string(&diagnostics).expect("serialize schema-16 actor diagnostics")
+            "  Original schema-{TRACE_SCHEMA_VERSION} actor diagnostics (up to 40): {}",
+            serde_json::to_string(&diagnostics)
+                .expect("serialize current-schema actor diagnostics")
         );
-    }
-}
-
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-#[serde(deny_unknown_fields)]
-struct TraceFailedPathRequest {
-    actor: TraceEntityId,
-    antagonist: Option<TraceEntityId>,
-    layer: u16,
-    area: u16,
-    source: TracePoint,
-    goal: TracePoint,
-    half_diagonal_index: u16,
-    half_diagonal: TracePoint,
-    animation: u32,
-    reverse: bool,
-    speed: u8,
-    tolerance: TraceFloat,
-    use_first_point: bool,
-    sector: u16,
-    time: u32,
-}
-
-fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
-    match schema {
-        12 | 14 => {
-            frame.campaign.is_none()
-                && frame.engine_state.is_none()
-                && frame.route_construction_events.is_none()
-                && frame.popup_events.is_none()
-                && frame.ai_forecast_events.is_none()
-                && frame.alert_formation_events.is_none()
-                && frame.goto_authorization_events.is_none()
-                && frame.strike_proposal_events.is_none()
-                && frame.sequence_lifecycle_events.is_none()
-                && frame.target_lifecycle_events.is_none()
-        }
-        15 => {
-            frame.campaign.is_none()
-                && frame.engine_state.is_none()
-                && frame.route_construction_events.is_some()
-                && frame.popup_events.is_none()
-                && frame.ai_forecast_events.is_none()
-                && frame.alert_formation_events.is_none()
-                && frame.goto_authorization_events.is_none()
-                && frame.strike_proposal_events.is_none()
-                && frame.sequence_lifecycle_events.is_none()
-                && frame.target_lifecycle_events.is_none()
-        }
-        16 => {
-            frame.campaign.is_none()
-                && frame.engine_state.is_none()
-                && frame.route_construction_events.is_some()
-                && frame.popup_events.is_some()
-                && frame.ai_forecast_events.is_some()
-                && frame.alert_formation_events.is_some()
-                && frame.goto_authorization_events.is_some()
-        }
-        13 => {
-            frame.campaign.is_some()
-                && frame.engine_state.is_some()
-                && frame.route_construction_events.is_none()
-                && frame.popup_events.is_none()
-                && frame.ai_forecast_events.is_none()
-                && frame.alert_formation_events.is_none()
-                && frame.goto_authorization_events.is_none()
-                && frame.strike_proposal_events.is_none()
-                && frame.sequence_lifecycle_events.is_none()
-                && frame.target_lifecycle_events.is_none()
-        }
-        _ => unreachable!("trace schema was validated before frame parsing"),
     }
 }
 
@@ -3826,49 +3416,32 @@ fn validate_jump_line_shapes(frame: &TraceFrame) {
 }
 
 fn validate_human_jump_line_shape(entity: &TraceEntityId, human: &TraceHuman) {
-    let Some(jump_lines) = human.opponent_jump_lines.as_ref() else {
-        return;
-    };
-    let opponents = human.opponents.as_ref().unwrap_or_else(|| {
-        panic!(
-            "schema-16 {entity:?} records opponent jump lines without the parallel opponent list"
-        )
-    });
     assert_eq!(
-        opponents.len(),
-        jump_lines.len(),
-        "schema-16 {entity:?} opponent and jump-line arrays differ in length"
+        human.opponents.len(),
+        human.opponent_jump_lines.len(),
+        "schema-{TRACE_SCHEMA_VERSION} {entity:?} opponent and jump-line arrays differ in length"
     );
 }
 
 fn validate_sequence_diagnostic_order(frame: &TraceFrame) {
-    let proposals = frame.strike_proposal_events.as_deref().unwrap_or_default();
-    let lifecycle = frame
-        .sequence_lifecycle_events
-        .as_deref()
-        .unwrap_or_default();
+    let proposals = &frame.strike_proposal_events;
+    let lifecycle = &frame.sequence_lifecycle_events;
     for (expected, event) in proposals.iter().enumerate() {
         assert_eq!(
             event.ordinal, expected as u64,
-            "schema-16 strike-proposal event ordinals are not contiguous"
+            "schema-{TRACE_SCHEMA_VERSION} strike-proposal event ordinals are not contiguous"
         );
     }
     for (expected, event) in lifecycle.iter().enumerate() {
         assert_eq!(
             event.ordinal, expected as u64,
-            "schema-16 sequence-lifecycle event ordinals are not contiguous"
+            "schema-{TRACE_SCHEMA_VERSION} sequence-lifecycle event ordinals are not contiguous"
         );
     }
-    for (expected, event) in frame
-        .target_lifecycle_events
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-    {
+    for (expected, event) in frame.target_lifecycle_events.iter().enumerate() {
         assert_eq!(
             event.ordinal, expected as u64,
-            "schema-16 target-lifecycle event ordinals are not contiguous"
+            "schema-{TRACE_SCHEMA_VERSION} target-lifecycle event ordinals are not contiguous"
         );
     }
 
@@ -3879,8 +3452,6 @@ fn validate_sequence_diagnostic_order(frame: &TraceFrame) {
         .chain(
             frame
                 .target_lifecycle_events
-                .as_deref()
-                .unwrap_or_default()
                 .iter()
                 .filter_map(|event| event.frame_ordinal),
         )
@@ -3889,7 +3460,7 @@ fn validate_sequence_diagnostic_order(frame: &TraceFrame) {
     assert_eq!(
         frame_ordinals,
         (0..frame_ordinals.len() as u64).collect::<Vec<_>>(),
-        "schema-16 strike/sequence/target frame ordinals are not a single contiguous timeline"
+        "schema-{TRACE_SCHEMA_VERSION} strike/sequence/target frame ordinals are not a single contiguous timeline"
     );
 
     let mut invocation_state = BTreeMap::<u32, (bool, bool)>::new();
@@ -3918,23 +3489,12 @@ fn validate_sequence_diagnostic_order(frame: &TraceFrame) {
     }
 }
 
-fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
+fn validate_trace_frame(frame: &TraceFrame) {
     validate_jump_line_shapes(frame);
     validate_sequence_diagnostic_order(frame);
-    match schema {
-        12 | 14 | 15 | 16 => assert!(
-            trace_frame_envelope_matches(schema, frame),
-            "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
-        ),
-        13 => assert!(
-            trace_frame_envelope_matches(schema, frame),
-            "schema-13 frame is missing campaign or engine_state"
-        ),
-        _ => unreachable!("trace schema was validated before frame parsing"),
-    }
 }
 
-const TRACE_NATIVE_VERSION: u32 = 66;
+const TRACE_NATIVE_VERSION: u32 = 67;
 /// The native parity trace is the authoritative artifact once its JSONL
 /// source has been converted (and possibly deleted), so its name carries no
 /// version: compatibility is enforced through the versioned header/footer,
@@ -3945,8 +3505,8 @@ const TRACE_NATIVE_VERSION: u32 = 66;
 /// completion markers.
 const TRACE_NATIVE_SUFFIX: &str = ".parity.bitcode.zst";
 const TRACE_CONVERSION_QUARANTINE_SUFFIX: &str = ".parity-conversion-source";
-const TRACE_REBLOCK_SOURCE_SUFFIX: &str = ".parity-reblock-source-v66";
-const TRACE_REBLOCK_BINDING_SUFFIX: &str = ".parity-reblock-binding-v66.json";
+const TRACE_REBLOCK_SOURCE_SUFFIX: &str = ".parity-reblock-source-v67";
+const TRACE_REBLOCK_BINDING_SUFFIX: &str = ".parity-reblock-binding-v67.json";
 const TRACE_NATIVE_FOOTER_MAGIC: [u8; 16] = *b"RHPRTRACEFOOTER!";
 const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -3962,12 +3522,12 @@ const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
 // native writer deliberately leaves it disabled.
 const TRACE_NATIVE_ZSTD_LEVEL: i32 = 9;
 const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
-/// Frames per on-disk block. A schema-16 frame contains a complete Original
+/// Frames per on-disk block. A current-schema frame contains a complete Original
 /// state envelope, so decoding 1024 at once expanded a roughly 100 MiB
 /// bitcode record into 2-3.6 GiB of live Rust allocations. Sixteen frames
 /// retain bitcode's columnar packing while bounding the decoded block to a
 /// small fraction of one replay engine. Readers accept any block size, so
-/// this storage-only change remains version-66 compatible.
+/// this storage-only change remains compatible within the current native version.
 const TRACE_NATIVE_BLOCK_RECORDS: usize = 16;
 /// Bound the zstd history retained by every replay process. Cross-frame
 /// repetition is already captured inside the 16-frame bitcode blocks; a
@@ -4099,68 +3659,6 @@ impl TraceTimeline {
         }
         Ok(())
     }
-}
-
-/// Recover the quit-mission message omitted by the current Original trace
-/// schema for the retained-frame mission-success envelope.
-///
-/// `RHEngine::PerformHourglass` can return `RHGAME_LEVEL_SUCCEEDED` without
-/// advancing the universal clock only from its leading `mbQuitWon` branch.
-/// The UI sets that flag by forwarding `MSG_QUIT_MISSION`, but
-/// `RHParity::RecordInputMessage` currently does not record that simple
-/// message. Keep the inference restricted to the exact envelope that proves
-/// this path; ordinary advancing frames and other terminal codes remain fully
-/// authoritative.
-// TODO: Record MSG_QUIT_MISSION in Original RHParity, append a matching
-// TraceCommand variant under a bumped schema, and remove this schema-16
-// legacy-envelope repair after affected corpora have been recaptured.
-fn is_legacy_retained_terminal_success(
-    schema: u32,
-    frame_before: u64,
-    frame_after: u64,
-    simulation_body_ran: bool,
-    game_code: i32,
-) -> bool {
-    schema == 16
-        && frame_before == frame_after
-        && !simulation_body_ran
-        && game_code == GameCode::LevelSucceeded as i32
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_legacy_retained_terminal_success_repair(
-    commands: &mut Vec<PlayerCommand>,
-    difficulty: robin_engine::player_profile::DifficultyLevel,
-    schema: u32,
-    frame_before: u64,
-    frame_after: u64,
-    simulation_body_ran: bool,
-    game_code: i32,
-    already_applied: &mut bool,
-) -> bool {
-    if *already_applied
-        || !is_legacy_retained_terminal_success(
-            schema,
-            frame_before,
-            frame_after,
-            simulation_body_ran,
-            game_code,
-        )
-    {
-        return false;
-    }
-
-    // Original MSG_QUIT_MISSION synchronously runs the complete QuitMission
-    // campaign/stat rollup and only then arms mbQuitWon for the next retained
-    // Hourglass. Preserve that ordering through the existing deterministic
-    // command path.
-    *already_applied = true;
-    commands.push(PlayerCommand::ApplyQuitMissionUpdates {
-        exit_code: GameCode::LevelSucceeded,
-        difficulty,
-    });
-    commands.push(PlayerCommand::QuitMissionRequested);
-    true
 }
 
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
@@ -4744,7 +4242,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
-    let (mut engine, assets, mut host, background, mission_scb, menu_text) =
+    let (mut engine, assets, mut host, background, mission_scb, _menu_text) =
         initialize_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
     if let Some(initial_save) = initial_save {
@@ -4756,9 +4254,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &mission_scb,
             &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
         )
-        .unwrap_or_else(|error| panic!("decode schema-12 initial_save body: {error}"));
+        .unwrap_or_else(|error| panic!("decode current-schema initial_save body: {error}"));
         eprintln!(
-            "decoded schema-12 Original save through byte {} ({} elements, {} dynamic, {} pending paths, {} failed paths)",
+            "decoded current-schema Original save through byte {} ({} elements, {} dynamic, {} pending paths, {} failed paths)",
             save.end_offset,
             save.element_envelope.records.len(),
             save.element_envelope
@@ -4788,45 +4286,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &assets,
                 &save,
             )
-            .unwrap_or_else(|error| panic!("adopt schema-12 initial_save body: {error}")),
+            .unwrap_or_else(|error| panic!("adopt current-schema initial_save body: {error}")),
         );
-        eprintln!("atomically adopted schema-12 Original Linux-v48 save");
+        eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
-    let restored_dormant_macros = apply_legacy_interactive_chain_macro_fallback(
-        &trace_path,
-        &header,
-        prefix_end,
-        &mut engine,
-        &assets,
+    apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
+    eprintln!(
+        "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
+        header.initial_npc_transients.len()
     );
-    if restored_dormant_macros != 0 {
-        eprintln!(
-            "restored {restored_dormant_macros} dormant waypoint-macro cursors from the authoritative preceding interactive-session terminal snapshot"
-        );
-    }
-    if let Some(transients) = header.initial_npc_transients.as_deref() {
-        apply_initial_npc_transients(&mut engine, transients);
-        eprintln!(
-            "restored {} explicit schema-16 NPC session-boundary transients",
-            transients.len()
-        );
-    } else if header.schema == 16
-        && header.start_state == TraceStartState::LoadedSave
-        && header.session_index > 1
-        && legacy_loaded_save_retains_process_transients(prefix_end)
-    {
-        let restored = apply_legacy_segment_visibility_fallback(&mut engine);
-        eprintln!(
-            "warning: legacy schema-16 segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
-        );
-    } else if header.schema == 16
-        && header.start_state == TraceStartState::LoadedSave
-        && header.session_index > 1
-    {
-        eprintln!(
-            "warning: legacy schema-16 fresh-engine segment lacks initial_npc_transients; retained constructor-zero maximal_visibility"
-        );
-    }
     if rewind_loaded_save_rng {
         let setup_draws = engine
             .original_rng_replay_cursor()
@@ -4915,7 +4383,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
 
     let mut line_index = 0_usize;
     let mut trace_timeline = TraceTimeline::new(header.initial_frame);
-    let mut legacy_terminal_success_repair_applied = false;
     let terminator = loop {
         let mut frame = match records.read_record() {
             BinaryTraceRecord::Frame(frame) => frame,
@@ -4925,7 +4392,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             frame.record_type, "frame",
             "invalid parity frame record type"
         );
-        validate_trace_frame_envelope(header.schema, &frame);
+        validate_trace_frame(&frame);
         if debug_stage_timing {
             eprintln!(
                 "parity stage: loaded original frame {} -> {}",
@@ -4992,8 +4459,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             .set_impossible_action_done_deadlines(
             frame
                 .strike_proposal_events
-                .as_deref()
-                .unwrap_or_default()
                 .iter()
                 .filter(|event| event.phase == "opponent_inputs")
                 .map(|event| {
@@ -5001,13 +4466,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         event.actor_creation_order,
                         event.principal_opponent_creation_order.unwrap_or_else(|| {
                             panic!(
-                                "schema-16 frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",
+                                "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",
                                 frame.frame_before, event.invocation
                             )
                         }),
                         i16::try_from(event.time_limit.unwrap_or_else(|| {
                             panic!(
-                                "schema-16 frame {} opponent_inputs invocation {} lacks time_limit",
+                                "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks time_limit",
                                 frame.frame_before, event.invocation
                             )
                         }))
@@ -5067,11 +4532,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             director_completions,
             Some(robin_engine::engine::SoundBoundary::replay(resolutions)),
         );
-        let popup_nested_refresh = frame.popup_events.as_deref().is_some_and(|events| {
-            events.iter().any(|event| {
-                event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true)
-            })
-        });
+        let popup_nested_refresh = frame
+            .popup_events
+            .iter()
+            .any(|event| event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true));
         let (commands_before_hourglass, commands_after_hourglass) = split_late_refresh_orientations(
             std::mem::take(&mut frame.commands),
             popup_nested_refresh,
@@ -5086,18 +4550,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame.frame_after
                 );
             }
-            let drop_ale_resolution = resolve_schema_sixteen_drop_ale(
-                header.schema,
+            let drop_ale_resolution = resolve_current_drop_ale(
                 &command,
-                frame.route_construction_events.as_deref(),
+                &frame.route_construction_events,
                 &mut consumed_drop_ale_route_ordinals,
                 map,
-                schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
+                current_drop_ale_actor_goal(&command, map, &engine),
             );
-            let group_move_resolution = resolve_schema_sixteen_group_move_route(
-                header.schema,
+            let group_move_resolution = resolve_current_group_move_route(
                 &command,
-                frame.route_construction_events.as_deref(),
+                &frame.route_construction_events,
                 &mut consumed_group_move_route_ordinals,
                 map,
                 &assets
@@ -5115,31 +4577,19 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        append_legacy_retained_terminal_success_repair(
-            &mut commands_before_hourglass_resolved,
-            header.sim_config.difficulty.into(),
-            header.schema,
-            frame.frame_before,
-            frame.frame_after,
-            frame.simulation_body_ran,
-            frame.game_code,
-            &mut legacy_terminal_success_repair_applied,
-        );
         let commands_after_hourglass = commands_after_hourglass
             .into_iter()
             .filter_map(|command| {
-                let drop_ale_resolution = resolve_schema_sixteen_drop_ale(
-                    header.schema,
+                let drop_ale_resolution = resolve_current_drop_ale(
                     &command,
-                    frame.route_construction_events.as_deref(),
+                    &frame.route_construction_events,
                     &mut consumed_drop_ale_route_ordinals,
                     map,
-                    schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
+                    current_drop_ale_actor_goal(&command, map, &engine),
                 );
-                let group_move_resolution = resolve_schema_sixteen_group_move_route(
-                    header.schema,
+                let group_move_resolution = resolve_current_group_move_route(
                     &command,
-                    frame.route_construction_events.as_deref(),
+                    &frame.route_construction_events,
                     &mut consumed_group_move_route_ordinals,
                     map,
                     &assets
@@ -5156,9 +4606,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
             })
             .collect::<Vec<_>>();
-        let recorded_drop_ale_routes = collect_schema_sixteen_delayed_drop_ale_routes(
-            header.schema,
-            frame.route_construction_events.as_deref(),
+        let recorded_drop_ale_routes = collect_current_delayed_drop_ale_routes(
+            &frame.route_construction_events,
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
@@ -5217,8 +4666,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture();
         let actual_move_box_extractions =
             robin_engine::movement_diagnostics::take_parity_move_box_extractions();
-        let late_movement_retranslations =
-            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations();
+        robin_engine::movement_diagnostics::take_parity_late_movement_retranslations();
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.
@@ -5340,11 +4788,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         differences.extend(compare_frame(
             &engine,
             &assets,
-            &menu_text,
             &frame,
             tick_effects.code as i32,
             map,
-            &late_movement_retranslations,
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -5544,38 +4990,27 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("serialize Rust path-event diagnostics")
                 );
             }
-            if let Some(route_events) = &frame.route_construction_events
-                && !route_events.is_empty()
-            {
+            if !frame.route_construction_events.is_empty() {
                 eprintln!(
                     "  Original route-construction events this frame: {}",
-                    serde_json::to_string(route_events)
+                    serde_json::to_string(&frame.route_construction_events)
                         .expect("serialize Original route-construction diagnostics")
                 );
             }
-            print_schema_sixteen_events("popup events", frame.popup_events.as_ref());
-            print_schema_sixteen_events("AI forecast events", frame.ai_forecast_events.as_ref());
-            print_schema_sixteen_events(
-                "alert-formation events",
-                frame.alert_formation_events.as_ref(),
-            );
-            print_schema_sixteen_events(
+            print_current_trace_events("popup events", &frame.popup_events);
+            print_current_trace_events("AI forecast events", &frame.ai_forecast_events);
+            print_current_trace_events("alert-formation events", &frame.alert_formation_events);
+            print_current_trace_events(
                 "GoTo-authorization events",
-                frame.goto_authorization_events.as_ref(),
+                &frame.goto_authorization_events,
             );
-            print_schema_sixteen_events(
-                "strike-proposal events",
-                frame.strike_proposal_events.as_ref(),
-            );
-            print_schema_sixteen_events(
+            print_current_trace_events("strike-proposal events", &frame.strike_proposal_events);
+            print_current_trace_events(
                 "sequence-lifecycle events",
-                frame.sequence_lifecycle_events.as_ref(),
+                &frame.sequence_lifecycle_events,
             );
-            print_schema_sixteen_events(
-                "target lifecycle events",
-                frame.target_lifecycle_events.as_ref(),
-            );
-            print_schema_sixteen_actor_diagnostics(&frame.elements);
+            print_current_trace_events("target lifecycle events", &frame.target_lifecycle_events);
+            print_current_trace_actor_diagnostics(&frame.elements);
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
                     &rolling_dump,
@@ -6489,21 +5924,11 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
 ///   `None`), and the two fields where Original's `null` is meaningful keep
 ///   the distinction in their typed `Option<Option<_>>` form. Array elements
 ///   are never removed.
-/// * Empty array/object entries are removed after their children normalize:
-///   schema-gated `#[serde(default)]` collection fields parse from an absent
-///   key but re-serialize as an empty collection, so the typed schema
-///   deliberately identifies the two.
-/// * Legacy alert-formation eligibility used `stay_on_post` for the boolean
-///   now emitted by Original as `allowed_to_leave_post`. The two spellings
-///   share one native slot; only this exact nested key is canonicalized.
 fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
-    normalize_trace_json_for_roundtrip_inner(value, false);
+    normalize_trace_json_for_roundtrip_inner(value);
 }
 
-fn normalize_trace_json_for_roundtrip_inner(
-    value: &mut serde_json::Value,
-    inside_alert_formation_events: bool,
-) {
+fn normalize_trace_json_for_roundtrip_inner(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             if map.len() == 2
@@ -6517,31 +5942,14 @@ fn normalize_trace_json_for_roundtrip_inner(
             {
                 map.remove("value");
             }
-            if inside_alert_formation_events {
-                if let Some(serde_json::Value::Object(eligibility)) = map.get_mut("eligibility") {
-                    if let Some(stay_on_post) = eligibility.remove("stay_on_post") {
-                        assert!(
-                            eligibility
-                                .insert("allowed_to_leave_post".to_owned(), stay_on_post)
-                                .is_none(),
-                            "alert eligibility contains both stay_on_post and allowed_to_leave_post"
-                        );
-                    }
-                }
+            for child in map.values_mut() {
+                normalize_trace_json_for_roundtrip_inner(child);
             }
-            for (key, child) in map.iter_mut() {
-                normalize_trace_json_for_roundtrip_inner(child, key == "alert_formation_events");
-            }
-            map.retain(|_, child| match child {
-                serde_json::Value::Null => false,
-                serde_json::Value::Array(items) => !items.is_empty(),
-                serde_json::Value::Object(entries) => !entries.is_empty(),
-                _ => true,
-            });
+            map.retain(|_, child| !child.is_null());
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                normalize_trace_json_for_roundtrip_inner(item, inside_alert_formation_events);
+                normalize_trace_json_for_roundtrip_inner(item);
             }
         }
         _ => {}
@@ -7289,7 +6697,7 @@ fn native_reblock_temporary_prefix(native_path: &Path, binding: bool) -> String 
     #[cfg(not(unix))]
     let path_bytes = path_text.as_bytes();
     let path_digest = sha256_hex(path_bytes);
-    let kind = if binding { "binding-v66" } else { "v66" };
+    let kind = if binding { "binding-v67" } else { "v67" };
     format!(".parity-reblock-{kind}-{path_digest}-")
 }
 
@@ -8033,7 +7441,7 @@ fn ensure_native_binary_trace_locked(
                 .send((line_number, line.clone()))
                 .expect("parity round-trip audit workers stopped early");
             if let Some(frame) = parse_trace_frame(&line, line_number) {
-                validate_trace_frame_envelope(header.trace.schema, &frame);
+                validate_trace_frame(&frame);
                 trace_timeline
                     .observe(frame.frame_before, frame.frame_after)
                     .unwrap_or_else(|error| {
@@ -10037,58 +9445,6 @@ fn compare_path_events(
     differences
 }
 
-fn campaign_comparison_value(
-    campaign: &robin_engine::campaign::Campaign,
-    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
-) -> serde_json::Value {
-    let mut value = serde_json::to_value(campaign).expect("serialize campaign parity state");
-    let object = value
-        .as_object_mut()
-        .expect("serialized Campaign must be a JSON object");
-
-    // These fields implement Rust host-side restart checkpoints and do not
-    // exist in the Original campaign object. They are verified by Rust's
-    // rollback/restart tests rather than cross-engine parity.
-    for field in [
-        "pre_mission_snapshot",
-        "pre_mission_rng_seed",
-        "pre_mission_sim_config",
-        "pre_mission_was_preselected",
-    ] {
-        object.remove(field);
-    }
-    if let Some(characters) = object.get_mut("characters").and_then(|v| v.as_array_mut()) {
-        assert_eq!(characters.len(), campaign.characters.len());
-        for (character, source) in characters.iter_mut().zip(&campaign.characters) {
-            let status = character
-                .get_mut("status")
-                .and_then(|v| v.as_object_mut())
-                .expect("serialized campaign character status must be an object");
-            status.insert(
-                "name".to_owned(),
-                serde_json::Value::String(source.status.display_name(menu_text).into_owned()),
-            );
-            status.remove("name_override");
-        }
-    }
-    if let Some(sectors) = object
-        .get_mut("production_sectors")
-        .and_then(|v| v.as_array_mut())
-    {
-        for sector in sectors {
-            let sector = sector
-                .as_object_mut()
-                .expect("serialized production sector must be an object");
-            // Runtime geometry attachments are derived from the loaded level;
-            // CampaignSnapshotJson records the mutable production values and
-            // occupants that the Original campaign actually serializes.
-            sector.remove("script_zone");
-            sector.remove("production_points");
-        }
-    }
-    value
-}
-
 fn collect_json_differences(
     path: &str,
     expected: &serde_json::Value,
@@ -10172,8 +9528,8 @@ fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'static str {
     }
 }
 
-/// Replace Original allocation identities in the schema-13 whole-engine
-/// snapshots with their Rust-side isomorphic identities before structural
+/// Replace Original allocation identities in authoritative runtime snapshots
+/// with their Rust-side isomorphic identities before structural
 /// comparison. Native VM table indices and sequence ordinals are semantic and
 /// intentionally remain untouched.
 fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map: &EntityMap) {
@@ -10223,615 +9579,6 @@ fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map
     }
 }
 
-/// Preserve additive schema-13 coverage for older raw recordings. Fields that
-/// do not exist in the recording are omitted from the actual projection too;
-/// whenever a field is present, comparison remains strict. No expected state
-/// is fabricated for frontiers that cannot be reconstructed from old frames.
-fn retain_recorded_world_interactable_coverage(
-    expected: &serde_json::Value,
-    actual: &mut serde_json::Value,
-) {
-    let (Some(expected), Some(actual)) = (expected.as_object(), actual.as_object_mut()) else {
-        return;
-    };
-    if !expected.contains_key("lifts") {
-        actual.remove("lifts");
-    }
-    for field in ["buildings", "script_zones"] {
-        if !expected.contains_key(field) {
-            actual.remove(field);
-        }
-    }
-
-    let Some(expected_doors) = expected.get("doors").and_then(serde_json::Value::as_array) else {
-        return;
-    };
-    let Some(actual_doors) = actual
-        .get_mut("doors")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return;
-    };
-    for (expected_door, actual_door) in expected_doors.iter().zip(actual_doors) {
-        let (Some(expected_door), Some(actual_door)) =
-            (expected_door.as_object(), actual_door.as_object_mut())
-        else {
-            continue;
-        };
-        for field in [
-            "locked_pc_after_patch",
-            "locked_npc_villain_after_patch",
-            "locked_npc_civilian_after_patch",
-            "unlockable_after_patch",
-        ] {
-            if !expected_door.contains_key(field) {
-                actual_door.remove(field);
-            }
-        }
-    }
-}
-
-/// Remove only the additive v28 order fields that are absent from an older
-/// raw sequence snapshot. Presence remains strict, including null/zero values.
-fn retain_recorded_order_runtime_coverage(
-    expected: &serde_json::Value,
-    actual: &mut serde_json::Value,
-) {
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("next_order_id"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("next_order_id");
-    }
-
-    let Some(expected_sequences) = expected
-        .get("sequences")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return;
-    };
-    let Some(actual_sequences) = actual
-        .get_mut("sequences")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return;
-    };
-    for (expected_sequence, actual_sequence) in
-        expected_sequences.iter().zip(actual_sequences.iter_mut())
-    {
-        let Some(expected_elements) = expected_sequence
-            .get("elements")
-            .and_then(serde_json::Value::as_array)
-        else {
-            continue;
-        };
-        let Some(actual_elements) = actual_sequence
-            .get_mut("elements")
-            .and_then(serde_json::Value::as_array_mut)
-        else {
-            continue;
-        };
-        for (expected_element, actual_element) in
-            expected_elements.iter().zip(actual_elements.iter_mut())
-        {
-            let Some(expected_orders) = expected_element
-                .get("orders")
-                .and_then(serde_json::Value::as_array)
-            else {
-                continue;
-            };
-            let Some(actual_orders) = actual_element
-                .get_mut("orders")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
-                continue;
-            };
-            for (expected_order, actual_order) in
-                expected_orders.iter().zip(actual_orders.iter_mut())
-            {
-                let (Some(expected_order), Some(actual_order)) =
-                    (expected_order.as_object(), actual_order.as_object_mut())
-                else {
-                    continue;
-                };
-                for field in [
-                    "destination_3d",
-                    "flight_vector",
-                    "apply_transition",
-                    "can_fly",
-                    "lock_ai",
-                    "transition",
-                    "id",
-                ] {
-                    if !expected_order.contains_key(field) {
-                        actual_order.remove(field);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Remove only additive entity-runtime projections when an older raw
-/// recording predates them. Once present, every nested field (including
-/// explicit nulls) remains structurally strict.
-fn retain_recorded_entity_runtime_coverage(
-    expected: &serde_json::Value,
-    actual: &mut serde_json::Value,
-) {
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("subtype"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("subtype");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("npc_ai"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("npc_ai");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("human_continuation"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("human_continuation");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("human_structure"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("human_structure");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("pc_tail"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("pc_tail");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("pc_qa"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("pc_qa");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("pc_interface"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("pc_interface");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("pc_portrait"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("pc_portrait");
-    }
-    if !expected
-        .as_object()
-        .is_some_and(|object| object.contains_key("pc_core"))
-        && let Some(actual) = actual.as_object_mut()
-    {
-        actual.remove("pc_core");
-    }
-    if expected
-        .get("npc_ai")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|npc_ai| !npc_ai.contains_key("subclass"))
-        && let Some(actual_npc_ai) = actual
-            .get_mut("npc_ai")
-            .and_then(serde_json::Value::as_object_mut)
-    {
-        actual_npc_ai.remove("subclass");
-    }
-    if let (Some(expected_npc_ai), Some(actual_npc_ai)) = (
-        expected
-            .get("npc_ai")
-            .and_then(serde_json::Value::as_object),
-        actual
-            .get_mut("npc_ai")
-            .and_then(serde_json::Value::as_object_mut),
-    ) {
-        for field in [
-            "stimulus_queue",
-            "object_memory",
-            "synchronizing_actors",
-            "reconnaissance",
-            "path_control",
-            "legacy_continuation",
-        ] {
-            if !expected_npc_ai.contains_key(field) {
-                actual_npc_ai.remove(field);
-            }
-        }
-    }
-    if expected
-        .get("npc_ai")
-        .and_then(|npc_ai| npc_ai.get("subclass"))
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|subclass| {
-            subclass.get("kind").and_then(serde_json::Value::as_str) == Some("enemy")
-        })
-        && let (Some(expected_subclass), Some(actual_subclass)) = (
-            expected
-                .get("npc_ai")
-                .and_then(|npc_ai| npc_ai.get("subclass"))
-                .and_then(serde_json::Value::as_object),
-            actual
-                .get_mut("npc_ai")
-                .and_then(|npc_ai| npc_ai.get_mut("subclass"))
-                .and_then(serde_json::Value::as_object_mut),
-        )
-    {
-        for field in [
-            "heard_nets",
-            "other_seen_ale",
-            "search_charly_way",
-            "missed_in_action",
-            "other_bodies_to_examine",
-            "beggars_to_control",
-            "them",
-            "ambush_point_array_reset",
-            "ambush_point_status",
-            "my_seek_points",
-            "personal_seek_point_1",
-            "personal_seek_point_2",
-            "seek_center",
-            "actual_seek_point",
-            "seek_point_view_directions",
-            "positions_of_beggars_to_control",
-            "seek_flags",
-            "seen_dead_body",
-            "seeking_charly",
-            "forced_next_battle_decision",
-            "reset_battle_decision",
-            "synchronize_index",
-            "initial_view_cone",
-            "company_number",
-            "left_combat_neighbour",
-            "right_combat_neighbour",
-            "attentive",
-            "will_be_attentive",
-            "forced_attentive",
-            "guarded_pc",
-            "tower_guard",
-            "combat_trainer",
-            "gather_position",
-            "gather_direction",
-            "gather_position_instructed",
-            "officers_position",
-            "previous_state",
-            "previous_substate",
-            "reported_to_officer",
-            "missed_soldier_timer",
-            "old_money",
-            "other_seen_money",
-            "money_fight_enemies",
-            "money_fight_victims",
-            "archer_behind_me",
-            "shield_bearer_before_me",
-            "already_seen_bodies",
-            "my_line_jump",
-            "shield_bearer_direction",
-            "phalanx_aborted",
-            "changed_to_alert_path",
-            "shooting_point",
-            "archery_sector",
-            "archery_sector_index",
-            "archery_point_index",
-            "archery_point_increment",
-            "enemy_seen_below",
-            "enemy_had_this_elevation",
-            "known_enemy_strike_commands",
-            "last_stimulus_dispatched_to_patrol",
-        ] {
-            if !expected_subclass.contains_key(field) {
-                actual_subclass.remove(field);
-            }
-        }
-    }
-}
-
-fn compare_engine_state(
-    differences: &mut Vec<String>,
-    expected: &TraceEngineState,
-    engine: &Engine,
-    assets: &LevelAssets,
-    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
-    entity_map: &EntityMap,
-) {
-    let actual = engine.parity_engine_state();
-    macro_rules! field {
-        ($name:ident) => {
-            if expected.$name != actual.$name {
-                differences.push(format!(
-                    "frame.engine_state.{}: original={:?} rust={:?}",
-                    stringify!($name),
-                    expected.$name,
-                    actual.$name
-                ));
-            }
-        };
-    }
-    field!(cheat_used_flags);
-    field!(next_creation_order);
-    field!(chorus_timer);
-    field!(force_check);
-    field!(men_to_blazon_conversion);
-    field!(lock_engine);
-    field!(freeze_all);
-    field!(locker);
-    field!(speed_int);
-    field!(mission_won);
-    field!(mission_won_first_time);
-    field!(quit_won);
-    field!(quit_lost);
-    field!(quit_interrupted);
-    field!(script_globals);
-
-    if let Some(expected_game_ui) = &expected.game_ui {
-        collect_json_differences(
-            "frame.engine_state.game_ui",
-            &expected_game_ui.to_json(),
-            &engine.parity_game_ui_state(),
-            differences,
-        );
-    }
-    if let Some(expected_controller) = &expected.messenger_controller {
-        let expected_controller = expected_controller.to_json();
-        let mut actual_controller = engine.parity_messenger_controller_state();
-        // Schema v49 introduced this object with only `view_locked`; v50 adds
-        // the independently authoritative action. Keep those existing traces
-        // usable while making the field strict whenever the recorder emitted
-        // it.
-        if expected_controller
-            .as_object()
-            .is_some_and(|controller| !controller.contains_key("selected_action"))
-            && let Some(controller) = actual_controller.as_object_mut()
-        {
-            controller.remove("selected_action");
-        }
-        collect_json_differences(
-            "frame.engine_state.messenger_controller",
-            &expected_controller,
-            &actual_controller,
-            differences,
-        );
-    }
-    if let Some(expected_controller) = &expected.shield_controller {
-        let mut expected_controller = expected_controller.to_json();
-        canonicalize_authoritative_snapshot(&mut expected_controller, entity_map);
-        collect_json_differences(
-            "frame.engine_state.shield_controller",
-            &expected_controller,
-            &engine.parity_shield_controller_state(),
-            differences,
-        );
-    }
-
-    let mut expected_pc_registry = expected.pc_registry.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_pc_registry, entity_map);
-    let actual_pc_registry = engine.parity_pc_registry_state();
-    collect_json_differences(
-        "frame.engine_state.pc_registry",
-        &expected_pc_registry,
-        &actual_pc_registry,
-        differences,
-    );
-
-    let mut expected_sequences = expected.sequence_manager.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_sequences, entity_map);
-    let mut actual_sequences = engine.parity_sequence_manager_state();
-    retain_recorded_order_runtime_coverage(&expected_sequences, &mut actual_sequences);
-    collect_json_differences(
-        "frame.engine_state.sequence_manager",
-        &expected_sequences,
-        &actual_sequences,
-        differences,
-    );
-
-    let mut expected_script = expected.script_runtime.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_script, entity_map);
-    let actual_script = engine.parity_script_runtime_state();
-    collect_json_differences(
-        "frame.engine_state.script_runtime",
-        &expected_script,
-        &actual_script,
-        differences,
-    );
-
-    let mut expected_pathfinder = expected.pathfinder.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_pathfinder, entity_map);
-    let actual_pathfinder = engine.parity_pathfinder_state();
-    collect_json_differences(
-        "frame.engine_state.pathfinder",
-        &expected_pathfinder,
-        &actual_pathfinder,
-        differences,
-    );
-
-    let mut expected_view_radius_cache = expected.view_radius_cache.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_view_radius_cache, entity_map);
-    let actual_view_radius_cache = engine.parity_view_radius_cache_state(assets);
-    collect_json_differences(
-        "frame.engine_state.view_radius_cache",
-        &expected_view_radius_cache,
-        &actual_view_radius_cache,
-        differences,
-    );
-
-    let expected_sound_sources = expected.sound_sources.to_json();
-    let actual_sound_sources = engine.parity_sound_sources_state();
-    collect_json_differences(
-        "frame.engine_state.sound_sources",
-        &expected_sound_sources,
-        &actual_sound_sources,
-        differences,
-    );
-
-    if let Some(expected_frontier) = &expected.sound_completion_frontier {
-        let expected_frontier = expected_frontier.to_json();
-        let actual_frontier = engine.parity_sound_completion_frontier_state();
-        collect_json_differences(
-            "frame.engine_state.sound_completion_frontier",
-            &expected_frontier,
-            &actual_frontier,
-            differences,
-        );
-    }
-
-    let mut expected_ai_global = expected.ai_global.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_ai_global, entity_map);
-    let actual_ai_global = engine.parity_ai_global_state();
-    collect_json_differences(
-        "frame.engine_state.ai_global",
-        &expected_ai_global,
-        &actual_ai_global,
-        differences,
-    );
-
-    let mut expected_runtime_roots = expected.engine_runtime_roots.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_runtime_roots, entity_map);
-    let actual_runtime_roots = engine.parity_engine_runtime_roots_state(menu_text);
-    collect_json_differences(
-        "frame.engine_state.engine_runtime_roots",
-        &expected_runtime_roots,
-        &actual_runtime_roots,
-        differences,
-    );
-
-    let mut expected_world_interactables = expected.world_interactables.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_world_interactables, entity_map);
-    let mut actual_world_interactables = engine.parity_world_interactables_state(assets);
-    retain_recorded_world_interactable_coverage(
-        &expected_world_interactables,
-        &mut actual_world_interactables,
-    );
-    collect_json_differences(
-        "frame.engine_state.world_interactables",
-        &expected_world_interactables,
-        &actual_world_interactables,
-        differences,
-    );
-
-    let expected_repulsive_points = expected.repulsive_points.to_json();
-    let actual_repulsive_points = engine.parity_repulsive_points_state();
-    collect_json_differences(
-        "frame.engine_state.repulsive_points",
-        &expected_repulsive_points,
-        &actual_repulsive_points,
-        differences,
-    );
-
-    let mut expected_titbit_manager = expected.titbit_manager.to_json();
-    canonicalize_authoritative_snapshot(&mut expected_titbit_manager, entity_map);
-    let actual_titbit_manager = engine.parity_titbit_manager_state();
-    collect_json_differences(
-        "frame.engine_state.titbit_manager",
-        &expected_titbit_manager,
-        &actual_titbit_manager,
-        differences,
-    );
-
-    if expected.speed.bits != actual.speed.to_bits() {
-        differences.push(format!(
-            "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
-            expected.speed.value(),
-            expected.speed.bits,
-            actual.speed,
-            actual.speed.to_bits()
-        ));
-    }
-
-    let actual_failed = engine.parity_failed_path_requests();
-    if expected.failed_path_requests.len() != actual_failed.len() {
-        differences.push(format!(
-            "frame.engine_state.failed_path_requests.length: original={} rust={}",
-            expected.failed_path_requests.len(),
-            actual_failed.len()
-        ));
-    }
-    for (index, (expected, actual)) in expected
-        .failed_path_requests
-        .iter()
-        .zip(&actual_failed)
-        .enumerate()
-    {
-        let prefix = format!("frame.engine_state.failed_path_requests[{index}]");
-        let request = &actual.request;
-        macro_rules! request_field {
-            ($name:expr, $left:expr, $right:expr) => {
-                if $left != $right {
-                    differences.push(format!(
-                        "{}.{}: original={:?} rust={:?}",
-                        prefix, $name, $left, $right
-                    ));
-                }
-            };
-        }
-        request_field!("actor", entity_map.translate(expected.actor), request.actor);
-        request_field!(
-            "antagonist",
-            expected.antagonist.map(|id| entity_map.translate(id)),
-            request.antagonist
-        );
-        request_field!("layer", expected.layer, request.layer);
-        if !entity_map.sectors_equivalent(expected.area, request.area) {
-            differences.push(format!(
-                "{prefix}.area: original={} rust={}",
-                expected.area, request.area
-            ));
-        }
-        request_field!(
-            "source.bits",
-            [expected.source.x.bits, expected.source.y.bits],
-            [request.source.x.to_bits(), request.source.y.to_bits()]
-        );
-        request_field!(
-            "goal.bits",
-            [expected.goal.x.bits, expected.goal.y.bits],
-            [request.goal.x.to_bits(), request.goal.y.to_bits()]
-        );
-        request_field!(
-            "half_diagonal_index",
-            expected.half_diagonal_index,
-            request.half_diagonal_index
-        );
-        request_field!(
-            "half_diagonal.bits",
-            [expected.half_diagonal.x.bits, expected.half_diagonal.y.bits],
-            [
-                request.half_diagonal.x.to_bits(),
-                request.half_diagonal.y.to_bits()
-            ]
-        );
-        request_field!("animation", expected.animation, request.animation);
-        request_field!("reverse", expected.reverse, request.reverse);
-        request_field!("speed", expected.speed, request.speed);
-        request_field!(
-            "tolerance.bits",
-            expected.tolerance.bits,
-            request.tolerance.to_bits()
-        );
-        request_field!(
-            "use_first_point",
-            expected.use_first_point,
-            request.use_first_point
-        );
-        request_field!("sector", expected.sector, actual.sector);
-        request_field!("time", expected.time, actual.time);
-    }
-}
-
 /// Whether Original exposes indeterminate `RHPositionInterface` old-position
 /// storage for a bonus constructed during this replay.
 ///
@@ -10858,30 +9605,11 @@ fn original_runtime_bonus_has_undefined_old_position(
 fn compare_frame(
     engine: &Engine,
     assets: &LevelAssets,
-    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
     frame: &TraceFrame,
     actual_game_code: i32,
     entity_map: &EntityMap,
-    late_movement_retranslations: &[EntityId],
 ) -> Vec<String> {
     let mut differences = Vec::new();
-
-    if let Some(expected_campaign) = &frame.campaign {
-        let restored = restore_campaign(expected_campaign, &assets.profile_manager);
-        let expected = campaign_comparison_value(&restored, menu_text);
-        let actual = campaign_comparison_value(engine.parity_campaign(), menu_text);
-        collect_json_differences("frame.campaign", &expected, &actual, &mut differences);
-    }
-    if let Some(expected) = &frame.engine_state {
-        compare_engine_state(
-            &mut differences,
-            expected,
-            engine,
-            assets,
-            menu_text,
-            entity_map,
-        );
-    }
 
     if frame.game_code != actual_game_code {
         differences.push(format!(
@@ -11060,15 +9788,13 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
-        if let Some(expected_increment_map_valid) = expected.increment_map_valid {
-            compare(
-                &mut differences,
-                id,
-                "increment_map_valid",
-                expected_increment_map_valid,
-                pi.is_increment_map_computed(),
-            );
-        }
+        compare(
+            &mut differences,
+            id,
+            "increment_map_valid",
+            expected.increment_map_valid,
+            pi.is_increment_map_computed(),
+        );
         if !undefined_runtime_bonus_old_position {
             let movement_map = element.position_map() - pi.old_map_position();
             compare_point(
@@ -11149,27 +9875,22 @@ fn compare_frame(
             expected.sprite_frame,
             element.sprite.current_frame,
         );
-        if let Some(expected_frame_count) = expected.sprite_frame_count {
-            compare(
-                &mut differences,
-                id,
-                "sprite_frame_count",
-                expected_frame_count,
-                element.sprite.frame_count,
-            );
-        }
-        if let Some(expected_runtime) = &expected.runtime {
-            let mut expected_runtime = expected_runtime.to_json();
-            canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
-            let mut actual_runtime = engine.parity_entity_runtime_state(id, assets);
-            retain_recorded_entity_runtime_coverage(&expected_runtime, &mut actual_runtime);
-            collect_json_differences(
-                &format!("{id_label:?}.runtime"),
-                &expected_runtime,
-                &actual_runtime,
-                &mut differences,
-            );
-        }
+        compare(
+            &mut differences,
+            id,
+            "sprite_frame_count",
+            expected.sprite_frame_count,
+            element.sprite.frame_count,
+        );
+        let mut expected_runtime = expected.runtime.to_json();
+        canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
+        let actual_runtime = engine.parity_entity_runtime_state(id, assets);
+        collect_json_differences(
+            &format!("{id_label:?}.runtime"),
+            &expected_runtime,
+            &actual_runtime,
+            &mut differences,
+        );
         if let Some(expected_actor) = &expected.actor {
             let actual_actor = actual
                 .actor_data()
@@ -11194,46 +9915,23 @@ fn compare_frame(
                 expected_actor.wait_time,
                 engine.actor_legacy_wait_time(id),
             );
-            // Legacy schema-12 recordings made before Original commit
-            // 7243bed9 captured a dangling `RHElementActor::mpOrder` here.
-            // `InvalidateMovements` runs after the actor's owner slot, deletes
-            // its live orders, and translates replacements. The old pointer's
-            // apparent animation then depended on RHOrder allocator reuse and
-            // is not logical game state. The replay has no sequence snapshot
-            // from which to reconstruct the corrected first order, but Rust's
-            // retranslation is independently compared through movement,
-            // motion-line, and subsequent-frame actor state. Omit only this
-            // explicitly captured post-slot physical representation.
-            if !late_movement_retranslations.contains(&id) {
-                compare(
-                    &mut differences,
-                    id,
-                    "actor.animation",
-                    expected_actor.animation,
-                    engine
-                        .actor_order_type(id)
-                        .unwrap_or(robin_engine::order::OrderType::NonanimationEnd)
-                        as u32,
-                );
-            }
-            // `RHElementActorPC::Perform(RHANIMATION_STRANGLING)` leaves its
-            // local `motionState` uninitialized while either participant is
-            // still turning, and `RHElementActor::Hourglass` copies that raw
-            // return into `mmotionState`.  Old schema-12 captures therefore
-            // occasionally contain stack bytes here.  Preserve comparison
-            // for every value in Original's declared `RHmotionState` enum,
-            // including its `RHMOTION_ERROR` member that Rust deliberately
-            // cannot produce, but do not turn undefined C++ telemetry into a
-            // fabricated Rust gameplay state.
-            if original_motion_state_is_defined(expected_actor.motion_state) {
-                compare(
-                    &mut differences,
-                    id,
-                    "actor.motion_state",
-                    expected_actor.motion_state,
-                    actual_actor.continuation.motion_state as u32,
-                );
-            }
+            compare(
+                &mut differences,
+                id,
+                "actor.animation",
+                expected_actor.animation,
+                engine
+                    .actor_order_type(id)
+                    .unwrap_or(robin_engine::order::OrderType::NonanimationEnd)
+                    as u32,
+            );
+            compare(
+                &mut differences,
+                id,
+                "actor.motion_state",
+                expected_actor.motion_state,
+                actual_actor.continuation.motion_state as u32,
+            );
             compare(
                 &mut differences,
                 id,
@@ -11241,27 +9939,26 @@ fn compare_frame(
                 command_from_stable_name(&expected_actor.command_name),
                 engine.actor_command(id),
             );
-            if let Some(expected_direct) = expected_actor.passing_door_directly {
-                compare(
-                    &mut differences,
-                    id,
-                    "actor.passing_door_directly",
-                    expected_direct,
-                    actual_actor.passing_door_directly,
-                );
+            compare(
+                &mut differences,
+                id,
+                "actor.passing_door_directly",
+                expected_actor.passing_door_directly,
+                actual_actor.passing_door_directly,
+            );
+            let expected_pass_key = expected_actor
+                .active_pass_door
+                .as_ref()
+                .map(trace_pass_door_key);
+            let actual_pass = engine
+                .actor_selected_pass_door(id)
+                .map(|(gate_id, direction)| (u32::from(gate_id.0), direction != 0));
+            if !active_pass_door_keys_match(expected_actor.active_pass_door.as_ref(), actual_pass) {
+                differences.push(format!(
+                    "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
+                ));
             }
-            if let Some(expected_pass) = &expected_actor.active_pass_door {
-                let expected_pass_key = expected_pass.as_ref().map(trace_pass_door_key);
-                let actual_pass = engine
-                    .actor_selected_pass_door(id)
-                    .map(|(gate_id, direction)| (u32::from(gate_id.0), direction != 0));
-                if !active_pass_door_keys_match(expected_pass.as_ref(), actual_pass) {
-                    differences.push(format!(
-                        "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
-                    ));
-                }
-            }
-            if let Some(Some(expected_sequence)) = &expected_actor.sequence_element {
+            if let Some(expected_sequence) = &expected_actor.sequence_element {
                 compare(
                     &mut differences,
                     id,
@@ -11331,55 +10028,54 @@ fn compare_frame(
                 expected_human.civilian,
                 actual.is_civilian(),
             );
-            if let Some(expected) = &expected_human.opponents {
-                let expected: Vec<EntityId> = expected
-                    .iter()
-                    .copied()
-                    .map(|opponent| entity_map.translate(opponent))
-                    .collect();
-                let actual = actual
-                    .human_data()
-                    .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
-                    .opponents
-                    .ids();
-                compare(&mut differences, id, "human.opponents", expected, actual);
-            }
-            if let Some(expected) = &expected_human.opponent_jump_lines {
-                let expected: Vec<Option<[u32; 4]>> = expected
-                    .iter()
-                    .map(|line| line.as_ref().map(trace_jump_line_bits))
-                    .collect();
-                let human = actual.human_data().unwrap_or_else(|| {
-                    panic!("trace reports human opponent jump lines for non-human {id:?}")
-                });
-                let actual: Vec<Option<[u32; 4]>> = human
-                    .opponents
-                    .iter_with_jump_lines()
-                    .map(|(_, line_index)| line_index)
-                    .map(|line_index| {
-                        line_index.map(|line_index| {
-                            let line = engine
-                                .fast_grid()
-                                .level
-                                .jump_lines
-                                .get(usize::from(line_index))
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "human {id:?} opponent jump-line index {line_index} is out of range"
-                                    )
-                                });
-                            runtime_jump_line_bits(line)
-                        })
+            let expected_opponents: Vec<EntityId> = expected_human
+                .opponents
+                .iter()
+                .copied()
+                .map(|opponent| entity_map.translate(opponent))
+                .collect();
+            let actual_human = actual
+                .human_data()
+                .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"));
+            compare(
+                &mut differences,
+                id,
+                "human.opponents",
+                expected_opponents,
+                actual_human.opponents.ids(),
+            );
+            let expected_jump_lines: Vec<Option<[u32; 4]>> = expected_human
+                .opponent_jump_lines
+                .iter()
+                .map(|line| line.as_ref().map(trace_jump_line_bits))
+                .collect();
+            let actual_jump_lines: Vec<Option<[u32; 4]>> = actual_human
+                .opponents
+                .iter_with_jump_lines()
+                .map(|(_, line_index)| line_index)
+                .map(|line_index| {
+                    line_index.map(|line_index| {
+                        let line = engine
+                            .fast_grid()
+                            .level
+                            .jump_lines
+                            .get(usize::from(line_index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "human {id:?} opponent jump-line index {line_index} is out of range"
+                                )
+                            });
+                        runtime_jump_line_bits(line)
                     })
-                    .collect();
-                compare(
-                    &mut differences,
-                    id,
-                    "human.opponent_jump_lines",
-                    expected,
-                    actual,
-                );
-            }
+                })
+                .collect();
+            compare(
+                &mut differences,
+                id,
+                "human.opponent_jump_lines",
+                expected_jump_lines,
+                actual_jump_lines,
+            );
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -11423,69 +10119,55 @@ fn compare_frame(
                 expected_ai.substate,
                 actual_ai.current_substate as u32,
             );
-            if let Some(expected) = expected_ai.script_locked {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.script_locked",
-                    expected,
-                    actual_ai.ai_is_script_locked(),
-                );
-            }
-            if let Some(expected) = expected_ai.locked {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.locked",
-                    expected,
-                    actual_ai.ai_is_locked(),
-                );
-            }
-            if let Some(expected) = expected_ai.locks {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.locks",
-                    expected,
-                    actual_ai.locks_flag_field.bits(),
-                );
-            }
-            if let Some(expected) = expected_ai.was_busy {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.was_busy",
-                    expected,
-                    actual_ai.was_busy,
-                );
-            }
-            if let Some(expected) = expected_ai.very_busy {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.very_busy",
-                    expected,
-                    engine.is_very_very_busy(id),
-                );
-            }
-            if let Some(expected) = expected_ai.macro_timer_running {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_timer_running",
-                    expected,
-                    actual_ai.macro_timer_is_running,
-                );
-            }
-            if let Some(expected) = expected_ai.macro_timer_ring {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_timer_ring",
-                    expected,
-                    actual_ai.when_does_macro_timer_ring,
-                );
-            }
+            compare(
+                &mut differences,
+                id,
+                "ai.script_locked",
+                expected_ai.script_locked,
+                actual_ai.ai_is_script_locked(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.locked",
+                expected_ai.locked,
+                actual_ai.ai_is_locked(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.locks",
+                expected_ai.locks,
+                actual_ai.locks_flag_field.bits(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.was_busy",
+                expected_ai.was_busy,
+                actual_ai.was_busy,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.very_busy",
+                expected_ai.very_busy,
+                engine.is_very_very_busy(id),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_timer_running",
+                expected_ai.macro_timer_running,
+                actual_ai.macro_timer_is_running,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_timer_ring",
+                expected_ai.macro_timer_ring,
+                actual_ai.when_does_macro_timer_ring,
+            );
             // The cursor is only a position while it still lies inside the
             // waypoint block it was authored against. Advancing the patrol path
             // or breaking a macro leaves the cursor behind on the previous
@@ -11513,92 +10195,94 @@ fn compare_frame(
                         )
                     })
                 });
-            if let Some(expected) = expected_ai.macro_cursor {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_cursor",
-                    expected,
-                    actual_macro_cursor,
-                );
-            }
-            if let Some(expected) = expected_ai.macro_remaining {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_remaining",
-                    expected,
-                    actual_ai.number_of_remaining_macro_bytes,
-                );
-            }
-            if let Some(expected) = expected_ai.macro_in_progress {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_in_progress",
-                    expected,
-                    actual_ai.macro_in_progress,
-                );
-            }
-            if let Some(expected) = &expected_ai.list_us {
-                let expected: Vec<EntityId> = expected
-                    .iter()
-                    .copied()
-                    .map(|human| entity_map.translate(human))
-                    .collect();
-                let actual: Vec<EntityId> = actual_ai
-                    .list_us
-                    .iter()
-                    .map(|&handle| {
-                        engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                            panic!("AI list_us handle {handle} refers to a vacant entity slot")
-                        })
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_cursor",
+                expected_ai.macro_cursor,
+                actual_macro_cursor,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_remaining",
+                expected_ai.macro_remaining,
+                actual_ai.number_of_remaining_macro_bytes,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_in_progress",
+                expected_ai.macro_in_progress,
+                actual_ai.macro_in_progress,
+            );
+            let expected_us: Vec<EntityId> = expected_ai
+                .list_us
+                .iter()
+                .copied()
+                .map(|human| entity_map.translate(human))
+                .collect();
+            let actual_us: Vec<EntityId> = actual_ai
+                .list_us
+                .iter()
+                .map(|&handle| {
+                    engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                        panic!("AI list_us handle {handle} refers to a vacant entity slot")
                     })
-                    .collect();
-                compare(&mut differences, id, "ai.list_us", expected, actual);
-            }
-            if let Some(expected) = &expected_ai.list_them {
-                let expected: Vec<EntityId> = expected
-                    .iter()
-                    .copied()
-                    .map(|human| entity_map.translate(human))
-                    .collect();
-                let actual: Vec<EntityId> = actual
-                    .enemy_ai()
-                    .map(|enemy| {
-                        enemy
-                            .list_them
-                            .iter()
-                            .map(|&handle| {
-                                engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                                    panic!(
-                                        "AI list_them handle {handle} refers to a vacant entity slot"
-                                    )
-                                })
+                })
+                .collect();
+            compare(&mut differences, id, "ai.list_us", expected_us, actual_us);
+            let expected_them: Vec<EntityId> = expected_ai
+                .list_them
+                .iter()
+                .copied()
+                .map(|human| entity_map.translate(human))
+                .collect();
+            let actual_them: Vec<EntityId> = actual
+                .enemy_ai()
+                .map(|enemy| {
+                    enemy
+                        .list_them
+                        .iter()
+                        .map(|&handle| {
+                            engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                                panic!(
+                                    "AI list_them handle {handle} refers to a vacant entity slot"
+                                )
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                compare(&mut differences, id, "ai.list_them", expected, actual);
-            }
-            if let Some(expected) = &expected_ai.my_line_jump {
-                let expected = expected.as_ref().map(trace_jump_line_bits);
-                let enemy = actual.enemy_ai().unwrap_or_else(|| {
-                    panic!("trace reports my_line_jump for non-enemy entity {id:?}")
-                });
-                let actual = enemy.my_line_jump.map(|line_index| {
-                    let line = engine
-                        .fast_grid()
-                        .level
-                        .jump_lines
-                        .get(line_index as usize)
-                        .unwrap_or_else(|| {
-                            panic!("enemy {id:?} my_line_jump index {line_index} is out of range")
-                        });
-                    runtime_jump_line_bits(line)
-                });
-                compare(&mut differences, id, "ai.my_line_jump", expected, actual);
-            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            compare(
+                &mut differences,
+                id,
+                "ai.list_them",
+                expected_them,
+                actual_them,
+            );
+            let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
+            let enemy = actual.enemy_ai().unwrap_or_else(|| {
+                panic!("trace reports my_line_jump for non-enemy entity {id:?}")
+            });
+            let actual_line = enemy.my_line_jump.map(|line_index| {
+                let line = engine
+                    .fast_grid()
+                    .level
+                    .jump_lines
+                    .get(line_index as usize)
+                    .unwrap_or_else(|| {
+                        panic!("enemy {id:?} my_line_jump index {line_index} is out of range")
+                    });
+                runtime_jump_line_bits(line)
+            });
+            compare(
+                &mut differences,
+                id,
+                "ai.my_line_jump",
+                expected_line,
+                actual_line,
+            );
         }
         if let Some(expected_detection) = &expected.detection {
             let npc = actual
@@ -11813,12 +10497,6 @@ fn compare_indexed<T: std::fmt::Debug + PartialEq>(
     }
 }
 
-fn original_motion_state_is_defined(raw: u32) -> bool {
-    // Original `RHSprite.h`: DONE, START, IN_PROGRESS, TERMINATED,
-    // ABORTED, ERROR.
-    raw <= 5
-}
-
 fn trace_kind_for_entity(entity: &Entity) -> TraceEntityKind {
     match entity {
         Entity::Pc(_) => TraceEntityKind::Pc,
@@ -12025,15 +10703,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn original_motion_state_comparison_rejects_only_undefined_stack_values() {
-        for raw in 0..=5 {
-            assert!(original_motion_state_is_defined(raw));
-        }
-        assert!(!original_motion_state_is_defined(6));
-        assert!(!original_motion_state_is_defined(4_160_286_488));
-    }
-
-    #[test]
     fn native_suffix_appends_to_the_recording_identity() {
         // The `.jsonl.zst` path is the stable trace identity; the native
         // artifact must derive from it by appending, never by renaming.
@@ -12053,7 +10722,7 @@ mod tests {
     }
 
     #[test]
-    fn schema16_npc_boundary_transients_are_typed_and_bounded() {
+    fn current_schema_npc_boundary_transients_are_typed_and_bounded() {
         let parsed: Vec<TraceInitialNpcTransient> = serde_json::from_value(serde_json::json!([
             {"creation_order": 96, "maximal_visibility": 31},
             {"creation_order": 117, "maximal_visibility": 47}
@@ -12080,38 +10749,15 @@ mod tests {
             .is_err(),
             "Original muwMaximalVisibility is a UWORD and must not be widened silently"
         );
-    }
 
-    #[test]
-    fn legacy_segment_visibility_fallback_matches_original_uword_conversion() {
-        assert_eq!(
-            reconstruct_unrecorded_maximal_visibility(false, [0.0, 1.599_999_9, 0.25]),
-            31
-        );
-        assert_eq!(
-            reconstruct_unrecorded_maximal_visibility(false, [2.399_999_9]),
-            47
-        );
-        assert_eq!(
-            reconstruct_unrecorded_maximal_visibility(true, [1.599_999_9]),
-            319
-        );
-        assert_eq!(
-            reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
-            0
-        );
-    }
-
-    #[test]
-    fn legacy_visibility_fallback_only_applies_to_in_process_reload_envelopes() {
-        assert!(
-            legacy_loaded_save_retains_process_transients(0),
-            "in-game loaded-save sessions 5-8 have an empty post-load RNG prefix"
-        );
-        assert!(
-            !legacy_loaded_save_retains_process_transients(76),
-            "fresh-engine session 9 records mission-construction draws and must retain constructor zero"
-        );
+        let mut header = serde_json::to_value(minimal_test_native_header("test").trace).unwrap();
+        header
+            .as_object_mut()
+            .unwrap()
+            .remove("initial_npc_transients");
+        let error = serde_json::from_value::<TraceHeader>(header)
+            .expect_err("current headers must include the NPC transient boundary");
+        assert!(error.to_string().contains("initial_npc_transients"));
     }
 
     fn write_test_native_records(
@@ -12135,7 +10781,7 @@ mod tests {
                 mission: "test".to_owned(),
                 proto_level: "test".to_owned(),
                 rng_seed: 1,
-                schema: 16,
+                schema: TRACE_SCHEMA_VERSION,
                 session_index: 1,
                 start_state: TraceStartState::MissionStart,
                 initial_frame: 0,
@@ -12143,7 +10789,6 @@ mod tests {
                 synchronous_pathfinding: true,
                 rng_stream: "libc_rand_raw_global_draw_order".to_owned(),
                 visibility_queries: "opaque_is_reachable".to_owned(),
-                authoritative_state: None,
                 random_input_seed: None,
                 sim_config: TraceSimConfig {
                     difficulty: TraceDifficulty::Medium,
@@ -12179,7 +10824,7 @@ mod tests {
                     production_sectors: Vec::new(),
                 },
                 motion_grid: TraceMotionGrid { layers: Vec::new() },
-                initial_npc_transients: None,
+                initial_npc_transients: Vec::new(),
                 initial_save: None,
             },
             rng_prefix: TraceRngPrefix {
@@ -12272,7 +10917,7 @@ mod tests {
 
     #[test]
     fn native_level_nine_policy_round_trips_records_and_footer() {
-        assert_eq!(TRACE_NATIVE_VERSION, 66);
+        assert_eq!(TRACE_NATIVE_VERSION, 67);
         assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 9);
         assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
         assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
@@ -12299,13 +10944,13 @@ mod tests {
         assert_eq!(
             native_reblock_source_path(native),
             PathBuf::from(
-                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-source-v66"
+                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-source-v67"
             )
         );
         assert_eq!(
             native_reblock_binding_path(native),
             PathBuf::from(
-                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-binding-v66.json"
+                "dir/replay-001-session-0001.jsonl.zst.parity.bitcode.zst.parity-reblock-binding-v67.json"
             )
         );
     }
@@ -12514,7 +11159,7 @@ mod tests {
             "{}live",
             native_reblock_temporary_prefix(&other_native, false)
         ));
-        let unrelated = directory.path().join(".parity-reblock-v66-unrelated");
+        let unrelated = directory.path().join(".parity-reblock-v67-unrelated");
         std::fs::write(&output_orphan, b"partial output").unwrap();
         std::fs::write(&binding_orphan, b"partial binding").unwrap();
         std::fs::write(&other_orphan, b"another trace").unwrap();
@@ -12572,9 +11217,9 @@ mod tests {
     }
 
     #[test]
-    fn native_reader_keeps_level_nineteen_ldm_version_sixty_six_compatible() {
+    fn native_reader_accepts_current_version_with_level_nineteen_ldm() {
         let footer = BinaryTraceFooter {
-            version: 66,
+            version: TRACE_NATIVE_VERSION,
             frame_count: 0,
             final_frame: 10,
         };
@@ -12792,121 +11437,6 @@ mod tests {
     }
 
     #[test]
-    fn schema16_retained_terminal_success_selects_legacy_quit_repair() {
-        assert!(is_legacy_retained_terminal_success(
-            16,
-            9_602,
-            9_602,
-            false,
-            GameCode::LevelSucceeded as i32,
-        ));
-    }
-
-    #[test]
-    fn legacy_quit_repair_rejects_advancing_body_and_other_schema_or_code() {
-        assert!(!is_legacy_retained_terminal_success(
-            16,
-            9_601,
-            9_602,
-            false,
-            GameCode::LevelSucceeded as i32,
-        ));
-        for game_code in [
-            GameCode::LevelInProgress,
-            GameCode::LevelFailed,
-            GameCode::LevelInterrupted,
-        ] {
-            assert!(!is_legacy_retained_terminal_success(
-                16,
-                9_602,
-                9_602,
-                false,
-                game_code as i32,
-            ));
-        }
-        assert!(!is_legacy_retained_terminal_success(
-            16,
-            9_602,
-            9_602,
-            true,
-            GameCode::LevelSucceeded as i32,
-        ));
-        for schema in [15, 17] {
-            assert!(!is_legacy_retained_terminal_success(
-                schema,
-                9_602,
-                9_602,
-                false,
-                GameCode::LevelSucceeded as i32,
-            ));
-        }
-    }
-
-    #[test]
-    fn legacy_retained_success_applies_full_quit_rollup_exactly_once() {
-        use robin_engine::campaign::{Campaign, CampaignValue};
-        use robin_engine::mission::MissionStatus;
-        use robin_engine::player_profile::DifficultyLevel;
-
-        let mut campaign = Campaign::default();
-        campaign.values[CampaignValue::Score] = 7;
-        let mut assets = LevelAssets::default();
-        let mut engine = Engine::new_for_test_with_simulation(
-            800.0,
-            600.0,
-            campaign,
-            &mut assets,
-            0,
-            robin_engine::engine::SimConfig {
-                script_enabled: false,
-                ..robin_engine::engine::SimConfig::default()
-            },
-        )
-        .expect("test engine");
-        engine.test_set_mission_flags(false, false, true);
-        let mut repaired = false;
-        let mut repair_commands = Vec::new();
-
-        assert!(append_legacy_retained_terminal_success_repair(
-            &mut repair_commands,
-            DifficultyLevel::Medium,
-            16,
-            9_602,
-            9_602,
-            false,
-            GameCode::LevelSucceeded as i32,
-            &mut repaired,
-        ));
-        assert!(!append_legacy_retained_terminal_success_repair(
-            &mut repair_commands,
-            DifficultyLevel::Medium,
-            16,
-            9_602,
-            9_602,
-            false,
-            GameCode::LevelSucceeded as i32,
-            &mut repaired,
-        ));
-
-        let output = engine
-            .advance_frame(
-                &assets,
-                robin_engine::engine::SimulationFrameInput::new(
-                    repair_commands
-                        .into_iter()
-                        .map(robin_engine::engine::SimCommand::from)
-                        .collect(),
-                )
-                .with_simulation_body_allowed(false),
-            )
-            .expect("repair frame");
-        assert_eq!(output.game_code(), GameCode::LevelSucceeded);
-        let campaign = engine.into_campaign();
-        assert_eq!(campaign.missions[0].status, MissionStatus::Won);
-        assert_eq!(campaign.values[CampaignValue::Score], 1_007);
-    }
-
-    #[test]
     fn fixed_native_footer_rejects_early_end_and_trailing_records() {
         let footer = BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
@@ -13005,10 +11535,10 @@ mod tests {
     }
 
     #[test]
-    fn movement_and_flight_steps_default_old_frames_and_preserve_exact_operands() {
-        let old: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
-        assert!(old.movement_steps.is_empty());
-        assert!(old.flight_steps.is_empty());
+    fn movement_and_flight_steps_preserve_exact_operands() {
+        let empty: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
+        assert!(empty.movement_steps.is_empty());
+        assert!(empty.flight_steps.is_empty());
 
         let mut instrumented = minimal_frame_json();
         instrumented["movement_steps"] = serde_json::json!([{
@@ -13118,26 +11648,19 @@ mod tests {
     }
 
     #[test]
-    fn trace_sword_seek_distance_defaults_old_records_and_discards_direct_zero() {
-        let old: TraceCommand = serde_json::from_value(serde_json::json!({
+    fn current_sword_seek_distance_is_required_and_direct_distance_is_ignored() {
+        let missing = serde_json::json!({
             "type": "sword_strike",
             "actor": { "kind": "pc", "index": 3 },
             "target": { "kind": "soldier", "index": 7 },
             "original_command": 78,
             "original_command_name": "swordstrike_thrust_a",
             "with_seek": true
-        }))
-        .expect("old sword trace without seek distance");
-        let TraceCommand::SwordStrike { seek_distance, .. } = old else {
-            panic!("decoded wrong trace command")
-        };
-        assert_eq!(seek_distance, None);
+        });
+        assert!(serde_json::from_value::<TraceCommand>(missing).is_err());
 
-        assert_eq!(normalized_trace_sword_seek_distance(false, Some(0.0)), None);
-        assert_eq!(
-            normalized_trace_sword_seek_distance(true, Some(63.0)),
-            Some(63.0)
-        );
+        assert_eq!(trace_sword_seek_distance(false, 0.0), None);
+        assert_eq!(trace_sword_seek_distance(true, 63.0), Some(63.0));
     }
 
     #[test]
@@ -13286,24 +11809,19 @@ mod tests {
     }
 
     #[test]
-    fn resolved_exclamation_schema_twelve_is_accepted() {
-        validate_trace_schema(12);
+    fn only_current_trace_schema_is_accepted() {
+        validate_trace_schema(TRACE_SCHEMA_VERSION);
+        for schema in 12..TRACE_SCHEMA_VERSION {
+            assert!(
+                !trace_schema_is_current(schema),
+                "obsolete trace schema {schema} was accepted"
+            );
+        }
+        assert!(!trace_schema_is_current(TRACE_SCHEMA_VERSION + 1));
     }
 
     #[test]
-    fn authoritative_state_schema_thirteen_is_accepted() {
-        validate_trace_schema(13);
-    }
-
-    #[test]
-    fn refused_action_schema_fourteen_is_accepted() {
-        validate_trace_schema(14);
-    }
-
-    #[test]
-    fn door_and_route_diagnostics_schema_fifteen_are_accepted() {
-        validate_trace_schema(15);
-
+    fn current_door_and_route_diagnostics_are_typed() {
         let actor: TraceActor = serde_json::from_value(serde_json::json!({
             "action_state": 1,
             "animation": 12,
@@ -13327,24 +11845,24 @@ mod tests {
                 "movement": {
                     "action": 12,
                     "pass_door": { "gate_id": 51, "direct": true, "direction": 1 }
-                }
-            }
+                },
+                "following": null,
+                "postponed": null,
+                "current_order": null,
+                "movement_payload": null
+            },
+            "position_interface": {}
         }))
-        .expect("parse schema-15 actor diagnostics");
-        assert_eq!(actor.passing_door_directly, Some(true));
+        .expect("parse current-schema actor diagnostics");
+        assert!(actor.passing_door_directly);
         assert_eq!(
             actor
                 .active_pass_door
                 .as_ref()
-                .and_then(Option::as_ref)
                 .map(|pass| (pass.gate_id, pass.direction)),
             Some((51, 1))
         );
-        let pass = actor
-            .active_pass_door
-            .as_ref()
-            .and_then(Option::as_ref)
-            .unwrap();
+        let pass = actor.active_pass_door.as_ref().unwrap();
         assert!(active_pass_door_keys_match(Some(pass), Some((51, true))));
         assert!(!active_pass_door_keys_match(Some(pass), Some((51, false))));
         assert!(!active_pass_door_keys_match(Some(pass), None));
@@ -13352,7 +11870,6 @@ mod tests {
             actor
                 .sequence_element
                 .as_ref()
-                .and_then(Option::as_ref)
                 .map(|element| (element.id, element.order_count)),
             Some((160, 3))
         );
@@ -13377,16 +11894,16 @@ mod tests {
             }]
         }]);
         let frame: TraceFrame = serde_json::from_value(frame_json)
-            .expect("parse schema-15 route-construction diagnostics");
-        validate_trace_frame_envelope(15, &frame);
-        let route = &frame.route_construction_events.as_ref().unwrap()[0];
+            .expect("parse current-schema route-construction diagnostics");
+        validate_trace_frame(&frame);
+        let route = &frame.route_construction_events[0];
         assert_eq!(route.actor.index, 43);
         assert_eq!(route.gates[0].gate_id, 51);
         assert!(!route.gates[0].direct);
     }
 
     #[test]
-    fn schema_sixteen_jump_lines_are_typed_parallel_and_cache_safe() {
+    fn current_schema_jump_lines_are_typed_parallel_and_cache_safe() {
         let human: TraceHuman = serde_json::from_value(serde_json::json!({
             "life_points": 40,
             "dead": false,
@@ -13411,16 +11928,28 @@ mod tests {
         let ai: TraceAi = serde_json::from_value(serde_json::json!({
             "state": 1,
             "substate": 2,
+            "script_locked": false,
+            "locked": false,
+            "locks": 0,
+            "was_busy": false,
+            "very_busy": false,
+            "macro_timer_running": false,
+            "macro_timer_ring": 0,
+            "macro_cursor": null,
+            "macro_remaining": 0,
+            "macro_in_progress": false,
+            "list_us": [],
+            "list_them": [],
             "my_line_jump": null
         }))
         .expect("parse authoritative null soldier jump line");
-        assert!(matches!(ai.my_line_jump, Some(None)));
+        assert!(ai.my_line_jump.is_none());
 
         let encoded = bitcode::encode(&(human, ai));
         let (cached_human, cached_ai): (TraceHuman, TraceAi) =
             bitcode::decode(&encoded).expect("restore typed jump-line snapshots");
-        assert_eq!(cached_human.opponent_jump_lines.as_ref().unwrap().len(), 1);
-        assert!(matches!(cached_ai.my_line_jump, Some(None)));
+        assert_eq!(cached_human.opponent_jump_lines.len(), 1);
+        assert!(cached_ai.my_line_jump.is_none());
 
         let malformed_line = serde_json::json!({
             "a": {"x": {"bits": 0}, "y": {"bits": 0}},
@@ -13432,7 +11961,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "opponent and jump-line arrays differ in length")]
-    fn schema_sixteen_rejects_misaligned_opponent_jump_lines() {
+    fn current_schema_rejects_misaligned_opponent_jump_lines() {
         let human: TraceHuman = serde_json::from_value(serde_json::json!({
             "life_points": 40,
             "dead": false,
@@ -13453,7 +11982,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_event_window_resets_only_after_record_frame() {
+    fn current_schema_event_window_resets_only_after_record_frame() {
         let mut pending = Vec::<(u64, &'static str)>::new();
         let mut next_ordinal = 0_u64;
         fn emit(
@@ -13499,7 +12028,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_target_unreached_observations_are_explicitly_nullable() {
+    fn current_schema_target_unreached_observations_are_explicitly_nullable() {
         let event: TraceTargetLifecycleEvent = serde_json::from_value(serde_json::json!({
             "ordinal": 0,
             "frame_ordinal": 0,
@@ -13544,7 +12073,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_movement_action_is_only_present_when_initialized() {
+    fn current_schema_movement_action_is_only_present_when_initialized() {
         let sequence = |command: u16,
                         command_name: &str,
                         movement: serde_json::Value,
@@ -13639,8 +12168,8 @@ mod tests {
     }
 
     #[test]
-    fn extensible_diagnostics_schema_sixteen_are_cached_and_required() {
-        validate_trace_schema(16);
+    fn current_diagnostics_are_cached_and_required() {
+        validate_trace_schema(TRACE_SCHEMA_VERSION);
 
         let actor: TraceActor = serde_json::from_value(serde_json::json!({
             "action_state": 1,
@@ -13683,9 +12212,8 @@ mod tests {
                 "movement_payload": {"flags": 3, "speed_factor": {"bits": 1065353216, "value": 1.0}}
             }
         }))
-        .expect("parse schema-16 actor and sequence diagnostics");
-        assert!(actor.position_interface.is_some());
-        let sequence = actor.sequence_element.as_ref().unwrap().as_ref().unwrap();
+        .expect("parse current actor and sequence diagnostics");
+        let sequence = actor.sequence_element.as_ref().unwrap();
         assert!(sequence.current_order.is_some());
         assert!(sequence.movement_payload.is_some());
 
@@ -13751,7 +12279,7 @@ mod tests {
             "eligibility": {
                 "rank": true,
                 "able_to_help": true,
-                "stay_on_post": true,
+                "allowed_to_leave_post": true,
                 "can_call": false,
                 "max_radius": null,
                 "squared_radius": null,
@@ -14047,27 +12575,22 @@ mod tests {
             }
         ]);
 
-        let frame: TraceFrame = serde_json::from_value(frame_json)
-            .expect("parse extensible schema-16 diagnostic streams");
-        validate_trace_frame_envelope(16, &frame);
-        assert_eq!(frame.popup_events.as_ref().unwrap().len(), 1);
-        assert_eq!(frame.popup_events.as_ref().unwrap()[0].ordinal, Some(0));
+        let frame: TraceFrame =
+            serde_json::from_value(frame_json).expect("parse current-schema diagnostic streams");
+        validate_trace_frame(&frame);
+        assert_eq!(frame.popup_events.len(), 1);
+        assert_eq!(frame.popup_events[0].ordinal, Some(0));
         assert_eq!(
-            frame.ai_forecast_events.as_ref().unwrap()[0]
-                .phase
-                .as_deref(),
+            frame.ai_forecast_events[0].phase.as_deref(),
             Some("resolved")
         );
-        assert_eq!(
-            frame.alert_formation_events.as_ref().unwrap()[0].ordinal,
-            Some(0)
-        );
-        let authorizations = frame.goto_authorization_events.as_ref().unwrap();
+        assert_eq!(frame.alert_formation_events[0].ordinal, Some(0));
+        let authorizations = &frame.goto_authorization_events;
         assert_eq!(authorizations[0].source.as_ref().unwrap().layer, 2);
         assert!(authorizations[0].move_box.is_some());
         assert!(authorizations[1].source.is_none());
         assert!(authorizations[1].move_box.is_none());
-        let target = &frame.target_lifecycle_events.as_ref().unwrap()[0];
+        let target = &frame.target_lifecycle_events[0];
         assert_eq!(target.sequence_id, Some(701));
         assert_eq!(target.frame_ordinal, Some(6));
         assert_eq!(target.command_level, 2);
@@ -14080,7 +12603,7 @@ mod tests {
                 ..
             }
         ));
-        let proposals = frame.strike_proposal_events.as_ref().unwrap();
+        let proposals = &frame.strike_proposal_events;
         assert_eq!(proposals[0].actor_creation_order, 373);
         assert_eq!(proposals[0].also_parade, Some(true));
         assert_eq!(proposals[1].only_parade, Some(true));
@@ -14091,7 +12614,7 @@ mod tests {
         );
         assert_eq!(proposals[2].threat, None);
         assert_eq!(proposals[3].accepted_as_best, Some(true));
-        let lifecycle = frame.sequence_lifecycle_events.as_ref().unwrap();
+        let lifecycle = &frame.sequence_lifecycle_events;
         assert_eq!(
             lifecycle
                 .iter()
@@ -14110,40 +12633,36 @@ mod tests {
         assert_eq!(lifecycle[4].sequence_id, Some(701));
         assert_eq!(lifecycle[4].command_level, 2);
         assert!(
-            frame.route_construction_events.as_ref().unwrap()[0]
+            frame.route_construction_events[0]
                 .draft_diagnostics
                 .contains_key("ordinal")
         );
         assert!(
-            frame.route_construction_events.as_ref().unwrap()[0].gates[0]
+            frame.route_construction_events[0].gates[0]
                 .draft_diagnostics
                 .contains_key("score")
         );
         let encoded = bitcode::encode(&frame);
         let cached: TraceFrame = bitcode::decode(&encoded)
-            .expect("decode schema-16 frame from native cache representation");
-        assert_eq!(cached.alert_formation_events.as_ref().unwrap().len(), 1);
-        assert_eq!(
-            cached.target_lifecycle_events.as_ref().unwrap()[0].sequence_id,
-            Some(701)
-        );
-        let cached_authorizations = cached.goto_authorization_events.as_ref().unwrap();
+            .expect("decode current-schema frame from native cache representation");
+        assert_eq!(cached.alert_formation_events.len(), 1);
+        assert_eq!(cached.target_lifecycle_events[0].sequence_id, Some(701));
+        let cached_authorizations = &cached.goto_authorization_events;
         assert_eq!(cached_authorizations[0].source.as_ref().unwrap().layer, 2);
         assert!(cached_authorizations[0].move_box.is_some());
         assert!(cached_authorizations[1].source.is_none());
         assert!(cached_authorizations[1].move_box.is_none());
-        assert_eq!(cached.strike_proposal_events.as_ref().unwrap().len(), 5);
-        assert_eq!(cached.sequence_lifecycle_events.as_ref().unwrap().len(), 5);
+        assert_eq!(cached.strike_proposal_events.len(), 5);
+        assert_eq!(cached.sequence_lifecycle_events.len(), 5);
         assert!(
-            cached.route_construction_events.as_ref().unwrap()[0]
+            cached.route_construction_events[0]
                 .draft_diagnostics
                 .contains_key("result")
         );
 
-        let mut incomplete_json = minimal_frame_json();
-        incomplete_json["route_construction_events"] = serde_json::json!([]);
-        let incomplete: TraceFrame = serde_json::from_value(incomplete_json).unwrap();
-        assert!(!trace_frame_envelope_matches(16, &incomplete));
+        let mut authoritative_state_json = minimal_frame_json();
+        authoritative_state_json["campaign"] = serde_json::json!({});
+        assert!(serde_json::from_value::<TraceFrame>(authoritative_state_json).is_err());
 
         let target_with_unknown = serde_json::json!({
             "ordinal": 0,
@@ -14169,21 +12688,25 @@ mod tests {
         });
         assert!(serde_json::from_value::<TraceTargetLifecycleEvent>(target_with_unknown).is_err());
 
-        let mut legacy_schema_sixteen = minimal_frame_json();
-        legacy_schema_sixteen["route_construction_events"] = serde_json::json!([]);
-        legacy_schema_sixteen["popup_events"] = serde_json::json!([]);
-        legacy_schema_sixteen["ai_forecast_events"] = serde_json::json!([]);
-        legacy_schema_sixteen["alert_formation_events"] = serde_json::json!([]);
-        legacy_schema_sixteen["goto_authorization_events"] = serde_json::json!([]);
-        let legacy: TraceFrame = serde_json::from_value(legacy_schema_sixteen).unwrap();
-        assert!(trace_frame_envelope_matches(16, &legacy));
-        assert!(legacy.target_lifecycle_events.is_none());
-    }
-
-    #[test]
-    fn schema_fourteen_frames_carry_no_authoritative_state() {
-        let frame: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
-        validate_trace_frame_envelope(14, &frame);
+        for required in [
+            "route_construction_events",
+            "popup_events",
+            "ai_forecast_events",
+            "alert_formation_events",
+            "goto_authorization_events",
+            "strike_proposal_events",
+            "sequence_lifecycle_events",
+            "target_lifecycle_events",
+            "movement_steps",
+            "flight_steps",
+        ] {
+            let mut incomplete = minimal_frame_json();
+            incomplete.as_object_mut().unwrap().remove(required);
+            assert!(
+                serde_json::from_value::<TraceFrame>(incomplete).is_err(),
+                "current schema accepted a frame missing {required}"
+            );
+        }
     }
 
     #[test]
@@ -14229,7 +12752,7 @@ mod tests {
         let save = valid_initial_save();
         let decoded = save
             .decode_and_validate(16_723)
-            .expect("valid schema-12 initial_save");
+            .expect("valid current-schema initial_save");
         assert_eq!(&decoded[..4], b"RHSG");
         assert_eq!(u32::from_le_bytes(decoded[4..8].try_into().unwrap()), 48);
         assert_eq!(
@@ -14240,75 +12763,11 @@ mod tests {
     }
 
     #[test]
-    fn interactive_chain_requires_the_exact_adjacent_session_name() {
-        assert_eq!(
-            preceding_interactive_session_path(Path::new("chain-session-0007.jsonl.zst"), 7),
-            Some(PathBuf::from("chain-session-0006.jsonl.zst"))
-        );
-        assert!(
-            preceding_interactive_session_path(Path::new("chain-session-0001.jsonl.zst"), 1)
-                .is_none()
-        );
-        assert!(preceding_interactive_session_path(Path::new("unrelated.jsonl.zst"), 7).is_none());
-    }
-
-    #[test]
-    fn terminal_macro_identity_requires_active_cursor_and_unique_position() {
-        use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-        let waypoint = |x| RawWaypoint {
-            x,
-            y: 1050,
-            sector: 0,
-            level: 0,
-            command: WaypointCommand::Macro(vec![0; 19]),
-        };
-        let unique = vec![RawHikingPath {
-            waypoints: vec![waypoint(353)],
-        }];
-        assert_eq!(
-            terminal_macro_waypoint_at(
-                (353_f32.to_bits(), 1050_f32.to_bits()),
-                Some(Some(18)),
-                Some(true),
-                &unique,
-            )
-            .map(|(path, waypoint, offset)| (path.get(), waypoint, offset)),
-            Some((0, 0, 18))
-        );
-        assert!(
-            terminal_macro_waypoint_at(
-                (353_f32.to_bits(), 1050_f32.to_bits()),
-                Some(Some(18)),
-                Some(false),
-                &unique,
-            )
-            .is_none()
-        );
-        let ambiguous = vec![
-            RawHikingPath {
-                waypoints: vec![waypoint(353)],
-            },
-            RawHikingPath {
-                waypoints: vec![waypoint(353)],
-            },
-        ];
-        assert!(
-            terminal_macro_waypoint_at(
-                (353_f32.to_bits(), 1050_f32.to_bits()),
-                Some(Some(18)),
-                Some(true),
-                &ambiguous,
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
     fn windows_i386_save_preserves_and_accepts_gshr_magic() {
         let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
         let decoded = save
             .decode_and_validate(16_723)
-            .expect("valid Windows i386 schema-12 initial_save");
+            .expect("valid Windows i386 current-schema initial_save");
         assert_eq!(&decoded[..4], b"GSHR");
     }
 
@@ -14393,12 +12852,6 @@ mod tests {
         assert!(config.synchronous_pathfinding);
     }
 
-    #[test]
-    #[should_panic(expected = "schemas 12 through 16 are supported")]
-    fn schema_eleven_is_rejected() {
-        validate_trace_schema(11);
-    }
-
     fn minimal_frame_json() -> serde_json::Value {
         serde_json::json!({
             "type": "frame",
@@ -14413,7 +12866,17 @@ mod tests {
             "visibility_queries": [],
             "motion_line_changes": [],
             "path_events": [],
+            "route_construction_events": [],
+            "popup_events": [],
+            "ai_forecast_events": [],
+            "alert_formation_events": [],
+            "goto_authorization_events": [],
+            "strike_proposal_events": [],
+            "sequence_lifecycle_events": [],
+            "target_lifecycle_events": [],
             "resolved_exclamations": [],
+            "movement_steps": [],
+            "flight_steps": [],
             "rng_draws": {
                 "first_index": 0,
                 "values": [],
@@ -14478,6 +12941,7 @@ mod tests {
             "elevation": {"bits": 0},
             "old_elevation": {"bits": 0},
             "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "increment_map_valid": true,
             "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
             "layer": 0,
             "layer_goal": 0,
@@ -14488,6 +12952,8 @@ mod tests {
             "moving_map": false,
             "sprite_row": 0,
             "sprite_frame": 0,
+            "sprite_frame_count": 0,
+            "runtime": {},
             "novel_recorder_field": 123
         }]);
         let line = stray.to_string();
@@ -14505,441 +12971,25 @@ mod tests {
     }
 
     #[test]
-    fn alert_eligibility_round_trip_canonicalizes_legacy_post_key_without_layout_change() {
-        #[derive(bitcode::Encode, bitcode::Decode)]
-        struct FrozenTraceAlertEligibilityV66 {
-            rank: bool,
-            able_to_help: Option<bool>,
-            allowed_to_leave_post: Option<bool>,
-            can_call: Option<bool>,
-            max_radius: Option<bool>,
-            squared_radius: Option<bool>,
-            capacity: Option<bool>,
-            think: Option<bool>,
-        }
-
-        let legacy_json = serde_json::json!({
-            "rank": true,
-            "stay_on_post": true,
-        });
+    fn alert_eligibility_accepts_only_the_current_post_key() {
         let current_json = serde_json::json!({
             "rank": true,
             "allowed_to_leave_post": true,
         });
-        let legacy: TraceAlertEligibility = serde_json::from_value(legacy_json.clone()).unwrap();
         let current: TraceAlertEligibility = serde_json::from_value(current_json.clone()).unwrap();
-        assert_eq!(legacy.allowed_to_leave_post, Some(true));
         assert_eq!(current.allowed_to_leave_post, Some(true));
-        assert_eq!(bitcode::encode(&legacy), bitcode::encode(&current));
-
-        let frozen_v66 = FrozenTraceAlertEligibilityV66 {
-            rank: true,
-            able_to_help: Some(false),
-            allowed_to_leave_post: Some(true),
-            can_call: None,
-            max_radius: Some(false),
-            squared_radius: Some(true),
-            capacity: None,
-            think: Some(true),
-        };
-        let frozen_v66_bytes = bitcode::encode(&frozen_v66);
-        let decoded: TraceAlertEligibility = bitcode::decode(&frozen_v66_bytes).unwrap();
-        assert!(decoded.rank);
-        assert_eq!(decoded.able_to_help, Some(false));
-        assert_eq!(decoded.allowed_to_leave_post, Some(true));
-        assert_eq!(decoded.can_call, None);
-        assert_eq!(decoded.max_radius, Some(false));
-        assert_eq!(decoded.squared_radius, Some(true));
-        assert_eq!(decoded.capacity, None);
-        assert_eq!(decoded.think, Some(true));
-        assert_eq!(bitcode::encode(&decoded), frozen_v66_bytes);
-
-        let serialized = serde_json::to_value(&legacy).unwrap();
+        let serialized = serde_json::to_value(&current).unwrap();
         assert_eq!(serialized["allowed_to_leave_post"], serde_json::json!(true));
         assert!(serialized.get("stay_on_post").is_none());
 
-        for duplicate in [
-            r#"{"rank":true,"stay_on_post":true,"allowed_to_leave_post":true}"#,
-            r#"{"rank":true,"allowed_to_leave_post":false,"stay_on_post":false}"#,
-        ] {
-            assert!(
-                serde_json::from_str::<TraceAlertEligibility>(duplicate).is_err(),
-                "both post keys must be rejected regardless of order or value"
-            );
-        }
-
-        for eligibility in [legacy_json, current_json] {
-            let mut frame_json = minimal_frame_json();
-            frame_json["alert_formation_events"] = serde_json::json!([{
-                "ordinal": 0,
-                "stage": "candidate",
-                "invocation": 9,
-                "scan_index": 2,
-                "candidate": {"kind": "soldier", "index": 8},
-                "eligibility": eligibility,
-            }]);
-
-            let line = frame_json.to_string();
-            let frame: TraceFrame = serde_json::from_str(&line).unwrap();
-            verify_trace_line_roundtrip(&frame, &line, 3);
-        }
-
-        let mut outside_alert_events = serde_json::json!({
-            "eligibility": {"stay_on_post": true},
-        });
-        normalize_trace_json_for_roundtrip(&mut outside_alert_events);
-        assert_eq!(
-            outside_alert_events,
-            serde_json::json!({"eligibility": {"stay_on_post": true}}),
-            "legacy spelling normalization must stay scoped to alert formation events"
+        assert!(
+            serde_json::from_value::<TraceAlertEligibility>(serde_json::json!({
+                "rank": true,
+                "stay_on_post": true,
+            }))
+            .is_err(),
+            "obsolete schema-16 alert key was accepted"
         );
-
-        let mut nested_inside_event = serde_json::json!({
-            "alert_formation_events": [{
-                "nested": {"eligibility": {"stay_on_post": true}},
-            }],
-        });
-        normalize_trace_json_for_roundtrip(&mut nested_inside_event);
-        assert_eq!(
-            nested_inside_event["alert_formation_events"][0]["nested"]["eligibility"],
-            serde_json::json!({"stay_on_post": true}),
-            "normalization must only inspect an alert event's direct eligibility field"
-        );
-    }
-
-    #[test]
-    fn schema_twelve_and_thirteen_frame_envelopes_are_distinct() {
-        let schema_twelve: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
-        assert!(trace_frame_envelope_matches(12, &schema_twelve));
-        assert!(!trace_frame_envelope_matches(13, &schema_twelve));
-
-        let mut schema_thirteen_json = minimal_frame_json();
-        schema_thirteen_json["campaign"] = serde_json::json!({
-            "version": 1,
-            "values": [],
-            "ares": -1,
-            "missions": [],
-            "accessible_mission_indices": [],
-            "pending_accessible_mission_indices": [],
-            "last_mission_index": null,
-            "current_mission_index": null,
-            "next_mission_index": null,
-            "blazon_mission_index": null,
-            "last_played_mission_indices": [],
-            "last_pseudo_mission_status": 0,
-            "last_pseudo_mission_id": 0,
-            "characters": [],
-            "gang_indices": [],
-            "reservist_indices": [],
-            "mission_team_indices": [],
-            "peasant_names": [],
-            "reservists_are_back": false,
-            "collected_relics": [],
-            "production_sectors": []
-        });
-        schema_thirteen_json["engine_state"] = serde_json::json!({
-            "cheat_used_flags": 0,
-            "next_creation_order": 31,
-            "chorus_timer": 0,
-            "force_check": false,
-            "men_to_blazon_conversion": false,
-            "pc_registry": [],
-            "lock_engine": false,
-            "freeze_all": false,
-            "locker": false,
-            "speed": {"bits": 1065353216},
-            "speed_int": 1,
-            "mission_won": false,
-            "mission_won_first_time": false,
-            "quit_won": false,
-            "quit_lost": false,
-            "quit_interrupted": false,
-            "script_globals": [],
-            "sequence_manager": {
-                "sequences": [], "elements_to_go": [], "actor_current": []
-            },
-            "script_runtime": {
-                "static_words": [], "instances": [], "computed_locations": []
-            },
-            "pathfinder": {
-                "status": "waiting",
-                "ignore_next_path": false,
-                "number_of_attempts": 1,
-                "area_states": [],
-                "requests": []
-            },
-            "view_radius_cache": {"frame": 0, "entries": []},
-            "sound_sources": [],
-            "sound_completion_frontier": [],
-            "ai_global": {
-                "stupid_soldiers_cheat": false,
-                "seek_points": [],
-                "archery_sectors": [],
-                "green_alert_soldiers": 0,
-                "yellow_alert_soldiers": 0,
-                "red_alert_soldiers": 0,
-                "overall_alert_status": 0,
-                "overall_villain_alert_status": 0,
-                "saved_random_seed": 0,
-                "forbidden_remarks": [],
-                "current_speech_variant": 0
-            },
-            "engine_runtime_roots": {
-                "timer_elements": [],
-                "camera_sequence": null,
-                "dead_pc": null,
-                "mission_stat": {
-                    "collected_money": 0,
-                    "bonus_money": 0,
-                    "soldier_money": 0,
-                    "living_soldier_count": 0,
-                    "total_soldier_count": 0,
-                    "new_peasant_count": 0,
-                    "killed_peasant_count": 0,
-                    "killed_allied_count": 0,
-                    "added_score": 0,
-                    "pc_names": []
-                },
-                "user_locked": false,
-                "selection_before_user_lock": [],
-                "follow_element": null
-            },
-            "world_interactables": {
-                "patches": [],
-                "doors": [],
-                "sector_doors": [],
-                "lifts": [],
-                "buildings": [],
-                "script_zones": []
-            },
-            "repulsive_points": {
-                "next_id": 0,
-                "points": []
-            },
-            "titbit_manager": {
-                "current_id": 0,
-                "titbits": []
-            },
-            "failed_path_requests": []
-        });
-        let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();
-        assert!(trace_frame_envelope_matches(13, &schema_thirteen));
-        assert!(!trace_frame_envelope_matches(12, &schema_thirteen));
-    }
-
-    #[test]
-    fn old_raw_world_snapshots_skip_only_absent_additive_v26_state() {
-        let expected = serde_json::json!({
-            "patches": [],
-            "doors": [{ "locked_pc": true }],
-            "sector_doors": [],
-            "lifts": []
-        });
-        let mut actual = serde_json::json!({
-            "patches": [],
-            "doors": [{
-                "locked_pc": true,
-                "locked_pc_after_patch": false,
-                "locked_npc_villain_after_patch": false,
-                "locked_npc_civilian_after_patch": false,
-                "unlockable_after_patch": false
-            }],
-            "sector_doors": [],
-            "lifts": [],
-            "buildings": [{ "occupants": [], "arrow_reserve": false }],
-            "script_zones": [{
-                "occupants": [],
-                "transformed_to_apex": false,
-                "max_apex_height": null
-            }]
-        });
-
-        retain_recorded_world_interactable_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn old_raw_sequence_snapshots_skip_only_absent_additive_v28_order_state() {
-        let expected = serde_json::json!({
-            "sequences": [{
-                "elements": [{
-                    "orders": [{ "action": 6, "done": false }]
-                }]
-            }]
-        });
-        let mut actual = serde_json::json!({
-            "next_order_id": 44,
-            "sequences": [{
-                "elements": [{
-                    "orders": [{
-                        "action": 6,
-                        "done": false,
-                        "destination_3d": {},
-                        "flight_vector": {},
-                        "apply_transition": false,
-                        "can_fly": false,
-                        "lock_ai": false,
-                        "transition": false,
-                        "id": 43
-                    }]
-                }]
-            }]
-        });
-
-        retain_recorded_order_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v45_state() {
-        let expected = serde_json::json!({
-            "npc_ai": {
-                "state": 3,
-                "subclass": {
-                    "kind": "enemy",
-                    "frame_when_missed_charly": 17
-                }
-            }
-        });
-        let mut actual = serde_json::json!({
-            "human_continuation": {
-                "already_detectable_body": false,
-                "sword_strike_boredom": [0, 0, 0, 0, 0, 0, 0, 0, 0]
-            },
-            "npc_ai": {
-                "state": 3,
-                "stimulus_queue": [],
-                "object_memory": {
-                    "forgotten": [], "desire": null,
-                    "checkpoint_charly": null, "synchronize_charly": null
-                },
-                "synchronizing_actors": [],
-                "reconnaissance": {
-                    "report_type": 0, "seek_position": {}, "seen_bodies": [],
-                    "charly": null, "charly_seen": false
-                },
-                "path_control": {
-                    "stop_before_end": false, "use_max_norm": false, "stop_distance": 0,
-                    "status": {
-                        "current_waypoint_index": 0, "last_waypoint_index": 0,
-                        "forward": true, "hiking_path_index": null, "history": []
-                    },
-                    "has_patrol_path": false, "macro_cursor": null
-                },
-                "legacy_continuation": {
-                    "remaining_tequila_gulps": 0,
-                    "last_hint_actuality": 0,
-                    "last_hint_subject": 1,
-                    "current_door": null,
-                    "looking_for_help_because_enemy_seen": false
-                },
-                "subclass": {
-                    "kind": "enemy",
-                    "frame_when_missed_charly": 17,
-                    "heard_nets": [],
-                    "other_seen_ale": [],
-                    "search_charly_way": [],
-                    "missed_in_action": [],
-                    "other_bodies_to_examine": [],
-                    "beggars_to_control": [],
-                    "them": [],
-                    "ambush_point_array_reset": false,
-                    "ambush_point_status": [],
-                    "my_seek_points": [],
-                    "personal_seek_point_1": null,
-                    "personal_seek_point_2": null,
-                    "seek_center": {},
-                    "actual_seek_point": null,
-                    "seek_point_view_directions": [],
-                    "positions_of_beggars_to_control": [],
-                    "seek_flags": 0,
-                    "seen_dead_body": false,
-                    "seeking_charly": false,
-                    "forced_next_battle_decision": 0,
-                    "reset_battle_decision": false,
-                    "synchronize_index": 0,
-                    "initial_view_cone": 0,
-                    "company_number": 0,
-                    "left_combat_neighbour": null,
-                    "right_combat_neighbour": null,
-                    "attentive": false,
-                    "will_be_attentive": false,
-                    "forced_attentive": false,
-                    "guarded_pc": null,
-                    "tower_guard": false,
-                    "combat_trainer": false,
-                    "gather_position": {},
-                    "gather_direction": 0,
-                    "gather_position_instructed": false,
-                    "officers_position": {},
-                    "previous_state": 0,
-                    "previous_substate": 0,
-                    "reported_to_officer": false,
-                    "missed_soldier_timer": 0,
-                    "old_money": 0,
-                    "other_seen_money": [],
-                    "money_fight_enemies": [],
-                    "money_fight_victims": [],
-                    "archer_behind_me": null,
-                    "shield_bearer_before_me": null,
-                    "already_seen_bodies": [],
-                    "my_line_jump": null,
-                    "shield_bearer_direction": 0,
-                    "phalanx_aborted": false,
-                    "changed_to_alert_path": false,
-                    "shooting_point": null,
-                    "archery_sector": null,
-                    "archery_sector_index": 0,
-                    "archery_point_index": 0,
-                    "archery_point_increment": 0,
-                    "enemy_seen_below": false,
-                    "enemy_had_this_elevation": 0,
-                    "known_enemy_strike_commands": [0, 0, 0],
-                    "last_stimulus_dispatched_to_patrol": null
-                }
-            }
-        });
-
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({
-            "pc_core": { "current_action": 0, "disabled_actions": [false, false, false] }
-        });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({
-            "pc_portrait": { "open": false, "burned": false }
-        });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({
-            "human_structure": { "opponents": [], "pending_shoots": [] }
-        });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({ "pc_tail": { "carried": null } });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({ "pc_qa": [] });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
-
-        let expected = serde_json::json!({});
-        let mut actual = serde_json::json!({
-            "pc_interface": { "playable": true, "displayed": true }
-        });
-        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
-        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -14951,12 +13001,12 @@ mod tests {
             .remove("simulation_body_ran");
 
         let error = serde_json::from_value::<TraceFrame>(frame_without_marker)
-            .expect_err("schema 12 frames must report whether the simulation body ran");
+            .expect_err("current frames must report whether the simulation body ran");
         assert!(error.to_string().contains("simulation_body_ran"));
     }
 
     #[test]
-    fn schema_nine_path_events_are_typed() {
+    fn current_path_events_are_typed() {
         let event = serde_json::json!({
             "phase": "completed",
             "actor": {"kind": "soldier", "index": 3},
@@ -15149,7 +13199,7 @@ mod tests {
             "final_frame": 112,
             "frame_count": 12
         }))
-        .expect("parse clean schema-12 terminator");
+        .expect("parse clean current-schema terminator");
         assert_eq!(suffix.record_type, "rng_suffix");
         assert_eq!(suffix.final_frame, 112);
         assert_eq!(suffix.frame_count, 12);
@@ -15182,6 +13232,7 @@ mod tests {
             "elevation": {"bits": 0},
             "old_elevation": {"bits": 0},
             "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "increment_map_valid": true,
             "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
             "layer": 0,
             "layer_goal": 0,
@@ -15199,7 +13250,11 @@ mod tests {
                 "command": 117,
                 "command_name": "whistle",
                 "motion_state": 2,
-                "wait_time": 25
+                "wait_time": 25,
+                "passing_door_directly": false,
+                "active_pass_door": null,
+                "sequence_element": null,
+                "position_interface": {}
             },
             "human": {
                 "life_points": 60,
@@ -15209,7 +13264,8 @@ mod tests {
                 "original_camp": 1,
                 "vip": true,
                 "civilian": false,
-                "opponents": [{"kind": "pc", "index": 2}]
+                "opponents": [{"kind": "pc", "index": 2}],
+                "opponent_jump_lines": [null]
             },
             "ai": {
                 "state": 3,
@@ -15225,7 +13281,8 @@ mod tests {
                 "macro_remaining": 2,
                 "macro_in_progress": true,
                 "list_us": [{"kind": "soldier", "index": 58}],
-                "list_them": [{"kind": "pc", "index": 2}]
+                "list_them": [{"kind": "pc", "index": 2}],
+                "my_line_jump": null
             },
             "detection": {
                 "suspects": [1, 2, 3, 4, 5, 6],
@@ -15243,7 +13300,8 @@ mod tests {
                     "shadow_seen_last_frame": true,
                     "last_visibility": {"bits": 1120403456}
                 }]
-            }
+            },
+            "runtime": {}
         }))
         .expect("parse authoritative recorded element state");
 
@@ -15255,20 +13313,18 @@ mod tests {
         assert_eq!(element.layer_goal, 0);
         assert_eq!(element.sprite_row, 64);
         assert_eq!(element.sprite_frame, 3);
-        assert_eq!(element.sprite_frame_count, Some(u16::MAX));
+        assert_eq!(element.sprite_frame_count, u16::MAX);
         let human = element.human.expect("human state");
         assert_eq!(human.camp, "lacklandists");
         assert!(human.vip);
         let ai = element.ai.expect("AI state");
-        assert_eq!(ai.macro_cursor, Some(Some(4)));
+        assert_eq!(ai.macro_cursor, Some(4));
         assert_eq!(
-            ai.list_them.as_deref(),
-            Some(
-                &[TraceEntityId {
-                    kind: TraceEntityKind::Pc,
-                    index: 2,
-                }][..]
-            )
+            ai.list_them,
+            [TraceEntityId {
+                kind: TraceEntityKind::Pc,
+                index: 2,
+            }]
         );
         let detection = element.detection.expect("detection state");
         assert_eq!(detection.suspects, [1, 2, 3, 4, 5, 6]);
@@ -15297,63 +13353,52 @@ mod tests {
     }
 
     #[test]
-    fn additive_ai_diagnostics_are_optional_within_schema_twelve() {
-        let ai: TraceAi = serde_json::from_value(serde_json::json!({
+    fn current_ai_and_human_snapshots_reject_missing_fields() {
+        let complete_ai = serde_json::json!({
             "state": 3,
             "substate": 17,
             "script_locked": false,
             "locked": true,
+            "locks": 0,
+            "was_busy": false,
+            "very_busy": false,
+            "macro_timer_running": false,
+            "macro_timer_ring": 0,
+            "macro_cursor": null,
+            "macro_remaining": 0,
+            "macro_in_progress": false,
             "list_us": [],
-            "list_them": []
-        }))
-        .expect("schema-12 AI state predating additive diagnostics remains readable");
+            "list_them": [],
+            "my_line_jump": null
+        });
+        for required in complete_ai.as_object().unwrap().keys() {
+            let mut incomplete = complete_ai.clone();
+            incomplete.as_object_mut().unwrap().remove(required);
+            assert!(
+                serde_json::from_value::<TraceAi>(incomplete).is_err(),
+                "current AI snapshot accepted missing {required}"
+            );
+        }
 
-        assert_eq!(ai.state, 3);
-        assert_eq!(ai.substate, 17);
-        assert_eq!(ai.locks, None);
-        assert_eq!(ai.was_busy, None);
-        assert_eq!(ai.very_busy, None);
-        assert_eq!(ai.macro_timer_running, None);
-        assert_eq!(ai.macro_timer_ring, None);
-        assert_eq!(ai.macro_cursor, None);
-        assert_eq!(ai.macro_remaining, None);
-        assert_eq!(ai.macro_in_progress, None);
-        assert_eq!(ai.list_us, Some(Vec::new()));
-        assert_eq!(ai.list_them, Some(Vec::new()));
-
-        let early_schema_twelve: TraceAi = serde_json::from_value(serde_json::json!({
-            "state": 3,
-            "substate": 17
-        }))
-        .expect("early schema-12 AI state with only state/substate remains readable");
-        assert_eq!(early_schema_twelve.script_locked, None);
-        assert_eq!(early_schema_twelve.locked, None);
-        assert_eq!(early_schema_twelve.list_us, None);
-        assert_eq!(early_schema_twelve.list_them, None);
-
-        let early_human: TraceHuman = serde_json::from_value(serde_json::json!({
+        let complete_human = serde_json::json!({
             "life_points": 60,
             "dead": false,
             "unconscious": false,
-            "camp": "outlaw",
+            "camp": "royalists",
             "original_camp": 0,
             "vip": false,
-            "civilian": false
-        }))
-        .expect("early schema-12 human state without opponents remains readable");
-        assert_eq!(early_human.opponents, None);
-
-        let recorded_null_cursor: TraceAi = serde_json::from_value(serde_json::json!({
-            "state": 3,
-            "substate": 17,
-            "script_locked": false,
-            "locked": true,
-            "macro_cursor": null,
-            "list_us": [],
-            "list_them": []
-        }))
-        .expect("recorded null macro cursor is distinct from a missing diagnostic");
-        assert_eq!(recorded_null_cursor.macro_cursor, Some(None));
+            "civilian": false,
+            "opponents": [],
+            "opponent_jump_lines": []
+        });
+        for required in ["opponents", "opponent_jump_lines"] {
+            let mut incomplete = complete_human.clone();
+            incomplete.as_object_mut().unwrap().remove(required);
+            assert!(
+                serde_json::from_value::<TraceHuman>(incomplete).is_err(),
+                "current human snapshot accepted missing {required}"
+            );
+        }
     }
 
     #[test]
@@ -15461,7 +13506,8 @@ mod tests {
                 "original_command": 0, "original_command_name": "hit", "running": false}),
             serde_json::json!({"type": "launch_scroll_read", "actor": pc, "target": pc, "running": false}),
             serde_json::json!({"type": "sword_strike", "actor": pc, "target": pc,
-                "original_command": 0, "original_command_name": "hit", "with_seek": true}),
+                "original_command": 0, "original_command_name": "hit", "with_seek": true,
+                "seek_distance": 63.0}),
             serde_json::json!({"type": "launch_self_ability", "actor": pc,
                 "original_command": 0, "original_command_name": "eat"}),
             serde_json::json!({"type": "launch_ground_target", "actor": pc, "target": point3,
@@ -15840,7 +13886,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_group_move_recovers_ordinary_route_over_door_overlay() {
+    fn current_schema_group_move_recovers_ordinary_route_over_door_overlay() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 344,
@@ -15876,14 +13922,7 @@ mod tests {
         let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                16,
-                &command,
-                Some(&routes),
-                &mut consumed,
-                &map,
-                &sectors,
-            ),
+            resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
             Some(ReplayGroupMoveResolution {
                 door_route: false,
                 unmapped_goal_search_sector: Some(64),
@@ -15895,7 +13934,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_same_sector_group_move_retains_ordinary_goal_kind() {
+    fn current_schema_same_sector_group_move_retains_ordinary_goal_kind() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 320,
@@ -15918,10 +13957,9 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                16,
+            resolve_current_group_move_route(
                 &command,
-                None,
+                &[],
                 &mut consumed,
                 &group_move_route_map(0),
                 &group_move_sector_kinds(150, None),
@@ -15937,7 +13975,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_group_moves_share_frame_routes_in_command_order() {
+    fn current_schema_group_moves_share_frame_routes_in_command_order() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 345,
@@ -15978,30 +14016,18 @@ mod tests {
         let map = group_move_route_map(54);
         let sectors = group_move_sector_kinds(117, None);
 
-        let first_resolution = resolve_schema_sixteen_group_move_route(
-            16,
-            &command,
-            Some(&routes),
-            &mut consumed,
-            &map,
-            &sectors,
-        )
-        .unwrap();
+        let first_resolution =
+            resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors)
+                .unwrap();
         assert_eq!(
             first_resolution.recorded_gate_routes,
             vec![(actor, vec![(53, false)])]
         );
         assert_eq!(consumed, BTreeSet::from([40]));
 
-        let second_resolution = resolve_schema_sixteen_group_move_route(
-            16,
-            &command,
-            Some(&routes),
-            &mut consumed,
-            &map,
-            &sectors,
-        )
-        .unwrap();
+        let second_resolution =
+            resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors)
+                .unwrap();
         assert_eq!(
             second_resolution.recorded_gate_routes,
             vec![(actor, vec![(54, true)])]
@@ -16010,7 +14036,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_group_move_recovers_internal_door_branch_from_retained_goal_kind() {
+    fn current_schema_group_move_recovers_internal_door_branch_from_retained_goal_kind() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 344,
@@ -16043,14 +14069,7 @@ mod tests {
         let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                16,
-                &command,
-                Some(&routes),
-                &mut consumed,
-                &map,
-                &sectors,
-            ),
+            resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
             Some(ReplayGroupMoveResolution {
                 door_route: true,
                 unmapped_goal_search_sector: Some(64),
@@ -16058,23 +14077,10 @@ mod tests {
                 recorded_failed_gate_routes: Vec::new(),
             })
         );
-        let mut legacy_consumed = BTreeSet::new();
-        assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                15,
-                &command,
-                Some(&routes),
-                &mut legacy_consumed,
-                &map,
-                &sectors,
-            ),
-            None
-        );
-        assert!(legacy_consumed.is_empty());
     }
 
     #[test]
-    fn schema_sixteen_group_move_retains_door_branch_for_failed_empty_route() {
+    fn current_schema_group_move_retains_door_branch_for_failed_empty_route() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 344,
@@ -16102,14 +14108,7 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                16,
-                &command,
-                Some(&routes),
-                &mut consumed,
-                &map,
-                &sectors,
-            ),
+            resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
             Some(ReplayGroupMoveResolution {
                 door_route: true,
                 unmapped_goal_search_sector: None,
@@ -16121,7 +14120,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_failed_ordinary_group_move_is_authoritative() {
+    fn current_schema_failed_ordinary_group_move_is_authoritative() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 136,
@@ -16153,10 +14152,9 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(
-                16,
+            resolve_current_group_move_route(
                 &command,
-                Some(&[route]),
+                &[route],
                 &mut consumed,
                 &group_move_route_map(0),
                 &group_move_sector_kinds(421, None),
@@ -16202,14 +14200,8 @@ mod tests {
         let mut consumed = BTreeSet::new();
         let map = group_move_route_map(78);
         let sectors = group_move_sector_kinds(492, None);
-        let resolution = resolve_schema_sixteen_group_move_route(
-            16,
-            &command,
-            Some(&[route]),
-            &mut consumed,
-            &map,
-            &sectors,
-        );
+        let resolution =
+            resolve_current_group_move_route(&command, &[route], &mut consumed, &map, &sectors);
 
         assert_eq!(
             resolution,
@@ -16305,7 +14297,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_drop_ale_recovers_save067_route_goal() {
+    fn current_schema_drop_ale_recovers_save067_route_goal() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 320,
@@ -16327,10 +14319,9 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_drop_ale(
-                16,
+            resolve_current_drop_ale(
                 &command,
-                Some(&routes),
+                &routes,
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 None,
@@ -16356,20 +14347,20 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "already consumed by the group-move join")]
-    fn schema_sixteen_route_ordinal_cannot_be_claimed_by_two_joiners() {
+    fn current_schema_route_ordinal_cannot_be_claimed_by_two_joiners() {
         claim_delayed_drop_ale_route_ordinal(7, &mut BTreeSet::new(), &BTreeSet::from([7]));
     }
 
     #[test]
     #[should_panic(expected = "matched twice")]
-    fn schema_sixteen_delayed_route_ordinal_cannot_be_claimed_twice() {
+    fn current_schema_delayed_route_ordinal_cannot_be_claimed_twice() {
         let mut delayed = BTreeSet::from([7]);
         claim_delayed_drop_ale_route_ordinal(7, &mut delayed, &BTreeSet::new());
     }
 
     #[test]
     #[should_panic(expected = "matched 2 exact route events")]
-    fn schema_sixteen_drop_ale_rejects_duplicate_exact_command_routes() {
+    fn current_schema_drop_ale_rejects_duplicate_exact_command_routes() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 0,
@@ -16393,10 +14384,9 @@ mod tests {
             "ordinal".to_owned(),
             TraceJsonValue::from(TraceJsonTree::Unsigned(8)),
         );
-        resolve_schema_sixteen_drop_ale(
-            16,
+        resolve_current_drop_ale(
             &command,
-            Some(&[first, second]),
+            &[first, second],
             &mut BTreeSet::new(),
             &drop_ale_route_map(actor),
             None,
@@ -16404,7 +14394,7 @@ mod tests {
     }
 
     #[test]
-    fn drop_ale_route_recovery_rejects_nonmatching_point_and_legacy_schema() {
+    fn drop_ale_route_recovery_rejects_nonmatching_point() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 320,
@@ -16425,18 +14415,7 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_drop_ale(16, &command, Some(&routes), &mut consumed, &map, None,),
-            None
-        );
-        assert_eq!(
-            resolve_schema_sixteen_drop_ale(
-                15,
-                &command,
-                Some(&[drop_ale_route_fixture(actor, target)]),
-                &mut consumed,
-                &map,
-                None,
-            ),
+            resolve_current_drop_ale(&command, &routes, &mut consumed, &map, None,),
             None
         );
         assert!(consumed.is_empty());
@@ -16444,7 +14423,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "has no retained Rust position-sector mapping")]
-    fn schema_sixteen_drop_ale_rejects_unmapped_authoritative_goal() {
+    fn current_schema_drop_ale_rejects_unmapped_authoritative_goal() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 320,
@@ -16461,10 +14440,9 @@ mod tests {
         let mut map = drop_ale_route_map(actor);
         map.sectors.clear();
 
-        let _ = resolve_schema_sixteen_drop_ale(
-            16,
+        let _ = resolve_current_drop_ale(
             &command,
-            Some(&[drop_ale_route_fixture(actor, target)]),
+            &[drop_ale_route_fixture(actor, target)],
             &mut BTreeSet::new(),
             &map,
             None,
@@ -16472,7 +14450,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_sixteen_drop_ale_recovers_same_sector_actor_goal_without_route() {
+    fn current_schema_drop_ale_recovers_same_sector_actor_goal_without_route() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 320,
@@ -16493,10 +14471,9 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_drop_ale(
-                16,
+            resolve_current_drop_ale(
                 &command,
-                None,
+                &[],
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 Some(expected.clone()),
