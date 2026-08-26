@@ -680,7 +680,7 @@ impl EngineInner {
                         crate::titbit::ElementHandle(target.index()),
                         crate::titbit::QuickAction::Speak as u16,
                         pc_handle,
-                        false,
+                        *running,
                         crate::titbit::INVALID_ID,
                         true,
                         Some(pos.y),
@@ -2348,34 +2348,27 @@ impl EngineInner {
                     if self.get_entity(target).is_none() {
                         return false;
                     }
-                    // When the recorded button was a double-click,
-                    // dispatch a leading single-click before the
-                    // recorded click — the sim advances each step
-                    // inline so back-to-back dispatches achieve the
-                    // "single primes, double commits" sequencing.
-                    if double_click {
-                        let pre_click = PlayerCommand::LaunchInteraction {
-                            actor: pc,
-                            target,
-                            command,
-                            running: false,
-                        };
-                        self.apply_command(sim, display, input, assets, &pre_click);
-                    }
-                    PlayerCommand::LaunchInteraction {
-                        actor: pc,
+                    // Sequence-backed QA interactions are recorded after
+                    // Original has resolved the click into a concrete seek.
+                    // A double-click therefore means that the stored seek is
+                    // RunningUpright; it is not a raw QUICKITOS_INTERRACT
+                    // click that needs the special single-click prime. Clone
+                    // that one resolved route directly. Re-entering the live
+                    // click dispatcher would either launch a walking route
+                    // twice or reduce the running click to MakeFast with no
+                    // newly launched route.
+                    let append_recovery =
+                        step_index + 1 == step_count && command == Command::TakeCorpse;
+                    self.apply_recorded_interaction_with_seek(
+                        sim,
+                        pc,
                         target,
                         command,
-                        // QA replay clones recorded elements verbatim;
-                        // the live Run flag is captured per-step by
-                        // the titbit and replayed via `MakeFast` on
-                        // the PC before the clone.  Keep
-                        // `running=false` here to match the
-                        // conservative `WalkingUpright` picked by the
-                        // seek fallback; the real `MakeFast` path
-                        // still fires via `actor_make_fast` callers.
-                        running: false,
-                    }
+                        double_click,
+                        append_recovery,
+                    );
+                    posture_recovery_embedded |= append_recovery;
+                    continue;
                 }
                 crate::macro_store::QaReplayCommand::TargetInteraction {
                     target,
@@ -2407,11 +2400,11 @@ impl EngineInner {
                     if self.get_entity(target).is_none() {
                         return false;
                     }
-                    PlayerCommand::LaunchScrollRead {
-                        actor: pc,
-                        target,
-                        running,
-                    }
+                    // Original stores the already-resolved scroll sequence.
+                    // Rebuild that sequence with its recorded gait instead
+                    // of taking the live double-click MakeFast shortcut.
+                    self.apply_scroll_read_with_seek_inner(sim, pc, target, running, true);
+                    continue;
                 }
                 crate::macro_store::QaReplayCommand::GroundTarget {
                     target_pos,
@@ -2553,6 +2546,7 @@ impl EngineInner {
                     *target,
                     Command::TakeCorpse,
                     *running,
+                    true,
                     true,
                 );
                 posture_recovery_embedded = true;
@@ -3089,7 +3083,33 @@ impl EngineInner {
         command: Command,
         running: bool,
     ) {
-        self.apply_interaction_with_seek_and_recovery(sim, actor, target, command, running, false);
+        self.apply_interaction_with_seek_and_recovery(
+            sim, actor, target, command, running, false, false,
+        );
+    }
+
+    /// Rebuild a sequence-backed QA interaction from its recorded semantic
+    /// route. Original's `StartQuickAction` clones the stored movement
+    /// element, including its running animation, rather than treating it as
+    /// a fresh live double-click.
+    fn apply_recorded_interaction_with_seek(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+        append_posture_recovery: bool,
+    ) {
+        self.apply_interaction_with_seek_and_recovery(
+            sim,
+            actor,
+            target,
+            command,
+            running,
+            append_posture_recovery,
+            true,
+        );
     }
 
     fn stamp_beggar_dont_talk_counter(&mut self, target: EntityId) {
@@ -3124,6 +3144,7 @@ impl EngineInner {
         command: Command,
         running: bool,
         append_posture_recovery: bool,
+        recorded_quick_action: bool,
     ) {
         // Ranged actions bypass the seek entirely: the actor fires or
         // throws from wherever it stands.  This mirrors the original
@@ -3178,7 +3199,11 @@ impl EngineInner {
             .map(|s| s.is_recording())
             .unwrap_or(false);
 
-        if running && !is_recording_macro && is_addinteraction_with_seek_command {
+        if running
+            && !is_recording_macro
+            && !recorded_quick_action
+            && is_addinteraction_with_seek_command
+        {
             self.actor_make_fast(sim, actor);
             // Civilian::MouseClicked performs this post-call stamp even when
             // AddInteractionWithSeek reduced the double-click to MakeFast.
@@ -3687,12 +3712,23 @@ impl EngineInner {
         target: EntityId,
         running: bool,
     ) {
+        self.apply_scroll_read_with_seek_inner(sim, actor, target, running, false);
+    }
+
+    fn apply_scroll_read_with_seek_inner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+        recorded_quick_action: bool,
+    ) {
         use crate::sequence::{Field, FieldValue};
 
         // `running && !is_recording` is a short-circuit — the PC just
         // gets `MakeFast` and we never build the composite.
         let is_recording = self.is_recording_macro();
-        if running && !is_recording {
+        if running && !is_recording && !recorded_quick_action {
             self.actor_make_fast(sim, actor);
             return;
         }
@@ -7582,6 +7618,84 @@ mod tests {
     }
 
     #[test]
+    fn recorded_running_interaction_replays_one_running_seek_route() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
+        engine
+            .get_entity_mut(target_id)
+            .expect("Strangle target exists")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(200.0, 100.0));
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::StrangleCmd,
+                running: true,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            1,
+            "StartQuickAction clones the recorded route once"
+        );
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("running interaction launches its stored route");
+        let seek = sequence.get(0).expect("interaction route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            action,
+            element,
+            post_seek_sequence,
+            ..
+        } = &seek.data
+        else {
+            panic!("running interaction route must begin with movement");
+        };
+        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert_eq!(*element, Some(target_id));
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("recorded route retains its interaction continuation");
+        assert_eq!(post_seek.len(), 1);
+        assert_eq!(post_seek.get(0).unwrap().command, Command::StrangleCmd);
+    }
+
+    #[test]
     #[should_panic(expected = "recorded interaction target")]
     fn recording_interaction_panics_when_target_is_missing() {
         let sim = crate::sim_rng::test_context();
@@ -8331,6 +8445,98 @@ mod tests {
             .next()
             .unwrap();
         assert_scroll_read_composite(sequence, pc_id, npc_id, scroll_id);
+    }
+
+    #[test]
+    fn recorded_running_scroll_read_replays_one_running_seek_route() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, npc_id, scroll_id) = setup_scroll_read_scene();
+        engine
+            .get_entity_mut(npc_id)
+            .expect("scroll owner exists")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(200.0, 100.0));
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchScrollRead {
+                actor: pc_id,
+                target: npc_id,
+                running: true,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        let running_titbit = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.get_slot_titbit(0))
+            .expect("running scroll read stores its QA titbit");
+        assert!(
+            engine
+                .feedback
+                .titbit_manager
+                .is_running_for_qa(running_titbit)
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            1,
+            "StartQuickAction clones the recorded scroll route once"
+        );
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("running scroll read launches its stored route");
+        let seek = sequence.get(0).expect("scroll route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            action,
+            element,
+            post_seek_sequence,
+            ..
+        } = &seek.data
+        else {
+            panic!("running scroll route must begin with movement");
+        };
+        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert_eq!(*element, Some(npc_id));
+        assert_scroll_read_composite(
+            post_seek_sequence
+                .as_deref()
+                .expect("recorded scroll route retains its continuation"),
+            pc_id,
+            npc_id,
+            scroll_id,
+        );
     }
 
     #[test]
