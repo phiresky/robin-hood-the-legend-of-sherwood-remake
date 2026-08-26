@@ -792,6 +792,11 @@ impl EngineInner {
                             post_seek_sequence: None,
                         };
                         seq.append_element(final_move);
+                        // AppendMoveToLineToSequence advances uwCount after
+                        // the terminal LINE movement.  The caller's explicit
+                        // JumpCmd must be on the following command level, not
+                        // dispatched concurrently with line arrival.
+                        level += 1;
                     }
                 }
                 GoalShape::Door {

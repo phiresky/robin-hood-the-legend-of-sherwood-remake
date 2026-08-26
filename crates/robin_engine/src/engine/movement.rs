@@ -4047,55 +4047,35 @@ pub(crate) fn circular_dispatch_destinations(
     result
 }
 
-/// Build the line-jump click-sequence shape:
+/// Build the portion of a line-jump click sequence that follows arrival at
+/// the selected source line.
 ///
-/// 1. move to the selected source jump-line,
-/// 2. execute the jump command from source to associated destination,
-/// 3. move from the landing side to the original clicked point.
+/// Original routes the approach to that line through
+/// `RHSequence::AppendMoveToLineToSequence`; the approach may therefore
+/// contain an `AssertPosition` and a complete gate path.  Keeping only the
+/// post-arrival elements here prevents callers from accidentally replacing
+/// that route with one direct, potentially blocked movement segment.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_line_jump_click_sequence(
+pub(crate) fn build_line_jump_click_tail(
     owner: EntityId,
     action: OrderType,
     source_line_idx: crate::jump_line::JumpLineIndex,
-    source_line: &crate::jump_line::JumpLine,
     destination_line_idx: crate::jump_line::JumpLineIndex,
     click_point: MapPoint,
     click_layer: u16,
     speed_factor: f32,
-) -> crate::sequence::Sequence {
+) -> Vec<crate::sequence::SequenceElement> {
     use crate::element::Command;
-    use crate::sequence::{
-        Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-    };
+    use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
 
-    let mut seq = Sequence::new();
-
-    let mut move_to_line = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
-    move_to_line.data = SequenceElementData::Movement {
-        destination: source_line.get_middle_point(),
-        layer: source_line.layer,
-        sector: None,
-        gate_id: None,
-        line_id: Some(source_line_idx),
-        element: None,
-        flags: MoveFlags::LINE | MoveFlags::TO_JUMP,
-        tolerance: 0.0,
-        direction: 0,
-        action,
-        speed_factor,
-        post_seek_sequence: None,
-    };
-    seq.append_element(move_to_line);
-
-    let mut jump = SequenceElement::new_generic(2, Command::JumpCmd, Some(owner));
+    let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
     jump.set_property(Field::JumplineSource, FieldValue::LineId(source_line_idx));
     jump.set_property(
         Field::JumplineDestination,
         FieldValue::LineId(destination_line_idx),
     );
-    seq.append_element(jump);
 
-    let mut final_move = SequenceElement::new_movement(3, Command::Move, Some(owner), action);
+    let mut final_move = SequenceElement::new_movement(2, Command::Move, Some(owner), action);
     final_move.data = SequenceElementData::Movement {
         destination: click_point,
         layer: click_layer,
@@ -4113,9 +4093,7 @@ pub(crate) fn build_line_jump_click_sequence(
         speed_factor,
         post_seek_sequence: None,
     };
-    seq.append_element(final_move);
-
-    seq
+    vec![jump, final_move]
 }
 
 #[derive(Clone, Copy, Default)]
@@ -11324,11 +11302,9 @@ impl EngineInner {
         let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
             true
         } else {
-            let reachable =
-                self.world
-                    .fast_grid
-                    .is_reachable_thick(source, dest, entity_layer, half_diagonal);
-            reachable
+            self.world
+                .fast_grid
+                .is_reachable_thick(source, dest, entity_layer, half_diagonal)
         };
 
         // Before submitting a path request, check whether the actor's
