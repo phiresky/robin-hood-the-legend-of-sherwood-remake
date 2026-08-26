@@ -197,7 +197,7 @@ pub(super) fn handle_hold_to_rewind(
             // sim frame so resuming playback re-applies the right
             // recorded commands.
             if let Some(player) = replay_player.as_mut() {
-                player.seek(target);
+                player.seek_timeline_frame(target);
             }
             rewind_active = true;
             // The rollback checker's ring history is now "ahead"

@@ -129,7 +129,7 @@ use crate::zoom_hud::{ZoomButton, ZoomButtonEnable};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::campaign::Campaign;
 use robin_engine::game_operation::GameCode;
-use robin_engine::player_command::{PlayerCommand, PlayerInput};
+use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::MissionLocation;
 
 pub(crate) fn prepare_replay_mission(

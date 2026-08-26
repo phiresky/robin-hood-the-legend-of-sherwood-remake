@@ -22,7 +22,6 @@ use robin_engine::engine::Engine;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::DebriefingTextId;
 use robin_engine::profiles as engine_profiles;
-use robin_engine::replay::ReplayRecorder;
 use robin_engine::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE;
 use robin_engine::sherwood_stat::{ScoreInfo, SherwoodStat};
 use robin_engine::sound_cache::SampleLoader;
@@ -31,7 +30,7 @@ use std::collections::VecDeque;
 
 /// Presentation-side plumbing every modal lane needs: the event pump,
 /// the renderer, cursor drawing, audio output, the shared ingame-menu
-/// resources, and the replay recorder that logs each dismissal.
+/// resources, and the current frame's host-control collector.
 ///
 /// The engine/host half deliberately stays out of this bundle —
 /// functions that need it take `&mut Host` alongside the context, and
@@ -45,7 +44,7 @@ pub(crate) struct ModalContext<'a> {
     pub audio_backend: &'a mut Option<KiraAudioBackend>,
     pub sample_loader: &'a SampleLoader,
     pub menu_resources: &'a mut Option<IngameMenuResources>,
-    pub replay_recorder: &'a mut Option<ReplayRecorder>,
+    pub modal_dismissals: &'a mut Vec<engine_player_command::PlayerCommand>,
 }
 
 /// One modal screen driven frame-by-frame inside a [`ModalBatch`].
@@ -123,12 +122,11 @@ impl<S: ModalScreen> ModalBatch<S> {
             && let Some(item) = self.pending.pop_front()
         {
             if let Some(result) = S::item_replay_result(&item) {
-                if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: S::item_kind(&item),
                         result,
                     });
-                }
             } else {
                 let kind = S::item_kind(&item);
                 let screen = S::begin(host, ctx, item);
@@ -142,12 +140,11 @@ impl<S: ModalScreen> ModalBatch<S> {
 
         if let Some(outcome) = screen.step(kind, host, ctx) {
             let result = S::to_result(&outcome);
-            if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+            ctx.modal_dismissals
+                .push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: kind.clone(),
                     result,
                 });
-            }
             S::on_dismiss(&outcome, &mut self.pending);
             self.current = None;
         }
@@ -561,10 +558,8 @@ pub(super) async fn drain_pending_dialogues(
                 let kind = engine_player_command::ModalKind::Dialog { dialog_id };
                 let result = pop_matching_dismissal(replay_modal_dismissals, &kind)
                     .unwrap_or(engine_player_command::DialogResult::Completed);
-                if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                    recorder
-                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-                }
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
             return;
         }
@@ -612,15 +607,12 @@ pub(super) async fn drain_pending_dialogues(
             let results =
                 ingame_menu::show_dialogue_batch(ctx, &mut host.audio.sound, &entries).await;
 
-            if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                for ((dialog_id, _), result) in sentences_per_id.iter().zip(results.iter().copied())
-                {
-                    let kind = engine_player_command::ModalKind::Dialog {
-                        dialog_id: *dialog_id,
-                    };
-                    recorder
-                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-                }
+            for ((dialog_id, _), result) in sentences_per_id.iter().zip(results.iter().copied()) {
+                let kind = engine_player_command::ModalKind::Dialog {
+                    dialog_id: *dialog_id,
+                };
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
         }
     }
@@ -853,12 +845,11 @@ pub(super) fn tick_active_modal(
             replay_result,
         } => {
             if let Some(result) = replay_result.take() {
-                if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: kind.clone(),
                         result,
                     });
-                }
                 *active_modal = None;
                 return match result {
                     engine_player_command::DialogResult::Completed => {
@@ -881,7 +872,7 @@ pub(super) fn tick_active_modal(
                 cursor_res,
                 cursor_renderer,
                 menu_resources,
-                replay_recorder,
+                modal_dismissals,
                 ..
             } = ctx;
             let Some(resources) = menu_resources.as_ref() else {
@@ -891,17 +882,15 @@ pub(super) fn tick_active_modal(
             };
             let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
             if let Some(confirmed) = state.tick(window, renderer, resources, Some(cursor)) {
-                if let Some(recorder) = replay_recorder.as_mut() {
-                    let result = if confirmed {
-                        engine_player_command::DialogResult::Completed
-                    } else {
-                        engine_player_command::DialogResult::Aborted
-                    };
-                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                        kind: kind.clone(),
-                        result,
-                    });
-                }
+                let result = if confirmed {
+                    engine_player_command::DialogResult::Completed
+                } else {
+                    engine_player_command::DialogResult::Aborted
+                };
+                modal_dismissals.push(engine_player_command::PlayerCommand::ModalDismiss {
+                    kind: kind.clone(),
+                    result,
+                });
                 *active_modal = None;
                 if confirmed {
                     ActiveModalOutcome::QuitMissionRequested
@@ -1009,9 +998,8 @@ pub(super) async fn drain_pending_popup_scroll(
             };
             let result =
                 ingame_menu::show_popup_scroll(ctx, &mut host.audio.sound, modal_net, item).await;
-            if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-            }
+            ctx.modal_dismissals
+                .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
         }
     }
 }
@@ -1074,9 +1062,8 @@ pub(super) async fn drain_pending_sherwood_stat(
             };
             let result =
                 ingame_menu::show_popup_scroll(ctx, &mut host.audio.sound, modal_net, item).await;
-            if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-            }
+            ctx.modal_dismissals
+                .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
         } else {
             tracing::warn!(
                 "DisplaySherwoodReport: campaign or menu resources unavailable — skipped"
@@ -1157,10 +1144,8 @@ pub(super) async fn drain_pending_debriefings(
                 } else {
                     engine_player_command::DialogResult::Completed
                 };
-                if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                    recorder
-                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-                }
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 // The iteration breaks out when an emergency-end
                 // fires — but only for THIS phase, not the win phase
                 // below.
@@ -1208,10 +1193,8 @@ pub(super) async fn drain_pending_debriefings(
                 } else {
                     engine_player_command::DialogResult::Completed
                 };
-                if let Some(recorder) = ctx.replay_recorder.as_mut() {
-                    recorder
-                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-                }
+                ctx.modal_dismissals
+                    .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     break;
                 }

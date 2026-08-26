@@ -1,6 +1,7 @@
 //! Replay recording and playback.
 //!
-//! A replay is a sequence of player commands keyed by frame number,
+//! A replay is a sequence of complete authoritative simulation-frame inputs,
+//! keyed by frame number,
 //! plus the metadata needed to reconstruct the initial engine state
 //! (mission ID, RNG seed, simulation config, and campaign snapshot). Recording
 //! happens transparently during normal gameplay; playback feeds the
@@ -12,8 +13,8 @@
 //!
 //! - **JSONL** (`*.rhrec.jsonl`): the recording format. Line 1 is the
 //!   [`ReplayHeader`]; subsequent lines are `FrameRecord` objects —
-//!   `{"f":<n>,"c":[…]}` — written **only for frames that have at
-//!   least one command**. Streamed to disk incrementally so a crash
+//!   `{"f":<n>,"i":{…}}` — written for every admitted simulation frame.
+//!   Streamed to disk incrementally so a crash
 //!   can't truncate the file to an invalid state.
 //! - **Compact sharing format** (`rhrec-{versionhash}-{base64}`): a
 //!   base64-encoded, zstd-compressed, bitcode-serialized snapshot of a
@@ -22,7 +23,8 @@
 //!   `--replay` / the JSON API. The encode/decode logic lives in
 //!   `robin_rs::replay_format`.
 
-use crate::player_command::{FrameCommands, PlayerInput};
+use crate::engine::SimulationFrameInput;
+use crate::player_command::{DialogResult, ModalKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -54,14 +56,12 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 10 builds on version 9 (complete
-/// campaign + [`crate::engine::SimConfig`] for frame-0 construction, typed
-/// script effects in one global emission order, synchronous sequence
-/// continuation state, fully-resolved minimap command inputs, first-owner
-/// active-ability and actor Execute initialization snapshots) and adds
-/// in-mission save markers (`sv`) and load-back records (`lb`), keeping the
-/// recording a single linear timeline across in-mission saves and loads.
-pub const REPLAY_SCHEMA_VERSION: u32 = 10;
+/// On-disk replay schema version. Version 11 replaces the command-only frame
+/// payload with a complete [`SimulationFrameInput`]. External facts/actions,
+/// pre/post command phases, the hourglass/body gates, and `PostInitialize` are
+/// therefore recorded exactly as admitted. There is deliberately no schema-10
+/// compatibility adapter: incomplete legacy frames are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 11;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -76,16 +76,52 @@ pub struct ReplayLoadBack {
     pub is_continue: bool,
 }
 
-/// One JSONL line.  Carries per-frame commands, a periodic engine-state
+/// State pinned by an in-mission save at one replay host ordinal.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct ReplaySaveMarker {
+    pub state_hash: u64,
+    pub timeline_frame: u32,
+}
+
+/// Presentation-side input needed to reproduce host-loop behavior but which
+/// must never be smuggled into [`SimulationFrameInput`] as an engine command.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReplayHostControl {
+    ModalDismiss {
+        modal: ModalKind,
+        result: DialogResult,
+    },
+}
+
+/// One complete recorded host frame: the authoritative engine transaction and
+/// its explicitly separate presentation controls.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct ReplayFrame {
+    /// Lockstep/history frame on entry and after host commit. They are
+    /// deliberately distinct from the dense replay ordinal.
+    pub timeline_before: u32,
+    pub timeline_after: u32,
+    pub input: SimulationFrameInput,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_controls: Vec<ReplayHostControl>,
+}
+
+/// One JSONL line. Carries one complete frame input, a periodic engine-state
 /// hash used for desync detection on replay, and/or in-mission
 /// save-marker / load-back timeline records.
 #[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(deny_unknown_fields)]
 struct FrameRecord {
-    /// Frame number (0-based).
+    /// Dense replay host-frame ordinal (0-based), distinct from the lockstep
+    /// frame carried by [`ReplayFrame::timeline_frame`].
     f: u32,
-    /// Inputs issued this frame, tagged with the seat that produced them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    c: Vec<PlayerInput>,
+    /// Complete authoritative input for this admitted simulation frame.
+    /// Marker-only records omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    i: Option<ReplayFrame>,
     /// Hash of deterministic engine state, written once per second
     /// (every 25 frames).  Used by the player to detect desyncs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,7 +131,7 @@ struct FrameRecord {
     /// playback can pin a clone of that state (for later load-backs) and
     /// verify it against the recording.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    sv: Option<u64>,
+    sv: Option<ReplaySaveMarker>,
     /// Load-back record: at this frame's pre-command boundary the engine
     /// state was replaced with the state captured by the save marker at the
     /// referenced (strictly earlier) frame.  Keeps the replay linear across
@@ -108,13 +144,14 @@ struct FrameRecord {
 #[derive(Clone, Debug)]
 pub struct ReplayData {
     pub header: ReplayHeader,
-    /// Sparse map: only frames with commands are present.
-    frames: BTreeMap<u32, Vec<PlayerInput>>,
+    /// Dense logical sequence, keyed explicitly so marker records can remain
+    /// independent JSONL lines. Every frame in `0..total_frames` is present.
+    frames: BTreeMap<u32, ReplayFrame>,
     /// Sparse map: expected engine state hash at the start of frame N.
     hashes: BTreeMap<u32, u64>,
     /// Save markers: frame → state hash at the pre-command boundary of
     /// that frame, where an in-mission save captured the engine state.
-    save_markers: BTreeMap<u32, u64>,
+    save_markers: BTreeMap<u32, ReplaySaveMarker>,
     /// Load-back records: frame → earlier save-marker frame whose
     /// captured state replaced the engine at this frame's boundary.
     load_backs: BTreeMap<u32, ReplayLoadBack>,
@@ -127,10 +164,10 @@ pub struct ReplayData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReplayFile {
     pub header: ReplayHeader,
-    pub frames: BTreeMap<u32, Vec<PlayerInput>>,
+    pub frames: BTreeMap<u32, ReplayFrame>,
     pub hashes: BTreeMap<u32, u64>,
     #[serde(default)]
-    pub save_markers: BTreeMap<u32, u64>,
+    pub save_markers: BTreeMap<u32, ReplaySaveMarker>,
     #[serde(default)]
     pub load_backs: BTreeMap<u32, ReplayLoadBack>,
 }
@@ -165,9 +202,82 @@ impl ReplayData {
         self.header.total_frames
     }
 
-    /// Commands for a given frame, or empty if none recorded.
-    pub fn commands_for_frame(&self, frame: u32) -> &[PlayerInput] {
-        self.frames.get(&frame).map(|v| v.as_slice()).unwrap_or(&[])
+    /// Validate invariants shared by JSONL and compact replay containers.
+    pub fn validate_layout(&self) -> Result<(), String> {
+        if self.header.version != REPLAY_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported replay schema version {}; expected {REPLAY_SCHEMA_VERSION}",
+                self.header.version
+            ));
+        }
+        for frame in 0..self.header.total_frames {
+            if !self.frames.contains_key(&frame) {
+                return Err(format!(
+                    "replay is missing authoritative simulation input for frame {frame}"
+                ));
+            }
+        }
+        for (&frame, load_back) in &self.load_backs {
+            if load_back.to_frame >= frame {
+                return Err(format!(
+                    "load-back target {} is not before frame {frame}",
+                    load_back.to_frame
+                ));
+            }
+            if !self.save_markers.contains_key(&load_back.to_frame) {
+                return Err(format!(
+                    "load-back at frame {frame} references frame {}, which has no save marker",
+                    load_back.to_frame
+                ));
+            }
+        }
+        let mut previous_after = None;
+        for (&ordinal, frame) in &self.frames {
+            if frame.timeline_after < frame.timeline_before
+                || frame.timeline_after > frame.timeline_before.saturating_add(1)
+            {
+                return Err(format!(
+                    "replay frame {ordinal} has invalid timeline transition {} -> {}",
+                    frame.timeline_before, frame.timeline_after
+                ));
+            }
+            if let Some(load_back) = self.load_backs.get(&ordinal) {
+                let marker = self
+                    .save_markers
+                    .get(&load_back.to_frame)
+                    .expect("load-back marker existence checked above");
+                if frame.timeline_before != marker.timeline_frame {
+                    return Err(format!(
+                        "replay load-back frame {ordinal} starts at timeline {}, saved timeline was {}",
+                        frame.timeline_before, marker.timeline_frame
+                    ));
+                }
+            } else if let Some(previous_after) = previous_after
+                && frame.timeline_before != previous_after
+            {
+                return Err(format!(
+                    "replay frame {ordinal} starts at timeline {}, previous frame ended at {previous_after}",
+                    frame.timeline_before
+                ));
+            }
+            previous_after = Some(frame.timeline_after);
+        }
+        if self
+            .frames
+            .last_key_value()
+            .is_some_and(|(&frame, _)| frame >= self.header.total_frames)
+        {
+            return Err(format!(
+                "replay contains frame input outside total_frames {}",
+                self.header.total_frames
+            ));
+        }
+        Ok(())
+    }
+
+    /// Complete authoritative input for a recorded frame.
+    pub fn frame(&self, frame: u32) -> Option<&ReplayFrame> {
+        self.frames.get(&frame)
     }
 
     /// Expected engine-state hash at the start of the given frame,
@@ -178,7 +288,7 @@ impl ReplayData {
 
     /// State hash captured by an in-mission save at the pre-command
     /// boundary of `frame`, if a save marker was recorded there.
-    pub fn save_marker_for_frame(&self, frame: u32) -> Option<u64> {
+    pub fn save_marker_for_frame(&self, frame: u32) -> Option<ReplaySaveMarker> {
         self.save_markers.get(&frame).copied()
     }
 
@@ -239,8 +349,14 @@ impl ReplayData {
                 }
                 load_backs.insert(rec.f, lb);
             }
-            if !rec.c.is_empty() {
-                frames.insert(rec.f, rec.c);
+            if let Some(recorded_frame) = rec.i {
+                if frames.insert(rec.f, recorded_frame).is_some() {
+                    return Err(format!(
+                        "bad line {}: duplicate simulation input for frame {}",
+                        i + 2,
+                        rec.f
+                    ));
+                }
             }
         }
         // Every load-back must reference a save marker recorded earlier in
@@ -254,22 +370,19 @@ impl ReplayData {
                 ));
             }
         }
-        // If header didn't have total_frames, infer from max frame index.
-        if header.total_frames == 0
-            && (!frames.is_empty()
-                || !hashes.is_empty()
-                || !save_markers.is_empty()
-                || !load_backs.is_empty())
-        {
+        // During streaming the header cannot know the final frame count.
+        if header.total_frames == 0 && !frames.is_empty() {
             header.total_frames = max_frame;
         }
-        Ok(Self {
+        let data = Self {
             header,
             frames,
             hashes,
             save_markers,
             load_backs,
-        })
+        };
+        data.validate_layout()?;
+        Ok(data)
     }
 
     /// Load a replay from a JSONL file on disk.
@@ -279,17 +392,18 @@ impl ReplayData {
     }
 }
 
-/// Records player commands during live gameplay, streaming each frame
+/// Records complete authoritative simulation inputs during live gameplay,
+/// streaming each frame
 /// to a JSONL file as it completes.
 ///
 /// Line 1 (the header) is written on construction.  Each subsequent
-/// `end_frame` appends a line **only if the frame has commands**.
+/// `end_frame` appends exactly one input line for every admitted frame.
 /// No explicit close is needed — the file is always valid up to the
 /// last completed frame.
 pub struct ReplayRecorder {
     writer: std::io::BufWriter<Box<dyn std::io::Write + Send>>,
-    current_frame: FrameCommands,
-    frame_number: u32,
+    next_expected_ordinal: u32,
+    boundary_metadata_pending: bool,
 }
 
 impl ReplayRecorder {
@@ -347,38 +461,58 @@ impl ReplayRecorder {
         writer.flush()?;
         Ok(Self {
             writer,
-            current_frame: FrameCommands::new(),
-            frame_number: 0,
+            next_expected_ordinal: 0,
+            boundary_metadata_pending: false,
         })
     }
 
-    /// Record a command for the current frame. Accepts a bare
-    /// [`PlayerCommand`] (tagged `PlayerId::HOST`) or a pre-tagged
-    /// [`PlayerInput`].
-    pub fn push(&mut self, cmd: impl Into<PlayerInput>) {
-        self.current_frame.push(cmd);
-    }
-
-    /// Finalize the current frame.  Writes a JSONL line only if the
-    /// frame contains at least one command.  Advances the frame counter.
-    pub fn end_frame(&mut self) {
-        let inputs = std::mem::take(&mut self.current_frame.commands);
-        if !inputs.is_empty() {
-            let rec = FrameRecord {
-                f: self.frame_number,
-                c: inputs,
-                h: None,
-                sv: None,
-                lb: None,
-            };
-            self.write_record(&rec);
+    /// Finalize the current frame with its complete authoritative input and
+    /// advance the recorder cursor.
+    pub fn write_frame(
+        &mut self,
+        ordinal: u32,
+        timeline_before: u32,
+        timeline_after: u32,
+        input: SimulationFrameInput,
+        host_controls: Vec<ReplayHostControl>,
+        hash: Option<u64>,
+    ) -> bool {
+        assert_eq!(
+            ordinal, self.next_expected_ordinal,
+            "replay frame ordinal must be dense"
+        );
+        let meaningful = input.run_hourglass
+            || !input.external_facts.is_empty()
+            || !input.external_actions.is_empty()
+            || !input.commands.is_empty()
+            || !input.post_external_actions.is_empty()
+            || !input.post_commands.is_empty()
+            || input.run_post_initialize
+            || !host_controls.is_empty()
+            || self.boundary_metadata_pending;
+        if !meaningful {
+            return false;
         }
-        self.frame_number += 1;
-    }
-
-    /// Number of frames elapsed (including empty ones).
-    pub fn frame_number(&self) -> u32 {
-        self.frame_number
+        assert!(
+            timeline_after == timeline_before || timeline_after == timeline_before + 1,
+            "replay timeline transition must stay or advance exactly once"
+        );
+        let rec = FrameRecord {
+            f: ordinal,
+            i: Some(ReplayFrame {
+                timeline_before,
+                timeline_after,
+                input,
+                host_controls,
+            }),
+            h: hash,
+            sv: None,
+            lb: None,
+        };
+        self.write_record(&rec);
+        self.next_expected_ordinal += 1;
+        self.boundary_metadata_pending = false;
+        true
     }
 
     /// Write a standalone hash record for `frame` (no commands).
@@ -386,7 +520,7 @@ impl ReplayRecorder {
     pub fn write_hash(&mut self, frame: u32, hash: u64) {
         self.write_record(&FrameRecord {
             f: frame,
-            c: Vec::new(),
+            i: None,
             h: Some(hash),
             sv: None,
             lb: None,
@@ -396,12 +530,14 @@ impl ReplayRecorder {
     /// Write a save-marker record for the current frame: an in-mission save
     /// captured the engine state (with the given state hash) at this frame's
     /// pre-command boundary.  Flushed immediately.
-    pub fn write_save_marker(&mut self, state_hash: u64) {
+    pub fn write_save_marker(&mut self, ordinal: u32, marker: ReplaySaveMarker) {
+        assert_eq!(ordinal, self.next_expected_ordinal);
+        self.boundary_metadata_pending = true;
         self.write_record(&FrameRecord {
-            f: self.frame_number,
-            c: Vec::new(),
+            f: ordinal,
+            i: None,
             h: None,
-            sv: Some(state_hash),
+            sv: Some(marker),
             lb: None,
         });
     }
@@ -410,15 +546,16 @@ impl ReplayRecorder {
     /// replaced with the state captured by the save marker at `to_frame`.
     /// `to_frame` must be strictly earlier than the current frame.  Flushed
     /// immediately.
-    pub fn write_load_back(&mut self, to_frame: u32, is_continue: bool) {
+    pub fn write_load_back(&mut self, ordinal: u32, to_frame: u32, is_continue: bool) {
+        assert_eq!(ordinal, self.next_expected_ordinal);
         assert!(
-            to_frame < self.frame_number,
-            "load-back target {to_frame} must precede the current frame {}",
-            self.frame_number
+            to_frame < ordinal,
+            "load-back target {to_frame} must precede the current replay ordinal {ordinal}",
         );
+        self.boundary_metadata_pending = true;
         self.write_record(&FrameRecord {
-            f: self.frame_number,
-            c: Vec::new(),
+            f: ordinal,
+            i: None,
             h: None,
             sv: None,
             lb: Some(ReplayLoadBack {
@@ -479,7 +616,7 @@ thread_local! {
         std::cell::RefCell::new(StateHashStats::default());
 }
 
-/// Plays back a recorded replay, yielding commands frame by frame.
+/// Plays back a recorded replay, yielding complete inputs frame by frame.
 pub struct ReplayPlayer {
     data: ReplayData,
     current_frame: u32,
@@ -487,6 +624,8 @@ pub struct ReplayPlayer {
 
 impl ReplayPlayer {
     pub fn new(data: ReplayData) -> Self {
+        data.validate_layout()
+            .unwrap_or_else(|error| panic!("invalid replay data: {error}"));
         Self {
             data,
             current_frame: 0,
@@ -503,11 +642,14 @@ impl ReplayPlayer {
         self.current_frame >= self.data.frame_count()
     }
 
-    /// Get commands for the current frame and advance.
-    pub fn next_frame(&mut self) -> &[PlayerInput] {
-        let cmds = self.data.commands_for_frame(self.current_frame);
+    /// Get the complete authoritative input for the current frame and advance.
+    pub fn next_frame(&mut self) -> &ReplayFrame {
+        let frame = self
+            .data
+            .frame(self.current_frame)
+            .unwrap_or_else(|| panic!("replay frame {} is absent", self.current_frame));
         self.current_frame += 1;
-        cmds
+        frame
     }
 
     /// Current frame index (before next_frame advances it).
@@ -515,12 +657,23 @@ impl ReplayPlayer {
         self.current_frame
     }
 
-    /// Move the playback cursor to `frame`.  Used by the host-side
-    /// step-back / rewind paths so replay playback can resume from the
-    /// reconstructed past frame instead of racing forward from where
-    /// the cursor happened to be.  Clamped to `[0, total_frames]`.
-    pub fn seek(&mut self, frame: u32) {
-        self.current_frame = frame.min(self.data.frame_count());
+    /// Seek by dense replay host-frame ordinal.
+    pub fn seek_ordinal(&mut self, ordinal: u32) {
+        self.current_frame = ordinal.min(self.data.frame_count());
+    }
+
+    /// Seek to the first persisted host transaction at or after a lockstep
+    /// boundary. This deliberately selects the first duplicate so meaningful
+    /// skipped-hourglass admissions at that boundary are replayed.
+    pub fn seek_timeline_frame(&mut self, timeline_frame: u32) {
+        self.current_frame = self
+            .data
+            .frames
+            .iter()
+            .find_map(|(&ordinal, frame)| {
+                (frame.timeline_before >= timeline_frame).then_some(ordinal)
+            })
+            .unwrap_or_else(|| self.data.frame_count());
     }
 
     /// Expected engine-state hash at the start of `frame`, if the
@@ -531,7 +684,7 @@ impl ReplayPlayer {
 
     /// Save marker at `frame`: the state hash an in-mission save captured
     /// at that frame's pre-command boundary, if one was recorded.
-    pub fn save_marker_for_frame(&self, frame: u32) -> Option<u64> {
+    pub fn save_marker_for_frame(&self, frame: u32) -> Option<ReplaySaveMarker> {
         self.data.save_marker_for_frame(frame)
     }
 
@@ -550,7 +703,7 @@ impl ReplayPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player_command::PlayerCommand;
+    use crate::player_command::{PlayerCommand, PlayerInput};
 
     fn unique_replay_path(label: &str) -> String {
         std::env::temp_dir()
@@ -563,9 +716,13 @@ mod tests {
             .into_owned()
     }
 
+    fn record_tick(recorder: &mut ReplayRecorder, ordinal: u32, input: SimulationFrameInput) {
+        assert!(recorder.write_frame(ordinal, ordinal, ordinal + 1, input, Vec::new(), None,));
+    }
+
     #[test]
     fn record_and_playback_roundtrip() {
-        let dir = std::env::temp_dir().join("replay_test_sparse.jsonl");
+        let dir = std::env::temp_dir().join("replay_test_full_frames.jsonl");
         let path = dir.to_str().unwrap();
 
         {
@@ -579,36 +736,43 @@ mod tests {
             )
             .unwrap();
 
-            // Frame 0: one command
-            rec.push(PlayerCommand::SelectAllPcs);
-            rec.end_frame();
+            // Frame 0: one command.
+            record_tick(
+                &mut rec,
+                0,
+                SimulationFrameInput::new(vec![PlayerCommand::SelectAllPcs.into()]),
+            );
 
-            // Frames 1-49: empty (no commands → no lines written)
-            for _ in 1..50 {
-                rec.end_frame();
+            // Frames 1-49: explicit empty authoritative frames.
+            for ordinal in 1..50 {
+                record_tick(&mut rec, ordinal, SimulationFrameInput::default());
             }
 
             // Frame 50: two commands
-            rec.push(PlayerCommand::GroupMove {
-                actors: vec![crate::element::EntityId::Pc(crate::entity_id::PcId(1))],
-                destination: crate::coordinates::MapPoint::new(100.0, 200.0),
-                running: false,
-                show_marker: true,
-                goal_override: None,
-                goal_sector_index_override: None,
-                door_route_override: None,
-                recorded_gate_routes: Vec::new(),
-                recorded_failed_gate_routes: Vec::new(),
-            });
-            rec.push(PlayerCommand::CrouchDown);
-            rec.end_frame();
-
-            assert_eq!(rec.frame_number(), 51);
+            record_tick(
+                &mut rec,
+                50,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::GroupMove {
+                        actors: vec![crate::element::EntityId::Pc(crate::entity_id::PcId(1))],
+                        destination: crate::coordinates::MapPoint::new(100.0, 200.0),
+                        running: false,
+                        show_marker: true,
+                        goal_override: None,
+                        goal_sector_index_override: None,
+                        door_route_override: None,
+                        recorded_gate_routes: Vec::new(),
+                        recorded_failed_gate_routes: Vec::new(),
+                    }
+                    .into(),
+                    PlayerCommand::CrouchDown.into(),
+                ]),
+            );
         }
 
-        // Check file is compact: header + 2 data lines
+        // Every frame is explicit: header + 51 frame lines.
         let contents = std::fs::read_to_string(path).unwrap();
-        assert_eq!(contents.lines().count(), 3); // header + frame 0 + frame 50
+        assert_eq!(contents.lines().count(), 52);
 
         let data = ReplayData::from_file(path).unwrap();
         assert_eq!(data.frame_count(), 51);
@@ -619,17 +783,17 @@ mod tests {
 
         // Frame 0: one command
         let f0 = player.next_frame();
-        assert_eq!(f0.len(), 1);
+        assert_eq!(f0.input.commands.len(), 1);
 
         // Frames 1-49: empty
         for _ in 1..50 {
             let empty = player.next_frame();
-            assert!(empty.is_empty());
+            assert!(empty.input.commands.is_empty());
         }
 
         // Frame 50: two commands
         let f50 = player.next_frame();
-        assert_eq!(f50.len(), 2);
+        assert_eq!(f50.input.commands.len(), 2);
 
         assert!(player.is_finished());
 
@@ -646,6 +810,88 @@ mod tests {
             error.contains("unsupported replay schema version 2"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn schema_eleven_rejects_command_only_frame_records() {
+        let header = serde_json::json!({
+            "mission_id": "old-command-frame",
+            "rng_seed": 7,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 1,
+            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+        });
+        let input = format!("{header}\n{{\"f\":0,\"c\":[]}}\n");
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("command-only records are not schema eleven frames");
+        assert!(error.contains("unknown field `c`"), "{error}");
+    }
+
+    #[test]
+    fn recorder_skips_only_pure_paused_noops_and_round_trips_complete_phases() {
+        let path = unique_replay_path("complete_frame_phases");
+        let campaign = crate::campaign::Campaign::default();
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "phases".into(),
+            11,
+            crate::engine::SimConfig::default(),
+            &campaign,
+        )
+        .expect("recorder");
+
+        assert!(!recorder.write_frame(
+            0,
+            7,
+            7,
+            SimulationFrameInput::no_hourglass(),
+            Vec::new(),
+            None,
+        ));
+
+        let input = SimulationFrameInput::new(vec![PlayerCommand::CrouchDown.into()])
+            .with_external_facts(vec![crate::engine::ExternalFact::ReplaySoundBoundary(
+                Vec::new(),
+            )])
+            .with_external_actions(vec![crate::engine::ExternalAction::Native {
+                name: "Before".into(),
+                args: vec![1, 2],
+                this_actor: None,
+            }])
+            .with_post_external_actions(vec![crate::engine::ExternalAction::Native {
+                name: "After".into(),
+                args: vec![3],
+                this_actor: Some(4),
+            }])
+            .with_post_commands(vec![PlayerCommand::StandUp.into()])
+            .with_hourglass(false)
+            .with_simulation_body_allowed(false)
+            .with_post_initialize(true);
+        let host_controls = vec![ReplayHostControl::ModalDismiss {
+            modal: ModalKind::SherwoodReport,
+            result: DialogResult::Completed,
+        }];
+        assert!(recorder.write_frame(0, 7, 7, input.clone(), host_controls, Some(0x1234),));
+        drop(recorder);
+
+        let data = ReplayData::from_file(&path).expect("load full frame replay");
+        assert_eq!(data.frame_count(), 1);
+        assert_eq!(data.hash_for_frame(0), Some(0x1234));
+        let frame = data.frame(0).expect("recorded frame");
+        assert_eq!((frame.timeline_before, frame.timeline_after), (7, 7));
+        assert_eq!(
+            serde_json::to_value(&frame.input).unwrap(),
+            serde_json::to_value(&input).unwrap()
+        );
+        assert!(matches!(
+            frame.host_controls.as_slice(),
+            [ReplayHostControl::ModalDismiss {
+                modal: ModalKind::SherwoodReport,
+                result: DialogResult::Completed,
+            }]
+        ));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -666,16 +912,21 @@ mod tests {
                 &campaign,
             )
             .unwrap();
-            rec.push(PlayerInput::new(PlayerId(0), PlayerCommand::CrouchDown));
-            rec.push(PlayerInput::new(PlayerId(2), PlayerCommand::StandUp));
-            rec.end_frame();
+            record_tick(
+                &mut rec,
+                0,
+                SimulationFrameInput::from_player_inputs(vec![
+                    PlayerInput::new(PlayerId(0), PlayerCommand::CrouchDown),
+                    PlayerInput::new(PlayerId(2), PlayerCommand::StandUp),
+                ]),
+            );
         }
         let data = ReplayData::from_file(&path).unwrap();
         assert_eq!(data.header.version, REPLAY_SCHEMA_VERSION);
-        let f0 = data.commands_for_frame(0);
-        assert_eq!(f0.len(), 2);
-        assert_eq!(f0[0].player_id, PlayerId(0));
-        assert_eq!(f0[1].player_id, PlayerId(2));
+        let f0 = &data.frame(0).expect("frame zero").input;
+        assert_eq!(f0.commands.len(), 2);
+        assert_eq!(f0.commands[0].player_input().player_id, PlayerId(0));
+        assert_eq!(f0.commands[1].player_input().player_id, PlayerId(2));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -691,22 +942,27 @@ mod tests {
             &campaign,
         )
         .expect("create replay recorder");
-        recorder.push(PlayerInput::host(PlayerCommand::MinimapMouseMove {
-            mouse_pt: crate::coordinates::ScreenPoint::new(11.0, 22.0),
-            left_mouse_down: true,
-            continuing_drag: true,
-        }));
-        recorder.push(PlayerInput::host(PlayerCommand::MinimapMouseUp {
-            on_minimap: true,
-            center_on: Some(crate::coordinates::MapPoint::new(333.0, 444.0)),
-        }));
-        recorder.end_frame();
+        record_tick(
+            &mut recorder,
+            0,
+            SimulationFrameInput::from_player_inputs(vec![
+                PlayerInput::host(PlayerCommand::MinimapMouseMove {
+                    mouse_pt: crate::coordinates::ScreenPoint::new(11.0, 22.0),
+                    left_mouse_down: true,
+                    continuing_drag: true,
+                }),
+                PlayerInput::host(PlayerCommand::MinimapMouseUp {
+                    on_minimap: true,
+                    center_on: Some(crate::coordinates::MapPoint::new(333.0, 444.0)),
+                }),
+            ]),
+        );
         drop(recorder);
 
         let replay = ReplayData::from_file(&path).expect("load current replay");
-        let commands = replay.commands_for_frame(0);
+        let commands = &replay.frame(0).expect("frame zero").input.commands;
         assert!(matches!(
-            &commands[0].command,
+            &commands[0].player_input().command,
             PlayerCommand::MinimapMouseMove {
                 left_mouse_down: true,
                 continuing_drag: true,
@@ -714,7 +970,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            &commands[1].command,
+            &commands[1].player_input().command,
             PlayerCommand::MinimapMouseUp {
                 on_minimap: true,
                 center_on: Some(point),
@@ -736,8 +992,11 @@ mod tests {
             &campaign,
         )
         .unwrap();
-        recorder.push(command.clone());
-        recorder.end_frame();
+        record_tick(
+            &mut recorder,
+            0,
+            SimulationFrameInput::new(vec![command.clone().into()]),
+        );
         drop(recorder);
 
         let mut live = crate::engine::EngineInner::new();
@@ -756,8 +1015,10 @@ mod tests {
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
             .next_frame()
-            .into_iter()
-            .map(|input| input.command.clone())
+            .input
+            .commands
+            .iter()
+            .map(|input| input.player_input().command.clone())
             .collect::<Vec<_>>();
         let mut replay_display = crate::engine::HostDisplayState::default();
         let mut replay_input = crate::engine::InputState::default();
@@ -911,8 +1172,11 @@ mod tests {
                 &campaign,
             )
             .unwrap();
-            rec.push(PlayerCommand::CrouchDown);
-            rec.end_frame();
+            record_tick(
+                &mut rec,
+                0,
+                SimulationFrameInput::new(vec![PlayerCommand::CrouchDown.into()]),
+            );
         }
 
         let data = ReplayData::from_file(&path).unwrap();
@@ -920,7 +1184,7 @@ mod tests {
         let restored: Campaign = bitcode::deserialize(bytes).unwrap();
         assert_eq!(restored.values[CampaignValue::Score], 12_345);
         assert_eq!(restored.ares, 4);
-        assert_eq!(data.commands_for_frame(0).len(), 1);
+        assert_eq!(data.frame(0).expect("frame zero").input.commands.len(), 1);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -1051,22 +1315,40 @@ mod tests {
             )
             .unwrap();
             // Frame 0-9: play.
-            for _ in 0..10 {
-                rec.end_frame();
+            for ordinal in 0..10 {
+                record_tick(&mut rec, ordinal, SimulationFrameInput::default());
             }
             // Frame 10: quick save captured state with hash 0xABCD.
-            rec.write_save_marker(0xABCD);
-            for _ in 10..30 {
-                rec.end_frame();
+            rec.write_save_marker(
+                10,
+                ReplaySaveMarker {
+                    state_hash: 0xABCD,
+                    timeline_frame: 10,
+                },
+            );
+            for ordinal in 10..30 {
+                record_tick(&mut rec, ordinal, SimulationFrameInput::default());
             }
             // Frame 30: quick load jumped back to the frame-10 state.
-            rec.write_load_back(10, true);
-            rec.push(PlayerCommand::CrouchDown);
-            rec.end_frame();
+            rec.write_load_back(30, 10, true);
+            assert!(rec.write_frame(
+                30,
+                10,
+                11,
+                SimulationFrameInput::new(vec![PlayerCommand::CrouchDown.into()]),
+                Vec::new(),
+                None,
+            ));
         }
 
         let data = ReplayData::from_file(&path).unwrap();
-        assert_eq!(data.save_marker_for_frame(10), Some(0xABCD));
+        assert_eq!(
+            data.save_marker_for_frame(10),
+            Some(ReplaySaveMarker {
+                state_hash: 0xABCD,
+                timeline_frame: 10,
+            })
+        );
         assert_eq!(data.save_marker_for_frame(9), None);
         assert_eq!(
             data.load_back_for_frame(30),
@@ -1076,13 +1358,19 @@ mod tests {
             })
         );
         assert_eq!(data.load_back_for_frame(29), None);
-        assert_eq!(data.commands_for_frame(30).len(), 1);
+        assert_eq!(data.frame(30).expect("frame 30").input.commands.len(), 1);
         assert_eq!(data.frame_count(), 31);
 
         // Timeline records survive the compact-format struct conversion.
         let file = ReplayFile::from(&data);
         let back: ReplayData = file.into();
-        assert_eq!(back.save_marker_for_frame(10), Some(0xABCD));
+        assert_eq!(
+            back.save_marker_for_frame(10),
+            Some(ReplaySaveMarker {
+                state_hash: 0xABCD,
+                timeline_frame: 10,
+            })
+        );
         assert_eq!(
             back.load_back_for_frame(30),
             Some(ReplayLoadBack {
@@ -1117,9 +1405,18 @@ mod tests {
     }
 
     #[test]
-    fn player_past_end_returns_empty() {
+    #[should_panic(expected = "replay frame 1 is absent")]
+    fn player_past_end_is_a_contract_violation() {
         let mut frames = BTreeMap::new();
-        frames.insert(0, vec![PlayerInput::host(PlayerCommand::CrouchDown)]);
+        frames.insert(
+            0,
+            ReplayFrame {
+                timeline_before: 0,
+                timeline_after: 1,
+                input: SimulationFrameInput::new(vec![PlayerCommand::CrouchDown.into()]),
+                host_controls: Vec::new(),
+            },
+        );
         let data = ReplayData {
             header: ReplayHeader {
                 mission_id: "x".into(),
@@ -1137,7 +1434,6 @@ mod tests {
         let mut player = ReplayPlayer::new(data);
         let _ = player.next_frame();
         assert!(player.is_finished());
-        let past = player.next_frame();
-        assert!(past.is_empty());
+        let _ = player.next_frame();
     }
 }

@@ -166,9 +166,10 @@ impl HeadlessMission {
         // See the frame-contract tests in runtime.rs.
         self.runtime.run_post_initialize(&frame);
         let paused = tick_paused;
-        self.commit_simulation_history(&frame, paused);
+        let timeline_advances = frame.timeline_advances(!paused);
+        self.commit_simulation_history(&frame, timeline_advances);
         self.drain_headless_steps(!network_paused);
-        self.finish_frame_recording(&mut frame, !paused);
+        self.finish_frame_recording(&mut frame, timeline_advances);
 
         let replay_finished = self
             .runtime
@@ -289,8 +290,12 @@ impl HeadlessMission {
     /// Commit the outer frame before any debugger-driven forward ticks reuse
     /// the rewind/checker begin/end lifecycle. Graphical already has this
     /// ordering; headless must not leave its pending frame open across steps.
-    fn commit_simulation_history(&mut self, frame: &super::runtime::MissionFrame, paused: bool) {
-        if paused {
+    fn commit_simulation_history(
+        &mut self,
+        frame: &super::runtime::MissionFrame,
+        timeline_advances: bool,
+    ) {
+        if !timeline_advances {
             return;
         }
         let MissionRuntime {
@@ -340,12 +345,22 @@ impl HeadlessMission {
     fn finish_frame_recording(
         &mut self,
         frame: &mut super::runtime::MissionFrame,
-        simulation_advanced: bool,
+        timeline_advances: bool,
     ) {
-        if simulation_advanced {
-            self.runtime.timeline.record_commands(frame, true);
+        if self.runtime.timeline.replay_recorder.is_some() {
+            let timeline_before = self
+                .runtime
+                .world
+                .manager
+                .sim_frame
+                .saturating_sub(u32::from(timeline_advances));
+            self.runtime
+                .timeline
+                .begin_recording(frame, true, timeline_before);
         }
-        self.runtime.timeline.finish_recording(frame);
+        self.runtime
+            .timeline
+            .finish_recording(frame, timeline_advances);
     }
 }
 

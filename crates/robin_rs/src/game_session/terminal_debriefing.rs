@@ -60,7 +60,6 @@ pub(super) struct TerminalDebriefingContext<'a> {
     pub(super) resources: &'a mut MissionResources,
     pub(super) ui: &'a mut MissionUi,
     pub(super) presentation: &'a mut MissionPresentation,
-    pub(super) runtime: &'a mut super::runtime::TimelineRuntime,
     pub(super) frame: &'a mut MissionFrame,
 }
 
@@ -161,9 +160,10 @@ async fn show_terminal_mission_state(
             }
         }
     };
-    if let Some(recorder) = context.runtime.replay_recorder.as_mut() {
-        recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
-    }
+    context
+        .frame
+        .modal_dismissals
+        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
 }
 
 /// Render the current debriefing page and, when requested, run the load picker.
@@ -309,12 +309,13 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
     show_terminal_mission_state(&mut context, popup_title, won).await;
     let page = terminal_debriefing_page(&mut context, won);
     let outcome = render_terminal_debriefing_and_picker(&mut context, &page).await;
-    if let Some(recorder) = context.runtime.replay_recorder.as_mut() {
-        recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+    context
+        .frame
+        .modal_dismissals
+        .push(engine_player_command::PlayerCommand::ModalDismiss {
             kind: page.kind.clone(),
             result: final_debriefing_result(&outcome),
         });
-    }
     apply_terminal_debriefing_action(&mut context, &outcome, page.mission_id)
 }
 

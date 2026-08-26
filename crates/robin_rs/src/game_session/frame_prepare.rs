@@ -368,7 +368,8 @@ fn prepare_pre_tick_timeline(
             paused = true;
         } else {
             runtime.replay_finished_logged = false;
-            frame.inject_replay_commands(player);
+            frame.inject_replay_input(player);
+            frame.assert_replay_timeline_before(manager.sim_frame);
         }
     }
 
@@ -823,7 +824,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 runtime.note_save_load_event(
                     event,
                     &mut frame,
-                    manager.sim_frame,
+                    &mut manager.sim_frame,
                     &manager.engine,
                     assets.as_ref(),
                 );
@@ -862,7 +863,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             runtime.note_save_load_event(
                 event,
                 &mut frame,
-                manager.sim_frame,
+                &mut manager.sim_frame,
                 &manager.engine,
                 assets.as_ref(),
             );

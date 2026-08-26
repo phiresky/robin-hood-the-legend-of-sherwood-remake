@@ -260,7 +260,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         } = runtime;
         let profiling = super::frame_perf::enabled();
         let phase_start = super::frame_perf::start(profiling);
-        finalize_interactive_recording(runtime, &mut frame);
+        finalize_interactive_recording(runtime, &mut frame, history_commit_pending);
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
         let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
@@ -508,8 +508,9 @@ impl InteractiveMission {
 fn finalize_interactive_recording(
     runtime: &mut super::runtime::TimelineRuntime,
     frame: &mut MissionFrame,
+    timeline_advances: bool,
 ) {
-    runtime.finish_recording(frame);
+    runtime.finish_recording(frame, timeline_advances);
     if !frame.replay_modal_dismissals.is_empty() {
         tracing::warn!(
             "Replay: {} recorded ModalDismiss command(s) unused this frame",

@@ -419,20 +419,22 @@ pub(super) fn run_forward_ticks(
             checker.begin_frame(frame, engine);
         }
 
-        let mut frame_cmds: Vec<PlayerInput> = Vec::new();
+        let mut replay_input = None;
+        let mut replay_timeline_after = None;
         if let Some(player) = replay_player.as_mut()
             && !player.is_finished()
         {
-            for cmd in player.next_frame() {
-                // `ModalDismiss` is recorded when the player clicked
-                // through a dialog during the original session; we
-                // drop it here because the engine's modal state may
-                // not be in the same shape mid-scrub.
-                if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
-                    continue;
-                }
-                frame_cmds.push(cmd.clone());
+            // Host controls are intentionally ignored while scrubbing because
+            // presentation modal state may not have the same shape mid-run.
+            let recorded = player.next_frame().clone();
+            if recorded.timeline_before != manager.sim_frame {
+                return Err(format!(
+                    "replay ordinal admitted at timeline {}, current timeline is {}",
+                    recorded.timeline_before, manager.sim_frame
+                ));
             }
+            replay_timeline_after = Some(recorded.timeline_after);
+            replay_input = Some(recorded.input);
         }
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
@@ -440,8 +442,9 @@ pub(super) fn run_forward_ticks(
         // point of the endpoint.
         let mut display = std::mem::take(&mut host.engine_display);
         let simulation_frame = buffered_frame.clone().unwrap_or_else(|| {
-            robin_engine::engine::SimulationFrameInput::from_player_inputs(frame_cmds)
-                .with_post_initialize(true)
+            replay_input.unwrap_or_else(|| {
+                robin_engine::engine::SimulationFrameInput::default().with_post_initialize(true)
+            })
         });
         game.run_engine_tick(
             host,
@@ -460,7 +463,8 @@ pub(super) fn run_forward_ticks(
         if buffered_frame.is_none() {
             rewind_buffer.end_frame_input(simulation_frame);
         }
-        manager.sim_frame += 1;
+        manager.sim_frame =
+            replay_timeline_after.unwrap_or_else(|| manager.sim_frame.saturating_add(1));
 
         // If the tick queued any modal, drop it silently and keep
         // going.  Without this the caller's `step N` would stop at
@@ -507,7 +511,7 @@ pub(super) fn rewind_to_frame(
     // Keep the replay cursor in sync with the rewound sim frame so
     // resuming playback re-applies the right commands.
     if let Some(player) = replay_player.as_mut() {
-        player.seek(target);
+        player.seek_timeline_frame(target);
     }
     Ok(from)
 }

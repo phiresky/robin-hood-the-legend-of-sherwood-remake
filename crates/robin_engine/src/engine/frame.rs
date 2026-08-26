@@ -23,11 +23,9 @@
 //! TODO(architecture): remove those host scratch arguments once remaining
 //! command/tick handlers emit sim events instead of editing presentation state.
 //!
-//! Journals should retain this whole value, not just
-//! [`SimulationFrameInput::commands`], so a
-//! reconstruction cannot lose host-resolved facts, an hourglass gate, or a
-//! late command. The current replay file remains command-only; its adapter
-//! constructs the explicit defaults used by that legacy format.
+//! Journals and disk replays retain this whole value, not just
+//! [`SimulationFrameInput::commands`], so reconstruction cannot lose
+//! host-resolved facts, an hourglass gate, or a late command.
 //!
 //! TODO(architecture): choose one timeline owner before production migration.
 //! This transaction advances `EngineInner::frame_counter`, but the current

@@ -153,7 +153,7 @@ async fn drive_scripted_modal_lanes(
     resources: &mut super::interactive::MissionResources,
     ui: &mut super::interactive::MissionUi,
     presentation: &mut super::interactive::MissionPresentation,
-    runtime: &mut super::runtime::TimelineRuntime,
+    _runtime: &mut super::runtime::TimelineRuntime,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     mut rendered: bool,
@@ -167,7 +167,7 @@ async fn drive_scripted_modal_lanes(
         audio_backend: &mut audio.backend,
         sample_loader: &audio.sample_loader,
         menu_resources: &mut resources.menu,
-        replay_recorder: &mut runtime.replay_recorder,
+        modal_dismissals: &mut frame.modal_dismissals,
     };
     if auto_dismiss {
         drain_pending_dialogues(
@@ -289,7 +289,7 @@ fn drive_leave_mission_prompt(
     resources: &mut super::interactive::MissionResources,
     ui: &mut super::interactive::MissionUi,
     presentation: &mut super::interactive::MissionPresentation,
-    runtime: &mut super::runtime::TimelineRuntime,
+    _runtime: &mut super::runtime::TimelineRuntime,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     rendered: bool,
@@ -345,7 +345,7 @@ fn drive_leave_mission_prompt(
         audio_backend: &mut audio.backend,
         sample_loader: &audio.sample_loader,
         menu_resources: &mut resources.menu,
-        replay_recorder: &mut runtime.replay_recorder,
+        modal_dismissals: &mut frame.modal_dismissals,
     };
     let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
     if outcome == ActiveModalOutcome::QuitMissionRequested {
@@ -467,7 +467,7 @@ impl InteractiveFrameSimulation {
             paused,
             consumed_buffered,
         );
-        let history_commit_pending = !paused && !rewind_active;
+        let history_commit_pending = frame.timeline_advances(!paused && !rewind_active);
         Self::drive_manual_steps(
             runtime,
             host,
@@ -614,7 +614,6 @@ impl InteractiveFrameSimulation {
             resources,
             ui,
             presentation,
-            runtime,
             frame: &mut frame,
         })
         .await
@@ -643,7 +642,7 @@ impl InteractiveFrameSimulation {
                     },
                 );
             }
-            runtime.finish_recording(&mut frame);
+            runtime.finish_recording(&mut frame, history_commit_pending);
             runtime.trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                 GameCode::Quit,
@@ -684,7 +683,11 @@ impl InteractiveFrameSimulation {
         // pass). The hash itself was computed at the top of the
         // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
-        runtime.record_commands(frame, !rewind_active && !consumed_buffered);
+        runtime.begin_recording(
+            frame,
+            !rewind_active && !consumed_buffered,
+            manager.sim_frame,
+        );
         runtime.trace(FrameContractStage::Simulation);
 
         // ── Engine tick ──
@@ -755,7 +758,7 @@ impl InteractiveFrameSimulation {
         // (no tick ran) and rewind frames (tick was suppressed).  The
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
-        if !paused && !rewind_active {
+        if frame.timeline_advances(!paused && !rewind_active) {
             manager.sim_frame += 1;
             if let Some(net) = host.transport.net.as_ref()
                 && host.transport.local_seat == engine_player_command::PlayerId::HOST
@@ -850,27 +853,23 @@ impl InteractiveFrameSimulation {
                     .rewind_buffer
                     .begin_frame(step_frame, &manager.engine, &assets);
 
-                let mut step_frame_cmds: Vec<PlayerInput> = Vec::new();
+                let mut replay_input = None;
+                let mut replay_timeline_after = None;
                 if let Some(ref mut player) = runtime.replay_player
                     && !player.is_finished()
                 {
-                    let replay_cmds = player.next_frame();
-                    for cmd in replay_cmds {
-                        if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
-                            tracing::debug!(
-                                "step-forward: dropping recorded ModalDismiss at frame {}",
-                                manager.sim_frame
-                            );
-                            continue;
-                        }
-                        step_frame_cmds.push(cmd.clone());
-                    }
+                    let recorded = player.next_frame().clone();
+                    assert_eq!(recorded.timeline_before, manager.sim_frame);
+                    replay_timeline_after = Some(recorded.timeline_after);
+                    replay_input = Some(recorded.input);
                 }
                 let simulation_frame = if reusing_recorded_frame {
                     buffered_frame
                 } else {
-                    robin_engine::engine::SimulationFrameInput::from_player_inputs(step_frame_cmds)
-                        .with_post_initialize(true)
+                    replay_input.unwrap_or_else(|| {
+                        robin_engine::engine::SimulationFrameInput::default()
+                            .with_post_initialize(true)
+                    })
                 };
                 let mut display = std::mem::take(&mut host.engine_display);
                 game.run_engine_tick(
@@ -887,7 +886,8 @@ impl InteractiveFrameSimulation {
                 if !reusing_recorded_frame {
                     runtime.rewind_buffer.end_frame_input(simulation_frame);
                 }
-                manager.sim_frame += 1;
+                manager.sim_frame =
+                    replay_timeline_after.unwrap_or_else(|| manager.sim_frame.saturating_add(1));
                 // Stepping bypasses the checker's begin_frame/end_frame
                 // pairing, so its ring buffer is now stale relative to the
                 // advanced engine.  Clear it — the checker resumes
@@ -917,7 +917,7 @@ impl InteractiveFrameSimulation {
                     // sim frame so resuming playback re-applies the
                     // right commands.
                     if let Some(ref mut player) = runtime.replay_player {
-                        player.seek(target);
+                        player.seek_timeline_frame(target);
                     }
                     // The rollback checker's ring now references a
                     // timeline the live engine is no longer on; clear
