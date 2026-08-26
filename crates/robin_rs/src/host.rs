@@ -632,7 +632,6 @@ pub struct HostFrontend {
     pub trajectory_preview_action: Action,
     /// Previous live-input modifier state used to emit a deterministic
     /// planned-action cancel command on the Shift release edge.
-    pub planned_shift_held_last_frame: bool,
     pub trajectory_preview_points: Vec<TrajectoryPoint>,
     pub trajectory_preview_start: WorldPoint3D,
     /// Shooter layer captured alongside `trajectory_preview_points`.

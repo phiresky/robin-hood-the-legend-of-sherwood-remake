@@ -328,10 +328,23 @@ impl EngineInner {
                 recorded_gate_routes,
                 recorded_failed_gate_routes,
             } => {
+                let live_actors: Vec<_> = actors
+                    .iter()
+                    .copied()
+                    .filter(|actor| !self.players.qa_recording_for.contains(actor))
+                    .collect();
+                if live_actors.len() != actors.len() {
+                    // The shared recorder captured each armed PC above. A
+                    // manually recorded move must not also move that live PC.
+                    self.stop_recording_macro();
+                }
+                if live_actors.is_empty() {
+                    return;
+                }
                 self.perform_group_move(
                     sim,
                     assets,
-                    actors,
+                    &live_actors,
                     *destination,
                     *running,
                     *show_marker,
@@ -347,7 +360,7 @@ impl EngineInner {
                 // helper has no access to `LevelAssets`; this is the
                 // command-dispatch entry point where the assets are in
                 // scope.
-                for &pc_id in actors {
+                for &pc_id in &live_actors {
                     if group_move_actor_accepts_command(pc_id, recorded_failed_gate_routes) {
                         self.hero_speaking(
                             assets,
@@ -592,6 +605,8 @@ impl EngineInner {
                     }
                     // QuickActionStep appended by `record_macro_step_for`
                     // at the top of `apply_command`.
+                    self.stop_recording_macro();
+                    return;
                 }
                 let mut elem = SequenceElement::new_generic(1, *command, Some(*actor));
                 // The sequence field is the full 3D throw target (the
@@ -615,6 +630,13 @@ impl EngineInner {
                 self.launch_sequence(seq);
             }
             LaunchSelfAbility { actor, command } => {
+                if self.players.qa_recording_for.contains(actor) {
+                    // The shared recorder already captured the step. Manual
+                    // QA recording stores this ability instead of applying it
+                    // to the live PC.
+                    self.stop_recording_macro();
+                    return;
+                }
                 let elem = SequenceElement::new(1, *command, Some(*actor));
                 // The corresponding Original input handlers use
                 // LaunchSequenceElement. Registration is immediate, but the
@@ -667,6 +689,8 @@ impl EngineInner {
                             .get_or_insert(*actor)
                             .set_slot_titbit(slot as usize, tb);
                     }
+                    self.stop_recording_macro();
+                    return;
                 }
                 self.apply_scroll_read_with_seek(sim, *actor, *target, *running);
             }
@@ -1549,7 +1573,7 @@ impl EngineInner {
                     return;
                 }
                 let action = pc_action(self, *actor);
-                let pos = MapPoint::new(target_pos.x, target_pos.y);
+                let pos = MapPoint::new(target_pos.x, target_pos.y - target_pos.z);
                 (
                     *actor,
                     action,
@@ -1704,6 +1728,20 @@ impl EngineInner {
             // into the macro recording.
             _ => return,
         };
+
+        if let Some(replaced_slot) = self
+            .players
+            .macro_store
+            .get(actor)
+            .and_then(crate::macro_store::PcMacroState::recording_replaces_existing_slot)
+        {
+            self.remove_quick_action_titbits_for(actor, replaced_slot);
+            self.players
+                .macro_store
+                .get_mut(actor)
+                .expect("recording macro state disappeared while replacing a slot")
+                .clear_slot_titbit(usize::from(replaced_slot));
+        }
 
         self.players.macro_store.append(
             actor,
@@ -1950,9 +1988,25 @@ impl EngineInner {
             return;
         }
         self.replay_macro_slot(sim, display, input, assets, pc, 0);
-        if !self.has_quick_action(pc, 0) {
-            self.do_tetris_macro_for_pc(display, pc, 0);
+        if self.has_quick_action(pc, 0) {
+            // Automatic queues cannot wait for a user to click a failed QA
+            // slot. Fizzle once, discard the invalid front item, and leave
+            // the tail ready to advance on the next idle tick.
+            tracing::warn!(?pc, "automatic quick action fizzled; dropping queue front");
+            self.feedback
+                .pending_side_effects
+                .sounds
+                .push(super::SoundCommand::Jingle(
+                    crate::sound::Jingle::QuickActionFailed,
+                ));
+            self.remove_quick_action_titbits_for(pc, 0);
+            self.players
+                .macro_store
+                .get_mut(pc)
+                .expect("automatic quick-action state disappeared after failed replay")
+                .clear_slot(0);
         }
+        self.do_tetris_macro_for_pc(display, pc, 0);
     }
 
     fn do_tetris_macro_for_pc(&mut self, display: &mut HostDisplayState, pc: EntityId, slot: u8) {
@@ -2047,7 +2101,8 @@ impl EngineInner {
 
         let targets: Vec<EntityId> = match pc {
             Some(id) => {
-                if self.has_quick_action(id, slot) {
+                if self.has_quick_action(id, slot) && !self.players.auto_queue_active.contains(&id)
+                {
                     vec![id]
                 } else {
                     Vec::new()
@@ -2058,7 +2113,9 @@ impl EngineInner {
                 .pc_ids
                 .iter()
                 .copied()
-                .filter(|id| self.has_quick_action(*id, slot))
+                .filter(|id| {
+                    self.has_quick_action(*id, slot) && !self.players.auto_queue_active.contains(id)
+                })
                 .collect(),
         };
 
@@ -2090,7 +2147,13 @@ impl EngineInner {
         // at this slot has now fired (i.e. no PC still has one), collapse
         // the strip.
         if pc.is_none() && all_launched {
-            self.do_tetris_macro(display, slot);
+            if self.players.auto_queue_active.is_empty() {
+                self.do_tetris_macro(display, slot);
+            } else {
+                for pc_id in targets {
+                    self.do_tetris_macro_for_pc(display, pc_id, slot);
+                }
+            }
         }
     }
 
@@ -2720,7 +2783,10 @@ impl EngineInner {
         let targets: Vec<EntityId> = match pc {
             Some(id) => vec![id],
             None => self.players.seats[seat].selection.clone(),
-        };
+        }
+        .into_iter()
+        .filter(|id| !self.players.auto_queue_active.contains(id))
+        .collect();
         if targets.is_empty() {
             return;
         }
@@ -2729,11 +2795,13 @@ impl EngineInner {
                 .macro_store
                 .get_or_insert(*id)
                 .begin_recording(slot);
-            let pc = self
-                .get_entity_mut(*id)
-                .and_then(|entity| entity.pc_data_mut())
-                .unwrap_or_else(|| panic!("quick-action recording target {id:?} is not a PC"));
-            pc.portrait.quick_icons[slot as usize] = Default::default();
+            if self
+                .get_entity(*id)
+                .and_then(|entity| entity.pc_data())
+                .is_none()
+            {
+                panic!("quick-action recording target {id:?} is not a PC");
+            }
         }
         self.players.qa_recording_slot = slot;
         self.players.qa_recording_for = targets;
@@ -2751,7 +2819,12 @@ impl EngineInner {
         // armed set, not the current selection — those can differ).
         self.stop_recording_macro();
         // Re-arm on whoever is currently selected.
-        let targets: Vec<EntityId> = self.players.seats[seat].selection.clone();
+        let targets: Vec<EntityId> = self.players.seats[seat]
+            .selection
+            .iter()
+            .copied()
+            .filter(|id| !self.players.auto_queue_active.contains(id))
+            .collect();
         if targets.is_empty() {
             return;
         }
@@ -2760,11 +2833,13 @@ impl EngineInner {
                 .macro_store
                 .get_or_insert(*id)
                 .begin_recording(slot);
-            let pc = self
-                .get_entity_mut(*id)
-                .and_then(|entity| entity.pc_data_mut())
-                .unwrap_or_else(|| panic!("quick-action recording target {id:?} is not a PC"));
-            pc.portrait.quick_icons[slot as usize] = Default::default();
+            if self
+                .get_entity(*id)
+                .and_then(|entity| entity.pc_data())
+                .is_none()
+            {
+                panic!("quick-action recording target {id:?} is not a PC");
+            }
         }
         self.players.qa_recording_slot = slot;
         self.players.qa_recording_for = targets;
@@ -2783,14 +2858,28 @@ impl EngineInner {
         self.stop_recording_macro();
         match pc {
             Some(id) => {
-                self.abort_quick_action(id, slot);
+                if !self.players.auto_queue_active.contains(&id) {
+                    self.abort_quick_action(id, slot);
+                }
             }
             None => {
                 let pcs = self.world.pc_ids.clone();
-                for id in pcs {
-                    self.abort_quick_action(id, slot);
+                if self.players.auto_queue_active.is_empty() {
+                    for id in pcs {
+                        self.abort_quick_action(id, slot);
+                    }
+                    self.do_tetris_macro(display, slot);
+                } else {
+                    // Preserve the contiguous window of every automatic
+                    // queue; collapse only PCs whose manual slot was deleted.
+                    for id in pcs {
+                        if !self.players.auto_queue_active.contains(&id)
+                            && self.abort_quick_action(id, slot)
+                        {
+                            self.do_tetris_macro_for_pc(display, id, slot);
+                        }
+                    }
                 }
-                self.do_tetris_macro(display, slot);
             }
         }
     }
@@ -5550,6 +5639,82 @@ mod tests {
                     command == Command::WhistleCmd
                 }),
             "the pending QA starts as soon as the preceding action terminates"
+        );
+    }
+
+    #[test]
+    fn shift_queue_retains_more_than_three_pending_actions() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
+        let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        busy.priority = crate::sequence::SequencePriority::Normal;
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+
+        let queued = PlayerCommand::QueueQuickAction {
+            action: Action::Whistle,
+            command: Box::new(PlayerCommand::LaunchSelfAbility {
+                actor: pc_id,
+                command: Command::WhistleCmd,
+            }),
+        };
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        for _ in 0..6 {
+            engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+        }
+
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("expanded queued QA state");
+        assert_eq!(state.slots().len(), 6);
+        assert_eq!(
+            state.slots().iter().filter(|slot| !slot.is_empty()).count(),
+            6
+        );
+    }
+
+    #[test]
+    fn shift_pickup_uses_take_quick_action_phase() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 4)]);
+        let target = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
+        let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::NoAction,
+                command: Box::new(PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target,
+                    command: Command::Take,
+                    running: false,
+                }),
+            },
+        );
+
+        let titbit = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.get_slot_titbit(0))
+            .expect("pickup QA titbit");
+        assert_eq!(
+            engine.feedback.titbit_manager.get_phase(titbit),
+            crate::titbit::QuickAction::Take as u16
         );
     }
 

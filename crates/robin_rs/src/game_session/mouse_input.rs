@@ -742,10 +742,7 @@ fn on_portrait_click(
                                 selected_action,
                                 shift_held,
                             );
-                            for cmd in &cmds {
-                                frame_cmds.push(cmd.clone());
-                            }
-                            dispatch_local_commands(host, engine, assets, &cmds);
+                            dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
                             true
                         } else {
@@ -787,10 +784,7 @@ fn on_portrait_click(
                                 selected_action,
                                 shift_held,
                             );
-                            for cmd in &cmds {
-                                frame_cmds.push(cmd.clone());
-                            }
-                            dispatch_local_commands(host, engine, assets, &cmds);
+                            dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!(
                                 "Portrait shield: {:?} → protect {:?}",
                                 shielder_id,

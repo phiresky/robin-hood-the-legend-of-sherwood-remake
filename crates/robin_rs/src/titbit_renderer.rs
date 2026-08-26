@@ -448,7 +448,11 @@ impl TitbitRenderer {
             ) && !titbit.blinking
             {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
+                if !engine
+                    .seat_selection(host.transport.local_seat)
+                    .iter()
+                    .any(|&id| id.index() == mgr)
+                {
                     continue;
                 }
             }
@@ -456,7 +460,11 @@ impl TitbitRenderer {
             // DangerPoint: only show when the managing PC is selected.
             if titbit.kind == TitbitKind::DangerPoint {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
+                if !engine
+                    .seat_selection(host.transport.local_seat)
+                    .iter()
+                    .any(|&id| id.index() == mgr)
+                {
                     continue;
                 }
             }

@@ -283,6 +283,11 @@ pub struct PcMacroState {
     /// site in the input-action flow.
     maul_titbits: Vec<Option<crate::titbit::TitbitId>>,
     recording_slot: Option<u8>,
+    /// Previous contents of a manually armed slot. The Original does not
+    /// destroy that QA merely by entering recording mode; it is replaced only
+    /// when the first new action is actually captured.
+    #[serde(default)]
+    recording_backup: Option<(QuickActionSlot, Option<crate::titbit::TitbitId>)>,
 }
 
 impl Default for PcMacroState {
@@ -293,6 +298,7 @@ impl Default for PcMacroState {
                 .collect(),
             maul_titbits: vec![None; NUMBER_OF_QA_MEMORY],
             recording_slot: None,
+            recording_backup: None,
         }
     }
 }
@@ -392,19 +398,23 @@ impl PcMacroState {
         }
     }
 
-    /// Begin recording into `slot_idx`, clearing any previous contents
-    /// (the recorder overwrites the slot when arming and the slot was
-    /// previously populated).
+    pub fn clear_slot_titbit(&mut self, slot: usize) {
+        if let Some(cell) = self.maul_titbits.get_mut(slot) {
+            *cell = None;
+        }
+    }
+
+    /// Begin recording into `slot_idx`. Previous contents are held as a
+    /// rollback backup until the first new step is appended, so arming and
+    /// canceling alone does not destroy an existing QA.
     pub fn begin_recording(&mut self, slot_idx: u8) {
         assert!(
             (slot_idx as usize) < NUMBER_OF_QA_MEMORY,
             "slot_idx {slot_idx} out of range 0..{NUMBER_OF_QA_MEMORY}"
         );
-        self.slots[slot_idx as usize].steps.clear();
-        self.slots[slot_idx as usize].legacy_action_sequence = None;
-        self.slots[slot_idx as usize].legacy_seek_sequence = None;
-        self.slots[slot_idx as usize].legacy_quickito = None;
-        self.maul_titbits[slot_idx as usize] = None;
+        let slot = usize::from(slot_idx);
+        self.recording_backup = Some((self.slots[slot].clone(), self.maul_titbits[slot]));
+        self.slots[slot] = QuickActionSlot::default();
         self.recording_slot = Some(slot_idx);
     }
 
@@ -419,18 +429,33 @@ impl PcMacroState {
         self.slots[slot] = QuickActionSlot::default();
         self.maul_titbits[slot] = None;
         self.recording_slot = Some(slot_idx);
+        self.recording_backup = None;
     }
 
     /// Stop recording.  Keeps whatever was appended; the slot is
     /// committed at this point.
     pub fn stop_recording(&mut self) {
+        if let Some(slot) = self.recording_slot.map(usize::from)
+            && self.slots[slot].is_empty()
+            && let Some((previous_slot, previous_titbit)) = self.recording_backup.take()
+        {
+            self.slots[slot] = previous_slot;
+            self.maul_titbits[slot] = previous_titbit;
+        }
+        self.recording_backup = None;
         self.recording_slot = None;
+    }
+
+    pub fn recording_replaces_existing_slot(&self) -> Option<u8> {
+        self.recording_slot
+            .filter(|_| self.recording_backup.is_some())
     }
 
     /// Append a step if currently recording.  No-op otherwise.
     pub fn append_if_recording(&mut self, step: QuickActionStep) {
         if let Some(idx) = self.recording_slot {
             self.slots[idx as usize].steps.push(step);
+            self.recording_backup = None;
         }
     }
 
@@ -448,6 +473,7 @@ impl PcMacroState {
         }
         if self.recording_slot == Some(slot_idx as u8) {
             self.recording_slot = None;
+            self.recording_backup = None;
         }
     }
 
@@ -742,6 +768,23 @@ mod tests {
         assert_eq!(s.slots[0].len(), 0);
         assert!(s.is_recording());
         assert!(s.get_slot_titbit(0).is_none());
+    }
+
+    #[test]
+    fn stopping_empty_recording_restores_previous_slot() {
+        let mut state = PcMacroState::default();
+        state.begin_auto_queue_recording(0);
+        state.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        state.stop_recording();
+        let titbit = crate::titbit::TitbitId::new(42).expect("valid test titbit");
+        state.set_slot_titbit(0, titbit);
+
+        state.begin_recording(0);
+        assert!(state.slot(0).expect("armed slot").is_empty());
+        state.stop_recording();
+
+        assert_eq!(state.slot(0).expect("restored slot").len(), 1);
+        assert_eq!(state.get_slot_titbit(0), Some(titbit));
     }
 
     #[test]

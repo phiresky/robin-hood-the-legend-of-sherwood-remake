@@ -75,7 +75,7 @@ pub fn resolve_left_click(
     // "no PCs selected" case is implicit: `selected_action_for_seat`
     // returns `NoAction` when nothing is selected, so the `!= NoAction`
     // gate already excludes it.
-    if is_double && num_selected > 0 {
+    if is_double && !shift_held && num_selected > 0 {
         let pending_action = if shift_held {
             engine.planned_action_for_seat(local_seat)
         } else {
@@ -487,7 +487,19 @@ pub fn queue_shift_click_commands(
             // are intentionally sticky while Shift is held, and must never
             // unequip/interrupt the real PC.
             PlayerCommand::UnselectAllActions | PlayerCommand::CancelAction { .. } => None,
-            other => Some(other),
+            // Selection changes remain UI intent while Shift is held. Do not
+            // let any unclassified simulation command leak through live: new
+            // click-result variants must opt into queuing explicitly above.
+            command @ (PlayerCommand::SelectPc { .. }
+            | PlayerCommand::TogglePcSelection { .. }
+            | PlayerCommand::SelectAlliedSoldiers { .. }
+            | PlayerCommand::ClearAlliedSelection
+            | PlayerCommand::UnselectAllPcs
+            | PlayerCommand::StopRecordingMacro) => Some(command),
+            other => {
+                tracing::warn!(?other, "suppressed unsupported live Shift-click command");
+                None
+            }
         })
         .collect()
 }
@@ -2206,6 +2218,20 @@ mod tests {
             }
         ));
         assert_eq!(queued.len(), 2);
+    }
+
+    #[test]
+    fn shift_suppresses_unclassified_live_simulation_commands() {
+        let pc = EntityId::Pc(robin_engine::entity_id::PcId(2));
+        let queued = queue_shift_click_commands(
+            vec![PlayerCommand::HeroSpeak {
+                pc_id: pc,
+                expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            }],
+            Action::NoAction,
+            true,
+        );
+        assert!(queued.is_empty());
     }
 
     // ── resolve_left_click ──

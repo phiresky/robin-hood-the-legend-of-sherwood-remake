@@ -322,11 +322,7 @@ pub(super) async fn drive_live_gameplay_input(
         .manager
         .engine
         .planned_action_for_seat(context.host.transport.local_seat);
-    if should_cancel_planned_action(
-        context.host.planned_shift_held_last_frame,
-        modifiers.shift,
-        planned_action,
-    ) {
+    if should_cancel_planned_action(modifiers.shift, planned_action) {
         dispatch_local_command(
             context.host,
             &mut context.manager.engine,
@@ -335,8 +331,6 @@ pub(super) async fn drive_live_gameplay_input(
             &PlayerCommand::CancelPlannedAction,
         );
     }
-    context.host.planned_shift_held_last_frame = modifiers.shift;
-
     if minimap_toggle_pressed
         && !context.ui.console_overlay.is_visible()
         && context.ui.pause_menu.is_none()
@@ -428,11 +422,10 @@ pub(super) async fn drive_live_gameplay_input(
 }
 
 fn should_cancel_planned_action(
-    shift_was_held: bool,
     shift_is_held: bool,
     planned_action: robin_engine::profiles::Action,
 ) -> bool {
-    shift_was_held && !shift_is_held && planned_action != robin_engine::profiles::Action::NoAction
+    !shift_is_held && planned_action != robin_engine::profiles::Action::NoAction
 }
 
 #[cfg(test)]
@@ -462,9 +455,8 @@ mod tests {
 
     #[test]
     fn shift_release_cancels_only_an_armed_planned_action() {
-        assert!(should_cancel_planned_action(true, false, Action::Bow));
-        assert!(!should_cancel_planned_action(false, false, Action::Bow));
-        assert!(!should_cancel_planned_action(true, true, Action::Bow));
-        assert!(!should_cancel_planned_action(true, false, Action::NoAction));
+        assert!(should_cancel_planned_action(false, Action::Bow));
+        assert!(!should_cancel_planned_action(true, Action::Bow));
+        assert!(!should_cancel_planned_action(false, Action::NoAction));
     }
 }
