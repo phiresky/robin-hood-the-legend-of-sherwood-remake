@@ -161,6 +161,14 @@ pub enum QaReplayCommand {
         #[serde(default)]
         seek_distance: Option<f32>,
     },
+    /// Shield two-click completion. Original records the concrete
+    /// `Seek(protected_pc, 50) -> RaiseShield` sequence and attaches the QA
+    /// titbit to `protected_pc` at the projected danger point.
+    ShieldRaise {
+        protected_pc: EntityId,
+        danger_point: crate::coordinates::WorldPoint3D,
+        danger_point_layer: u16,
+    },
     /// Quickitos posture toggle — `CrouchDown` / `StandUp` recorded so
     /// the macro can replay a mid-sequence posture change.  `to_crouch`
     /// = true means *crouch down*; the input source passes

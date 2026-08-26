@@ -264,7 +264,7 @@ pub enum PlayerCommand {
         /// first.
         protected_pc: EntityId,
         /// The danger point toward which the shield is oriented.
-        danger_point: MapPoint,
+        danger_point: WorldPoint3D,
         /// Map layer the player was looking at when picking the danger
         /// point.  Differs from the carrier's own layer when the danger
         /// is across a chasm or off a balcony.  Stamped onto

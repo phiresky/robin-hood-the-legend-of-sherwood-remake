@@ -924,7 +924,7 @@ fn resolve_action_left_click(
                 PlayerCommand::RaiseShieldWithDanger {
                     actor: pc_id,
                     protected_pc,
-                    danger_point: map_pt,
+                    danger_point: convert_to_3d(map_pt),
                     danger_point_layer: selected_layer,
                 },
                 commit_tail(is_recording),

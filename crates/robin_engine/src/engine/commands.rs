@@ -858,13 +858,22 @@ impl EngineInner {
                 danger_point,
                 danger_point_layer,
             } => {
+                if self.players.qa_recording_for.contains(actor) {
+                    // The first shield click already selected the protectee.
+                    // Original's second click updates the prompt state, stores
+                    // the concrete Seek -> RaiseShield quick action, and stops
+                    // recording without launching it against the live actor.
+                    self.world.shield.is_protected = true;
+                    self.world.shield.protected_pc = Some(*protected_pc);
+                    self.world.shield.danger_point = *danger_point;
+                    self.world.shield.danger_point_layer = *danger_point_layer;
+                    self.stop_recording_macro();
+                    return;
+                }
                 self.apply_raise_shield_with_danger(
                     *actor,
                     *protected_pc,
-                    crate::coordinates::MapPoint {
-                        x: danger_point.x,
-                        y: danger_point.y,
-                    },
+                    *danger_point,
                     *danger_point_layer,
                 );
             }
@@ -1699,6 +1708,32 @@ impl EngineInner {
                     },
                 )
             }
+            RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => {
+                if *actor != recording_pc {
+                    return;
+                }
+                if self.get_entity(*protected_pc).is_none() {
+                    panic!(
+                        "recorded shield protectee {protected_pc:?} disappeared before QA registration"
+                    );
+                }
+                phase_override = Some(crate::titbit::QuickAction::Shield);
+                (
+                    *actor,
+                    pc_action(self, *actor),
+                    danger_point.to_map(),
+                    QaReplayCommand::ShieldRaise {
+                        protected_pc: *protected_pc,
+                        danger_point: *danger_point,
+                        danger_point_layer: *danger_point_layer,
+                    },
+                )
+            }
             CrouchDown | StandUp => {
                 // For each selected PC, we either perform the live
                 // posture change or register a posture-toggle step
@@ -1820,7 +1855,11 @@ impl EngineInner {
             | QaReplayCommand::TargetInteraction { target, .. }
             | QaReplayCommand::ScrollRead { target, .. }
             | QaReplayCommand::Swordfight { target, .. }
-            | QaReplayCommand::SwordStrike { target, .. } => Some(target),
+            | QaReplayCommand::SwordStrike { target, .. }
+            | QaReplayCommand::ShieldRaise {
+                protected_pc: target,
+                ..
+            } => Some(target),
             QaReplayCommand::SelfAbility { .. } | QaReplayCommand::PostureToggle { .. } => {
                 Some(actor)
             }
@@ -1838,6 +1877,11 @@ impl EngineInner {
                 titbit_layer,
                 ..
             } => (target_pos, titbit_layer),
+            QaReplayCommand::ShieldRaise {
+                danger_point,
+                danger_point_layer,
+                ..
+            } => (danger_point, danger_point_layer),
             QaReplayCommand::Move { destination, .. }
             | QaReplayCommand::DropAle {
                 target_pos: destination,
@@ -2372,6 +2416,21 @@ impl EngineInner {
                         seek_distance,
                     }
                 }
+                crate::macro_store::QaReplayCommand::ShieldRaise {
+                    protected_pc,
+                    danger_point,
+                    danger_point_layer,
+                } => {
+                    if self.get_entity(protected_pc).is_none() {
+                        return;
+                    }
+                    PlayerCommand::RaiseShieldWithDanger {
+                        actor: pc,
+                        protected_pc,
+                        danger_point,
+                        danger_point_layer,
+                    }
+                }
                 crate::macro_store::QaReplayCommand::PostureToggle { to_crouch } => {
                     // Replay a recorded `CrouchDown` / `StandUp` on
                     // the macro's owning PC.  The existing
@@ -2756,7 +2815,11 @@ impl EngineInner {
                 | QaReplayCommand::TargetInteraction { target, .. }
                 | QaReplayCommand::ScrollRead { target, .. }
                 | QaReplayCommand::Swordfight { target, .. }
-                | QaReplayCommand::SwordStrike { target, .. } => Some(target),
+                | QaReplayCommand::SwordStrike { target, .. }
+                | QaReplayCommand::ShieldRaise {
+                    protected_pc: target,
+                    ..
+                } => Some(target),
                 _ => None,
             };
             if let Some(target) = target
@@ -4653,18 +4716,14 @@ impl EngineInner {
         &mut self,
         actor: EntityId,
         protected_pc: EntityId,
-        danger_point: crate::coordinates::MapPoint,
+        danger_point: crate::coordinates::WorldPoint3D,
         danger_point_layer: u16,
     ) {
         use crate::order::OrderType;
 
         self.world.shield.is_protected = true;
         self.world.shield.protected_pc = Some(protected_pc);
-        self.world.shield.danger_point = crate::coordinates::WorldPoint3D {
-            x: danger_point.x,
-            y: danger_point.y,
-            z: 0.0,
-        };
+        self.world.shield.danger_point = danger_point;
         self.world.shield.danger_point_layer = danger_point_layer;
 
         // Stamp the new danger point on the acting PC so
@@ -4673,7 +4732,7 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(actor)
             && let Some(actor_data) = entity.actor_data_mut()
         {
-            actor_data.shield_face_point = Some(danger_point);
+            actor_data.shield_face_point = Some(danger_point.to_map());
         }
 
         // Build Seek(protected_pc, tol=50, RUNNING_UPRIGHT) → RaiseShield.
@@ -4697,7 +4756,7 @@ impl EngineInner {
             FieldValue::Point3D {
                 x: danger_point.x,
                 y: danger_point.y,
-                z: 0.0,
+                z: danger_point.z,
             },
         );
         raise_elem.set_property(
@@ -5498,6 +5557,148 @@ mod tests {
         }));
 
         (engine, assets, pc_id)
+    }
+
+    #[test]
+    fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_route() {
+        let (mut engine, assets, actor) = setup_pc_engine(&[(Action::Shield, 0)]);
+        let protected_pc = spawn_pc_at(&mut engine, 80.0, 30.0);
+        engine.players.seats[0].selection.push(actor);
+        engine
+            .get_entity_mut(actor)
+            .and_then(Entity::pc_data_mut)
+            .expect("shield actor is a PC")
+            .current_action = Action::Shield;
+
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(actor),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::ShieldSelectProtected {
+                actor,
+                protected_pc,
+            },
+        );
+        assert!(engine.is_recording_macro());
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+
+        let danger_point = WorldPoint3D::new(140.0, 215.0, 35.0);
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer: 7,
+            },
+        );
+
+        assert!(!engine.is_recording_macro());
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            0,
+            "recording stores the shield sequence instead of launching it live"
+        );
+        let state = engine
+            .players
+            .macro_store
+            .get(actor)
+            .expect("recorded shield QA state");
+        let slot = state.slot(0).expect("recorded shield QA slot");
+        assert_eq!(slot.steps.len(), 1);
+        assert_eq!(slot.steps[0].action, Action::Shield);
+        assert_eq!(slot.steps[0].position, danger_point.to_map());
+        assert_eq!(
+            slot.steps[0].replay,
+            QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point,
+                danger_point_layer: 7,
+            }
+        );
+        let titbit = engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .find(|titbit| titbit.kind == TitbitKind::QuickAction)
+            .expect("recorded shield QA titbit");
+        assert_eq!(titbit.phase, crate::titbit::QuickAction::Shield as u16);
+        assert_eq!(titbit.element_supplier, ElementHandle(protected_pc.index()));
+        assert_eq!(titbit.element_manager, ElementHandle(actor.index()));
+        assert_eq!(titbit.position, danger_point);
+        assert_eq!(titbit.layer, 7);
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(actor),
+                slot: 0,
+            },
+        );
+
+        assert!(!engine.has_quick_action(actor, 0));
+        assert_eq!(engine.world.shield.danger_point, danger_point);
+        assert_eq!(engine.world.shield.danger_point_layer, 7);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("shield QA launches one sequence");
+        let seek = sequence.get(0).expect("shield QA begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            element,
+            tolerance,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &seek.data
+        else {
+            panic!("shield QA must begin with a movement element");
+        };
+        assert_eq!(*element, Some(protected_pc));
+        assert_eq!(*tolerance, 50.0);
+        assert!(flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD));
+        let raise = post_seek_sequence
+            .as_deref()
+            .and_then(|post_seek| post_seek.get(0))
+            .expect("shield QA Seek owns RaiseShield continuation");
+        assert_eq!(raise.command, Command::RaiseShield);
+        assert!(matches!(
+            raise.get_property(Field::ShieldDangerPoint),
+            Some(FieldValue::Point3D { x, y, z })
+                if *x == danger_point.x && *y == danger_point.y && *z == danger_point.z
+        ));
+        assert!(matches!(
+            raise.get_property(Field::ShieldDangerPointLayer),
+            Some(FieldValue::Integer(7))
+        ));
+        assert!(matches!(
+            raise.get_property(Field::ShieldProtected),
+            Some(FieldValue::Element(id)) if *id == protected_pc
+        ));
     }
 
     #[test]
