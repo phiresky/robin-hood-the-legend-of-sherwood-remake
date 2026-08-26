@@ -2982,9 +2982,7 @@ struct TraceAiForecastEvent {
 struct TraceAlertEligibility {
     rank: bool,
     able_to_help: Option<bool>,
-    #[serde(default)]
-    stay_on_post: Option<bool>,
-    #[serde(default)]
+    #[serde(alias = "stay_on_post")]
     allowed_to_leave_post: Option<bool>,
     can_call: Option<bool>,
     max_radius: Option<bool>,
@@ -6339,7 +6337,17 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
 ///   schema-gated `#[serde(default)]` collection fields parse from an absent
 ///   key but re-serialize as an empty collection, so the typed schema
 ///   deliberately identifies the two.
+/// * Legacy alert-formation eligibility used `stay_on_post` for the boolean
+///   now emitted by Original as `allowed_to_leave_post`. The two spellings
+///   share one native slot; only this exact nested key is canonicalized.
 fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
+    normalize_trace_json_for_roundtrip_inner(value, false);
+}
+
+fn normalize_trace_json_for_roundtrip_inner(
+    value: &mut serde_json::Value,
+    inside_alert_formation_events: bool,
+) {
     match value {
         serde_json::Value::Object(map) => {
             if map.len() == 2
@@ -6353,8 +6361,20 @@ fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
             {
                 map.remove("value");
             }
-            for child in map.values_mut() {
-                normalize_trace_json_for_roundtrip(child);
+            if inside_alert_formation_events {
+                if let Some(serde_json::Value::Object(eligibility)) = map.get_mut("eligibility") {
+                    if let Some(stay_on_post) = eligibility.remove("stay_on_post") {
+                        assert!(
+                            eligibility
+                                .insert("allowed_to_leave_post".to_owned(), stay_on_post)
+                                .is_none(),
+                            "alert eligibility contains both stay_on_post and allowed_to_leave_post"
+                        );
+                    }
+                }
+            }
+            for (key, child) in map.iter_mut() {
+                normalize_trace_json_for_roundtrip_inner(child, key == "alert_formation_events");
             }
             map.retain(|_, child| match child {
                 serde_json::Value::Null => false,
@@ -6365,7 +6385,7 @@ fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                normalize_trace_json_for_roundtrip(item);
+                normalize_trace_json_for_roundtrip_inner(item, inside_alert_formation_events);
             }
         }
         _ => {}
@@ -14333,35 +14353,106 @@ mod tests {
     }
 
     #[test]
-    fn alert_eligibility_round_trip_preserves_distinct_post_keys() {
-        let original = serde_json::json!({
+    fn alert_eligibility_round_trip_canonicalizes_legacy_post_key_without_layout_change() {
+        #[derive(bitcode::Encode, bitcode::Decode)]
+        struct FrozenTraceAlertEligibilityV66 {
+            rank: bool,
+            able_to_help: Option<bool>,
+            allowed_to_leave_post: Option<bool>,
+            can_call: Option<bool>,
+            max_radius: Option<bool>,
+            squared_radius: Option<bool>,
+            capacity: Option<bool>,
+            think: Option<bool>,
+        }
+
+        let legacy_json = serde_json::json!({
             "rank": true,
             "stay_on_post": true,
-            "allowed_to_leave_post": false,
         });
-        let eligibility: TraceAlertEligibility = serde_json::from_value(original.clone()).unwrap();
-        let serialized = serde_json::to_value(&eligibility).unwrap();
-        assert_eq!(serialized["stay_on_post"], serde_json::json!(true));
+        let current_json = serde_json::json!({
+            "rank": true,
+            "allowed_to_leave_post": true,
+        });
+        let legacy: TraceAlertEligibility = serde_json::from_value(legacy_json.clone()).unwrap();
+        let current: TraceAlertEligibility = serde_json::from_value(current_json.clone()).unwrap();
+        assert_eq!(legacy.allowed_to_leave_post, Some(true));
+        assert_eq!(current.allowed_to_leave_post, Some(true));
+        assert_eq!(bitcode::encode(&legacy), bitcode::encode(&current));
+
+        let frozen_v66 = FrozenTraceAlertEligibilityV66 {
+            rank: true,
+            able_to_help: Some(false),
+            allowed_to_leave_post: Some(true),
+            can_call: None,
+            max_radius: Some(false),
+            squared_radius: Some(true),
+            capacity: None,
+            think: Some(true),
+        };
+        let frozen_v66_bytes = bitcode::encode(&frozen_v66);
+        let decoded: TraceAlertEligibility = bitcode::decode(&frozen_v66_bytes).unwrap();
+        assert!(decoded.rank);
+        assert_eq!(decoded.able_to_help, Some(false));
+        assert_eq!(decoded.allowed_to_leave_post, Some(true));
+        assert_eq!(decoded.can_call, None);
+        assert_eq!(decoded.max_radius, Some(false));
+        assert_eq!(decoded.squared_radius, Some(true));
+        assert_eq!(decoded.capacity, None);
+        assert_eq!(decoded.think, Some(true));
+        assert_eq!(bitcode::encode(&decoded), frozen_v66_bytes);
+
+        let serialized = serde_json::to_value(&legacy).unwrap();
+        assert_eq!(serialized["allowed_to_leave_post"], serde_json::json!(true));
+        assert!(serialized.get("stay_on_post").is_none());
+
+        for duplicate in [
+            r#"{"rank":true,"stay_on_post":true,"allowed_to_leave_post":true}"#,
+            r#"{"rank":true,"allowed_to_leave_post":false,"stay_on_post":false}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<TraceAlertEligibility>(duplicate).is_err(),
+                "both post keys must be rejected regardless of order or value"
+            );
+        }
+
+        for eligibility in [legacy_json, current_json] {
+            let mut frame_json = minimal_frame_json();
+            frame_json["alert_formation_events"] = serde_json::json!([{
+                "ordinal": 0,
+                "stage": "candidate",
+                "invocation": 9,
+                "scan_index": 2,
+                "candidate": {"kind": "soldier", "index": 8},
+                "eligibility": eligibility,
+            }]);
+
+            let line = frame_json.to_string();
+            let frame: TraceFrame = serde_json::from_str(&line).unwrap();
+            verify_trace_line_roundtrip(&frame, &line, 3);
+        }
+
+        let mut outside_alert_events = serde_json::json!({
+            "eligibility": {"stay_on_post": true},
+        });
+        normalize_trace_json_for_roundtrip(&mut outside_alert_events);
         assert_eq!(
-            serialized["allowed_to_leave_post"],
-            serde_json::json!(false)
+            outside_alert_events,
+            serde_json::json!({"eligibility": {"stay_on_post": true}}),
+            "legacy spelling normalization must stay scoped to alert formation events"
         );
-        assert_eq!(eligibility.stay_on_post, Some(true));
-        assert_eq!(eligibility.allowed_to_leave_post, Some(false));
 
-        let mut frame_json = minimal_frame_json();
-        frame_json["alert_formation_events"] = serde_json::json!([{
-            "ordinal": 0,
-            "stage": "candidate",
-            "invocation": 9,
-            "scan_index": 2,
-            "candidate": {"kind": "soldier", "index": 8},
-            "eligibility": original,
-        }]);
-
-        let line = frame_json.to_string();
-        let frame: TraceFrame = serde_json::from_str(&line).unwrap();
-        verify_trace_line_roundtrip(&frame, &line, 3);
+        let mut nested_inside_event = serde_json::json!({
+            "alert_formation_events": [{
+                "nested": {"eligibility": {"stay_on_post": true}},
+            }],
+        });
+        normalize_trace_json_for_roundtrip(&mut nested_inside_event);
+        assert_eq!(
+            nested_inside_event["alert_formation_events"][0]["nested"]["eligibility"],
+            serde_json::json!({"stay_on_post": true}),
+            "normalization must only inspect an alert event's direct eligibility field"
+        );
     }
 
     #[test]
