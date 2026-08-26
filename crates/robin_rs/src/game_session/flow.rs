@@ -538,8 +538,8 @@ fn finish_interactive_audio(
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
     runtime.trace(FrameContractStage::AppEffects);
-    if let Some(fact) = frontend.audio.tick(&mut world.manager, &mut world.host) {
-        runtime.queue_external_fact(fact);
+    if let Some(boundary) = frontend.audio.tick(&mut world.manager, &mut world.host) {
+        runtime.queue_sound_boundary(boundary);
     }
     runtime.trace(FrameContractStage::Audio);
 }

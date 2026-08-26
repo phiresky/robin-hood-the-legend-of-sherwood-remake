@@ -21,15 +21,15 @@
 
 use std::ops::Deref;
 
-#[cfg(test)]
-use super::DirectorCompletion;
 use super::SimConfig;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
-    ExternalFact, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
+    ExternalFacts, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
     LevelLoadStaging, SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput,
-    SimulationRng,
+    SimulationRng, SoundBoundaryPolicy,
 };
+#[cfg(test)]
+use super::{DirectorCompletion, SoundBoundary};
 use crate::campaign::Campaign;
 use crate::element::EntityId;
 use crate::minimap::HitMask;
@@ -3080,14 +3080,10 @@ impl Engine {
             run_post_initialize,
         } = frame;
 
-        // Director facts are fallible replay inputs. Stage the entire fact
-        // boundary when one is present so a corrupt later fact cannot leave
-        // earlier sound/director facts partially committed. Engine cloning is
-        // already the rollback primitive and this path is parity-replay-only.
-        if external_facts
-            .iter()
-            .any(|fact| matches!(fact, ExternalFact::DirectorCompletion(_)))
-        {
+        // Facts are fallible authoritative inputs. Stage the complete ordered
+        // prefix so a corrupt later completion or sound resolution cannot
+        // leave earlier director/sound mutations partially committed.
+        if !external_facts.is_empty() {
             let mut staged_inner = self.inner.clone();
             let mut staged_display = display.clone();
             Self::apply_frame_external_facts(
@@ -3098,8 +3094,6 @@ impl Engine {
             )?;
             self.inner = staged_inner;
             *display = staged_display;
-        } else {
-            Self::apply_frame_external_facts(&mut self.inner, display, assets, external_facts)?;
         }
 
         let mut external_action_results = external_actions
@@ -3158,28 +3152,29 @@ impl Engine {
         inner: &mut EngineInner,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
-        external_facts: Vec<ExternalFact>,
+        external_facts: ExternalFacts,
     ) -> Result<(), FrameAdvanceError> {
-        for (index, fact) in external_facts.into_iter().enumerate() {
-            match fact {
-                ExternalFact::DirectorCompletion(completion) => inner
-                    .apply_external_director_completion(completion, display, assets)
-                    .map_err(|reason| FrameAdvanceError::DirectorCompletionRejected {
-                        index,
-                        completion,
-                        reason,
-                    })?,
-                ExternalFact::LiveSoundBoundary(resolutions) => {
-                    inner.queue_resolved_exclamations(resolutions);
-                    let sim = inner.control.simulation_context();
-                    inner.hourglass_phase_sound_boundary(&sim, assets);
-                }
-                ExternalFact::ReplaySoundBoundary(resolutions) => {
-                    inner.queue_replay_resolved_exclamations(resolutions);
-                    let sim = inner.control.simulation_context();
-                    inner.hourglass_phase_sound_boundary(&sim, assets);
-                }
-            }
+        for (index, completion) in external_facts.director_completions.into_iter().enumerate() {
+            inner
+                .apply_external_director_completion(completion, display, assets)
+                .map_err(|reason| FrameAdvanceError::DirectorCompletionRejected {
+                    index,
+                    completion,
+                    reason,
+                })?;
+        }
+        if let Some(sound_boundary) = external_facts.sound_boundary {
+            let policy = sound_boundary.policy;
+            inner
+                .try_queue_resolved_exclamations(
+                    sound_boundary.resolutions,
+                    policy == SoundBoundaryPolicy::Replay,
+                )
+                .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
+            let sim = inner.control.simulation_context();
+            inner
+                .hourglass_phase_sound_boundary(&sim, assets)
+                .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
         }
         Ok(())
     }
@@ -3850,7 +3845,10 @@ mod tests {
                 &assets,
                 &mut dev,
                 SimulationFrameInput::new(vec![SimCommand::from(PlayerCommand::Noop)])
-                    .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
+                    .with_external_facts(
+                        ExternalFacts::default()
+                            .with_sound_boundary(SoundBoundary::live(vec![resolution])),
+                    ),
             )
             .expect("advance frame with sound fact");
 
@@ -3862,6 +3860,68 @@ mod tests {
             24,
             "the fact is resolved at the frame-0 boundary before the hourglass increments the clock"
         );
+    }
+
+    #[test]
+    fn rejected_live_sound_boundary_is_atomic() {
+        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+        let (mut engine, assets) = frame_api_fixture();
+        engine
+            .inner
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .push(PendingExclamation {
+                actor_id: 191,
+                group: ExclamationGroup::Civilian,
+                profile_id: 0x4651_0000,
+                exclamation_id: 62,
+                variant: -1,
+            });
+        let invalid_resolution = ResolvedExclamation {
+            actor_id: 192,
+            identifier: 0x4651_003f,
+            exclamation_id: 63,
+            duration_frames: 24,
+        };
+        let engine_hash_before = crate::replay::state_hash(&engine);
+        let mut display = super::super::HostDisplayState::default();
+        let display_before =
+            serde_json::to_value(&display).expect("serialize display before rejected boundary");
+        let mut input = InputState::default();
+        let mut dev = DevState::default();
+
+        let error = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::new(vec![SimCommand::from(
+                    PlayerCommand::SetMenToBlazonConversionMode { on: true },
+                )])
+                .with_external_facts(
+                    ExternalFacts::default()
+                        .with_sound_boundary(SoundBoundary::live(vec![invalid_resolution])),
+                ),
+            )
+            .expect_err("a live sound resolution must match the pending FIFO");
+
+        assert!(matches!(
+            error,
+            FrameAdvanceError::SoundBoundaryRejected {
+                policy: SoundBoundaryPolicy::Live,
+                ..
+            }
+        ));
+        assert_eq!(crate::replay::state_hash(&engine), engine_hash_before);
+        assert_eq!(
+            serde_json::to_value(&display).expect("serialize display after rejected boundary"),
+            display_before,
+        );
+        assert_eq!(engine.frame_counter(), 0);
+        assert!(!engine.is_men_to_blazon_conversion_mode());
     }
 
     #[test]
@@ -3937,10 +3997,12 @@ mod tests {
                     SimCommand::from(PlayerCommand::SetMenToBlazonConversionMode { on: true }),
                     SimCommand::from(PlayerCommand::MouseRightUp),
                 ])
-                .with_external_facts(vec![
-                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
-                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
-                ]),
+                .with_external_facts(
+                    ExternalFacts::default().with_director_completions(vec![
+                        DirectorCompletion::CameraGoto,
+                        DirectorCompletion::CameraGoto,
+                    ]),
+                ),
             )
             .expect_err("the second completion has no active camera command");
 
@@ -4003,8 +4065,10 @@ mod tests {
                 &mut complete_input,
                 &assets,
                 &mut complete_dev,
-                SimulationFrameInput::new(vec![command.clone()])
-                    .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
+                SimulationFrameInput::new(vec![command.clone()]).with_external_facts(
+                    ExternalFacts::default()
+                        .with_sound_boundary(SoundBoundary::live(vec![resolution])),
+                ),
             )
             .expect("advance complete frame journal");
 

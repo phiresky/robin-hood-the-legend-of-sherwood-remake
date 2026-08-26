@@ -102,7 +102,7 @@ pub(super) struct MissionFrame {
     pub(super) post_commands: FrameCommands,
     pub(super) post_external_actions: Vec<robin_engine::engine::ExternalAction>,
     post_external_actions_applied: usize,
-    pub(super) external_facts: Vec<robin_engine::engine::ExternalFact>,
+    pub(super) external_facts: robin_engine::engine::ExternalFacts,
     pub(super) run_hourglass: bool,
     pub(super) simulation_body_allowed: bool,
     pub(super) run_post_initialize: bool,
@@ -134,7 +134,7 @@ impl MissionFrame {
             post_commands: FrameCommands::new(),
             post_external_actions: Vec::new(),
             post_external_actions_applied: 0,
-            external_facts: Vec::new(),
+            external_facts: robin_engine::engine::ExternalFacts::default(),
             run_hourglass: true,
             simulation_body_allowed: true,
             run_post_initialize: true,
@@ -597,7 +597,7 @@ pub(super) struct TimelineRuntime {
     phase: MissionPhase,
     clock: FrameClock,
     execution_trace: FrameExecutionTrace,
-    pending_external_facts: Vec<robin_engine::engine::ExternalFact>,
+    pending_external_facts: robin_engine::engine::ExternalFacts,
 
     pub(super) replay_recorder: Option<ReplayRecorder>,
     pub(super) replay_player: Option<ReplayPlayer>,
@@ -656,7 +656,7 @@ impl TimelineRuntime {
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
             execution_trace: FrameExecutionTrace::default(),
-            pending_external_facts: Vec::new(),
+            pending_external_facts: robin_engine::engine::ExternalFacts::default(),
             replay_recorder: replay.recorder,
             replay_player: replay.player,
             rollback_checker: replay.rollback_checker,
@@ -821,15 +821,21 @@ impl TimelineRuntime {
         engine: &Engine,
         assets: &LevelAssets,
     ) {
-        frame
-            .external_facts
-            .append(&mut self.pending_external_facts);
+        assert!(
+            frame.external_facts.is_empty(),
+            "timeline facts must be attached before replay/rewind input adoption",
+        );
+        frame.external_facts = std::mem::take(&mut self.pending_external_facts);
         frame.recorder_hash = self.begin_frame(frame.started_at_ms, sim_frame, engine, assets);
         self.trace(FrameContractStage::TimelineBegin);
     }
 
-    pub(super) fn queue_external_fact(&mut self, fact: robin_engine::engine::ExternalFact) {
-        self.pending_external_facts.push(fact);
+    pub(super) fn queue_sound_boundary(&mut self, boundary: robin_engine::engine::SoundBoundary) {
+        assert!(
+            self.pending_external_facts.sound_boundary.is_none(),
+            "a host frame cannot cross more than one sound boundary",
+        );
+        self.pending_external_facts.sound_boundary = Some(boundary);
     }
 
     /// Start the input phase and capture the shared pre-command snapshots.
@@ -1677,6 +1683,14 @@ mod tests {
         assert!(!recorded.run_hourglass);
         assert!(!recorded.simulation_body_allowed);
         assert!(!recorded.run_post_initialize);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot cross more than one sound boundary")]
+    fn timeline_rejects_a_second_pending_sound_boundary() {
+        let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+        timeline.queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
+        timeline.queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
     }
 
     #[test]

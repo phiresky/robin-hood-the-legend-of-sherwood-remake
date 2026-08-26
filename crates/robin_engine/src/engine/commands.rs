@@ -8030,7 +8030,9 @@ mod tests {
             duration_frames: 24,
         }]);
 
-        engine.hourglass_phase_sound_boundary(sim, &assets);
+        engine
+            .hourglass_phase_sound_boundary(sim, &assets)
+            .expect("replay sound boundary");
         engine.apply_commands(
             sim,
             &mut display,
@@ -8046,7 +8048,9 @@ mod tests {
         // resolutions already drained, that second entry must not consume the
         // bark queued by this boundary's input; Original will first expose it
         // to the host sound manager after the engine frame is recorded.
-        engine.hourglass_phase_sound_boundary(sim, &assets);
+        engine
+            .hourglass_phase_sound_boundary(sim, &assets)
+            .expect("live sound boundary");
 
         assert_eq!(
             engine

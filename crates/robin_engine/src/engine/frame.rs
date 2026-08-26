@@ -15,7 +15,7 @@
 //!
 //! [`SimulationFrameInput`] deliberately contains only authoritative inputs:
 //! resolved [`SimCommand`]s, host observations represented as
-//! [`ExternalFact`]s, and explicitly admitted host [`ExternalAction`]s.
+//! [`ExternalFacts`], and explicitly admitted host [`ExternalAction`]s.
 //! Host UI scratch remains an adapter argument to
 //! [`super::Engine::advance_frame`] during migration and cannot be serialized
 //! accidentally as part of the frame input.
@@ -91,33 +91,90 @@ impl From<SimCommand> for PlayerInput {
     }
 }
 
-/// A nondeterministic host observation made authoritative before entering the
+/// Validation policy for a host sound-manager boundary.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SoundBoundaryPolicy {
+    /// Resolutions came from the live Rust host and must match the simulation's
+    /// pending speech FIFO.
+    Live,
+    /// Resolutions came from an Original trace and may describe Original-only
+    /// speech for which Rust has no corresponding logical request.
+    Replay,
+}
+
+/// The single sound-manager boundary which may precede a simulation frame.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct SoundBoundary {
+    /// Whether FIFO validation follows live Rust or Original replay rules.
+    pub policy: SoundBoundaryPolicy,
+    /// Concrete speech durations resolved at this boundary, in callback order.
+    pub resolutions: Vec<ResolvedExclamation>,
+}
+
+impl SoundBoundary {
+    pub fn live(resolutions: Vec<ResolvedExclamation>) -> Self {
+        Self {
+            policy: SoundBoundaryPolicy::Live,
+            resolutions,
+        }
+    }
+
+    pub fn replay(resolutions: Vec<ResolvedExclamation>) -> Self {
+        Self {
+            policy: SoundBoundaryPolicy::Replay,
+            resolutions,
+        }
+    }
+}
+
+/// Nondeterministic host observations made authoritative before entering the
 /// simulation frame.
 ///
-/// Facts are applied in vector order, before every [`SimCommand`]. This is
-/// significant for Original parity: director completions and the sound
-/// manager's resolution boundary occur after one `PerformHourglass` but before
-/// the following frame's translated input messages. When a frame contains both,
-/// Original order is all director completions produced by `Refresh`, followed
-/// by the sound-manager boundary (`original-code/RHgame.cpp:1879-1915`).
-///
-/// TODO(architecture): replace this free-form vector with phase-typed fields,
-/// or validate its phase ordering, so callers cannot encode a sound boundary
-/// before a director completion or more than one host sound boundary.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum ExternalFact {
-    /// A camera-director command completed during the preceding render pass.
-    DirectorCompletion(DirectorCompletion),
-    /// Concrete speech durations resolved by the live host sound manager.
-    ///
-    /// Live resolutions must match the simulation's pending speech FIFO.
-    LiveSoundBoundary(Vec<ResolvedExclamation>),
-    /// Authoritative speech durations imported from an Original parity trace.
-    ///
-    /// Original-only speech may have no matching Rust logical request, so this
-    /// variant uses the replay-specific validation policy.
-    ReplaySoundBoundary(Vec<ResolvedExclamation>),
+/// The structure encodes the only legal Original phase order: every director
+/// completion produced by `RHEngine::PerformDirectorWork` during `Refresh`,
+/// followed by zero or one `RHSound::Hourglass` boundary. A caller cannot put a
+/// director completion after sound or encode multiple sound boundaries
+/// (`original-code/RHgame.cpp:1867-1926`, `RHengine.cpp:4172`,
+/// `RHsound.cpp:2125-2250`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct ExternalFacts {
+    /// Camera-director completions produced during the preceding refresh, in
+    /// termination order.
+    pub director_completions: Vec<DirectorCompletion>,
+    /// The following sound-manager phase, when that host boundary was crossed.
+    pub sound_boundary: Option<SoundBoundary>,
+}
+
+impl ExternalFacts {
+    pub fn new(
+        director_completions: Vec<DirectorCompletion>,
+        sound_boundary: Option<SoundBoundary>,
+    ) -> Self {
+        Self {
+            director_completions,
+            sound_boundary,
+        }
+    }
+
+    pub fn with_director_completions(
+        mut self,
+        director_completions: Vec<DirectorCompletion>,
+    ) -> Self {
+        self.director_completions = director_completions;
+        self
+    }
+
+    pub fn with_sound_boundary(mut self, sound_boundary: SoundBoundary) -> Self {
+        self.sound_boundary = Some(sound_boundary);
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.director_completions.is_empty() && self.sound_boundary.is_none()
+    }
 }
 
 /// An explicitly admitted host action that can mutate simulation state.
@@ -210,7 +267,8 @@ impl From<ConsoleResponse> for FrameConsoleResponse {
 /// entirely; use `run_hourglass` for that host gate.
 #[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SimulationFrameInput {
-    pub external_facts: Vec<ExternalFact>,
+    /// Ordered facts observed between the preceding tick and these commands.
+    pub external_facts: ExternalFacts,
     /// Host actions admitted before player commands and the hourglass.
     #[serde(default)]
     pub external_actions: Vec<ExternalAction>,
@@ -253,7 +311,7 @@ const fn simulation_body_allowed_default() -> bool {
 impl Default for SimulationFrameInput {
     fn default() -> Self {
         Self {
-            external_facts: Vec::new(),
+            external_facts: ExternalFacts::default(),
             external_actions: Vec::new(),
             commands: Vec::new(),
             post_external_actions: Vec::new(),
@@ -277,7 +335,7 @@ impl SimulationFrameInput {
         Self::new(commands.into_iter().map(SimCommand::from).collect())
     }
 
-    pub fn with_external_facts(mut self, external_facts: Vec<ExternalFact>) -> Self {
+    pub fn with_external_facts(mut self, external_facts: ExternalFacts) -> Self {
         self.external_facts = external_facts;
         self
     }
@@ -404,10 +462,74 @@ impl SimulationFrameOutput {
 /// deterministic state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum FrameAdvanceError {
-    #[error("external fact {index} rejected {completion:?}: {reason}")]
+    #[error("director completion {index} rejected {completion:?}: {reason}")]
     DirectorCompletionRejected {
         index: usize,
         completion: DirectorCompletion,
         reason: String,
     },
+    #[error("{policy:?} sound boundary rejected: {reason}")]
+    SoundBoundaryRejected {
+        policy: SoundBoundaryPolicy,
+        reason: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_util::state_hash::StateHash;
+    use std::hash::{DefaultHasher, Hasher};
+
+    fn deterministic_hash(value: &impl StateHash) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.state_hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn external_facts_serde_preserves_phases_and_sound_policy() {
+        let facts = ExternalFacts::new(
+            vec![DirectorCompletion::CameraGoto],
+            Some(SoundBoundary::replay(vec![ResolvedExclamation {
+                actor_id: 7,
+                identifier: 0x4651_003e,
+                exclamation_id: 62,
+                duration_frames: 24,
+            }])),
+        );
+
+        let encoded = serde_json::to_value(&facts).expect("serialize external facts");
+        assert_eq!(encoded["director_completions"][0]["command"], "camera_goto");
+        assert_eq!(encoded["sound_boundary"]["policy"], "replay");
+        let decoded: ExternalFacts =
+            serde_json::from_value(encoded).expect("deserialize external facts");
+        assert!(matches!(
+            decoded.director_completions.as_slice(),
+            [DirectorCompletion::CameraGoto]
+        ));
+        let boundary = decoded.sound_boundary.expect("sound boundary");
+        assert_eq!(boundary.policy, SoundBoundaryPolicy::Replay);
+        assert_eq!(boundary.resolutions.len(), 1);
+        assert_eq!(boundary.resolutions[0].actor_id, 7);
+    }
+
+    #[test]
+    fn external_fact_hash_distinguishes_policy_and_an_empty_boundary() {
+        let live_empty =
+            ExternalFacts::default().with_sound_boundary(SoundBoundary::live(Vec::new()));
+        let replay_empty =
+            ExternalFacts::default().with_sound_boundary(SoundBoundary::replay(Vec::new()));
+
+        assert_ne!(
+            deterministic_hash(&ExternalFacts::default()),
+            deterministic_hash(&replay_empty),
+            "an explicit empty replay boundary still drains the Original sound phase"
+        );
+        assert_ne!(
+            deterministic_hash(&live_empty),
+            deterministic_hash(&replay_empty),
+            "live and replay validation policy is authoritative"
+        );
+    }
 }

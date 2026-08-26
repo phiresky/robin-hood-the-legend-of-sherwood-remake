@@ -32,7 +32,7 @@ pub(super) fn tick_audio(
     backend: &mut KiraAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
-) -> Option<engine_api::ExternalFact> {
+) -> Option<engine_api::SoundBoundary> {
     let alert_status = match manager.engine.ai_global().overall_alert_status {
         AlertLevel::Green => AlertStatus::Green,
         AlertLevel::Yellow => AlertStatus::Yellow,
@@ -108,9 +108,8 @@ pub(super) fn tick_audio(
             .into_iter()
             .map(DeferredAudioRequest::PlayDelayedSource),
     );
-    (!resolved_exclamations.is_empty()).then_some(engine_api::ExternalFact::LiveSoundBoundary(
-        resolved_exclamations,
-    ))
+    (!resolved_exclamations.is_empty())
+        .then_some(engine_api::SoundBoundary::live(resolved_exclamations))
 }
 
 /// Apply every pending engine mutation that conceptually belongs with

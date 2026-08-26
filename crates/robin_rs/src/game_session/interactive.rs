@@ -101,7 +101,7 @@ impl MissionAudio {
         &mut self,
         manager: &mut EngineManager,
         host: &mut Host,
-    ) -> Option<robin_engine::engine::ExternalFact> {
+    ) -> Option<robin_engine::engine::SoundBoundary> {
         if let Some(backend) = self.backend.as_mut() {
             return tick_audio(
                 manager,

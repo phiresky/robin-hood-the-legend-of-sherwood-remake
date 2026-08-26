@@ -2,7 +2,8 @@
 
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
-    Engine, ExternalAction, ExternalFact, LevelAssets, SimCommand, SimulationFrameInput,
+    Engine, ExternalAction, ExternalFacts, LevelAssets, SimCommand, SimulationFrameInput,
+    SoundBoundary, SoundBoundaryPolicy,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_rs::sim_timeline::{
@@ -32,7 +33,9 @@ fn journal_retains_the_complete_authoritative_frame() {
         SimulationFrameInput::new(vec![SimCommand::host(PlayerCommand::SetGoldenEyeMode {
             on: true,
         })])
-        .with_external_facts(vec![ExternalFact::ReplaySoundBoundary(Vec::new())])
+        .with_external_facts(
+            ExternalFacts::default().with_sound_boundary(SoundBoundary::replay(Vec::new())),
+        )
         .with_external_actions(vec![ExternalAction::ConsoleCommand {
             input: "GOLDENEYE".to_owned(),
             selected_view_element: None,
@@ -49,7 +52,15 @@ fn journal_retains_the_complete_authoritative_frame() {
     history.begin_frame(0, &engine);
     assert!(history.commit_frame_input(frame));
     let recorded = history.frame_for(0).expect("complete frame record");
-    assert_eq!(recorded.external_facts.len(), 1);
+    assert!(recorded.external_facts.director_completions.is_empty());
+    assert!(matches!(
+        recorded
+            .external_facts
+            .sound_boundary
+            .as_ref()
+            .map(|boundary| boundary.policy),
+        Some(SoundBoundaryPolicy::Replay),
+    ));
     assert_eq!(recorded.external_actions.len(), 1);
     assert_eq!(recorded.commands.len(), 1);
     assert_eq!(recorded.post_external_actions.len(), 1);
