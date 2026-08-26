@@ -2978,7 +2978,7 @@ struct TraceAiForecastEvent {
 struct TraceAlertEligibility {
     rank: bool,
     able_to_help: Option<bool>,
-    #[serde(alias = "stay_on_post")]
+    #[serde(rename = "stay_on_post", alias = "allowed_to_leave_post")]
     allowed_to_leave_post: Option<bool>,
     can_call: Option<bool>,
     max_radius: Option<bool>,
@@ -12513,7 +12513,7 @@ mod tests {
             "eligibility": {
                 "rank": true,
                 "able_to_help": true,
-                "allowed_to_leave_post": true,
+                "stay_on_post": true,
                 "can_call": false,
                 "max_radius": null,
                 "squared_radius": null,
@@ -13263,6 +13263,29 @@ mod tests {
             message.contains("$.elements[0].novel_recorder_field is dropped"),
             "unexpected audit failure message: {message}"
         );
+    }
+
+    #[test]
+    fn alert_eligibility_round_trip_preserves_original_stay_on_post_key() {
+        let original = serde_json::json!({
+            "rank": true,
+            "stay_on_post": true,
+        });
+        let eligibility: TraceAlertEligibility = serde_json::from_value(original.clone()).unwrap();
+        let serialized = serde_json::to_value(&eligibility).unwrap();
+        assert_eq!(serialized["stay_on_post"], serde_json::json!(true));
+        assert!(serialized.get("allowed_to_leave_post").is_none());
+
+        let legacy: TraceAlertEligibility = serde_json::from_value(serde_json::json!({
+            "rank": true,
+            "allowed_to_leave_post": false,
+        }))
+        .unwrap();
+        assert_eq!(legacy.allowed_to_leave_post, Some(false));
+
+        let line = minimal_frame_json().to_string();
+        let frame: TraceFrame = serde_json::from_str(&line).unwrap();
+        verify_trace_line_roundtrip(&frame, &line, 3);
     }
 
     #[test]
