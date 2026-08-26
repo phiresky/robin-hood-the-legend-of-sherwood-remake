@@ -88,9 +88,9 @@ A list of which additional features we have added, which ones we might still wan
   persistent `Fix Hard Reaction Times` toggle. When enabled, Lacklandist NPCs
   on Hard difficulty use the intended `HARD_REACTIONTIME_MODIFICATOR` instead
   of the Easy modifier selected by the original game's copy-paste bug. It is
-  off by default to preserve original behavior and parity replays, and changes
-  made during a mission take effect immediately through the deterministic
-  command stream.
+  on by default; the original-parity replay tool disables it explicitly.
+  Changes made during a mission take effect immediately through the
+  deterministic command stream.
 
 - **Fog/night-tint all sprites option.** Options → Graphics now includes a
   `Fog/Night All Sprites` toggle. On fog and night missions it applies the

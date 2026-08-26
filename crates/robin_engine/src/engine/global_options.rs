@@ -19,7 +19,7 @@ use crate::player_profile::DifficultyLevel;
 pub struct SimConfig {
     pub difficulty: DifficultyLevel,
     /// Fix the original game's Hard-difficulty reaction-time copy-paste bug.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub fix_hard_reaction_times: bool,
     pub script_enabled: bool,
     pub highlander: bool,
@@ -40,7 +40,7 @@ impl SimConfig {
     pub fn from_options(options: &GlobalOptions, difficulty: DifficultyLevel) -> Self {
         Self {
             difficulty,
-            fix_hard_reaction_times: false,
+            fix_hard_reaction_times: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -51,6 +51,10 @@ impl SimConfig {
             synchronous_pathfinding: false,
         }
     }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Default for SimConfig {
