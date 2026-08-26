@@ -34,6 +34,9 @@ jxl = { version = "0.4", default-features = false }
 # dep native-only dodges that entirely.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bzip2 = "0.6"
+# Memory-maps the ~600 MB sprite bank so mission load doesn't read or
+# copy it; sprites fault their pages in on first draw.
+memmap2 = "0.9"
 
 [dev-dependencies]
 tempfile.workspace = true

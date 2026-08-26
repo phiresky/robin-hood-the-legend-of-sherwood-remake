@@ -5862,6 +5862,7 @@ dependencies = [
  "bzip2",
  "flate2",
  "jxl",
+ "memmap2",
  "robin_engine",
  "robin_util",
  "serde",
