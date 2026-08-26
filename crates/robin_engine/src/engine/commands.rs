@@ -1077,9 +1077,6 @@ impl EngineInner {
             DispatchStartupMessage { msg, arg1, arg2 } => {
                 self.dispatch_startup_message(sim, assets, *msg, *arg1, *arg2);
             }
-            RefreshSelectedPatchDisplayDoors { selected_patch_idx } => {
-                self.refresh_selected_patch_display_doors(*selected_patch_idx);
-            }
             RevealAllBlips => {
                 self.reveal_all_blips();
             }

@@ -451,7 +451,9 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
                     transient.creation_order
                 )
             });
-        engine.restore_parity_npc_maximal_visibility(id, transient.maximal_visibility);
+        engine
+            .parity_replay_setup()
+            .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
 }
 
@@ -505,7 +507,9 @@ fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
         })
         .collect::<Vec<_>>();
     for &(id, value) in &restorations {
-        engine.restore_parity_npc_maximal_visibility(id, value);
+        engine
+            .parity_replay_setup()
+            .restore_npc_maximal_visibility(id, value);
     }
     restorations.len()
 }
@@ -647,7 +651,9 @@ fn apply_legacy_interactive_chain_macro_fallback(
             continue;
         };
         restored += usize::from(
-            engine.restore_parity_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
+            engine
+                .parity_replay_setup()
+                .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
         );
     }
     restored
@@ -4592,11 +4598,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let setup_draws = engine
             .original_rng_replay_cursor()
             .expect("loaded-save reconstruction lost Original RNG replay");
-        engine.replace_original_rng_replay(initial_rng_draws);
+        engine
+            .parity_replay_setup()
+            .replace_rng_draws(initial_rng_draws);
         eprintln!("rewound loaded-save RNG after {setup_draws} deterministic construction draws");
     }
     let mut motion_line_parity = MotionLineParity::build(&engine, &header.motion_grid);
-    engine.set_external_director_completion_replay(true);
+    engine
+        .parity_replay_setup()
+        .use_external_director_completions(true);
     let mut dev = DevState::new();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
@@ -4717,7 +4727,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
         if !preload_complete_rng_stream {
-            engine.append_original_rng_replay(simulation_rng_draws(&frame.rng_draws));
+            engine
+                .parity_replay_setup()
+                .append_rng_draws(simulation_rng_draws(&frame.rng_draws));
         }
         let capture_commands = automatic_dump_enabled
             || dump
@@ -4743,7 +4755,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // distinguish load-time differences from first-hourglass mutations.
         let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
         map.refresh_trace_indices(&frame);
-        engine.set_original_impossible_action_done_deadlines(
+        engine
+            .parity_replay_setup()
+            .set_impossible_action_done_deadlines(
             frame
                 .strike_proposal_events
                 .as_deref()

@@ -429,13 +429,13 @@ impl InteractiveFrameSimulation {
             timeline: runtime,
             control,
         } = runtime;
-        let MissionWorld {
+        let MissionSimulationPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.simulation_phase();
         let MissionControl {
             manual_pause,
             last_shadow_color,
@@ -517,13 +517,13 @@ impl InteractiveFrameSimulation {
             timeline: runtime,
             ..
         } = runtime;
-        let MissionWorld {
+        let MissionSimulationPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.simulation_phase();
         let input = &mut frontend.input;
         let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;

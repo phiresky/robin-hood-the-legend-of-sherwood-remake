@@ -110,6 +110,53 @@ fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
     );
 }
 
+#[test]
+fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
+    let syntax = parse_rust("src/engine/rollback_safe.rs");
+    let mut mutable_methods = Vec::new();
+    for item in &syntax.items {
+        let Item::Impl(item_impl) = item else {
+            continue;
+        };
+        if !impl_is_for_engine(item_impl) {
+            continue;
+        }
+        for item in &item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let Some(receiver) = method.sig.receiver() else {
+                continue;
+            };
+            if matches!(method.vis, Visibility::Public(_))
+                && receiver.reference.is_some()
+                && receiver.mutability.is_some()
+            {
+                mutable_methods.push(method.sig.ident.to_string());
+            }
+        }
+    }
+    mutable_methods.sort();
+
+    let mut allowed = vec![
+        "advance_frame",
+        "mission_setup",
+        "parity_replay_setup",
+        "test_add_entity",
+        "test_set_camera_transition_inputs",
+        "test_set_engine_scalars",
+        "test_set_frame_counter",
+        "test_set_mission_flags",
+        "test_set_mission_stat",
+    ];
+    allowed.sort();
+
+    assert_eq!(
+        mutable_methods, allowed,
+        "new public &mut Engine methods must be crate-private, represented as frame input, or deliberately added as a capability opener/test helper"
+    );
+}
+
 fn impl_is_for_engine(item: &ItemImpl) -> bool {
     path_ends_with(&item.self_ty, "Engine")
 }

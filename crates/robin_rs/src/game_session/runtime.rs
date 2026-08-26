@@ -30,14 +30,87 @@ use std::sync::Arc;
 /// `InteractiveFrontend`. None of these process resources is serializable;
 /// deterministic persistence remains the Engine snapshot.
 pub(super) struct MissionWorld {
-    // TODO(refactor): make these fields private once frame methods move onto
-    // their focused owners. Wave 1 borrows them directly to keep loop order
-    // and behavior unchanged.
-    pub(super) host: Host,
-    pub(super) game: Game,
-    pub(super) manager: EngineManager,
-    pub(super) assets: Arc<LevelAssets>,
-    pub(super) dev: DevState,
+    host: Host,
+    game: Game,
+    manager: EngineManager,
+    assets: Arc<LevelAssets>,
+    dev: DevState,
+}
+
+/// Capability-limited borrow for wire ingress and rollback adoption.
+///
+/// Keeping `Game` and developer state out of this context makes it impossible
+/// for the network prelude to mutate unrelated mission state while admitting
+/// inputs or snapshots.
+pub(super) struct MissionIngress<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+}
+
+/// Read-only view used by pacing, diagnostics, and presentation decisions.
+pub(super) struct MissionWorldView<'a> {
+    pub(super) host: &'a Host,
+    pub(super) manager: &'a EngineManager,
+}
+
+/// Host-only mutation capability for modal/effect drains.
+pub(super) struct MissionHostPhase<'a> {
+    pub(super) host: &'a mut Host,
+}
+
+/// Borrow of the simulation/host roots for interactive input admission.
+///
+/// This is intentionally issued only for the input phase. It replaces public
+/// fields on `MissionWorld`, so a caller cannot keep reaching back into the
+/// world owner after the phase borrow ends.
+pub(super) struct MissionInputPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) game: &'a mut Game,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+    pub(super) dev: &'a mut DevState,
+}
+
+/// Borrow issued while the host processes save/load and game operations.
+pub(super) struct MissionOperationPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) game: &'a mut Game,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+    pub(super) dev: &'a mut DevState,
+}
+
+/// Borrow issued at the final deterministic pre-tick boundary.
+pub(super) struct MissionPreTickPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) game: &'a mut Game,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+}
+
+/// Borrow issued for the simulation/manual-step and scripted-modal phases.
+pub(super) struct MissionSimulationPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) game: &'a mut Game,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+    pub(super) dev: &'a mut DevState,
+}
+
+/// Borrow issued only while process-side audio is drained.
+pub(super) struct MissionAudioPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) manager: &'a mut EngineManager,
+}
+
+/// Borrow issued for render and presentation work.
+pub(super) struct MissionPresentationPhase<'a> {
+    pub(super) host: &'a mut Host,
+    pub(super) game: &'a mut Game,
+    pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
+    pub(super) dev: &'a mut DevState,
 }
 
 impl MissionWorld {
@@ -65,6 +138,91 @@ impl MissionWorld {
         robin_engine::engine::SimConfig,
     ) {
         self.manager.engine.into_campaign_and_simulation()
+    }
+
+    pub(super) fn sim_frame(&self) -> u32 {
+        self.manager.sim_frame
+    }
+
+    pub(super) fn ingress(&mut self) -> MissionIngress<'_> {
+        MissionIngress {
+            host: &mut self.host,
+            manager: &mut self.manager,
+            assets: &self.assets,
+        }
+    }
+
+    pub(super) fn view(&self) -> MissionWorldView<'_> {
+        MissionWorldView {
+            host: &self.host,
+            manager: &self.manager,
+        }
+    }
+
+    pub(super) fn host_phase(&mut self) -> MissionHostPhase<'_> {
+        MissionHostPhase {
+            host: &mut self.host,
+        }
+    }
+
+    pub(super) fn input_phase(&mut self) -> MissionInputPhase<'_> {
+        MissionInputPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            manager: &mut self.manager,
+            assets: &self.assets,
+            dev: &mut self.dev,
+        }
+    }
+
+    pub(super) fn operation_phase(&mut self) -> MissionOperationPhase<'_> {
+        MissionOperationPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            manager: &mut self.manager,
+            assets: &self.assets,
+            dev: &mut self.dev,
+        }
+    }
+
+    pub(super) fn pre_tick_phase(&mut self) -> MissionPreTickPhase<'_> {
+        MissionPreTickPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            manager: &mut self.manager,
+            assets: &self.assets,
+        }
+    }
+
+    pub(super) fn simulation_phase(&mut self) -> MissionSimulationPhase<'_> {
+        MissionSimulationPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            manager: &mut self.manager,
+            assets: &self.assets,
+            dev: &mut self.dev,
+        }
+    }
+
+    pub(super) fn audio_phase(&mut self) -> MissionAudioPhase<'_> {
+        MissionAudioPhase {
+            host: &mut self.host,
+            manager: &mut self.manager,
+        }
+    }
+
+    pub(super) fn presentation_phase(&mut self) -> MissionPresentationPhase<'_> {
+        MissionPresentationPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            manager: &mut self.manager,
+            assets: &self.assets,
+            dev: &mut self.dev,
+        }
+    }
+
+    pub(super) fn dismiss_pending_modals(&mut self) -> usize {
+        super::dismiss_pending_modals(&mut self.host)
     }
 }
 

@@ -113,6 +113,26 @@ pub struct Engine {
     inner: EngineInner,
 }
 
+/// Explicit capability for parity-tool reconstruction before/during replay.
+///
+/// This borrow is deliberately not serializable: it is a short-lived setup
+/// authority over an `Engine`, not simulation state. Normal game code should
+/// never acquire it.
+#[must_use = "parity replay setup must be used immediately and not retained"]
+pub struct ParityReplaySetup<'a> {
+    engine: &'a mut Engine,
+}
+
+/// Explicit capability for the one-shot mission bootstrap boundary.
+///
+/// Startup script extensions and campaign counters run here before the first
+/// authoritative frame. They are intentionally unavailable as ordinary
+/// `Engine` mutators.
+#[must_use = "mission setup must be completed before frame advancement"]
+pub struct MissionSetup<'a> {
+    engine: &'a mut Engine,
+}
+
 /// Level-load parameters for [`EngineArgs::level`].
 ///
 /// The host is responsible for pre-loading the mission binaries
@@ -216,15 +236,23 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    /// Open the capability used exclusively by Original parity replay tools.
+    pub fn parity_replay_setup(&mut self) -> ParityReplaySetup<'_> {
+        ParityReplaySetup { engine: self }
+    }
+
+    /// Open the one-shot mission bootstrap capability.
+    pub fn mission_setup(&mut self) -> MissionSetup<'_> {
+        MissionSetup { engine: self }
+    }
+
     /// Restore an Original schema-16 session-boundary transient before the
     /// first replay frame. The v48 save payload does not carry this field.
-    #[doc(hidden)]
-    pub fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
+    fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         self.inner.restore_parity_npc_maximal_visibility(id, value);
     }
 
-    #[doc(hidden)]
-    pub fn restore_parity_npc_dormant_macro_cursor(
+    fn restore_parity_npc_dormant_macro_cursor(
         &mut self,
         id: EntityId,
         path_id: crate::ai::PathId,
@@ -2675,14 +2703,14 @@ impl Engine {
     }
 
     /// Append one original frame's raw RNG values to an active parity replay.
-    pub fn append_original_rng_replay(&mut self, draws: Vec<u32>) {
+    fn append_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.rng.append_original_replay(draws);
     }
 
     /// Supply one frame's captured results for Original's undefined stale
     /// sprite action-point read. This is a parity-tool boundary, analogous to
     /// the captured Original RNG stream; live simulation leaves it empty.
-    pub fn set_original_impossible_action_done_deadlines(
+    fn set_original_impossible_action_done_deadlines(
         &mut self,
         deadlines: impl IntoIterator<Item = (u32, u32, i16)>,
     ) {
@@ -2702,7 +2730,7 @@ impl Engine {
     /// construction. A reconstruction tool may therefore need one copy of
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
-    pub fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
+    fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.rng.replace_original_replay(draws);
     }
 
@@ -3034,6 +3062,17 @@ impl Engine {
                 self.inner.replace_campaign(campaign);
                 ExternalActionResult::ReplaceCampaign
             }
+            ExternalAction::CampaignBuyBlazon { mission_index } => {
+                let mission_index = usize::try_from(mission_index)
+                    .expect("campaign mission index does not fit usize");
+                let profiles = std::sync::Arc::clone(&assets.profile_manager);
+                let closed_by_cascade = self.campaign_buy_blazon(mission_index, profiles.as_ref());
+                ExternalActionResult::CampaignBuyBlazon { closed_by_cascade }
+            }
+            ExternalAction::AcknowledgePseudoMissionDebrief => {
+                self.campaign_reset_last_pseudo_mission_status();
+                ExternalActionResult::AcknowledgePseudoMissionDebrief
+            }
         }
     }
 
@@ -3186,7 +3225,7 @@ impl Engine {
 
     /// Select whether recorded between-frame director events own completion
     /// timing for camera sequence elements.
-    pub fn set_external_director_completion_replay(&mut self, enabled: bool) {
+    fn set_external_director_completion_replay(&mut self, enabled: bool) {
         self.inner.set_external_director_completion_replay(enabled);
     }
 
@@ -3251,7 +3290,7 @@ impl Engine {
     /// shims can still draw from `sim_rng`; using this boundary advances the
     /// one authoritative stream instead of panicking for lack of a scope or
     /// inventing a second RNG. The closure must not retain the host reference.
-    pub fn with_mission_script_effects_and_rng<R>(
+    fn with_mission_script_effects_and_rng<R>(
         &mut self,
         assets: &LevelAssets,
         f: impl FnOnce(
@@ -3338,10 +3377,6 @@ impl Engine {
             .run_cheat_string(assets, dev, selected_view_element, input)
     }
 
-    pub fn restore_rng_from_seed(&mut self, seed: u64) {
-        self.inner.restore_rng_from_seed(seed);
-    }
-
     /// Complete deterministic configuration currently owned by this Engine.
     pub fn sim_config(&self) -> SimConfig {
         self.inner.control.sim_config
@@ -3369,16 +3404,6 @@ impl Engine {
             .call_external_native_with_this(&sim, assets, native_name, args, this_actor)
     }
 
-    /// Refresh render-only patch door highlight flags.
-    ///
-    /// `Patch::display_doors` is intentionally outside serialization and the
-    /// rollback hash, so this is allowed from the cursor/render path.
-    /// Sim-visible mouse effects must still travel through `PlayerCommand`.
-    pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
-        self.inner
-            .refresh_selected_patch_display_doors(selected_patch_idx);
-    }
-
     pub fn doors(&self) -> &[crate::gate::Door] {
         &self.inner.script_domains.interactables.doors
     }
@@ -3393,8 +3418,7 @@ impl Engine {
     // so the engine no longer owns the queue between tick and render.
 
     // `mission_script_script_effects_mut` is no longer exposed — the
-    // host-side callers go through `refresh_selected_patch_display_doors`
-    // / `queue_update_information_bars` / `PlayerCommand::*` instead.
+    // host-side callers use typed frame actions / `PlayerCommand::*` instead.
 
     // `campaign_mut` is no longer exposed — cross-crate callers use
     // the narrow methods below, or read through `campaign()` and
@@ -3408,25 +3432,23 @@ impl Engine {
     /// is paused.  Returns `true` when the Sherwood consume-cascade
     /// closed the buy screen (blazon mission fully funded), matching
     /// `Campaign::buy_blazon`.  `None` when no campaign is installed.
-    pub fn campaign_buy_blazon(
+    fn campaign_buy_blazon(
         &mut self,
         mission_index: usize,
         profiles: &crate::profiles::ProfileManager,
-    ) -> Option<bool> {
+    ) -> bool {
         let sim = self.inner.control.simulation_context();
-        Some(
-            self.inner
-                .mission_domain
-                .campaign
-                .buy_blazon(&sim, mission_index, profiles),
-        )
+        self.inner
+            .mission_domain
+            .campaign
+            .buy_blazon(&sim, mission_index, profiles)
     }
 
     /// Reset the campaign's `last_pseudo_mission_status` flag after the
     /// campaign-map host has displayed the pseudo-mission debriefing.
     /// Runs on a mission-lifecycle boundary (sim paused) — `Campaign` is
     /// part of the rollback hash.  No-op when no campaign is installed.
-    pub fn campaign_reset_last_pseudo_mission_status(&mut self) {
+    fn campaign_reset_last_pseudo_mission_status(&mut self) {
         self.inner
             .mission_domain
             .campaign
@@ -3435,43 +3457,11 @@ impl Engine {
 
     /// Reset the campaign's `MissionLength` accumulator to 0 before
     /// the mission begins.
-    pub fn campaign_reset_mission_length(&mut self) {
+    fn campaign_reset_mission_length(&mut self) {
         self.inner
             .mission_domain
             .campaign
             .set_value(crate::campaign::CampaignValue::MissionLength, 0);
-    }
-
-    /// Queue the `UpdateInformationBars` script-host command so the
-    /// next tick rebuilds the blazon / requirements widgets against
-    /// the current campaign state.  Called inline from
-    /// `DisplayCampaignMap` post-commit and from the options-menu
-    /// resolution-change handler.
-    pub fn queue_update_information_bars(&mut self) {
-        self.inner.queue_update_information_bars();
-    }
-
-    /// Push the active player profile's `GraphicConfig` through the
-    /// shadow polygon and every live element so a graphics-options
-    /// change takes effect immediately.
-    ///
-    /// Today neither effect needs explicit propagation: the
-    /// shadow-polygon renderer reads the framed-view-cone flag live
-    /// from the active profile at draw time (no cached function
-    /// pointer), and element shadow rendering is not currently
-    /// per-element-cached either.  The method is provided as a
-    /// callable surface so the `DisplayMenu` re-entry path has a
-    /// single hook — when the framed-view-cone shadow path or
-    /// per-element shadow caching is wired up, the implementation
-    /// here is the single point that needs to fan out the new config.
-    pub fn change_detail_level(&mut self) {
-        // Read-only access today (the active profile already supplies
-        // GraphicConfig wherever rendering needs it).  Logged at debug
-        // so the call shows up in replay traces alongside the
-        // resolution-change events that surround it.
-        tracing::debug!(
-            "Engine::change_detail_level — graphics config refreshed (no cached state to invalidate)"
-        );
     }
 
     pub fn is_peasant_name_registered(&self, name: &str) -> bool {
@@ -3585,79 +3575,44 @@ impl Engine {
 
     // ── Save / restore ────────────────────────────────────────────
 
-    /// Build a fully-restored engine from a decoded save snapshot and the
-    /// matching mission's immutable [`LevelAssets`].
+    /// Prepare a decoded save snapshot as a complete replacement Engine.
     ///
-    /// Wholesale sim-state replacement — legitimate because loading a
-    /// save or rewinding is a deliberate, user-initiated discontinuity
-    /// that also resets the rollback checker.  The consuming signature
-    /// makes the replacement explicit at every call site: the old
-    /// engine is moved in, a new one comes out.
-    ///
-    /// Everything mutable comes from `saved`. Static grid, sprite, script
-    /// program, and native-binding attachments come only from `assets`, then
-    /// [`EngineInner::post_load_fixups`] removes save-load-only transient
-    /// state so it cannot leak into the resumed session.
-    ///
-    /// Queues `UpdateInformationBars` on the script host so the next
-    /// tick recomputes the HUD state to match the loaded mission.
-    pub fn restore(
-        &mut self,
+    /// The returned value is installed by the timeline/save coordinator only
+    /// after validation and post-load fixups succeed. Unlike a live `&mut
+    /// self` restore method, this API cannot partially mutate the current
+    /// authoritative Engine or conceal the whole-state replacement at the
+    /// call site.
+    pub fn restore_from_snapshot(
         display: &mut super::HostDisplayState,
         saved: Engine,
         assets: &LevelAssets,
-    ) {
-        // Assertion-oriented wrapper for callers that have already handled
-        // snapshot compatibility. UI/file boundaries use `try_restore`.
-        self.try_restore(display, saved, assets)
-            .unwrap_or_else(|error| panic!("cannot restore engine snapshot: {error}"));
+    ) -> Result<Self, SnapshotRestoreError> {
+        Self::restore_from_snapshot_with_observer(display, saved, assets, |_| {})
     }
 
-    /// Fallible form of [`Self::restore`] for snapshot/network boundaries.
-    ///
-    /// Validation happens before `self` is mutated. In particular, malformed
-    /// parallel fast-grid arrays are rejected rather than replaced with
-    /// all-active values that were never present in the snapshot.
-    pub fn try_restore(
-        &mut self,
-        display: &mut super::HostDisplayState,
-        saved: Engine,
-        assets: &LevelAssets,
-    ) -> Result<(), SnapshotRestoreError> {
-        self.try_restore_with_post_fixup_observer(display, saved, assets, |_| {})
-    }
-
-    fn try_restore_with_post_fixup_observer(
-        &mut self,
+    fn restore_from_snapshot_with_observer(
         display: &mut super::HostDisplayState,
         saved: Engine,
         assets: &LevelAssets,
         post_fixup_observer: impl FnOnce(&EngineInner),
-    ) -> Result<(), SnapshotRestoreError> {
+    ) -> Result<Self, SnapshotRestoreError> {
         let mut inner = Self::prepare_snapshot(saved, assets)?;
-
-        // ── Engine-owned transient reset + HUD refresh ───────────
         inner.post_load_fixups(display);
         post_fixup_observer(&inner);
         inner.queue_update_information_bars();
-        self.inner = inner;
-        Ok(())
+        Ok(Self { inner })
     }
 
-    /// Adopt an exact decoded network snapshot.
+    /// Prepare an exact authoritative network snapshot as a complete
+    /// replacement Engine.
     ///
-    /// Unlike save restore, adoption performs no transient resets and queues no
-    /// repair messages: every serialized simulation queue remains exactly as
-    /// sent by the host. The live engine changes only after the candidate has
-    /// passed all attachment and state validation.
-    pub fn try_adopt_snapshot(
-        &mut self,
+    /// Network adoption deliberately skips save-load transient repair and
+    /// preserves every serialized queue exactly as supplied by the host.
+    pub fn adopt_authoritative_snapshot(
         snapshot: Engine,
         assets: &LevelAssets,
-    ) -> Result<(), SnapshotRestoreError> {
-        let inner = Self::prepare_snapshot(snapshot, assets)?;
-        self.inner = inner;
-        Ok(())
+    ) -> Result<Self, SnapshotRestoreError> {
+        Self::prepare_snapshot(snapshot, assets).map(|inner| Self { inner })
     }
 
     fn prepare_snapshot(
@@ -3726,6 +3681,78 @@ impl Engine {
             .validate_invariants()
             .map_err(|detail| SnapshotRestoreError::OrderInvariantViolation { detail })?;
         Ok(())
+    }
+}
+
+impl ParityReplaySetup<'_> {
+    #[doc(hidden)]
+    pub fn restore_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
+        self.engine.restore_parity_npc_maximal_visibility(id, value);
+    }
+
+    #[doc(hidden)]
+    pub fn restore_npc_dormant_macro_cursor(
+        &mut self,
+        id: EntityId,
+        path_id: crate::ai::PathId,
+        waypoint_index: u8,
+        offset: usize,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.engine.restore_parity_npc_dormant_macro_cursor(
+            id,
+            path_id,
+            waypoint_index,
+            offset,
+            assets,
+        )
+    }
+
+    pub fn append_rng_draws(&mut self, draws: Vec<u32>) {
+        self.engine.append_original_rng_replay(draws);
+    }
+
+    pub fn replace_rng_draws(&mut self, draws: Vec<u32>) {
+        self.engine.replace_original_rng_replay(draws);
+    }
+
+    pub fn set_impossible_action_done_deadlines(
+        &mut self,
+        deadlines: impl IntoIterator<Item = (u32, u32, i16)>,
+    ) {
+        self.engine
+            .set_original_impossible_action_done_deadlines(deadlines);
+    }
+
+    pub fn use_external_director_completions(&mut self, enabled: bool) {
+        self.engine.set_external_director_completion_replay(enabled);
+    }
+}
+
+impl MissionSetup<'_> {
+    /// Run a startup extension against the mission script while the
+    /// authoritative RNG scope is installed.
+    pub fn with_script_effects_and_rng<R>(
+        &mut self,
+        assets: &LevelAssets,
+        f: impl FnOnce(
+            &crate::sim_rng::SimulationContext,
+            Option<(
+                &mut crate::natives::ScriptEffects,
+                &mut crate::natives::ScriptState,
+                &mut crate::engine::ScriptDomains,
+                &crate::natives::AttachedScriptBindings,
+                &crate::natives::NativeSessionCapabilities<'_>,
+            )>,
+        ) -> R,
+    ) -> R {
+        self.engine.with_mission_script_effects_and_rng(assets, f)
+    }
+
+    /// Reset Original's mission-length accumulator immediately before the
+    /// mission begins.
+    pub fn reset_mission_length(&mut self) {
+        self.engine.campaign_reset_mission_length();
     }
 }
 
@@ -3813,6 +3840,57 @@ mod tests {
             serde_json::to_value(&legacy_display).expect("serialize legacy display"),
         );
         assert!(framed.is_men_to_blazon_conversion_mode());
+    }
+
+    #[test]
+    fn paused_campaign_actions_are_typed_no_hourglass_transactions() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine
+            .inner
+            .mission_domain
+            .campaign
+            .last_pseudo_mission_status = crate::mission::MissionStatus::Won;
+        let blazons_before = engine
+            .campaign()
+            .get_value(crate::campaign::CampaignValue::Blazon);
+
+        let mut display = super::super::HostDisplayState::default();
+        let mut input = InputState::default();
+        let mut dev = DevState::default();
+        let output = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::no_hourglass().with_external_actions(vec![
+                    ExternalAction::CampaignBuyBlazon { mission_index: 0 },
+                    ExternalAction::AcknowledgePseudoMissionDebrief,
+                ]),
+            )
+            .expect("admit paused campaign actions");
+
+        assert!(!output.hourglass_ran);
+        assert_eq!(output.frame_before, output.frame_after);
+        assert!(matches!(
+            output.external_action_results.as_slice(),
+            [
+                ExternalActionResult::CampaignBuyBlazon {
+                    closed_by_cascade: false
+                },
+                ExternalActionResult::AcknowledgePseudoMissionDebrief
+            ]
+        ));
+        assert_eq!(
+            engine
+                .campaign()
+                .get_value(crate::campaign::CampaignValue::Blazon),
+            blazons_before + 1
+        );
+        assert_eq!(
+            engine.campaign().get_last_pseudo_mission_status(),
+            crate::mission::MissionStatus::Available
+        );
     }
 
     #[test]
@@ -4867,11 +4945,9 @@ mod tests {
         let json = serde_json::to_string(&source).expect("serialize");
         let decoded: Engine = serde_json::from_str(&json).expect("deserialize");
 
-        let mut restored = source;
-        restored.inner.feedback.cutscene_camera.level_size =
-            crate::coordinates::MapSize::new(99.0, 88.0);
         let mut display = crate::engine::HostDisplayState::default();
-        restored.restore(&mut display, decoded, &LevelAssets::new());
+        let restored = Engine::restore_from_snapshot(&mut display, decoded, &LevelAssets::new())
+            .expect("restore compatible snapshot");
 
         assert_eq!(
             restored.inner.feedback.cutscene_camera.level_size,
@@ -4884,7 +4960,7 @@ mod tests {
         let mut live_inner = EngineInner::new();
         live_inner.feedback.cutscene_camera.level_size =
             crate::coordinates::MapSize::new(1234.0, 5678.0);
-        let mut live = Engine { inner: live_inner };
+        let live = Engine { inner: live_inner };
 
         let mut malformed_inner = EngineInner::new();
         malformed_inner.world.fast_grid_mut().line_active.push(true);
@@ -4893,9 +4969,9 @@ mod tests {
         };
 
         let mut display = crate::engine::HostDisplayState::default();
-        let error = live
-            .try_restore(&mut display, malformed, &LevelAssets::new())
-            .unwrap_err();
+        let error = Engine::restore_from_snapshot(&mut display, malformed, &LevelAssets::new())
+            .err()
+            .expect("malformed snapshot must be rejected");
         assert_eq!(
             error,
             SnapshotRestoreError::FastGridLengthMismatch {
@@ -4913,7 +4989,7 @@ mod tests {
 
     #[test]
     fn try_restore_rejects_world_parallel_mismatch_before_mutating_live_engine() {
-        let mut live = Engine {
+        let live = Engine {
             inner: EngineInner::new(),
         };
         let mut malformed_inner = EngineInner::new();
@@ -4927,9 +5003,9 @@ mod tests {
         };
 
         let mut display = crate::engine::HostDisplayState::default();
-        let error = live
-            .try_restore(&mut display, malformed, &LevelAssets::new())
-            .unwrap_err();
+        let error = Engine::restore_from_snapshot(&mut display, malformed, &LevelAssets::new())
+            .err()
+            .expect("malformed snapshot must be rejected");
         assert_eq!(
             error,
             SnapshotRestoreError::WorldInvariantViolation {
@@ -4945,11 +5021,7 @@ mod tests {
         let (source, assets, program, sequence_id) = scripted_snapshot_fixture();
         let source_hash = crate::replay::state_hash(&source);
         let snapshot = decoded_engine(&source);
-        let mut live = Engine {
-            inner: EngineInner::new(),
-        };
-
-        live.try_adopt_snapshot(snapshot, &assets)
+        let live = Engine::adopt_authoritative_snapshot(snapshot, &assets)
             .expect("adopt compatible snapshot");
 
         assert_eq!(crate::replay::state_hash(&live), source_hash);
@@ -5018,33 +5090,31 @@ mod tests {
             .engine_commands()
             .len();
         let snapshot = decoded_engine(&source);
-        let mut live = Engine {
-            inner: EngineInner::new(),
-        };
         let mut display = super::super::HostDisplayState::default();
 
         let observed_fixups_before_hud_repair = std::cell::Cell::new(false);
-        live.try_restore_with_post_fixup_observer(&mut display, snapshot, &assets, |inner| {
-            observed_fixups_before_hud_repair.set(true);
-            assert_eq!(
-                inner.orders.messenger.count(),
-                3,
-                "zoom-end, stature, and select-action must already be queued"
-            );
-            assert_eq!(
-                inner
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .expect("restored script during fixup observation")
-                    .script_effects
-                    .engine_commands()
-                    .len(),
-                queued_engine_commands,
-                "save-only HUD repair must not be queued until engine fixups finish"
-            );
-        })
-        .expect("restore compatible save snapshot");
+        let mut live =
+            Engine::restore_from_snapshot_with_observer(&mut display, snapshot, &assets, |inner| {
+                observed_fixups_before_hud_repair.set(true);
+                assert_eq!(
+                    inner.orders.messenger.count(),
+                    3,
+                    "zoom-end, stature, and select-action must already be queued"
+                );
+                assert_eq!(
+                    inner
+                        .scripts
+                        .mission
+                        .as_ref()
+                        .expect("restored script during fixup observation")
+                        .script_effects
+                        .engine_commands()
+                        .len(),
+                    queued_engine_commands,
+                    "save-only HUD repair must not be queued until engine fixups finish"
+                );
+            })
+            .expect("restore compatible save snapshot");
         assert!(observed_fixups_before_hud_repair.get());
 
         live.inner.scripts.assert_native_attachments_ready();
@@ -5085,10 +5155,12 @@ mod tests {
 
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 77;
-        let mut live = Engine { inner: live_inner };
+        let live = Engine { inner: live_inner };
         let before_hash = crate::replay::state_hash(&live);
 
-        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
+            .err()
+            .expect("snapshot with missing attachment must be rejected");
         assert!(matches!(
             error,
             SnapshotRestoreError::AttachmentFailure { ref detail }
@@ -5103,11 +5175,13 @@ mod tests {
         let (source, mut assets, _, _) = scripted_snapshot_fixture();
         let snapshot = decoded_engine(&source);
         assets.scripts.mission_name = Some("different_mission".to_owned());
-        let mut live = Engine {
+        let live = Engine {
             inner: EngineInner::new(),
         };
 
-        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
+            .err()
+            .expect("snapshot for wrong mission must be rejected");
         assert!(matches!(
             error,
             SnapshotRestoreError::AttachmentFailure { ref detail }
@@ -5125,10 +5199,12 @@ mod tests {
         };
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 91;
-        let mut live = Engine { inner: live_inner };
+        let live = Engine { inner: live_inner };
         let before_hash = crate::replay::state_hash(&live);
 
-        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
+            .err()
+            .expect("snapshot with wrong mobile count must be rejected");
         assert_eq!(
             error,
             SnapshotRestoreError::WorldInvariantViolation {

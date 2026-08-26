@@ -3,8 +3,8 @@
 use super::modal_state::ActiveModal;
 use super::multiplayer::{drain_mission_network, host_scheduled_frame_deadline_ms};
 use super::runtime::{
-    FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionRuntime, MissionWorld,
-    TickPolicy,
+    FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionHostPhase,
+    MissionIngress, MissionRuntime, MissionSimulationPhase, TickPolicy,
 };
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
 use crate::multiplayer::matchmaking::current_epoch_ms;
@@ -104,14 +104,12 @@ impl HeadlessMission {
             let MissionRuntime {
                 world, timeline, ..
             } = &mut self.runtime;
-            drain_mission_network(
-                timeline,
-                &mut world.host,
-                &mut world.manager,
-                &world.assets,
-                true,
-                current_epoch_ms(),
-            )
+            let MissionIngress {
+                host,
+                manager,
+                assets,
+            } = world.ingress();
+            drain_mission_network(timeline, host, manager, assets, true, current_epoch_ms())
         };
         let network_paused = net_drain.pause_simulation;
         let tick_paused = self.runtime.control.manual_pause || network_paused;
@@ -137,16 +135,18 @@ impl HeadlessMission {
         }
 
         if self.policy.auto_dismiss_modals {
-            let _ = dismiss_pending_modals(&mut self.runtime.world.host);
+            let _ = self.runtime.world.dismiss_pending_modals();
         }
         self.runtime
             .timeline
             .trace(FrameContractStage::PreTickCommands);
-        super::frame_prepare::process_pre_tick_state_hash(
-            &mut self.runtime.timeline,
-            &self.runtime.world.host,
-            &self.runtime.world.manager,
-        );
+        {
+            let MissionRuntime {
+                world, timeline, ..
+            } = &mut self.runtime;
+            let view = world.view();
+            super::frame_prepare::process_pre_tick_state_hash(timeline, view.host, view.manager);
+        }
         let simulation_start = super::frame_perf::start(profiling);
         let tick_exit_code = self.runtime.run_tick(
             TickPolicy {
@@ -198,13 +198,13 @@ impl HeadlessMission {
             self.runtime.timeline.trace(FrameContractStage::Exit);
         }
         self.runtime.timeline.trace(FrameContractStage::Pacing);
-        let host_deadline_ms = if self.runtime.world.host.transport.net.is_some()
-            && self.runtime.world.host.transport.local_seat
-                != robin_engine::player_command::PlayerId::HOST
+        let world_view = self.runtime.world.view();
+        let host_deadline_ms = if world_view.host.transport.net.is_some()
+            && world_view.host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
         {
             host_scheduled_frame_deadline_ms(
                 self.runtime.timeline.mp_host_frame_schedule,
-                self.runtime.world.manager.sim_frame,
+                world_view.manager.sim_frame,
             )
         } else {
             None
@@ -214,25 +214,19 @@ impl HeadlessMission {
             FramePacing {
                 fast_forward_requested: args.fast_forward,
                 headless: true,
-                engine_fast_forward: self.runtime.world.manager.engine.is_fast_forward(),
-                slow_motion: self.runtime.world.host.slow_motion,
+                engine_fast_forward: world_view.manager.engine.is_fast_forward(),
+                slow_motion: world_view.host.slow_motion,
                 host_deadline_ms,
             },
             exit_code,
         );
         if let FrameOutcome::Continue { sleep_ms } = outcome
             && let Some((hash_frame, hash)) = self.runtime.timeline.pending_mp_state_hash
-            && let Some(net) = self.runtime.world.host.transport.net.as_ref()
-            && self.runtime.world.host.transport.local_seat
-                == robin_engine::player_command::PlayerId::HOST
+            && let Some(net) = world_view.host.transport.net.as_ref()
+            && world_view.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
         {
-            net.publish_frame(self.runtime.world.manager.sim_frame);
-            net.send_state_hash(
-                hash_frame,
-                hash,
-                self.runtime.world.manager.sim_frame,
-                sleep_ms,
-            );
+            net.publish_frame(world_view.manager.sim_frame);
+            net.send_state_hash(hash_frame, hash, world_view.manager.sim_frame, sleep_ms);
         }
 
         let result = HeadlessFrameResult {
@@ -246,7 +240,7 @@ impl HeadlessMission {
 
     fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
         let MissionRuntime { world, .. } = &mut self.runtime;
-        let MissionWorld { host, .. } = world;
+        let MissionHostPhase { host } = world.host_phase();
 
         if host
             .effects
@@ -296,19 +290,24 @@ impl HeadlessMission {
         let MissionRuntime {
             world, timeline, ..
         } = &mut self.runtime;
+        let MissionIngress {
+            host,
+            manager,
+            assets: _,
+        } = world.ingress();
         timeline.commit_simulation_history(
-            &mut world.host,
-            &mut world.manager,
+            host,
+            manager,
             frame,
             FrameCommitPolicy {
                 store_rewind_commands: true,
             },
         );
-        world.manager.sim_frame += 1;
-        if let Some(net) = world.host.transport.net.as_ref()
-            && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+        manager.sim_frame += 1;
+        if let Some(net) = host.transport.net.as_ref()
+            && host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
         {
-            net.set_initial_snapshot(world.manager.sim_frame, &world.manager.engine);
+            net.set_initial_snapshot(manager.sim_frame, &manager.engine);
         }
     }
 
@@ -321,13 +320,20 @@ impl HeadlessMission {
             timeline,
             control,
         } = &mut self.runtime;
+        let MissionSimulationPhase {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        } = world.simulation_phase();
         let mut active_modal: Option<ActiveModal> = None;
         drain_steps(
-            &mut world.manager,
-            &mut world.host,
-            &world.assets,
-            &mut world.dev,
-            &mut world.game,
+            manager,
+            host,
+            assets,
+            dev,
+            game,
             &mut timeline.rewind_buffer,
             &mut timeline.rollback_checker,
             &mut timeline.replay_player,
@@ -355,7 +361,8 @@ mod tests {
     use crate::game::Game;
     use crate::game_session::replay_init::ReplayAndRollback;
     use crate::game_session::runtime::{
-        FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
+        FrameContract, MissionControl, MissionRuntime, MissionSimulationPhase, MissionWorld,
+        TimelineRuntime,
     };
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent};
@@ -498,12 +505,19 @@ mod tests {
             let MissionRuntime {
                 world, timeline, ..
             } = &mut mission.runtime;
+            let MissionSimulationPhase {
+                host,
+                game,
+                manager,
+                assets,
+                dev,
+            } = world.simulation_phase();
             crate::game_session::tick::run_forward_ticks(
-                &mut world.manager,
-                &mut world.host,
-                &world.assets,
-                &mut world.dev,
-                &mut world.game,
+                manager,
+                host,
+                assets,
+                dev,
+                game,
                 &mut timeline.rewind_buffer,
                 &mut timeline.rollback_checker,
                 &mut timeline.replay_player,
@@ -515,7 +529,7 @@ mod tests {
         };
 
         assert_eq!(advanced, 1);
-        assert_eq!(mission.runtime.world.manager.sim_frame, 2);
+        assert_eq!(mission.runtime.world.sim_frame(), 2);
         assert!(
             mission
                 .runtime

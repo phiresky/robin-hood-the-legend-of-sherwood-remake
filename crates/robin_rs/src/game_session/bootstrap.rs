@@ -179,15 +179,15 @@ impl MissionBootstrap {
                 lua.mission_basename(),
                 self.loaded.engine_rng_seed,
             );
-            self.loaded.engine.with_mission_script_effects_and_rng(
-                &self.loaded.assets,
-                |_simulation, native_parts| {
+            self.loaded
+                .engine
+                .mission_setup()
+                .with_script_effects_and_rng(&self.loaded.assets, |_simulation, native_parts| {
                     lua.run_required_startup_events(
                         native_parts,
                         self.loaded.engine_rng_seed as i32,
                     )
-                },
-            )?;
+                })?;
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::LevelInitialized,
@@ -222,7 +222,7 @@ impl MissionBootstrap {
     /// the original `GameLoop` boundary.
     pub(super) fn start_campaign_clock(&mut self, callbacks: &mut RustCallbacks) {
         self.lifecycle.require(MissionBootstrapPhase::AudioPrepared);
-        self.loaded.engine.campaign_reset_mission_length();
+        self.loaded.engine.mission_setup().reset_mission_length();
         <RustCallbacks as GameCallbacks>::start_play_time(callbacks);
         self.lifecycle.advance(
             MissionBootstrapPhase::AudioPrepared,

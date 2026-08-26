@@ -62,8 +62,8 @@ const ALPHA_JUMPZONE: u32 = 64;
 ///     the hovered sector is a door, either stack up to the connected
 ///     building (Building / BuildingTrap door-types) or paint the single
 ///     door polygon. In both cases, skip when the door is controlled by a
-///     patch (the patch-driven draw happens below via
-///     `Patch::display_doors`).
+///     patch (the patch-driven draw happens below from the host's selected
+///     patch index).
 ///   * Hovered-jump branch: jump-type sector gets the jumpzone alpha.
 ///   * Hovered-patch branch: draw the patch's mouse sector polygon, each
 ///     of its door polygons, and each opposite-side motion-area's own door
@@ -277,8 +277,7 @@ pub(crate) fn render_door_overlays(
                         });
                     if let Some(building) = building_sector {
                         // Only draw inline when no patch owns the door;
-                        // otherwise the patch-FX path handles it via
-                        // `Patch::display_doors`, which is set below.
+                        // otherwise the selected-patch path handles it below.
                         if owning_patch.is_none() {
                             draw_sector_doors(renderer, building, false);
                         }
@@ -339,13 +338,13 @@ pub(crate) fn render_door_overlays(
     }
 
     // ── 6. Hovered-patch branch ──
-    //    `Patch::display_doors` is refreshed each frame in `update_mouse`
-    //    (cleared on every patch, set on the hovered one).
-    for patch in engine.patches().iter() {
-        if !patch.display_doors {
-            continue;
-        }
-
+    // Local cursor selection is host presentation state. Read it directly
+    // instead of mutating a render cache inside the authoritative Engine.
+    if let Some(patch) = host
+        .input
+        .selected_patch_idx
+        .and_then(|index| engine.patches().get(index as usize))
+    {
         // Paint the patch's active mouse sector.
         if !patch.in_transition {
             let mouse_sector_list = if patch.applied {

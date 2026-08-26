@@ -73,7 +73,7 @@ impl InteractiveMission {
                     if let Some(output) = services.args.mission_start_map_output.as_deref() {
                         return Err(format!(
                             "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
-                            self.runtime.world.manager.sim_frame,
+                            self.runtime.world.sim_frame(),
                             services.args.mission_start_map_frame,
                             output.display()
                         ));
@@ -96,13 +96,13 @@ impl InteractiveMission {
         // state copies.
         let InteractiveMission { runtime, frontend } = self;
         let MissionRuntime { world, .. } = runtime;
-        let MissionWorld {
+        let MissionPresentationPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.presentation_phase();
         let InteractiveFrontend {
             input,
             resources,
@@ -267,13 +267,13 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
 
         let phase_start = super::frame_perf::start(profiling);
-        let MissionWorld {
+        let MissionPresentationPhase {
             host,
             game,
             manager,
             assets,
             dev,
-        } = world;
+        } = world.presentation_phase();
         let input = &mut frontend.input;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
@@ -527,9 +527,10 @@ fn finish_interactive_audio(
     frontend: &mut InteractiveFrontend,
     callbacks: &mut RustCallbacks,
 ) {
+    let MissionAudioPhase { host, manager } = world.audio_phase();
     execute_app_effects(
         &mut callbacks.app_effects,
-        &mut world.host.audio.sound,
+        &mut host.audio.sound,
         &mut frontend.input.threaded,
         frontend
             .audio
@@ -538,7 +539,7 @@ fn finish_interactive_audio(
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
     runtime.trace(FrameContractStage::AppEffects);
-    if let Some(fact) = frontend.audio.tick(&mut world.manager, &mut world.host) {
+    if let Some(fact) = frontend.audio.tick(manager, host) {
         runtime.queue_external_fact(fact);
     }
     runtime.trace(FrameContractStage::Audio);

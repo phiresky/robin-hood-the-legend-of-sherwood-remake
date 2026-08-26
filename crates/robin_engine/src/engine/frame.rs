@@ -153,6 +153,15 @@ pub enum ExternalAction {
     ReplaceCampaign {
         campaign: Campaign,
     },
+    /// Commit the campaign-map ransom/blazon conversion while the host keeps
+    /// `PerformHourglass` paused. The enclosing frame journals this action
+    /// even when the live modal needs its result synchronously.
+    CampaignBuyBlazon {
+        mission_index: u32,
+    },
+    /// Acknowledge the pseudo-mission debrief after the modal is dismissed.
+    /// Original performs this on the paused campaign-map boundary.
+    AcknowledgePseudoMissionDebrief,
 }
 
 /// Serializable result of an admitted host action.
@@ -171,6 +180,10 @@ pub enum ExternalActionResult {
     SimpleMessage,
     EzekielInstakill(bool),
     ReplaceCampaign,
+    CampaignBuyBlazon {
+        closed_by_cascade: bool,
+    },
+    AcknowledgePseudoMissionDebrief,
 }
 
 /// Owned/serializable form of [`ConsoleResponse`] used at the frame boundary.
