@@ -84,7 +84,7 @@ impl EnemyAi {
 
         // RefreshArrowProtection(true) — every-16-frame sweep
         // that drives reactive shield-raising.
-        let refreshed_arrow_protection = self.refresh_arrow_protection(true, ctx, tick, grid);
+        self.refresh_arrow_protection(true, ctx, tick, grid);
 
         // Gate the rest on `frame_phase & 63`.
         if (frame_phase & 63) != 0 {
@@ -161,12 +161,11 @@ impl EnemyAi {
                 | Substate::FleeingRunForArrowReserves,
         );
 
-        // The engine snapshots the actor command before entering this AI
-        // callback, but Original reads GetCommand() here, after
-        // RefreshArrowProtection's GoTo has synchronously Halted the old
-        // movement and exposed Wait. The deferred Rust GoTo is not itself a
-        // manager element in `sequence_null_about_to_launch` yet.
-        let stuck_command_active = stuck_command_active || refreshed_arrow_protection;
+        // The stuck guard is a switch on the actor's command, not on whether
+        // RefreshArrowProtection took an action. In particular, a shield
+        // reaction can be queued while an EnterAttentive transition remains
+        // selected; treating every successful refresh as Wait fabricates a
+        // stuck tick (RHArtificialMalignity.cpp:9347-9439).
         if in_reachpoint_arm && stuck_command_active {
             // A queued Null sequence element means a
             // transition is in-flight — don't bump the stuck counter.

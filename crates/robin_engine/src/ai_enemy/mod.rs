@@ -7536,7 +7536,7 @@ mod tests {
             None,
             true,
             false,
-            false,
+            true,
             false,
         );
 
@@ -7548,6 +7548,93 @@ mod tests {
         assert_eq!(
             ai.base.stuck_counter, 3,
             "the deferred phalanx GoTo does not hide the current idle actor"
+        );
+    }
+
+    #[test]
+    fn periodic_phalanx_goto_does_not_fake_wait_during_attentive_transition() {
+        // Seed3 linux2/P002/Savegame_030/replay-007 frame 6887. The shield
+        // refresh queues a phalanx GoTo while EnterAttentive remains the
+        // selected command. Original's subsequent GetCommand switch does not
+        // enter the Wait/smalltalk stuck-counter arm.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.stuck_counter = 0;
+        ai.list_them.push(2);
+
+        let exact_position = |x, y| Position {
+            sector: SectorHandle::new(0),
+            ..test_position(x, y)
+        };
+        let owner_position = exact_position(500.0, 500.0);
+        let enemy_position = exact_position(1_500.0, 500.0);
+        let mut owner_view = soldier_view(owner_position);
+        owner_view.camp = Camp::Royalists;
+        let mut enemy_view = soldier_view(enemy_position);
+        enemy_view.camp = Camp::Lacklandists;
+        enemy_view.action_state = crate::element::ActionState::AimingWithBow;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner_view);
+        views.insert(2, enemy_view);
+        let ctx = AiContext {
+            position: owner_position,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.seen_last_frame_enemies.push(2);
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 1,
+            position: owner_position,
+            raw_position: owner_position,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 2,
+            position: enemy_position,
+            raw_position: enemy_position,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 3,
+            position: exact_position(600.0, 500.0),
+            raw_position: exact_position(600.0, 500.0),
+            direction: 0,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingPhalanx as u32,
+            ..FighterSnapshot::default()
+        });
+
+        ai.the_16th_frame(
+            &sim,
+            0,
+            &ctx,
+            &AiGlobalState::default(),
+            &tick,
+            None,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunningToPhalanx
+        );
+        assert!(!ai.base.outbox.actor.orders.is_empty());
+        assert_eq!(
+            ai.base.stuck_counter, 0,
+            "a shield action must not substitute for Original's selected-command switch"
         );
     }
 
@@ -7625,7 +7712,7 @@ mod tests {
             None,
             true,
             false,
-            false,
+            true,
             false,
         );
 
