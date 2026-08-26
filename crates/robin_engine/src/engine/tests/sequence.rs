@@ -3369,6 +3369,53 @@ fn deferred_attentive_then_forget_preserves_launch_but_clears_local_flags() {
 }
 
 #[test]
+fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    for (current_command, expected_quits) in
+        [(Command::QuitSwordfight, 1), (Command::EnterSwordfight, 1)]
+    {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut entity = make_test_soldier(Posture::Upright);
+        let Entity::Soldier(soldier) = &mut entity else {
+            unreachable!();
+        };
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .unwrap()
+            .base
+            .outbox
+            .actor
+            .retry_quit_swordfight = true;
+        let owner = engine.add_entity(entity);
+        let selected = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, current_command, Some(owner)));
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(selected, 0);
+
+        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+
+        let quit_count = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .filter(|element| element.command == Command::QuitSwordfight)
+            .count();
+        assert_eq!(quit_count, expected_quits);
+    }
+}
+
+#[test]
 fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

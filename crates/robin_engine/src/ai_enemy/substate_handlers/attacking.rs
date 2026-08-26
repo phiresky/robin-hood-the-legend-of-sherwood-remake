@@ -847,8 +847,13 @@ impl EnemyAi {
             // necessarily finishes, so the action state remains the
             // authoritative completion gate.
             if ctx.self_action_state.is_sword() {
-                // Still in a sword action state — retry quit and wait.
-                self.end_swordfight(ctx, tick);
+                // Original retries only when the actor is not already
+                // executing QUIT_SWORDFIGHT. The AI context cannot inspect
+                // the live sequence-manager selection, so retain that guard
+                // on a distinct engine-side effect.
+                if ctx.is_swordfighting {
+                    self.base.outbox.actor.retry_quit_swordfight = true;
+                }
                 self.base.launch_timer(3, ctx.frame);
             } else {
                 // Left sword state — proceed to battle overview.

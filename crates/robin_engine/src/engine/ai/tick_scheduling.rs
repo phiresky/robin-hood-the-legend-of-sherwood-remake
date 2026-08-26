@@ -338,7 +338,14 @@ impl EngineInner {
         // not tear down the relationship directly here: the command owns
         // both that teardown and the visible lowering-sword transition, and
         // LaunchSequenceElement arbitrates it synchronously in the Original.
-        if effects.quit_swordfight {
+        let retry_quit_swordfight = effects.retry_quit_swordfight
+            && self
+                .current_sequence_element_for_actor(npc_id)
+                .and_then(|(sequence, index)| {
+                    self.orders.sequence_manager.get_element(sequence, index)
+                })
+                .is_none_or(|element| element.command != crate::element::Command::QuitSwordfight);
+        if effects.quit_swordfight || retry_quit_swordfight {
             self.launch_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
