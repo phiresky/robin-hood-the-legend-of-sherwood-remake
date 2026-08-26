@@ -4341,9 +4341,18 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        // DeleteAllDetectables(DETECTABLE_BEGGAR) — queue the scrub so a
-        // `BECAUSE_COULDNT_REACHPOINT`-triggered return out of
-        // beggar-handling doesn't leave a stale beggar detectable.
+        // DeleteAllDetectables(DETECTABLE_BEGGAR) is synchronous in
+        // Original. In particular, SeekNextPoint can call ReturnToDuty after
+        // SeekArea queued beggars earlier in the same borrowed AI dispatch;
+        // erase those earlier additions before queuing the bucket scrub so
+        // the later outbox drain cannot replay them after the delete.
+        self.base
+            .outbox
+            .actor
+            .add_detectables
+            .retain(|(_, detectable_type)| {
+                *detectable_type != crate::element::DetectableType::Beggar
+            });
         self.base
             .outbox
             .actor
@@ -5083,7 +5092,7 @@ mod tests {
     use crate::ai::{DoorSeekInfo, House, cache_npc_villain_authorized_direct};
     use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
     use crate::coordinates::MapPoint;
-    use crate::element::{Camp, EyeStatus, Posture};
+    use crate::element::{Camp, DetectableType, EyeStatus, Posture};
     use crate::entity_id::{EntityId, SoldierId};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
@@ -6641,6 +6650,42 @@ mod tests {
         ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx, false);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
+    }
+
+    #[test]
+    fn return_to_duty_deletes_beggars_added_earlier_in_same_dispatch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let target = EntityId::Pc(PcId(171));
+        ai.base
+            .outbox
+            .actor
+            .add_detectables
+            .push((target, DetectableType::Beggar));
+        ai.base
+            .outbox
+            .actor
+            .add_detectables
+            .push((target, DetectableType::Enemy));
+
+        ai.return_to_duty(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(
+            ai.base.outbox.actor.add_detectables,
+            vec![(target, DetectableType::Enemy)]
+        );
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .delete_detectables
+                .contains(&DetectableType::Beggar)
+        );
     }
 
     #[test]
