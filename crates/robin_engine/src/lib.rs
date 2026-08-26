@@ -55,6 +55,7 @@ pub mod mission_stat;
 pub mod movement;
 pub mod movement_diagnostics;
 pub mod multiplayer;
+pub mod native_snapshot;
 pub mod natives;
 pub mod order;
 pub mod parameters_ai;

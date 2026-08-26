@@ -32,7 +32,7 @@ use robin_engine::sbfile::SbFile;
 pub type ResourceId = i32;
 
 /// Mouse-cursor metadata stored alongside cursor picture resources.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct MouseEntry {
     pub hotspot: CursorHotspot,
     pub flags: u16,
@@ -44,13 +44,13 @@ pub struct MouseEntry {
 /// Runtime callers still receive decoded [`Picture`] values. The compressed
 /// form is used only inside `datadir.bin` so interface `.res` images do not
 /// have to ship as raw RGB565 blobs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct EncodedPicture {
     pub codec: EncodedPictureCodec,
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub enum EncodedPictureCodec {
     /// JPEG XL, RGB-only, decoded back to RGB565.
     JxlRgb565,
@@ -81,7 +81,7 @@ impl EncodedPicture {
 
 /// Bookkeeping for a resource's origin on disk, used for recovery after
 /// [`ResourceManager::dismiss_resource`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct ResourceFileEntry {
     file_path: String,
     file_offset: u64,
@@ -270,7 +270,7 @@ fn read_wave_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>
 /// Does **not** create draw-manager surfaces; it stores decoded [`Picture`]
 /// data directly.  Delayed-load resources are loaded eagerly (simplification
 /// for modern HW).
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ResourceManager {
     /// Picture collections keyed by resource ID.
     pictures: HashMap<ResourceId, Vec<Option<Picture>>>,

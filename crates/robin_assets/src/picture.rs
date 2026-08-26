@@ -24,7 +24,9 @@ use robin_engine::sbfile::SbFile;
 // ---------------------------------------------------------------------------
 
 /// Pixel format for picture data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub enum PixelFormat {
     /// Sentinel for a default-constructed picture with no pixel data yet.
     /// Makes format-dependent ops on a fresh `Picture` fail explicitly
@@ -74,7 +76,7 @@ impl PixelFormat {
 }
 
 /// Palette entry for `Paletized` format.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct RgbQuad {
     pub r: u16,
     pub g: u16,
@@ -206,7 +208,7 @@ pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// An in-memory image with raw pixel data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct Picture {
     pub width: u16,
     pub height: u16,

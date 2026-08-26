@@ -97,8 +97,8 @@ pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
 
 /// Reject replay schemas that this build cannot interpret reliably.
 ///
-/// Serde alone cannot reject a header whose payload happens to deserialize
-/// into today's structs but belongs to a different hash contract.
+/// A successful decode alone cannot reject a header whose payload happens to
+/// fit today's structs but belongs to a different hash contract.
 pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
     if data.header.version != REPLAY_SCHEMA_VERSION {
         return Err(FormatError::UnsupportedVersion {

@@ -2820,7 +2820,10 @@ fn post_seek_sequence_is_one_level_and_native_bitcode_roundtrips() {
     else {
         panic!("decoded Seek lost its continuation")
     };
-    assert_eq!(decoded_continuation.elements[0].command, Command::CrouchDown);
+    assert_eq!(
+        decoded_continuation.elements[0].command,
+        Command::CrouchDown
+    );
 
     assert!(matches!(
         decoded.try_into_post_seek(),

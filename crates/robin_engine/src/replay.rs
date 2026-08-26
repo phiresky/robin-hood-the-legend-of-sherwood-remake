@@ -62,10 +62,11 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 13 moves Serde-backed binary replay
-/// payloads to bitcode revision 7ae8807. Replay compatibility is intentionally
-/// exact-schema only, so version-12 payloads are not decoded by this build.
-pub const REPLAY_SCHEMA_VERSION: u32 = 13;
+/// On-disk replay schema version. Version 14 moves campaign snapshots and the
+/// compact replay payload from Serde-backed bitcode to native bitcode at
+/// revision 7ae8807. Replay compatibility is intentionally exact-schema only,
+/// so older payloads are not decoded by this build.
+pub const REPLAY_SCHEMA_VERSION: u32 = 14;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -573,8 +574,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replay_schema_version_identifies_7ae_serde_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 13);
+    fn replay_schema_version_identifies_native_snapshot_codec() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 14);
     }
     use crate::player_command::PlayerCommand;
 

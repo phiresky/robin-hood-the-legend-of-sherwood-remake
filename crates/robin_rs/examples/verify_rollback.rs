@@ -1,8 +1,8 @@
 //! Headless verification of the rollback determinism checker.
 //!
-//! Loads a level, ticks the engine forward, and every frame after
-//! warm-up rewinds 25 frames + re-simulates.  Prints whether the
-//! replayed state matches the live state.
+//! Loads a level, ticks the engine forward, round-trips the live warm engine
+//! through native bitcode, and every frame after warm-up rewinds 25 frames +
+//! re-simulates. Prints whether the replayed state matches the live state.
 //!
 //! This exercises the same `state_hash` + `advance_frame` path
 //! the in-game rollback checker uses, but without rendering, input, or UI
@@ -29,6 +29,7 @@ fn main() {
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
     }
+    robin_rs::main_entry::register_language_data_paths_for_tool();
 
     // Load the real profile pool from the legacy CPF (mirrors main_entry).
     let mut pm = robin_engine::profiles::ProfileManager::new();
@@ -55,6 +56,13 @@ fn main() {
 
     let mut assets = LevelAssets::new();
     assets.profile_manager = profiles.clone();
+    let mut text_res = robin_assets::resource_manager::ResourceManager::new();
+    text_res
+        .attach_resource_file("Data/Text/Level.res")
+        .expect("load localized mission names");
+    (assets.peasant_firstnames, assets.peasant_surnames) =
+        robin_rs::game_session::load_peasant_name_pool(&mut text_res);
+    assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res);
     let mut host = Host::scratch(1024.0, 768.0);
     if let Err(e) = host.frame_holder_mut().initialize_sprite_bank(".") {
         tracing::warn!("sprite bank: {e}");
@@ -123,6 +131,32 @@ fn main() {
     let mut checks = 0usize;
 
     for frame in 0..TOTAL_FRAMES {
+        if frame == WARMUP_FRAMES {
+            tracing::info!(
+                encoder_bytes = std::mem::size_of::<<Engine as bitcode::Encode>::Encoder>(),
+                decoder_bytes =
+                    std::mem::size_of::<<Engine as bitcode::Decode<'static>>::Decoder>(),
+                "native engine codec state sizes"
+            );
+            let encoded = robin_engine::native_snapshot::encode(&engine);
+            let restored = robin_engine::native_snapshot::decode::<Engine>(&encoded)
+                .expect("decode warm mission engine snapshot");
+            assert_eq!(
+                state_hash(&engine),
+                state_hash(&restored),
+                "native bitcode changed warm mission state"
+            );
+            tracing::info!(
+                bytes = encoded.len(),
+                "native engine snapshot round-trip passed"
+            );
+            let mut adopted = engine.clone();
+            adopted
+                .try_adopt_snapshot(restored, &assets)
+                .expect("adopt warm mission engine snapshot");
+            engine = adopted;
+        }
+
         // Snapshot pre-tick state.
         history.push_back((
             engine.clone(),

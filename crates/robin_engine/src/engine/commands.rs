@@ -6630,9 +6630,9 @@ mod tests {
             .expect("occupied armed manual slot")
             .clone();
 
-        let bytes = bitcode::encode(&engine);
-        let mut engine: EngineInner =
-            bitcode::decode(&bytes).expect("restore engine with automatic and manual QA state");
+        let bytes = crate::native_snapshot::encode(&engine);
+        let mut engine: EngineInner = crate::native_snapshot::decode(&bytes)
+            .expect("restore engine with automatic and manual QA state");
         assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
 
         engine
@@ -9530,9 +9530,15 @@ mod tests {
         assert_eq!(sequence.elements.len(), 5);
         assert_eq!(sequence.elements.get(0).unwrap().command, Command::LockAi);
         assert_eq!(sequence.elements.get(0).unwrap().owner, Some(npc_id));
-        assert_eq!(sequence.elements.get(1).unwrap().command, Command::TurnElement);
+        assert_eq!(
+            sequence.elements.get(1).unwrap().command,
+            Command::TurnElement
+        );
         assert_eq!(sequence.elements.get(1).unwrap().owner, Some(pc_id));
-        assert_eq!(sequence.elements.get(2).unwrap().command, Command::TurnElement);
+        assert_eq!(
+            sequence.elements.get(2).unwrap().command,
+            Command::TurnElement
+        );
         assert_eq!(sequence.elements.get(2).unwrap().owner, Some(npc_id));
         assert_eq!(sequence.elements.get(3).unwrap().command, Command::UnlockAi);
         assert_eq!(sequence.elements.get(3).unwrap().owner, Some(npc_id));

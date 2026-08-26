@@ -44,7 +44,7 @@ png = "0.18"
 bitcode.workspace = true
 # The parity-native v66 wire format is authoritative and remains on 0.6.9.
 # The game replay and multiplayer formats use the workspace's pinned revision.
-bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
+bitcode_parity = { package = "bitcode", version = "=0.6.9" }
 zstd.workspace = true
 base64 = "0.22"
 sha2 = "0.11"

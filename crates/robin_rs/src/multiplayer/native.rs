@@ -670,7 +670,7 @@ async fn handle_incoming_peer(
                 .clone()
             {
                 let encode_start = web_time::Instant::now();
-                let bytes = bitcode::encode(&engine);
+                let bytes = robin_engine::native_snapshot::encode(&engine);
                 tracing::info!(
                     seat = assigned_seat_u8,
                     frame,

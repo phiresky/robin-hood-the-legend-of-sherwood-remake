@@ -92,8 +92,9 @@ fn engine_state_hash_is_deterministic_within_the_current_build() {
         crate::replay::state_hash(&clone)
     );
 
-    let bytes = bitcode::encode(&engine);
-    let restored: EngineInner = bitcode::decode(&bytes).expect("decode compatibility fixture");
+    let bytes = crate::native_snapshot::encode(&engine);
+    let restored: EngineInner =
+        crate::native_snapshot::decode(&bytes).expect("decode compatibility fixture");
     assert_eq!(
         crate::replay::state_hash(&engine),
         crate::replay::state_hash(&restored)
@@ -156,8 +157,8 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
     original.set_actors_frozen(true);
     original.set_fade_freeze_frames_remaining(2);
 
-    let bytes = bitcode::encode(&original);
-    let mut replay: EngineInner = bitcode::decode(&bytes).expect("decode");
+    let bytes = crate::native_snapshot::encode(&original);
+    let mut replay: EngineInner = crate::native_snapshot::decode(&bytes).expect("decode");
     assert!(replay.engine_locked());
     assert!(replay.actors_frozen());
     assert_eq!(replay.fade_freeze_frames_remaining(), 2);
@@ -192,8 +193,9 @@ fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
     live.feedback.cutscene_camera.zoom_init_done = true;
     live.send_simple_message(crate::messenger::SimpleMessage::LockAlt);
 
-    let bytes = bitcode::encode(&live);
-    let mut replay: EngineInner = bitcode::decode(&bytes).expect("decode active camera transition");
+    let bytes = crate::native_snapshot::encode(&live);
+    let mut replay: EngineInner =
+        crate::native_snapshot::decode(&bytes).expect("decode active camera transition");
 
     let mut live_display = HostDisplayState::default();
     live_display.background_transform.zoom_to_up = false;
@@ -227,8 +229,9 @@ fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
             .expect("positive script bound");
     });
 
-    let bytes = bitcode::encode(&live);
-    let mut restored: EngineInner = bitcode::decode(&bytes).expect("decode RNG snapshot");
+    let bytes = crate::native_snapshot::encode(&live);
+    let mut restored: EngineInner =
+        crate::native_snapshot::decode(&bytes).expect("decode RNG snapshot");
     assert_eq!(
         crate::replay::state_hash(&live),
         crate::replay::state_hash(&restored)

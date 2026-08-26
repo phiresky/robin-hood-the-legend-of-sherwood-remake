@@ -12,9 +12,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use bitcode::serialize;
-
-use robin_assets::shipping_datadir::{ShippingDatadir, zstd_max_compress};
+use robin_assets::shipping_datadir::{ShippingDatadir, encode_native, zstd_max_compress};
 
 fn main() -> Result<()> {
     let path = std::env::args()
@@ -27,7 +25,7 @@ fn main() -> Result<()> {
         .len();
     let dd = ShippingDatadir::load_from_file(&path)?;
 
-    let full = serialize(&dd).map_err(|e| anyhow!("bitcode {e:?}"))?;
+    let full = encode_native(&dd);
     let full_z = zstd_max_compress(&full)?;
     println!(
         "# {}: on-disk = {}, re-serialised raw = {}, re-compressed = {}",
@@ -56,7 +54,7 @@ fn main() -> Result<()> {
     // Helper: serialize a single field and measure.
     macro_rules! field {
         ($name:expr, $entries:expr, $expr:expr) => {{
-            let bytes = serialize(&$expr).map_err(|e| anyhow!("bitcode {e:?}"))?;
+            let bytes = bitcode::encode(&$expr);
             let z = zstd_max_compress(&bytes)?;
             rows.push(($name, $entries, bytes.len() as u64, z.len() as u64));
         }};
@@ -120,9 +118,9 @@ fn main() -> Result<()> {
     if let Some(bank) = &dd.sprite_bank {
         println!();
         println!("## Sprite bank sub-breakdown");
-        let sig_bytes = serialize(&bank.signature).map_err(|e| anyhow!("{e:?}"))?;
-        let dicts_bytes = serialize(&bank.dictionaries).map_err(|e| anyhow!("{e:?}"))?;
-        let sprites_bytes = serialize(&bank.sprites).map_err(|e| anyhow!("{e:?}"))?;
+        let sig_bytes = bitcode::encode(&bank.signature);
+        let dicts_bytes = bitcode::encode(&bank.dictionaries);
+        let sprites_bytes = bitcode::encode(&bank.sprites);
         let sig_z = zstd_max_compress(&sig_bytes)?;
         let dicts_z = zstd_max_compress(&dicts_bytes)?;
         let sprites_z = zstd_max_compress(&sprites_bytes)?;

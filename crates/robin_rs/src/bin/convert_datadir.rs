@@ -1616,7 +1616,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
 
     // Serialize + compress with the configured window log.
     let out_file = data_out.join("datadir.bin");
-    let blob = bitcode::serialize(&dd).map_err(|e| anyhow!("bitcode encode: {e:?}"))?;
+    let blob = robin_assets::shipping_datadir::encode_native(&dd);
     let compressed =
         robin_assets::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
     fs::write(&out_file, compressed).with_context(|| format!("write {}", out_file.display()))?;

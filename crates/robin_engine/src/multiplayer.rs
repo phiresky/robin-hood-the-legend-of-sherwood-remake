@@ -256,7 +256,7 @@ impl NetChannels {
     /// that already handshook before the cache was populated.
     pub fn publish_initial_snapshot(&self, frame: u32, engine: &Engine) {
         self.set_initial_snapshot(frame, engine);
-        let engine_bytes = bitcode::encode(engine);
+        let engine_bytes = crate::native_snapshot::encode(engine);
         let _ = self.outgoing.send(NetOutbound::InitialSnapshot {
             frame,
             engine_bytes,
