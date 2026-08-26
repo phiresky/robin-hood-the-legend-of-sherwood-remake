@@ -25,8 +25,8 @@ use super::SimConfig;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
     ExternalFacts, FrameAdvanceError, FrameConsoleResponse, LevelAssets, LevelLoadStaging,
-    SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput, SimulationRng,
-    SoundBoundaryPolicy,
+    RecordedDropAleRoute, SideEffects, SimEvents, SimulationFrameInput, SimulationFrameOutput,
+    SimulationRng, SoundBoundaryPolicy,
 };
 #[cfg(test)]
 use super::{DirectorCompletion, InputState, SoundBoundary};
@@ -278,6 +278,17 @@ impl Engine {
     /// Open the host-only developer-console capability.
     pub fn host_console(&mut self) -> HostConsoleDispatch<'_> {
         HostConsoleDispatch { engine: self }
+    }
+
+    fn has_pending_recorded_drop_ale_route(
+        &self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+    ) -> bool {
+        self.inner
+            .orders
+            .sequence_manager
+            .has_pending_drop_ale_route_candidate(actor, destination)
     }
 
     /// Restore an Original schema-16 session-boundary transient before the
@@ -3208,7 +3219,12 @@ impl Engine {
         assets: &LevelAssets,
         external_facts: ExternalFacts,
     ) -> Result<(), FrameAdvanceError> {
-        for (index, completion) in external_facts.director_completions.into_iter().enumerate() {
+        let ExternalFacts {
+            director_completions,
+            sound_boundary,
+            recorded_drop_ale_routes,
+        } = external_facts;
+        for (index, completion) in director_completions.into_iter().enumerate() {
             inner
                 .apply_frame_external_director_completion(completion, assets)
                 .map_err(|reason| FrameAdvanceError::DirectorCompletionRejected {
@@ -3217,7 +3233,7 @@ impl Engine {
                     reason,
                 })?;
         }
-        if let Some(sound_boundary) = external_facts.sound_boundary {
+        if let Some(sound_boundary) = sound_boundary {
             let policy = sound_boundary.policy;
             inner
                 .try_queue_resolved_exclamations(
@@ -3229,6 +3245,42 @@ impl Engine {
             inner
                 .hourglass_phase_sound_boundary(&sim, assets)
                 .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
+        }
+        for (index, route) in recorded_drop_ale_routes.into_iter().enumerate() {
+            let RecordedDropAleRoute {
+                actor,
+                destination,
+                goal_sector,
+                goal_sector_index,
+                goal_layer,
+                recorded_gate_path,
+            } = route;
+            let goal_sector = u16::try_from(goal_sector.get())
+                .ok()
+                .and_then(crate::position_interface::SectorHandle::new)
+                .map(|sector| sector.with_arena_index(goal_sector_index))
+                .ok_or_else(|| FrameAdvanceError::RecordedDropAleRouteRejected {
+                    index,
+                    actor,
+                    reason: format!("invalid goal sector {}", goal_sector.get()),
+                })?;
+            if !inner
+                .orders
+                .sequence_manager
+                .inject_recorded_drop_ale_route(
+                    actor,
+                    destination,
+                    goal_sector,
+                    goal_layer,
+                    recorded_gate_path,
+                )
+            {
+                return Err(FrameAdvanceError::RecordedDropAleRouteRejected {
+                    index,
+                    actor,
+                    reason: "no matching pending DropAle seek".to_owned(),
+                });
+            }
         }
         Ok(())
     }
@@ -3645,6 +3697,16 @@ impl Engine {
 
 impl ParityReplaySetup<'_> {
     #[doc(hidden)]
+    pub fn has_pending_recorded_drop_ale_route(
+        &self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+    ) -> bool {
+        self.engine
+            .has_pending_recorded_drop_ale_route(actor, destination)
+    }
+
+    #[doc(hidden)]
     pub fn restore_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         self.engine.restore_parity_npc_maximal_visibility(id, value);
     }
@@ -3752,6 +3814,61 @@ mod tests {
         (engine, assets)
     }
 
+    fn pending_drop_ale_seek(
+        owner: EntityId,
+        destination: crate::coordinates::MapPoint,
+        fallback_sector: crate::position_interface::SectorHandle,
+    ) -> crate::sequence::SequenceElement {
+        use crate::element::Command;
+        use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
+
+        let mut seek = SequenceElement::new_movement(
+            1,
+            Command::Seek,
+            Some(owner),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            destination: seek_destination,
+            layer,
+            sector,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        else {
+            unreachable!()
+        };
+        *seek_destination = destination;
+        *layer = 2;
+        *sector = Some(fallback_sector);
+        *flags |= MoveFlags::SEEK;
+        let mut post_seek = Sequence::new();
+        post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
+        *post_seek_sequence = Some(Box::new(post_seek));
+        seek
+    }
+
+    fn recorded_drop_ale_fact(
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+    ) -> RecordedDropAleRoute {
+        RecordedDropAleRoute {
+            actor,
+            destination,
+            goal_sector: crate::sector::SectorNumber::new(0),
+            goal_sector_index: crate::fast_find_grid::SectorIndex::new(0)
+                .expect("sector index zero is valid"),
+            goal_layer: 0,
+            recorded_gate_path: crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: crate::fast_find_grid::SectorIndex::new(57),
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Failure,
+            },
+        }
+    }
+
     #[test]
     fn frame_api_matches_legacy_command_then_hourglass_boundary() {
         let (engine, assets) = frame_api_fixture();
@@ -3786,6 +3903,66 @@ mod tests {
             "this host-local effect is serde-skipped and must be compared explicitly"
         );
         assert!(framed.is_men_to_blazon_conversion_mode());
+    }
+
+    #[test]
+    fn recorded_drop_ale_facts_round_trip_and_reject_atomically() {
+        let (mut engine, assets) = frame_api_fixture();
+        let owner = EntityId::Pc(crate::entity_id::PcId(36));
+        let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
+        let fallback_sector =
+            crate::position_interface::SectorHandle::new(25).expect("fallback sector is valid");
+        engine
+            .inner
+            .orders
+            .sequence_manager
+            .launch_element(pending_drop_ale_seek(owner, destination, fallback_sector));
+
+        let fact = recorded_drop_ale_fact(owner, destination);
+        let input = SimulationFrameInput::no_hourglass().with_external_facts(
+            ExternalFacts::default().with_recorded_drop_ale_routes(vec![fact.clone()]),
+        );
+        let encoded = bitcode::serialize(&input).expect("serialize typed frame fact");
+        let decoded: SimulationFrameInput =
+            bitcode::deserialize(&encoded).expect("deserialize typed frame fact");
+        let mut direct = engine.clone();
+        let mut replayed = engine.clone();
+        direct
+            .advance_frame(&assets, input)
+            .expect("admit recorded DropAle route");
+        replayed
+            .advance_frame(&assets, decoded)
+            .expect("replay recorded DropAle route");
+        assert_eq!(
+            crate::replay::state_hash(&direct),
+            crate::replay::state_hash(&replayed),
+            "the full frame journal must retain delayed route resolution"
+        );
+
+        let before = crate::replay::state_hash(&engine);
+        let rejected = engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_external_facts(
+                    ExternalFacts::default().with_recorded_drop_ale_routes(vec![
+                        fact,
+                        recorded_drop_ale_fact(
+                            EntityId::Pc(crate::entity_id::PcId(37)),
+                            destination,
+                        ),
+                    ]),
+                ),
+            )
+            .expect_err("a route without a pending DropAle seek must be rejected");
+        assert!(matches!(
+            rejected,
+            FrameAdvanceError::RecordedDropAleRouteRejected { index: 1, .. }
+        ));
+        assert_eq!(
+            crate::replay::state_hash(&engine),
+            before,
+            "a rejected later fact must not publish the accepted prefix"
+        );
     }
 
     #[test]

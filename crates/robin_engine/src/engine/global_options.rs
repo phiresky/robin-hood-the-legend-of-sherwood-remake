@@ -18,6 +18,11 @@ use crate::player_profile::DifficultyLevel;
 )]
 pub struct SimConfig {
     pub difficulty: DifficultyLevel,
+    /// Fix the original game's Hard-difficulty reaction-time copy-paste bug.
+    // A missing field identifies deterministic state written before this
+    // extension existed and therefore preserves the original game's bug.
+    #[serde(default)]
+    pub fix_hard_reaction_times: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -37,6 +42,7 @@ impl SimConfig {
     pub fn from_options(options: &GlobalOptions, difficulty: DifficultyLevel) -> Self {
         Self {
             difficulty,
+            fix_hard_reaction_times: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -154,5 +160,29 @@ impl GlobalOptions {
     /// `set_global` has not been called yet (tests, headless tooling).
     pub fn global() -> std::sync::MutexGuard<'static, Option<GlobalOptions>> {
         GLOBAL_OPTIONS.lock().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SimConfig;
+
+    #[test]
+    fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
+        assert!(SimConfig::default().fix_hard_reaction_times);
+    }
+
+    #[test]
+    fn state_without_the_setting_retains_original_reaction_times() {
+        let mut serialized =
+            serde_json::to_value(SimConfig::default()).expect("serialize simulation config");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("fix_hard_reaction_times");
+
+        let config: SimConfig =
+            serde_json::from_value(serialized).expect("deserialize legacy simulation config");
+        assert!(!config.fix_hard_reaction_times);
     }
 }

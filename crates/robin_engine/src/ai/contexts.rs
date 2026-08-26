@@ -886,6 +886,9 @@ pub struct ReconsiderSwordfightObservationFighter {
 /// and swordfight tactics. Passed alongside AiContext.
 #[derive(Debug, Clone)]
 pub struct AiPerTickData {
+    /// Whether to use the intended Hard reaction-time multiplier instead of
+    /// the Easy multiplier selected by the original copy-paste bug.
+    pub fix_hard_reaction_times: bool,
     /// Shared immutable profile table used by combat evaluation.
     ///
     /// `None` is valid only for narrow non-combat dispatches and test
@@ -1216,6 +1219,7 @@ impl AiPerTickData {
     /// builder call instead of silently feeding empty combat context.
     pub fn stub() -> Self {
         Self {
+            fix_hard_reaction_times: false,
             profile_manager: None,
             owner_live_position: None,
             patrol_chief_position: Position::default(),

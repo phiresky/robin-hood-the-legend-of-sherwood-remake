@@ -48,6 +48,11 @@ pub struct SeatState {
     /// this value when an action becomes unavailable.
     #[serde(default)]
     pub selected_action: Action,
+    /// Action armed only for Shift-held quick-action planning.  Unlike
+    /// `selected_action`, changing this does not touch the live PC, launch
+    /// equip/unequip sequences, or interrupt its current work.
+    #[serde(default)]
+    pub planned_action: Action,
     /// Original `RHMessenger::muwActionBeforeControl`, used to restore the
     /// globally armed action when Ctrl is released.
     #[serde(default)]

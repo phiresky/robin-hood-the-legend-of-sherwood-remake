@@ -282,6 +282,8 @@ impl TraceSimConfig {
     fn to_sim_config(&self, synchronous_pathfinding: bool) -> robin_engine::engine::SimConfig {
         robin_engine::engine::SimConfig {
             difficulty: self.difficulty.into(),
+            // Original-parity traces deliberately retain the shipped bug.
+            fix_hard_reaction_times: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -1749,12 +1751,21 @@ impl TraceCommand {
                 target,
                 running,
             } => {
-                let (already_authorized, goal_override, goal_sector_index_override) =
-                    drop_ale_resolution
-                        .map(|resolution| {
-                            (true, Some(resolution.goal), resolution.goal_sector_index)
-                        })
-                        .unwrap_or((false, None, None));
+                let (
+                    already_authorized,
+                    goal_override,
+                    goal_sector_index_override,
+                    recorded_gate_path,
+                ) = drop_ale_resolution
+                    .map(|resolution| {
+                        (
+                            true,
+                            Some(resolution.goal),
+                            resolution.goal_sector_index,
+                            resolution.recorded_gate_path,
+                        )
+                    })
+                    .unwrap_or((false, None, None, None));
                 PlayerCommand::DropAleAt {
                     actor: entity_map.translate(actor),
                     target_pos: target.into(),
@@ -1762,6 +1773,7 @@ impl TraceCommand {
                     already_authorized,
                     goal_override,
                     goal_sector_index_override,
+                    recorded_gate_path,
                 }
             }
             Self::ShieldSelectProtected {
@@ -2527,10 +2539,11 @@ struct TraceRouteGate {
     draft_diagnostics: BTreeMap<String, TraceJsonValue>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
     goal_sector_index: Option<robin_engine::fast_find_grid::SectorIndex>,
+    recorded_gate_path: Option<robin_engine::gate::RecordedGatePath>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2755,7 +2768,7 @@ fn resolve_schema_sixteen_drop_ale(
     };
 
     let actor = entity_map.translate(*actor);
-    let matching_event = route_events
+    let matching_events = route_events
         .unwrap_or_default()
         .iter()
         .filter_map(|event| {
@@ -2778,8 +2791,13 @@ fn resolve_schema_sixteen_drop_ale(
             }
             Some((ordinal, event))
         })
-        .min_by_key(|(ordinal, _)| *ordinal);
-    let Some((ordinal, event)) = matching_event else {
+        .collect::<Vec<_>>();
+    assert!(
+        matching_events.len() <= 1,
+        "schema-16 DropAle command matched {} exact route events",
+        matching_events.len()
+    );
+    let Some((ordinal, event)) = matching_events.into_iter().next() else {
         // A cross-sector DropAle must have an authoritative route event. Do
         // not disguise a mismatched/corrupt event as a same-sector command.
         let has_actor_route = route_events.unwrap_or_default().iter().any(|event| {
@@ -2796,10 +2814,136 @@ fn resolve_schema_sixteen_drop_ale(
 
     let (goal_sector, goal_sector_index) =
         entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
+    let recorded_gate_path = recorded_gate_path_from_event(event, entity_map);
     Some(ReplayDropAleResolution {
         goal: (goal_sector, event.goal_level),
         goal_sector_index: Some(goal_sector_index),
+        recorded_gate_path: Some(recorded_gate_path),
     })
+}
+
+fn recorded_gate_path_from_event(
+    event: &TraceRouteConstructionEvent,
+    entity_map: &EntityMap,
+) -> robin_engine::gate::RecordedGatePath {
+    let (source_sector, source_sector_index) =
+        entity_map.translate_required_drop_ale_goal_sector(event.source_sector);
+    let outcome = match event
+        .draft_diagnostics
+        .get("result")
+        .map(TraceJsonValue::tree)
+    {
+        Some(TraceJsonTree::String(result)) if result == "success" => {
+            assert!(
+                !event.gates.is_empty(),
+                "successful cross-sector DropAle route has no gates: {event:?}"
+            );
+            robin_engine::gate::RecordedGateOutcome::Success(
+                event
+                    .gates
+                    .iter()
+                    .map(|gate| robin_engine::gate::GatePathStep {
+                        door_index: robin_engine::gate::DoorIndex(
+                            entity_map.translate_gate(gate.gate_id),
+                        ),
+                        direct: gate.direct,
+                    })
+                    .collect(),
+            )
+        }
+        Some(TraceJsonTree::String(result)) if result == "failure" => {
+            assert!(
+                event.gates.is_empty(),
+                "failed cross-sector DropAle route retained gates: {event:?}"
+            );
+            robin_engine::gate::RecordedGateOutcome::Failure
+        }
+        other => panic!("schema-16 DropAle route has invalid result: {other:?}"),
+    };
+    robin_engine::gate::RecordedGatePath {
+        source_sector,
+        source_sector_index: Some(source_sector_index),
+        source_layer: event.source_level,
+        outcome,
+    }
+}
+
+fn collect_schema_sixteen_delayed_drop_ale_routes(
+    schema: u32,
+    route_events: Option<&[TraceRouteConstructionEvent]>,
+    consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
+    consumed_group_move_route_ordinals: &BTreeSet<u64>,
+    entity_map: &EntityMap,
+    engine: &mut Engine,
+) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
+    if schema != 16 {
+        return Vec::new();
+    }
+    assert!(
+        consumed_drop_ale_route_ordinals.is_disjoint(consumed_group_move_route_ordinals),
+        "schema-16 route ordinal was consumed independently by DropAle and group-move joins"
+    );
+    let replay_setup = engine.parity_replay_setup();
+    let mut seen_route_ordinals = BTreeSet::new();
+    let mut routes = Vec::new();
+    for event in route_events.unwrap_or_default() {
+        let ordinal = match event
+            .draft_diagnostics
+            .get("ordinal")
+            .map(TraceJsonValue::tree)
+        {
+            Some(TraceJsonTree::Unsigned(ordinal)) => ordinal,
+            other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
+        };
+        if event.kind != "move" || event.source_sector == event.goal_sector {
+            continue;
+        }
+        assert!(
+            seen_route_ordinals.insert(ordinal),
+            "schema-16 route stream contains duplicate ordinal {ordinal}"
+        );
+        if consumed_drop_ale_route_ordinals.contains(&ordinal)
+            || consumed_group_move_route_ordinals.contains(&ordinal)
+        {
+            continue;
+        }
+        let actor = entity_map.translate(event.actor);
+        let destination = event.goal.into();
+        if !replay_setup.has_pending_recorded_drop_ale_route(actor, destination) {
+            continue;
+        }
+        claim_delayed_drop_ale_route_ordinal(
+            ordinal,
+            consumed_drop_ale_route_ordinals,
+            consumed_group_move_route_ordinals,
+        );
+        let (goal_sector, goal_sector_index) =
+            entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
+        routes.push(robin_engine::engine::RecordedDropAleRoute {
+            actor,
+            destination,
+            goal_sector,
+            goal_sector_index,
+            goal_layer: event.goal_level,
+            recorded_gate_path: recorded_gate_path_from_event(event, entity_map),
+        });
+    }
+    routes
+}
+
+fn claim_delayed_drop_ale_route_ordinal(
+    ordinal: u64,
+    consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
+    consumed_group_move_route_ordinals: &BTreeSet<u64>,
+) {
+    assert!(
+        !consumed_group_move_route_ordinals.contains(&ordinal),
+        "schema-16 route ordinal {ordinal} was already consumed by the group-move join"
+    );
+    assert!(
+        consumed_drop_ale_route_ordinals.insert(ordinal),
+        "schema-16 delayed DropAle route ordinal {ordinal} matched twice"
+    );
 }
 
 fn schema_sixteen_drop_ale_actor_goal(
@@ -2834,6 +2978,8 @@ fn schema_sixteen_drop_ale_actor_goal(
         // stronger identity. Preserve the actor's current representation so
         // the seek compares equal whether it is exact or number-only.
         goal_sector_index: sector.arena_index(),
+        // Same-sector DropAle never calls FindPathGates.
+        recorded_gate_path: None,
     })
 }
 
@@ -5016,6 +5162,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
             })
             .collect::<Vec<_>>();
+        let recorded_drop_ale_routes = collect_schema_sixteen_delayed_drop_ale_routes(
+            header.schema,
+            frame.route_construction_events.as_deref(),
+            &mut consumed_drop_ale_route_ordinals,
+            &consumed_group_move_route_ordinals,
+            map,
+            &mut engine,
+        );
         if debug_stage_timing {
             eprintln!(
                 "parity stage: entering Rust frame {} -> {}",
@@ -5037,7 +5191,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     .map(robin_engine::engine::SimCommand::from),
             );
             let frame_input = robin_engine::engine::SimulationFrameInput::new(pre_commands)
-                .with_external_facts(external_facts)
+                .with_external_facts(
+                    external_facts.with_recorded_drop_ale_routes(recorded_drop_ale_routes),
+                )
                 .with_post_commands(
                     commands_after_hourglass
                         .into_iter()
@@ -12714,8 +12870,6 @@ mod tests {
         )
         .expect("test engine");
         engine.test_set_mission_flags(false, false, true);
-        let mut display = HostDisplayState::default();
-        let mut input = InputState::default();
         let mut repaired = false;
         let mut repair_commands = Vec::new();
 
@@ -14344,11 +14498,12 @@ mod tests {
         }]);
         let line = stray.to_string();
         let frame: TraceFrame = serde_json::from_str(&line).unwrap();
-        let panic =
-            std::panic::catch_unwind(|| verify_trace_line_roundtrip(&frame, &line, 3)).unwrap_err();
-        let message = panic
-            .downcast_ref::<String>()
-            .expect("round-trip audit panics with a formatted message");
+        let mut original: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let mut reserialized = serde_json::to_value(frame).unwrap();
+        normalize_trace_json_for_roundtrip(&mut original);
+        normalize_trace_json_for_roundtrip(&mut reserialized);
+        let message = first_json_difference("$", &original, &reserialized)
+            .expect("the stray recorder field must be reported as dropped");
         assert!(
             message.contains("$.elements[0].novel_recorder_field is dropped"),
             "unexpected audit failure message: {message}"
@@ -16115,11 +16270,25 @@ mod tests {
             goal: target,
             goal_sector: 148,
             goal_level: 4,
-            gates: Vec::new(),
-            draft_diagnostics: BTreeMap::from([(
-                "ordinal".to_owned(),
-                TraceJsonValue::from(TraceJsonTree::Unsigned(7)),
-            )]),
+            gates: vec![TraceRouteGate {
+                gate_id: 0,
+                direct: false,
+                sector_out: 148,
+                level_out: 4,
+                sector_in: 394,
+                level_in: 6,
+                draft_diagnostics: BTreeMap::new(),
+            }],
+            draft_diagnostics: BTreeMap::from([
+                (
+                    "ordinal".to_owned(),
+                    TraceJsonValue::from(TraceJsonTree::Unsigned(7)),
+                ),
+                (
+                    "result".to_owned(),
+                    TraceJsonValue::from(TraceJsonTree::String("success".to_owned())),
+                ),
+            ]),
         }
     }
 
@@ -16128,9 +16297,15 @@ mod tests {
         EntityMap {
             entities: BTreeMap::from([(actor, EntityId::Pc(robin_engine::entity_id::PcId(12)))]),
             entities_by_creation_order: BTreeMap::new(),
-            sectors: BTreeMap::from([(148, 55)]),
-            sector_indices: BTreeMap::from([(148, goal_sector_index)]),
-            gates: Vec::new(),
+            sectors: BTreeMap::from([(148, 55), (394, 56)]),
+            sector_indices: BTreeMap::from([
+                (148, goal_sector_index),
+                (
+                    394,
+                    robin_engine::fast_find_grid::SectorIndex::new(38).unwrap(),
+                ),
+            ]),
+            gates: vec![robin_engine::gate::DoorIndex(42)],
             runtime_creation_order_boundary: 0,
         }
     }
@@ -16169,9 +16344,69 @@ mod tests {
             Some(ReplayDropAleResolution {
                 goal: (SectorNumber::new(55), 4),
                 goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(37),
+                recorded_gate_path: Some(robin_engine::gate::RecordedGatePath {
+                    source_sector: SectorNumber::new(56),
+                    source_sector_index: robin_engine::fast_find_grid::SectorIndex::new(38),
+                    source_layer: 6,
+                    outcome: robin_engine::gate::RecordedGateOutcome::Success(vec![
+                        robin_engine::gate::GatePathStep {
+                            door_index: robin_engine::gate::DoorIndex(42),
+                            direct: false,
+                        },
+                    ]),
+                }),
             })
         );
         assert_eq!(consumed, BTreeSet::from([7]));
+    }
+
+    #[test]
+    #[should_panic(expected = "already consumed by the group-move join")]
+    fn schema_sixteen_route_ordinal_cannot_be_claimed_by_two_joiners() {
+        claim_delayed_drop_ale_route_ordinal(7, &mut BTreeSet::new(), &BTreeSet::from([7]));
+    }
+
+    #[test]
+    #[should_panic(expected = "matched twice")]
+    fn schema_sixteen_delayed_route_ordinal_cannot_be_claimed_twice() {
+        let mut delayed = BTreeSet::from([7]);
+        claim_delayed_drop_ale_route_ordinal(7, &mut delayed, &BTreeSet::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "matched 2 exact route events")]
+    fn schema_sixteen_drop_ale_rejects_duplicate_exact_command_routes() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 0,
+        };
+        let target = TracePoint {
+            x: TraceFloat {
+                bits: 2607.467_041_f32.to_bits(),
+            },
+            y: TraceFloat {
+                bits: 881.610_474_f32.to_bits(),
+            },
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target,
+            running: false,
+        };
+        let first = drop_ale_route_fixture(actor, target);
+        let mut second = drop_ale_route_fixture(actor, target);
+        second.draft_diagnostics.insert(
+            "ordinal".to_owned(),
+            TraceJsonValue::from(TraceJsonTree::Unsigned(8)),
+        );
+        resolve_schema_sixteen_drop_ale(
+            16,
+            &command,
+            Some(&[first, second]),
+            &mut BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            None,
+        );
     }
 
     #[test]
@@ -16259,6 +16494,7 @@ mod tests {
         let expected = ReplayDropAleResolution {
             goal: (SectorNumber::new(0), 0),
             goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(0),
+            recorded_gate_path: None,
         };
         let mut consumed = BTreeSet::new();
 
@@ -16269,7 +16505,7 @@ mod tests {
                 None,
                 &mut consumed,
                 &drop_ale_route_map(actor),
-                Some(expected),
+                Some(expected.clone()),
             ),
             Some(expected)
         );

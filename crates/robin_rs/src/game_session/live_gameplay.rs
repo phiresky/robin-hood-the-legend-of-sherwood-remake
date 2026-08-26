@@ -318,6 +318,19 @@ pub(super) async fn drive_live_gameplay_input(
         pause_closed_this_frame,
     } = input_batch;
 
+    let planned_action = context
+        .manager
+        .engine
+        .planned_action_for_seat(context.host.transport.local_seat);
+    if should_cancel_planned_action(modifiers.shift, planned_action) {
+        dispatch_local_command(
+            context.host,
+            &mut context.manager.engine,
+            &mut context.frame.commands,
+            context.assets,
+            &PlayerCommand::CancelPlannedAction,
+        );
+    }
     if minimap_toggle_pressed
         && !context.ui.console_overlay.is_visible()
         && context.ui.pause_menu.is_none()
@@ -408,10 +421,18 @@ pub(super) async fn drive_live_gameplay_input(
     HandlerAction::Proceed
 }
 
+fn should_cancel_planned_action(
+    shift_is_held: bool,
+    planned_action: robin_engine::profiles::Action,
+) -> bool {
+    !shift_is_held && planned_action != robin_engine::profiles::Action::NoAction
+}
+
 #[cfg(test)]
 mod tests {
-    use super::portrait_selection_command;
+    use super::{portrait_selection_command, should_cancel_planned_action};
     use robin_engine::player_command::PlayerCommand;
+    use robin_engine::profiles::Action;
 
     #[test]
     fn portrait_dispatch_prioritizes_assignment_then_recall_then_portrait() {
@@ -430,5 +451,12 @@ mod tests {
                 append: false
             }
         ));
+    }
+
+    #[test]
+    fn shift_release_cancels_only_an_armed_planned_action() {
+        assert!(should_cancel_planned_action(false, Action::Bow));
+        assert!(!should_cancel_planned_action(true, Action::Bow));
+        assert!(!should_cancel_planned_action(false, Action::NoAction));
     }
 }

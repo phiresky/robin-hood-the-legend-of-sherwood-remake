@@ -1313,6 +1313,22 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
         .map(|i| i as u8)
 }
 
+fn action_index(
+    profiles: &engine_profiles::ProfileManager,
+    entity: &Entity,
+    action: engine_profiles::Action,
+) -> Option<u8> {
+    if action == engine_profiles::Action::NoAction {
+        return None;
+    }
+    let profile = profiles.get_character(entity.pc_data()?.profile_index)?;
+    profile
+        .actions
+        .iter()
+        .position(|candidate| *candidate == action)
+        .map(|index| index as u8)
+}
+
 fn allied_action_index(relative_x: f32) -> u8 {
     ((relative_x / (ELEMENT_WIDTH as f32 / 3.0)).floor() as u8).min(2)
 }
@@ -1748,6 +1764,7 @@ pub fn draw_panel(
     mouse_x: f32,
     mouse_y: f32,
     titbit_renderer: Option<&mut crate::titbit_renderer::TitbitRenderer>,
+    shift_held: bool,
 ) {
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
@@ -2035,14 +2052,21 @@ pub fn draw_panel(
                 };
 
                 // Determine active action button index and disabled state.
-                let active_idx = entity.and_then(|e| active_action_index(profiles, e));
+                let active_idx = if shift_held {
+                    entity.and_then(|entity| {
+                        action_index(profiles, entity, engine.planned_action_for_seat(local_seat))
+                    })
+                } else {
+                    entity.and_then(|e| active_action_index(profiles, e))
+                };
 
                 for i in 0..num_buttons {
                     let is_active = active_idx == Some(i as u8);
-                    let is_disabled = entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
-                        pc.disabled_actions.get(i).copied().unwrap_or(false)
-                            || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
-                    });
+                    let is_disabled = !shift_held
+                        && entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
+                            pc.disabled_actions.get(i).copied().unwrap_or(false)
+                                || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
+                        });
                     let is_hovered = hovered_action == Some((slot as u8, i as u8));
 
                     let mut icon_drawn = false;
@@ -2189,7 +2213,10 @@ pub fn draw_panel(
                             .map(|id| engine.titbit_manager().get_phase(id))
                             .filter(|&p| p != 0xFFFF)
                     };
-                    let frame = frame_from_last_step.or_else(phase_from_slot_titbit);
+                    // The titbit phase is target/command-specific (Take,
+                    // BowOk, lever, pay, ...), while the recorded Action is
+                    // only a broad fallback for expired legacy titbits.
+                    let frame = phase_from_slot_titbit().or(frame_from_last_step);
                     // The per-slot `run` flag carries through into the
                     // shifting-titbit renderer, which then draws a second
                     // copy of the sprite offset by `(3, 0)`.  The flag is

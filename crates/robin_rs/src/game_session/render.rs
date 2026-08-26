@@ -1295,6 +1295,7 @@ pub(super) fn render_frame(
         panel_mouse.x,
         panel_mouse.y,
         Some(titbit_renderer),
+        shift_held,
     );
 
     // ── GPU phase: blazon-bar / requirements icon strips ──

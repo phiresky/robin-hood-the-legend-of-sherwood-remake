@@ -172,6 +172,15 @@ pub enum PlayerCommand {
         pc_id: EntityId,
         action: Action,
     },
+    /// Toggle an action for Shift-held quick-action planning without changing
+    /// the live PC's action, posture, animation, or current sequence.
+    SelectPlannedAction {
+        pc_id: EntityId,
+        action: Action,
+    },
+    /// Clear only the Shift-held planned action, leaving the live PC action
+    /// and animation untouched.
+    CancelPlannedAction,
     /// Cancel the active action (set to NoAction).
     CancelAction {
         pc_id: EntityId,
@@ -227,6 +236,10 @@ pub enum PlayerCommand {
         /// turn a valid cross-building route into no route at all.
         #[serde(default)]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        /// Replay-only authoritative result of Original's gate search. Live
+        /// commands leave this unset and use the runtime gate graph.
+        #[serde(default)]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
     /// protect in [`ShieldState::protected_pc`] and flip
@@ -430,6 +443,19 @@ pub enum PlayerCommand {
     ChangeQaMemory {
         slot: u8,
     },
+    /// Record one already-resolved action into the next free QA memory slot.
+    /// The queue executor starts it immediately when the actor is idle and
+    /// advances subsequent slots as each dispatched action completes.
+    QueueQuickAction {
+        action: Action,
+        command: Box<PlayerCommand>,
+    },
+    /// Double-click acceleration for Shift-planned movement.  If the newest
+    /// pending QA is a move it becomes a run; otherwise the active actor is
+    /// accelerated, matching ordinary double-click behavior.
+    MakeQueuedActionFast {
+        pc_id: EntityId,
+    },
     /// Toggle the permanent alt-lock flag.  When true, the engine
     /// behaves as though alt is always held, enabling the view cone
     /// hover overlay without needing the key.  Host-driven from the
@@ -616,6 +642,10 @@ pub enum PlayerCommand {
     SetAmountOfSpeaking {
         /// Sound-menu slider value in the original 0..=9 range.
         amount: u16,
+    },
+    /// Toggle the fix for the original Hard reaction-time multiplier bug.
+    SetFixHardReactionTimes {
+        enabled: bool,
     },
 
     // ── Hero speech (side-effect feedback) ───────────────────────

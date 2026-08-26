@@ -19,6 +19,10 @@ pub(crate) struct PlayerRuntime {
     pub(crate) qa_recording_for: Vec<EntityId>,
     pub(crate) qa_recording_slot: u8,
     pub(crate) action_before_recording_macro: Action,
+    /// PCs whose Shift-click queue is waiting for its currently dispatched
+    /// action (or pre-existing live work) to finish.
+    #[serde(default)]
+    pub(crate) auto_queue_active: Vec<EntityId>,
     #[serde(default)]
     pub(crate) allied: AlliedControlState,
 }
@@ -34,6 +38,7 @@ impl PlayerRuntime {
             qa_recording_for: Vec::new(),
             qa_recording_slot: 0,
             action_before_recording_macro: Action::NoAction,
+            auto_queue_active: Vec::new(),
             allied: AlliedControlState::default(),
         }
     }

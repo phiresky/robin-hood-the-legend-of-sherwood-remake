@@ -157,6 +157,59 @@ impl EngineInner {
             .unwrap_or(crate::profiles::Action::NoAction)
     }
 
+    /// Action armed for Shift-held planning.  This is deliberately separate
+    /// from both the messenger's live action and `PcData::current_action`.
+    pub fn planned_action_for_seat(
+        &self,
+        player_id: crate::player_command::PlayerId,
+    ) -> crate::profiles::Action {
+        self.players
+            .seats
+            .get(player_id.0 as usize)
+            .map(|seat| seat.planned_action)
+            .unwrap_or(crate::profiles::Action::NoAction)
+    }
+
+    /// Map position at which the next Shift-planned action is expected to
+    /// execute: the last queued QA destination, then the live movement goal,
+    /// then the actor's current position.
+    pub fn planned_action_origin(&self, pc_id: EntityId) -> Option<MapPoint> {
+        self.players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| {
+                state
+                    .slots()
+                    .iter()
+                    .rev()
+                    .flat_map(|slot| slot.steps.iter().rev())
+                    .find_map(|step| match step.replay {
+                        crate::macro_store::QaReplayCommand::Move { destination, .. }
+                        | crate::macro_store::QaReplayCommand::TargetInteraction {
+                            destination,
+                            ..
+                        } => Some(destination),
+                        crate::macro_store::QaReplayCommand::DropAle { target_pos, .. } => {
+                            Some(target_pos)
+                        }
+                        // Ranged, ground-targeted, and self actions do not
+                        // move their owner. Entity seeks are command-specific;
+                        // the stored target point is an icon anchor, not a
+                        // guaranteed final actor position.
+                        _ => None,
+                    })
+            })
+            .or_else(|| {
+                self.orders
+                    .sequence_manager
+                    .actor_planned_movement_destination(pc_id)
+            })
+            .or_else(|| {
+                self.get_entity(pc_id)
+                    .map(|entity| entity.element_data().position_map())
+            })
+    }
+
     /// Map-space per-pixel hit test for a sprite.
     ///
     /// Builds a map-space AABB from
@@ -1818,6 +1871,93 @@ impl EngineInner {
         )
     }
 
+    /// Bow preview for Shift-held planning, translated to the actor's
+    /// predicted queue position without mutating the actor or equipping a
+    /// bow. Planned shots use the long-shot arc as an explicit affordance.
+    pub fn compute_planned_bow_trajectory_preview(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        target_id: EntityId,
+    ) -> TrajectoryPreview {
+        let target = match self.get_entity(target_id) {
+            Some(target) => target,
+            None => return TrajectoryPreview::Invalid,
+        };
+        let target_point = if target.is_human() {
+            let Some(point) = target.compute_belt_point() else {
+                tracing::warn!(?target_id, "planned bow target is missing belt hotspot");
+                return TrajectoryPreview::Invalid;
+            };
+            point
+        } else if target.is_fx_target() {
+            let Some(point) = target.compute_target_center() else {
+                tracing::warn!(?target_id, "planned bow target is missing center hotspot");
+                return TrajectoryPreview::Invalid;
+            };
+            point
+        } else {
+            return TrajectoryPreview::Invalid;
+        };
+        let Some(origin) = self.planned_action_origin(pc_id) else {
+            tracing::warn!(?pc_id, "planned bow shooter is missing");
+            return TrajectoryPreview::Invalid;
+        };
+        self.compute_trajectory_preview_to_point_from(
+            assets,
+            pc_id,
+            target_point,
+            crate::weapons::ShootMode::Long,
+            Some(target_id),
+            crate::profiles::Action::Bow,
+            Some(origin),
+        )
+    }
+
+    /// Throwable preview for Shift planning, translated to the actor's
+    /// predicted queue position and driven by the planned action rather than
+    /// the live PC's equipped action.
+    pub fn compute_planned_trajectory_preview(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        target_id: EntityId,
+        action: crate::profiles::Action,
+    ) -> TrajectoryPreview {
+        let target = match self.get_entity(target_id) {
+            Some(target) => target,
+            None => return TrajectoryPreview::Invalid,
+        };
+        let target_point = if target.is_human() {
+            let Some(point) = target.compute_belt_point() else {
+                tracing::warn!(?target_id, "planned throw target is missing belt hotspot");
+                return TrajectoryPreview::Invalid;
+            };
+            point
+        } else if target.is_fx_target() {
+            let Some(point) = target.compute_target_center() else {
+                tracing::warn!(?target_id, "planned throw target is missing center hotspot");
+                return TrajectoryPreview::Invalid;
+            };
+            point
+        } else {
+            return TrajectoryPreview::Invalid;
+        };
+        let Some(origin) = self.planned_action_origin(pc_id) else {
+            tracing::warn!(?pc_id, "planned thrower is missing");
+            return TrajectoryPreview::Invalid;
+        };
+        self.compute_trajectory_preview_to_point_from(
+            assets,
+            pc_id,
+            target_point,
+            crate::weapons::ShootMode::Long,
+            Some(target_id),
+            action,
+            Some(origin),
+        )
+    }
+
     /// Compute and store a trajectory preview arc for a jump line.
     ///
     /// Looks up the near + far jump-line midpoints and runs them
@@ -1903,12 +2043,57 @@ impl EngineInner {
             y: target_3d.y,
             z: target_3d.z,
         };
-        let preview = self.compute_trajectory_preview_to_point(
+        self.compute_trajectory_preview_ground_from(
+            assets,
+            pc_id,
+            target_point,
+            self.get_selected_action(),
+            None,
+        )
+    }
+
+    /// Ground-target throwable preview from the future Shift-queue origin.
+    pub fn compute_planned_trajectory_preview_ground(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        mouse_map: MapPoint,
+        action: crate::profiles::Action,
+    ) -> TrajectoryPreview {
+        let target = self.world.fast_grid.convert_2d_to_3d(
+            mouse_map,
+            crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+            self.sight_obstacles(assets),
+        );
+        let Some(origin) = self.planned_action_origin(pc_id) else {
+            tracing::warn!(?pc_id, "planned ground thrower is missing");
+            return TrajectoryPreview::Invalid;
+        };
+        self.compute_trajectory_preview_ground_from(
+            assets,
+            pc_id,
+            crate::coordinates::WorldPoint3D::new(target.x, target.y, target.z),
+            action,
+            Some(origin),
+        )
+    }
+
+    fn compute_trajectory_preview_ground_from(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        target_point: crate::coordinates::WorldPoint3D,
+        action: crate::profiles::Action,
+        origin: Option<MapPoint>,
+    ) -> TrajectoryPreview {
+        let preview = self.compute_trajectory_preview_to_point_from(
             assets,
             pc_id,
             target_point,
             crate::weapons::ShootMode::Long,
             None,
+            action,
+            origin,
         );
 
         // The purse preview is only valid when the projectile's
@@ -1916,7 +2101,7 @@ impl EngineInner {
         // obstacle/ground impact logic leaves layer = -1 when nothing
         // valid is hit. WaspNest and Apple (the other ground-target
         // actions) skip this gate.
-        if self.get_selected_action() == crate::profiles::Action::Purse
+        if action == crate::profiles::Action::Purse
             && let TrajectoryPreview::ShowArc { points, .. } = &preview
             && let Some(last) = points.last()
         {
@@ -1954,13 +2139,33 @@ impl EngineInner {
         shoot_mode: crate::weapons::ShootMode,
         target_entity: Option<crate::element::EntityId>,
     ) -> TrajectoryPreview {
+        self.compute_trajectory_preview_to_point_from(
+            assets,
+            pc_id,
+            target_point,
+            shoot_mode,
+            target_entity,
+            self.get_selected_action(),
+            None,
+        )
+    }
+
+    fn compute_trajectory_preview_to_point_from(
+        &self,
+        assets: &LevelAssets,
+        pc_id: crate::element::EntityId,
+        target_point: crate::coordinates::WorldPoint3D,
+        shoot_mode: crate::weapons::ShootMode,
+        target_entity: Option<crate::element::EntityId>,
+        selected_action: crate::profiles::Action,
+        origin_override: Option<MapPoint>,
+    ) -> TrajectoryPreview {
         use crate::bow_shot;
         use crate::coordinates::{WorldPoint3D, WorldVec3D};
         use crate::weapons::ShootMode;
 
         // Determine mass and apex based on the selected action.
         // For bow, only preview long (arced) shots.
-        let selected_action = self.get_selected_action();
         let (mass, apex_height_override) = match selected_action {
             crate::profiles::Action::Apple => (bow_shot::MASS_APPLE, Some(bow_shot::APEX_APPLE)),
             crate::profiles::Action::Stone => (bow_shot::MASS_STONE, Some(bow_shot::APEX_STONE)),
@@ -1987,11 +2192,14 @@ impl EngineInner {
         // direction from the selected PC to the hovered destination for
         // every projectile action. Bow uses ComputeBowPoint(LongShoot);
         // throwables use their own throwing animation hand point.
+        let live_origin = pc.element_data().position_map();
+        let planned_origin = origin_override.unwrap_or(live_origin);
+        let source_delta = planned_origin - live_origin;
         let direction = {
             let shooter_pos = pc.element_data().position();
             crate::position_interface::vector_to_sector_0_to_15_iso(
-                target_point.x - shooter_pos.x,
-                bow_ground_y(target_point) - bow_ground_y(shooter_pos),
+                target_point.x - (shooter_pos.x + source_delta.x),
+                bow_ground_y(target_point) - (bow_ground_y(shooter_pos) + source_delta.y),
             )
         };
         let throwable_source = |animation| {
@@ -2000,16 +2208,21 @@ impl EngineInner {
                 animation,
                 crate::element::Posture::Upright,
             )
+            .map(|mut point| {
+                point.x += source_delta.x;
+                point.y += source_delta.y;
+                point
+            })
         };
         let source_point = match selected_action {
             crate::profiles::Action::Bow => {
                 let elevation = pc.position_iface().get_elevation();
                 let shooter_pos = WorldPoint3D {
-                    x: pc.element_data().position_map().x,
-                    y: pc.element_data().position_map().y,
+                    x: planned_origin.x,
+                    y: planned_origin.y,
                     z: elevation,
                 };
-                let Some(sprite_hand_point) =
+                let Some(mut sprite_hand_point) =
                     bow_shot::bow_sprite_hand_point(pc, ShootMode::Long, direction)
                 else {
                     tracing::warn!(
@@ -2019,6 +2232,8 @@ impl EngineInner {
                     );
                     return TrajectoryPreview::Invalid;
                 };
+                sprite_hand_point.x += source_delta.x;
+                sprite_hand_point.y += source_delta.y;
                 bow_shot::compute_bow_point(
                     shooter_pos,
                     ShootMode::Long,

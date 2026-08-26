@@ -196,6 +196,7 @@ pub mod shader_preset;
 /// consumers should import them from `robin_engine` and `robin_assets`.
 pub use host::Host;
 pub mod audio_backend;
+pub mod audio_duration_cache;
 pub mod gfx_types;
 pub mod ingame_menu;
 pub mod input;

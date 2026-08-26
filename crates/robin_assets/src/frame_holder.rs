@@ -609,39 +609,45 @@ impl FrameHolder {
 
         progress(ProgressUpdate::Phase("Reading sprite bank file...", 0.30));
         // Tick the bar immediately so the user sees it move before the
-        // slow `.bks` read below (~30 MB, couple of seconds on cold cache).
+        // slow `.bks` read below (~600 MB fullgame, several seconds on
+        // cold cache).
         progress(ProgressUpdate::Tick(0.5));
 
         let bks_path = format!("{}/Data/robinhood.bks", data_dir);
         let dic_path = format!("{}/Data/robinhood.dic", data_dir);
 
-        // Read the bank file into memory in chunks so we can tick the
-        // progress bar during the I/O.
-        let mut bks_file = SbFile::open(&bks_path, 0)
-            .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?;
-        let bks_size = bks_file.get_size() as usize;
-        let mut bks_bytes = vec![0u8; bks_size];
-        const BKS_CHUNK: usize = 4 * 1024 * 1024; // 4 MB
-        let mut offset = 0;
-        while offset < bks_size {
-            let end = (offset + BKS_CHUNK).min(bks_size);
-            bks_file
-                .serialize_bytes(&mut bks_bytes[offset..end])
-                .map_err(|e| anyhow!("read sprite bank: error {e}"))?;
-            offset = end;
-            progress(ProgressUpdate::Tick(0.25));
-        }
+        // Open buffers the whole bank; take that buffer directly. Every
+        // extra in-memory copy of the bank costs hundreds of milliseconds
+        // and doubles peak RSS.
+        let bks_bytes = SbFile::open(&bks_path, 0)
+            .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
+            .into_bytes();
+        progress(ProgressUpdate::Tick(1.0));
 
         progress(ProgressUpdate::Phase("Decoding sprite pixel data...", 0.85));
-        // Zero-copy cast + single memcpy. The chunks_exact + from_le_bytes
-        // approach was 23-30s in debug mode on a 100 MB fullgame bank
-        // because the iterator's per-u16 function-call overhead dominates.
-        // bytemuck::cast_slice assumes LE host byte order, which matches
-        // the only targets we ship (x86_64 / arm64).
-        let bank_words: Vec<u16> = bytemuck::try_cast_slice::<u8, u16>(&bks_bytes)
-            .map_err(|error| anyhow!("sprite bank must contain aligned 16-bit words: {error}"))?
-            .to_vec();
-        drop(bks_bytes); // free the raw byte buffer
+        if !bks_bytes.len().is_multiple_of(2) {
+            return Err(anyhow!(
+                "sprite bank must contain 16-bit words (odd byte length {})",
+                bks_bytes.len()
+            ));
+        }
+        // Zero-copy view of the bank as u16 words; assumes LE host byte
+        // order, which matches the only targets we ship (x86_64 / arm64).
+        // Allocators align large buffers well past 2 bytes, so the copying
+        // fallback below is effectively dead code kept for correctness.
+        let aligned_fallback: Vec<u16>;
+        let bank_words: &[u16] = match bytemuck::try_cast_slice::<u8, u16>(&bks_bytes) {
+            Ok(words) => words,
+            Err(_) => {
+                aligned_fallback = bks_bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_le_bytes(*c))
+                    .collect();
+                &aligned_fallback
+            }
+        };
         progress(ProgressUpdate::Tick(1.0));
 
         progress(ProgressUpdate::Phase(
@@ -650,7 +656,7 @@ impl FrameHolder {
         ));
         let dic_bytes = SbFile::read_all(&dic_path)
             .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
-        self.load_sprite_index_bytes(&dic_bytes, &bank_words, progress)?;
+        self.load_sprite_index_bytes(&dic_bytes, bank_words, progress)?;
 
         tracing::info!(
             "Sprite bank loaded: {} dictionaries, {} sprites",

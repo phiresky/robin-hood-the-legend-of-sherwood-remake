@@ -74,8 +74,8 @@ pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use frame::{
     ExternalAction, ExternalActionResult, ExternalFacts, FrameAdvanceError, FrameConsoleResponse,
-    SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput, SimulationTick,
-    SoundBoundary, SoundBoundaryPolicy,
+    RecordedDropAleRoute, SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput,
+    SimulationTick, SoundBoundary, SoundBoundaryPolicy,
 };
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};

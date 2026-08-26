@@ -448,7 +448,11 @@ impl TitbitRenderer {
             ) && !titbit.blinking
             {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
+                if !engine
+                    .seat_selection(host.transport.local_seat)
+                    .iter()
+                    .any(|&id| id.index() == mgr)
+                {
                     continue;
                 }
             }
@@ -456,7 +460,11 @@ impl TitbitRenderer {
             // DangerPoint: only show when the managing PC is selected.
             if titbit.kind == TitbitKind::DangerPoint {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
+                if !engine
+                    .seat_selection(host.transport.local_seat)
+                    .iter()
+                    .any(|&id| id.index() == mgr)
+                {
                     continue;
                 }
             }
@@ -625,8 +633,16 @@ impl TitbitRenderer {
                 titbit.kind,
                 TitbitKind::QuickAction | TitbitKind::QuickActionRun
             ) {
-                let mut dst_x = floor_centered(screen_pt.x, w) + ox as i32;
-                let dst_y = floor_anchor(screen_pt.y, h as i32 + 50) + oy as i32;
+                let supplier_attached = titbit.element_supplier.is_valid();
+                let (mut dst_x, dst_y) = quick_action_screen_origin(
+                    screen_pt.x,
+                    screen_pt.y,
+                    w,
+                    h,
+                    ox as i32,
+                    oy as i32,
+                    supplier_attached,
+                );
                 if titbit.kind == TitbitKind::QuickActionRun {
                     dst_x += 3;
                 }
@@ -734,7 +750,10 @@ impl TitbitRenderer {
 fn effective_titbit_frame(kind: TitbitKind, row: u16, phase: u16, sprite_frame: u16) -> u16 {
     if kind == TitbitKind::Ghost {
         sprite_frame + 7
-    } else if kind == TitbitKind::Hidden {
+    } else if matches!(
+        kind,
+        TitbitKind::Hidden | TitbitKind::QuickAction | TitbitKind::QuickActionRun
+    ) {
         phase
     } else if kind == TitbitKind::Emoticon && row == SpriteRow::EmoticonGrowingQMark as u16 {
         phase * 8 + sprite_frame
@@ -749,6 +768,24 @@ fn floor_centered(anchor: f32, extent: u16) -> i32 {
 
 fn floor_anchor(anchor: f32, offset: i32) -> i32 {
     (anchor - offset as f32).floor() as i32
+}
+
+fn quick_action_screen_origin(
+    screen_x: f32,
+    screen_y: f32,
+    width: u16,
+    height: u16,
+    offset_x: i32,
+    offset_y: i32,
+    supplier_attached: bool,
+) -> (i32, i32) {
+    let x = floor_centered(screen_x, width) + offset_x;
+    let y = if supplier_attached {
+        floor_anchor(screen_y, height as i32 + 50) + offset_y
+    } else {
+        floor_centered(screen_y, height) + offset_y
+    };
+    (x, y)
 }
 
 fn floor_bottom(anchor: f32, extent: u16) -> i32 {
@@ -955,6 +992,18 @@ mod tests {
     }
 
     #[test]
+    fn fixed_qa_crosshair_is_centered_but_supplier_icon_floats_above_target() {
+        assert_eq!(
+            quick_action_screen_origin(100.0, 100.0, 20, 20, 0, 0, false),
+            (90, 90)
+        );
+        assert_eq!(
+            quick_action_screen_origin(100.0, 100.0, 20, 20, 0, 0, true),
+            (90, 30)
+        );
+    }
+
+    #[test]
     fn hidden_titbit_uses_character_phase_as_portrait_frame() {
         assert_eq!(
             effective_titbit_frame(TitbitKind::Hidden, SpriteRow::Hidden as u16, 0, 0),
@@ -967,6 +1016,28 @@ mod tests {
         assert_eq!(
             effective_titbit_frame(TitbitKind::Hidden, SpriteRow::Hidden as u16, 8, 0),
             8
+        );
+    }
+
+    #[test]
+    fn quick_action_uses_authored_phase_as_icon_frame() {
+        assert_eq!(
+            effective_titbit_frame(
+                TitbitKind::QuickAction,
+                SpriteRow::QuickActionTitbits as u16,
+                robin_engine::titbit::QuickAction::BowOk as u16,
+                0,
+            ),
+            robin_engine::titbit::QuickAction::BowOk as u16
+        );
+        assert_eq!(
+            effective_titbit_frame(
+                TitbitKind::QuickActionRun,
+                SpriteRow::QuickActionTitbits as u16,
+                robin_engine::titbit::QuickAction::Take as u16,
+                0,
+            ),
+            robin_engine::titbit::QuickAction::Take as u16
         );
     }
 

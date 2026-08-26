@@ -415,7 +415,7 @@ pub(super) fn setup_mission_audio(
         .sound
         .sound_cache
         .finalize_sound_sources(&engine.sound_sim().sources);
-    populate_sound_duration_tables(host, assets, profiles, &loader);
+    populate_sound_duration_tables(host, assets, profiles, &loader, sound_dir);
 
     // Per-entry sample validation block.  When
     // `gGlobalOptions.bCheckSoundData` is set, the engine validates
@@ -445,9 +445,16 @@ fn populate_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     loader: &engine_sound_cache::SampleLoader,
+    sound_dir: &str,
 ) {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
+
+    // Durations only depend on the sample files, so they're served from
+    // the persistent one-file cache; the loader (a full sample read) is
+    // only hit for files the cache hasn't seen.
+    let mut duration_cache = crate::audio_duration_cache::AudioDurationCache::load();
+    let sample_base = std::path::Path::new(sound_dir);
 
     fn frames_from_ms(ms: u32) -> u32 {
         ((ms.saturating_add(39)) / 40).max(1)
@@ -493,7 +500,7 @@ fn populate_sound_duration_tables(
             .entry_indices
             .iter()
             .filter_map(|&idx| host.audio.sound.sound_cache.speech_cache.entries.get(idx))
-            .filter_map(|entry| loader(&entry.file_name).map(|(_, _, duration_ms)| duration_ms))
+            .filter_map(|entry| duration_cache.duration_ms(sample_base, &entry.file_name, loader))
             .max();
         let Some(duration_ms) = duration_ms else {
             continue;
@@ -511,10 +518,12 @@ fn populate_sound_duration_tables(
 
     let mut source_durations = BTreeMap::new();
     for (&sample_id, entry) in &host.audio.sound.sound_cache.source_cache.entries {
-        if let Some((_, _, duration_ms)) = loader(&entry.file_name) {
+        if let Some(duration_ms) = duration_cache.duration_ms(sample_base, &entry.file_name, loader)
+        {
             source_durations.insert(sample_id, frames_from_ms(duration_ms));
         }
     }
+    duration_cache.save_if_dirty();
 
     tracing::info!(
         exclamations = exclamation_durations.len(),

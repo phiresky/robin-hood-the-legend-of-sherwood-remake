@@ -59,6 +59,104 @@ fn seek_sectors_match(
     }
 }
 
+/// Validate and recover an Original-recorded gate-search outcome. The outer
+/// `None` means there is no replay override and the caller must run live A*;
+/// `Some(None)` preserves an observed Original search failure.
+fn recorded_point_seek_gate_path(
+    doors: &[crate::gate::Door],
+    source_sector: crate::position_interface::SectorHandle,
+    source_layer: u16,
+    goal_sector: crate::position_interface::SectorHandle,
+    recorded: Option<crate::gate::RecordedGatePath>,
+) -> Option<Option<Vec<crate::gate::GatePathStep>>> {
+    let recorded = recorded?;
+    validate_recorded_point_seek_source(&recorded, source_sector, source_layer);
+    let crate::gate::RecordedGateOutcome::Success(path) = recorded.outcome else {
+        return Some(None);
+    };
+    assert!(
+        !path.is_empty(),
+        "recorded cross-sector point Seek has an empty successful gate path"
+    );
+    let mut expected_entry = source_sector;
+    for step in &path {
+        let door = doors.get(usize::from(step.door_index)).unwrap_or_else(|| {
+            panic!(
+                "recorded point-Seek gate {} is absent from the Rust mission",
+                step.door_index
+            )
+        });
+        let (entry_number, entry_index, exit_number, exit_index) = if step.direct {
+            (
+                door.sector_out,
+                door.sector_out_index,
+                door.sector_in,
+                door.sector_in_index,
+            )
+        } else {
+            (
+                door.sector_in,
+                door.sector_in_index,
+                door.sector_out,
+                door.sector_out_index,
+            )
+        };
+        let mut entry = crate::position_interface::SectorHandle::new(u16::from(entry_number))
+            .unwrap_or_else(|| {
+                panic!(
+                    "recorded point-Seek gate {} has invalid entry sector {entry_number}",
+                    step.door_index
+                )
+            });
+        if let Some(index) = entry_index {
+            entry = entry.with_arena_index(index);
+        }
+        assert!(
+            seek_sectors_match(expected_entry, entry),
+            "recorded point-Seek gate {} does not continue from sector {:?}",
+            step.door_index,
+            expected_entry,
+        );
+        let mut exit = crate::position_interface::SectorHandle::new(u16::from(exit_number))
+            .unwrap_or_else(|| {
+                panic!(
+                    "recorded point-Seek gate {} has invalid exit sector {exit_number}",
+                    step.door_index
+                )
+            });
+        if let Some(index) = exit_index {
+            exit = exit.with_arena_index(index);
+        }
+        expected_entry = exit;
+    }
+    assert!(
+        seek_sectors_match(expected_entry, goal_sector),
+        "recorded point-Seek gate path ends in {expected_entry:?}, not goal {goal_sector:?}"
+    );
+    Some(Some(path))
+}
+
+fn validate_recorded_point_seek_source(
+    recorded: &crate::gate::RecordedGatePath,
+    source_sector: crate::position_interface::SectorHandle,
+    source_layer: u16,
+) {
+    assert_eq!(
+        u16::from(recorded.source_sector),
+        u16::from(source_sector),
+        "recorded point-Seek route public source sector differs at dispatch"
+    );
+    assert_eq!(
+        recorded.source_sector_index,
+        source_sector.arena_index(),
+        "recorded point-Seek route exact source sector differs at dispatch"
+    );
+    assert_eq!(
+        recorded.source_layer, source_layer,
+        "recorded point-Seek route source layer differs at dispatch"
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn find_seek_gate_path(
     doors: &[crate::gate::Door],
@@ -1014,6 +1112,7 @@ impl crate::engine::EngineInner {
         action: OrderType,
         flags: MoveFlags,
         seek_distance: f32,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     ) -> bool {
         let Some(goal_sector) = goal_sector else {
             return false;
@@ -1021,15 +1120,15 @@ impl crate::engine::EngineInner {
         if self.scripts.mission.is_none() {
             return false;
         }
-        let Some((owner_pos, Some(owner_sector))) = self
-            .get_entity(owner)
-            .map(|e| (e.element_data().position_map(), e.element_data().sector()))
-        else {
+        let Some((owner_pos, owner_layer, Some(owner_sector))) = self.get_entity(owner).map(|e| {
+            (
+                e.element_data().position_map(),
+                e.element_data().layer(),
+                e.element_data().sector(),
+            )
+        }) else {
             return false;
         };
-        if seek_sectors_match(owner_sector, goal_sector) {
-            return false;
-        }
         // A door-sector goal takes the original's `AppendMoveToDoorToSequence`
         // shape, which this expansion does not build yet.
         let goal_is_door_sector = self
@@ -1053,35 +1152,52 @@ impl crate::engine::EngineInner {
             .get_entity(owner)
             .map(crate::engine::movement::current_door_for_route_source)
             .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
-        let (src_pos, src_sector) =
+        let (src_pos, src_sector, src_layer) =
             match crate::engine::movement::adapt_source_to_current_door_with_identity(
                 &self.script_domains.interactables.doors,
                 door_handle,
                 door_direction,
             ) {
-                Some((adjusted, sector, _layer)) => (adjusted, sector),
-                None => (owner_pos, owner_sector),
+                Some((adjusted, sector, layer)) => (adjusted, sector, layer),
+                None => (owner_pos, owner_sector, owner_layer),
             };
+        if let Some(recorded) = recorded_gate_path.as_ref() {
+            validate_recorded_point_seek_source(recorded, src_sector, src_layer);
+        }
+        if seek_sectors_match(src_sector, goal_sector) {
+            return false;
+        }
 
-        let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
-        let level = self.world.fast_grid.level.clone();
-        let gate_path = find_seek_gate_path(
+        let gate_path = match recorded_point_seek_gate_path(
             &self.script_domains.interactables.doors,
-            src_pos,
             src_sector,
-            destination,
+            src_layer,
             goal_sector,
-            owner_auth.as_ref(),
-            flags.contains(MoveFlags::MAP),
-            &|sector| self.building_sector_is_authorized(sector),
-            &|sector| {
-                level
-                    .sectors
-                    .iter()
-                    .find(|candidate| candidate.sector_number == sector)
-                    .and_then(|candidate| candidate.lift_type)
-            },
-        );
+            recorded_gate_path,
+        ) {
+            Some(recorded) => recorded,
+            None => {
+                let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
+                let level = self.world.fast_grid.level.clone();
+                find_seek_gate_path(
+                    &self.script_domains.interactables.doors,
+                    src_pos,
+                    src_sector,
+                    destination,
+                    goal_sector,
+                    owner_auth.as_ref(),
+                    flags.contains(MoveFlags::MAP),
+                    &|sector| self.building_sector_is_authorized(sector),
+                    &|sector| {
+                        level
+                            .sectors
+                            .iter()
+                            .find(|candidate| candidate.sector_number == sector)
+                            .and_then(|candidate| candidate.lift_type)
+                    },
+                )
+            }
+        };
 
         let Some(gate_path) = gate_path else {
             // AppendMoveToSequence speaks the unable bark for a PC before
@@ -1185,6 +1301,276 @@ mod tests {
         assert!(seek_refresh_wait_elapsed(0));
         assert!(seek_refresh_wait_elapsed(u32::MAX));
         assert!(seek_refresh_wait_elapsed(i32::MIN as u32));
+    }
+
+    fn drop_ale_exit_doors() -> Vec<crate::gate::Door> {
+        let mut doors = (0..8)
+            .map(|_| crate::gate::Door {
+                active: false,
+                ..crate::gate::Door::default()
+            })
+            .collect::<Vec<_>>();
+        doors[6] = crate::gate::Door {
+            active: true,
+            sector_in: crate::sector::SectorNumber::new(133),
+            sector_out: crate::sector::SectorNumber::new(25),
+            ..crate::gate::Door::default()
+        };
+        doors[7] = crate::gate::Door {
+            active: true,
+            sector_in: crate::sector::SectorNumber::new(133),
+            sector_out: crate::sector::SectorNumber::new(22),
+            ..crate::gate::Door::default()
+        };
+        doors
+    }
+
+    fn recorded_route(
+        source_sector: SectorHandle,
+        source_layer: u16,
+        outcome: crate::gate::RecordedGateOutcome,
+    ) -> crate::gate::RecordedGatePath {
+        crate::gate::RecordedGatePath {
+            source_sector: crate::sector::SectorNumber::new(u16::from(source_sector) as i16),
+            source_sector_index: source_sector.arena_index(),
+            source_layer,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn recorded_drop_ale_gate_path_preserves_original_exit_over_alternate() {
+        let expected = vec![crate::gate::GatePathStep {
+            door_index: crate::gate::DoorIndex(7),
+            direct: false,
+        }];
+        assert_eq!(
+            recorded_point_seek_gate_path(
+                &drop_ale_exit_doors(),
+                SectorHandle::new(133).unwrap(),
+                11,
+                SectorHandle::new(22).unwrap(),
+                None,
+            ),
+            None,
+            "live commands without recorded provenance must fall through to A*"
+        );
+        assert_eq!(
+            recorded_point_seek_gate_path(
+                &drop_ale_exit_doors(),
+                SectorHandle::new(133).unwrap(),
+                11,
+                SectorHandle::new(22).unwrap(),
+                Some(recorded_route(
+                    SectorHandle::new(133).unwrap(),
+                    11,
+                    crate::gate::RecordedGateOutcome::Success(expected.clone()),
+                )),
+            ),
+            Some(Some(expected)),
+            "Save034/r035 must retain Original gate 7 rather than recompute alternate gate 6"
+        );
+        assert_eq!(
+            recorded_point_seek_gate_path(
+                &drop_ale_exit_doors(),
+                SectorHandle::new(133).unwrap(),
+                11,
+                SectorHandle::new(22).unwrap(),
+                Some(recorded_route(
+                    SectorHandle::new(133).unwrap(),
+                    11,
+                    crate::gate::RecordedGateOutcome::Failure,
+                )),
+            ),
+            Some(None),
+            "an observed Original search failure must suppress live A*"
+        );
+    }
+
+    #[test]
+    fn recorded_drop_ale_route_uses_dispatch_time_door_adapted_source() {
+        let doors = drop_ale_exit_doors();
+        let raw_owner_sector = SectorHandle::new(22).unwrap();
+        let goal_sector = SectorHandle::new(22).unwrap();
+        assert!(seek_sectors_match(raw_owner_sector, goal_sector));
+        let (_, adapted_source, adapted_layer) =
+            crate::engine::movement::adapt_source_to_current_door_with_identity(
+                &doors,
+                crate::position_interface::DoorHandle(7),
+                true,
+            )
+            .expect("a straddling actor adapts to the gate's in side at Seek dispatch");
+        assert!(!seek_sectors_match(adapted_source, goal_sector));
+        assert_eq!(
+            recorded_point_seek_gate_path(
+                &doors,
+                adapted_source,
+                adapted_layer,
+                goal_sector,
+                Some(recorded_route(
+                    adapted_source,
+                    adapted_layer,
+                    crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                        door_index: crate::gate::DoorIndex(7),
+                        direct: false,
+                    }]),
+                )),
+            ),
+            Some(Some(vec![crate::gate::GatePathStep {
+                door_index: crate::gate::DoorIndex(7),
+                direct: false,
+            }])),
+            "raw owner==goal must not suppress a route whose dispatch-time door source differs"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "is absent from the Rust mission")]
+    fn recorded_drop_ale_gate_path_rejects_missing_door() {
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(133).unwrap(),
+                11,
+                crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                    door_index: crate::gate::DoorIndex(99),
+                    direct: false,
+                }]),
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "does not continue from sector")]
+    fn recorded_drop_ale_gate_path_rejects_wrong_direction() {
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(133).unwrap(),
+                11,
+                crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                    door_index: crate::gate::DoorIndex(7),
+                    direct: true,
+                }]),
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "not goal")]
+    fn recorded_drop_ale_gate_path_rejects_wrong_terminal_sector() {
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(133).unwrap(),
+                11,
+                crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
+                    door_index: crate::gate::DoorIndex(6),
+                    direct: false,
+                }]),
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "public source sector differs at dispatch")]
+    fn recorded_drop_ale_failure_rejects_wrong_dispatch_source_sector() {
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(25).unwrap(),
+                11,
+                crate::gate::RecordedGateOutcome::Failure,
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "source layer differs at dispatch")]
+    fn recorded_drop_ale_failure_rejects_wrong_dispatch_source_layer() {
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(133).unwrap(),
+                2,
+                crate::gate::RecordedGateOutcome::Failure,
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exact source sector differs at dispatch")]
+    fn recorded_drop_ale_failure_rejects_same_public_different_exact_source() {
+        let live_source = SectorHandle::new(133)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(57).unwrap());
+        let recorded_source = SectorHandle::new(133)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(58).unwrap());
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            live_source,
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                recorded_source,
+                11,
+                crate::gate::RecordedGateOutcome::Failure,
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exact source sector differs at dispatch")]
+    fn recorded_drop_ale_failure_rejects_missing_exact_source_identity() {
+        let live_source = SectorHandle::new(133)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(57).unwrap());
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            live_source,
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                SectorHandle::new(133).unwrap(),
+                11,
+                crate::gate::RecordedGateOutcome::Failure,
+            )),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exact source sector differs at dispatch")]
+    fn recorded_drop_ale_failure_rejects_spurious_exact_source_identity() {
+        let recorded_source = SectorHandle::new(133)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(57).unwrap());
+        recorded_point_seek_gate_path(
+            &drop_ale_exit_doors(),
+            SectorHandle::new(133).unwrap(),
+            11,
+            SectorHandle::new(22).unwrap(),
+            Some(recorded_route(
+                recorded_source,
+                11,
+                crate::gate::RecordedGateOutcome::Failure,
+            )),
+        );
     }
 
     #[test]

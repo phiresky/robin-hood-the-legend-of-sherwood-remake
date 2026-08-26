@@ -905,6 +905,11 @@ pub struct SequenceElement {
     /// old movement handoff.
     pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
 
+    /// Replay-only authoritative gate-search result retained until a point
+    /// Seek reaches its cross-sector expansion boundary.
+    #[serde(default)]
+    pub recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+
     /// The sub-steps (movement waypoints, animation frames, etc.) for this element.
     pub orders: VecDeque<Order>,
 
@@ -1010,6 +1015,7 @@ impl SequenceElement {
             action_state_after_transition: ActionState::default(),
             num_transition_orders: 0,
             retained_movement_goal: None,
+            recorded_gate_path: None,
             orders: VecDeque::new(),
             data: SequenceElementData::Simple,
             postponed_element_index: None,
@@ -3102,6 +3108,123 @@ impl SequenceManager {
         self.sequences.values()
     }
 
+    /// Install an authoritative replay route on the one pending point Seek
+    /// created by DropAle. Original computes this route only when the
+    /// postponed Seek is instructed, potentially many frames after the input
+    /// command was recorded.
+    pub(crate) fn inject_recorded_drop_ale_route(
+        &mut self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+        goal_sector: crate::position_interface::SectorHandle,
+        goal_layer: u16,
+        recorded_gate_path: crate::gate::RecordedGatePath,
+    ) -> bool {
+        let mut candidates = 0_usize;
+        for sequence in self.sequences.values_mut() {
+            for element in &mut sequence.elements {
+                let SequenceElementData::Movement {
+                    destination: element_destination,
+                    layer,
+                    sector,
+                    element: target,
+                    flags,
+                    post_seek_sequence,
+                    ..
+                } = &mut element.data
+                else {
+                    continue;
+                };
+                let is_drop_ale = post_seek_sequence.as_ref().is_some_and(|post_seek| {
+                    post_seek
+                        .elements
+                        .first()
+                        .is_some_and(|post_element| post_element.command == Command::DropAle)
+                });
+                if element.owner != Some(actor)
+                    || element.command != Command::Seek
+                    || !Self::is_actor_live_state(element.state)
+                    || target.is_some()
+                    || !flags.contains(MoveFlags::SEEK)
+                    || !is_drop_ale
+                    || element_destination.x.to_bits() != destination.x.to_bits()
+                    || element_destination.y.to_bits() != destination.y.to_bits()
+                {
+                    continue;
+                }
+                candidates += 1;
+                assert!(
+                    element.recorded_gate_path.is_none(),
+                    "pending DropAle point Seek already has a recorded gate route"
+                );
+                *sector = Some(goal_sector);
+                *layer = goal_layer;
+                element.recorded_gate_path = Some(recorded_gate_path.clone());
+            }
+        }
+        assert!(
+            candidates <= 1,
+            "recorded DropAle route matched {candidates} pending point Seeks for {actor:?}"
+        );
+        candidates == 1
+    }
+
+    pub(crate) fn has_pending_drop_ale_route_candidate(
+        &self,
+        actor: EntityId,
+        destination: crate::coordinates::MapPoint,
+    ) -> bool {
+        let candidates = self
+            .sequences
+            .values()
+            .flat_map(|sequence| &sequence.elements)
+            .filter_map(|element| {
+                let SequenceElementData::Movement {
+                    destination: element_destination,
+                    element: target,
+                    flags,
+                    post_seek_sequence,
+                    ..
+                } = &element.data
+                else {
+                    return None;
+                };
+                let is_drop_ale = post_seek_sequence.as_ref().is_some_and(|post_seek| {
+                    post_seek
+                        .elements
+                        .first()
+                        .is_some_and(|post_element| post_element.command == Command::DropAle)
+                });
+                if element.owner != Some(actor)
+                    || element.command != Command::Seek
+                    || !Self::is_actor_live_state(element.state)
+                    || target.is_some()
+                    || !flags.contains(MoveFlags::SEEK)
+                    || !is_drop_ale
+                    || element_destination.x.to_bits() != destination.x.to_bits()
+                    || element_destination.y.to_bits() != destination.y.to_bits()
+                {
+                    return None;
+                }
+                Some(element.recorded_gate_path.is_some())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            candidates.len() <= 1,
+            "recorded DropAle route matched {} pending point Seeks for {actor:?}",
+            candidates.len()
+        );
+        if let Some(already_recorded) = candidates.first() {
+            assert!(
+                !*already_recorded,
+                "pending DropAle point Seek already has a recorded gate route"
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
         self.elements_to_go.contains(&(seq_id, elem_idx))
     }
@@ -3409,6 +3532,24 @@ impl SequenceManager {
         self.current_element_for_actor(actor)
             .and_then(|(sequence_id, element_index)| self.get_element(sequence_id, element_index))
             .is_some_and(|element| element.data.is_movement())
+    }
+
+    /// Furthest currently-live movement destination for an actor.  Shift-held
+    /// planning uses this as the hypothetical origin when no queued move is
+    /// already ahead of it.
+    pub fn actor_planned_movement_destination(
+        &self,
+        actor: impl Into<EntityId>,
+    ) -> Option<crate::coordinates::MapPoint> {
+        let actor = actor.into();
+        let live = self.actor_live.get(&actor)?;
+        live.iter().rev().find_map(|element_ref| {
+            let element = self.get_element(element_ref.sequence_id, element_ref.element_index)?;
+            match &element.data {
+                SequenceElementData::Movement { destination, .. } => Some(*destination),
+                _ => None,
+            }
+        })
     }
 
     /// Select the accepted element for the duration of its command

@@ -126,13 +126,15 @@ pub(super) fn handle_mouse_input(
                 // drag panning works during replay; nothing to do here.
                 GameEvent::ViewportPan { .. } => {}
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
-                    on_left_mouse_down(engine, host, assets, frame_cmds, mx, my, clicks);
+                    on_left_mouse_down(
+                        engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
+                    );
                 }
                 GameEvent::MouseDown(mx, my, 3, _) => {
-                    on_right_mouse_down(engine, host, mx, my);
+                    on_right_mouse_down(engine, host, mx, my, shift_held);
                 }
                 GameEvent::MouseMove { x, y, .. } => {
-                    on_mouse_move(engine, host, assets, frame_cmds, x, y);
+                    on_mouse_move(engine, host, assets, frame_cmds, x, y, shift_held);
                 }
                 GameEvent::MouseUp(mx, my, 1) => {
                     on_left_mouse_up(
@@ -160,6 +162,7 @@ pub(super) fn handle_mouse_input(
                         screen_height,
                         mx,
                         my,
+                        shift_held,
                     );
                 }
                 _ => {}
@@ -180,6 +183,7 @@ fn on_left_mouse_down(
     mx: i32,
     my: i32,
     clicks: u8,
+    shift_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
@@ -232,7 +236,11 @@ fn on_left_mouse_down(
             //   - Apple / Stone / Hit / HitHard / Heal /
             //     Lever / Strangle → fire the matching
             //     drag action (see `resolve_action_drag`).
-            let selected_action = engine.selected_action_for_seat(local_seat);
+            let selected_action = if shift_held {
+                engine.planned_action_for_seat(local_seat)
+            } else {
+                engine.selected_action_for_seat(local_seat)
+            };
             let is_swordfighting =
                 crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
             match selected_action {
@@ -258,7 +266,9 @@ fn on_left_mouse_down(
                 | Action::HitHard
                 | Action::Heal
                 | Action::Lever
-                | Action::Strangle => {
+                | Action::Strangle
+                    if !shift_held =>
+                {
                     let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
                     dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                 }
@@ -278,7 +288,7 @@ fn on_left_mouse_down(
 /// enables it, and only when not in swordfight, not Alt-held, and not
 /// Locker-latched — missing any of these guards caused right-drag to
 /// deselect PCs during swordfight, while an action was armed, etc.
-fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32) {
+fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32, shift_held: bool) {
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = true;
@@ -286,7 +296,10 @@ fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32)
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
         // from starting.
-        let guard_ok = !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+        let cancelling_planned_action =
+            shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
+        let guard_ok = !cancelling_planned_action
+            && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !host.input.is_alt
             && !engine.view_locked()
@@ -310,6 +323,7 @@ fn on_mouse_move(
     frame_cmds: &mut FrameCommands,
     x: i32,
     y: i32,
+    shift_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
@@ -372,7 +386,8 @@ fn on_mouse_move(
         // minimap captures the drag — and when
         // `ignore_next_drag` has suppressed this drag
         // cycle.
-        if host.input.left_mouse_down
+        if !shift_held
+            && host.input.left_mouse_down
             && !host.engine_display.minimap().drag_start()
             && !host.input.ignore_next_drag
             && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
@@ -706,7 +721,11 @@ fn on_portrait_click(
         // commits that action on the portrait's PC.
         let mut portrait_action_handled = macro_stop_handled;
         if !hit.is_burned && !is_double && !macro_stop_handled {
-            let selected_action = engine.selected_action_for_seat(local_seat);
+            let selected_action = if shift_held {
+                engine.planned_action_for_seat(local_seat)
+            } else {
+                engine.selected_action_for_seat(local_seat)
+            };
             portrait_action_handled = match selected_action {
                 Action::Heal => {
                     // Target must be alive and injured (life < 100).
@@ -716,15 +735,21 @@ fn on_portrait_click(
                         .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100);
                     if can_heal {
                         if let Some(&healer_id) = engine.seat_selection(local_seat).first() {
-                            let cmd = PlayerCommand::LaunchInteraction {
-                                actor: healer_id,
-                                target: pc_id,
-                                command: Command::HealCmd,
-                                running: false,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            let cancel = PlayerCommand::CancelAction { pc_id: healer_id };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cancel);
+                            let cmds = vec![
+                                PlayerCommand::LaunchInteraction {
+                                    actor: healer_id,
+                                    target: pc_id,
+                                    command: Command::HealCmd,
+                                    running: false,
+                                },
+                                PlayerCommand::CancelAction { pc_id: healer_id },
+                            ];
+                            let cmds = crate::game_input::queue_shift_click_commands(
+                                cmds,
+                                selected_action,
+                                shift_held,
+                            );
+                            dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
                             true
                         } else {
@@ -752,15 +777,21 @@ fn on_portrait_click(
                             .is_some_and(|pc| pc.life_points > 0);
                     if can_shield {
                         if let Some(&shielder_id) = engine.seat_selection(local_seat).first() {
-                            let cmd = PlayerCommand::LaunchInteraction {
-                                actor: shielder_id,
-                                target: pc_id,
-                                command: Command::RaiseShield,
-                                running: false,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            let cancel = PlayerCommand::CancelAction { pc_id: shielder_id };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cancel);
+                            let cmds = vec![
+                                PlayerCommand::LaunchInteraction {
+                                    actor: shielder_id,
+                                    target: pc_id,
+                                    command: Command::RaiseShield,
+                                    running: false,
+                                },
+                                PlayerCommand::CancelAction { pc_id: shielder_id },
+                            ];
+                            let cmds = crate::game_input::queue_shift_click_commands(
+                                cmds,
+                                selected_action,
+                                shift_held,
+                            );
+                            dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!(
                                 "Portrait shield: {:?} → protect {:?}",
                                 shielder_id,
@@ -889,11 +920,34 @@ fn on_portrait_click(
                         // dispatch decision read-only before emitting
                         // the command, so the live and replay paths
                         // agree on the fallback-select branch.
-                        let dispatched = engine.can_dispatch_pc_action(assets, pc_id, btn_idx);
+                        let profile_action = engine
+                            .get_entity(pc_id)
+                            .and_then(|entity| entity.pc_data())
+                            .and_then(|pc| {
+                                assets
+                                    .profile_manager
+                                    .get_character(pc.profile_index)
+                                    .and_then(|profile| profile.actions.get(btn_idx as usize))
+                            })
+                            .copied()
+                            .unwrap_or(Action::NoAction);
+                        let dispatched = portrait_action_dispatchable(
+                            shift_held,
+                            profile_action,
+                            engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
+                        );
                         if dispatched {
-                            let cmd = PlayerCommand::SelectAction {
-                                pc_id,
-                                action_index: btn_idx as u32,
+                            let planned_action = profile_action;
+                            let cmd = if shift_held {
+                                PlayerCommand::SelectPlannedAction {
+                                    pc_id,
+                                    action: planned_action,
+                                }
+                            } else {
+                                PlayerCommand::SelectAction {
+                                    pc_id,
+                                    action_index: btn_idx as u32,
+                                }
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                             host.input.portrait_drop_ammo_armed = false;
@@ -984,6 +1038,30 @@ fn on_portrait_click(
     false
 }
 
+fn portrait_action_dispatchable(
+    shift_held: bool,
+    profile_action: Action,
+    live_action_enabled: bool,
+) -> bool {
+    if shift_held {
+        profile_action != Action::NoAction
+    } else {
+        live_action_enabled
+    }
+}
+
+#[cfg(test)]
+mod shift_planning_tests {
+    use super::*;
+
+    #[test]
+    fn hypothetical_action_can_be_selected_when_live_ammo_disables_it() {
+        assert!(portrait_action_dispatchable(true, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(false, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(true, Action::NoAction, false));
+    }
+}
+
 /// Left-mouse-up on the world (no portrait hit): swordfight-gesture
 /// commit or the regular left-click resolver.
 fn on_world_click(
@@ -1054,6 +1132,12 @@ fn on_world_click(
                 host, engine, assets, map_pt, shift_held, ctrl_held, is_double,
             );
         }
+        let queued_action = if shift_held {
+            engine.planned_action_for_seat(host.transport.local_seat)
+        } else {
+            Action::NoAction
+        };
+        cmds = crate::game_input::queue_shift_click_commands(cmds, queued_action, shift_held);
         dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
     }
 }
@@ -1071,10 +1155,23 @@ fn on_right_mouse_up(
     screen_height: u16,
     mx: i32,
     my: i32,
+    shift_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = false;
+
+        if shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
+            let cmd = PlayerCommand::CancelPlannedAction;
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            host.input.cancel_multi_unselection();
+            host.input.accept_mouse_event(true, true);
+            host.input.next_left_double_is_simple = false;
+            host.input.multi_unselection_active = false;
+            host.input.multi_selection_active = false;
+            host.input.draw_multi_selection = false;
+            return;
+        }
 
         if host.allied_target_mode.take().is_some() {
             host.input.cancel_multi_unselection();
@@ -1342,6 +1439,8 @@ pub(super) async fn handle_pause_menu_events(
                     )) = profile_settings
                     {
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
+                        let profile_fix_hard_reaction_times =
+                            gameplay_config.fix_hard_reaction_times;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1401,6 +1500,14 @@ pub(super) async fn handle_pause_menu_events(
                         if sound_config.amount_of_speaking != profile_amount_of_speaking {
                             let cmd = PlayerCommand::SetAmountOfSpeaking {
                                 amount: sound_config.amount_of_speaking,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.fix_hard_reaction_times
+                            != profile_fix_hard_reaction_times
+                        {
+                            let cmd = PlayerCommand::SetFixHardReactionTimes {
+                                enabled: gameplay_config.fix_hard_reaction_times,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

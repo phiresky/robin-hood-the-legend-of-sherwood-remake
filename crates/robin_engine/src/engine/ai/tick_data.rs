@@ -504,7 +504,7 @@ impl EngineInner {
 
     fn build_npc_tick_data_for_target_mode(
         &self,
-        _sim: &crate::sim_rng::SimulationContext,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         scratch: &SimScratch,
         assets: &LevelAssets,
@@ -558,6 +558,7 @@ impl EngineInner {
         });
 
         let mut tick = AiPerTickData::stub();
+        tick.fix_hard_reaction_times = sim.config().fix_hard_reaction_times;
         tick.owner_live_position = Some(crate::ai::Position {
             x: me_pos.x,
             y: me_pos.y,

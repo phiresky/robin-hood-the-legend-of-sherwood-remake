@@ -3018,6 +3018,7 @@ impl EngineInner {
                 };
                 // ── Populate combat context from engine ──────
                 let mut tick_data = AiPerTickData {
+                    fix_hard_reaction_times: self.control.sim_config.fix_hard_reaction_times,
                     profile_manager: Some(assets.profile_manager.clone()),
                     owner_live_position: Some(viewer.position),
                     // Prepared without RNG only after this scan produces an

@@ -139,6 +139,22 @@ pub struct SoundBoundary {
     pub resolutions: Vec<ResolvedExclamation>,
 }
 
+/// An Original-trace gate-search result for a postponed DropAle seek.
+///
+/// Original resolves this only when the pending movement is instructed, which
+/// may be several frames after the command created it. Parity adapters resolve
+/// the trace identity outside the engine, then admit the concrete result with
+/// the frame whose hourglass consumes it.
+#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct RecordedDropAleRoute {
+    pub actor: EntityId,
+    pub destination: crate::coordinates::MapPoint,
+    pub goal_sector: crate::sector::SectorNumber,
+    pub goal_sector_index: crate::fast_find_grid::SectorIndex,
+    pub goal_layer: u16,
+    pub recorded_gate_path: crate::gate::RecordedGatePath,
+}
+
 impl SoundBoundary {
     pub fn live(resolutions: Vec<ResolvedExclamation>) -> Self {
         Self {
@@ -160,8 +176,9 @@ impl SoundBoundary {
 ///
 /// The structure encodes the only legal Original phase order: every director
 /// completion produced by `RHEngine::PerformDirectorWork` during `Refresh`,
-/// followed by zero or one `RHSound::Hourglass` boundary. A caller cannot put a
-/// director completion after sound or encode multiple sound boundaries
+/// followed by zero or one `RHSound::Hourglass` boundary and any recorded
+/// delayed-route results consumed by the upcoming hourglass. A caller cannot
+/// put a director completion after sound or encode multiple sound boundaries
 /// (`original-code/RHgame.cpp:1867-1926`, `RHengine.cpp:4172`,
 /// `RHsound.cpp:2125-2250`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -171,6 +188,9 @@ pub struct ExternalFacts {
     pub director_completions: Vec<DirectorCompletion>,
     /// The following sound-manager phase, when that host boundary was crossed.
     pub sound_boundary: Option<SoundBoundary>,
+    /// Recorded gate-search results for postponed DropAle seeks which become
+    /// instructible in this frame, in trace order.
+    pub recorded_drop_ale_routes: Vec<RecordedDropAleRoute>,
 }
 
 impl ExternalFacts {
@@ -181,6 +201,7 @@ impl ExternalFacts {
         Self {
             director_completions,
             sound_boundary,
+            recorded_drop_ale_routes: Vec::new(),
         }
     }
 
@@ -197,8 +218,18 @@ impl ExternalFacts {
         self
     }
 
+    pub fn with_recorded_drop_ale_routes(
+        mut self,
+        recorded_drop_ale_routes: Vec<RecordedDropAleRoute>,
+    ) -> Self {
+        self.recorded_drop_ale_routes = recorded_drop_ale_routes;
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.director_completions.is_empty() && self.sound_boundary.is_none()
+        self.director_completions.is_empty()
+            && self.sound_boundary.is_none()
+            && self.recorded_drop_ale_routes.is_empty()
     }
 }
 
@@ -497,6 +528,12 @@ pub enum FrameAdvanceError {
     #[error("{policy:?} sound boundary rejected: {reason}")]
     SoundBoundaryRejected {
         policy: SoundBoundaryPolicy,
+        reason: String,
+    },
+    #[error("recorded DropAle route {index} for {actor:?} rejected: {reason}")]
+    RecordedDropAleRouteRejected {
+        index: usize,
+        actor: EntityId,
         reason: String,
     },
 }

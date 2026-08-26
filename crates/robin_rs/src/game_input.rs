@@ -75,8 +75,12 @@ pub fn resolve_left_click(
     // "no PCs selected" case is implicit: `selected_action_for_seat`
     // returns `NoAction` when nothing is selected, so the `!= NoAction`
     // gate already excludes it.
-    if is_double && num_selected > 0 {
-        let pending_action = engine.selected_action_for_seat(local_seat);
+    if is_double && !shift_held && num_selected > 0 {
+        let pending_action = if shift_held {
+            engine.planned_action_for_seat(local_seat)
+        } else {
+            engine.selected_action_for_seat(local_seat)
+        };
         if pending_action != Action::NoAction {
             for &pc_id in selected {
                 if !engine.is_pc_action_available(&assets.profile_manager, pc_id, pending_action) {
@@ -88,7 +92,11 @@ pub fn resolve_left_click(
 
     // Action-specific click dispatch
     if num_selected > 0 {
-        let selected_action = engine.selected_action_for_seat(local_seat);
+        let selected_action = if shift_held {
+            engine.planned_action_for_seat(local_seat)
+        } else {
+            engine.selected_action_for_seat(local_seat)
+        };
         if selected_action != Action::NoAction {
             // Double-click-specific behaviour:
             //   - Whistle/Listen/Eat/Guzzle cancel the action instead
@@ -123,6 +131,7 @@ pub fn resolve_left_click(
                 local_seat,
                 selected_action,
                 is_double,
+                shift_held,
             );
             return cmds;
         } else if is_double && (engine.is_alt_effective(&host.input) || engine.view_locked()) {
@@ -444,6 +453,57 @@ pub fn resolve_left_click(
     commands
 }
 
+/// Convert Shift-click results into non-live quick-action queue commands.
+/// Selection/UI commands are deliberately left alone: Shift+click on a
+/// portrait still extends selection, while world actions are recorded.
+pub fn queue_shift_click_commands(
+    commands: Vec<PlayerCommand>,
+    action: Action,
+    shift_held: bool,
+) -> Vec<PlayerCommand> {
+    if !shift_held {
+        return commands;
+    }
+    commands
+        .into_iter()
+        .filter_map(|command| match command {
+            command @ (PlayerCommand::GroupMove { .. }
+            | PlayerCommand::LaunchInteraction { .. }
+            | PlayerCommand::LaunchGroundTarget { .. }
+            | PlayerCommand::DropAleAt { .. }
+            | PlayerCommand::LaunchSelfAbility { .. }
+            | PlayerCommand::LaunchScrollRead { .. }
+            | PlayerCommand::EnterSwordfight { .. }
+            | PlayerCommand::SwordStrikeCmd { .. }
+            | PlayerCommand::CrouchDown
+            | PlayerCommand::StandUp) => Some(PlayerCommand::QueueQuickAction {
+                action,
+                command: Box::new(command),
+            }),
+            PlayerCommand::MakePcFast { pc_id } => {
+                Some(PlayerCommand::MakeQueuedActionFast { pc_id })
+            }
+            // These trailers only clear the live action arm. Planned actions
+            // are intentionally sticky while Shift is held, and must never
+            // unequip/interrupt the real PC.
+            PlayerCommand::UnselectAllActions | PlayerCommand::CancelAction { .. } => None,
+            // Selection changes remain UI intent while Shift is held. Do not
+            // let any unclassified simulation command leak through live: new
+            // click-result variants must opt into queuing explicitly above.
+            command @ (PlayerCommand::SelectPc { .. }
+            | PlayerCommand::TogglePcSelection { .. }
+            | PlayerCommand::SelectAlliedSoldiers { .. }
+            | PlayerCommand::ClearAlliedSelection
+            | PlayerCommand::UnselectAllPcs
+            | PlayerCommand::StopRecordingMacro) => Some(command),
+            other => {
+                tracing::warn!(?other, "suppressed unsupported live Shift-click command");
+                None
+            }
+        })
+        .collect()
+}
+
 fn selected_allied_formation(engine: &Engine, soldiers: &[EntityId]) -> AlliedFormation {
     soldiers
         .iter()
@@ -474,6 +534,7 @@ fn resolve_action_left_click(
     local_seat: PlayerId,
     action: Action,
     is_double: bool,
+    is_planning: bool,
 ) -> Vec<PlayerCommand> {
     let draw_order = &host.draw_order.ids;
     let pc_id = match engine.seat_selection(local_seat).first().copied() {
@@ -481,6 +542,7 @@ fn resolve_action_left_click(
         None => return vec![],
     };
     let is_recording = engine.is_recording_macro();
+    let is_deferred = is_recording || is_planning;
     let valid_trajectory = host.valid_trajectory;
     let selected_layer = host.input.selected_layer;
 
@@ -514,7 +576,7 @@ fn resolve_action_left_click(
             // 1. Climbing or inside a building → drop the click.
             //    Recording bypasses this gate so a macro can still be
             //    recorded while climbing / inside a building.
-            if !is_recording && engine.is_climbing_or_inside_building(pc_id) {
+            if !is_deferred && engine.is_climbing_or_inside_building(pc_id) {
                 return vec![];
             }
 
@@ -560,7 +622,7 @@ fn resolve_action_left_click(
                 return vec![];
             };
             let archer_posture = pc_entity.element_data().posture;
-            if !is_recording && archer_posture == Posture::AnonymousArcher {
+            if !is_deferred && archer_posture == Posture::AnonymousArcher {
                 tracing::info!(
                     ?pc_id,
                     ?target_id,
@@ -576,7 +638,7 @@ fn resolve_action_left_click(
             //    in the non-record branch — a macro can be recorded
             //    even when the current LOS / range wouldn't allow the
             //    shot (replay re-evaluates).
-            if !is_recording {
+            if !is_deferred {
                 let (bow_status, _shoot_mode) =
                     engine.can_shoot_with_bow_at(assets, pc_id, target_id);
                 if bow_status != engine_api::input::BowTarget::Valid {
@@ -640,7 +702,7 @@ fn resolve_action_left_click(
         Action::Apple => {
             // Drop the click on an invalid trajectory unless recording
             // a macro.
-            if !valid_trajectory && !is_recording {
+            if !valid_trajectory && !is_deferred {
                 return vec![];
             }
             if let Some(target_id) =
@@ -672,7 +734,7 @@ fn resolve_action_left_click(
         Action::Stone => {
             // Trajectory gate — drop the click on an invalid arc
             // unless recording.
-            if !valid_trajectory && !is_recording {
+            if !valid_trajectory && !is_deferred {
                 return vec![];
             }
             if let Some(target_id) =
@@ -750,7 +812,7 @@ fn resolve_action_left_click(
         }
         Action::Net => {
             // Trajectory gate.
-            if !valid_trajectory && !is_recording {
+            if !valid_trajectory && !is_deferred {
                 return vec![];
             }
             let mut cmds = vec![PlayerCommand::LaunchGroundTarget {
@@ -769,7 +831,7 @@ fn resolve_action_left_click(
         }
         Action::WaspNest => {
             // Trajectory gate.
-            if !valid_trajectory && !is_recording {
+            if !valid_trajectory && !is_deferred {
                 return vec![];
             }
             let mut cmds = vec![PlayerCommand::LaunchGroundTarget {
@@ -787,9 +849,10 @@ fn resolve_action_left_click(
             return cmds;
         }
         Action::Purse => {
-            // Trajectory gate — unconditional, applies even while
-            // recording a macro.
-            if !valid_trajectory {
+            // Live throws require the currently displayed trajectory.
+            // Deferred recording/planning validates from the eventual
+            // execution position instead of the real PC's present position.
+            if !valid_trajectory && !is_deferred {
                 return vec![];
             }
             return vec![
@@ -807,6 +870,21 @@ fn resolve_action_left_click(
             ];
         }
         Action::Shield | Action::BigShield => {
+            // Planning never enters the live two-click shield prompt: that
+            // prompt mutates shared ShieldState before an action exists. A
+            // planned click records the same protectee interaction used by
+            // portrait targeting, leaving both the actor and prompt intact.
+            if is_planning {
+                if let Some(target_id) = engine.find_focusable_pc(assets, map_pt, Focus::Shield) {
+                    return vec![PlayerCommand::LaunchInteraction {
+                        actor: pc_id,
+                        target: target_id,
+                        command: Command::RaiseShield,
+                        running: false,
+                    }];
+                }
+                return vec![];
+            }
             // Two-step protocol keyed on `ShieldState::is_protected`:
             //   first click  (is_protected=true):
             //     pick a focusable PC via `Focus::Shield`, store it in
@@ -998,6 +1076,7 @@ fn resolve_action_left_click(
                     already_authorized: false,
                     goal_override: None,
                     goal_sector_index_override: None,
+                    recorded_gate_path: None,
                 },
                 commit_tail(is_recording),
             ];
@@ -2108,6 +2187,48 @@ mod tests {
         assert_eq!(pattern_to_command(MouseWayPattern::Attempt), None);
     }
 
+    #[test]
+    fn shift_wraps_world_actions_but_not_selection_or_live_action_cleanup() {
+        let pc = EntityId::Pc(robin_engine::entity_id::PcId(2));
+        let commands = vec![
+            PlayerCommand::SelectPc {
+                pc_id: pc,
+                append: true,
+            },
+            PlayerCommand::LaunchSelfAbility {
+                actor: pc,
+                command: Command::WhistleCmd,
+            },
+            PlayerCommand::UnselectAllActions,
+            PlayerCommand::CancelAction { pc_id: pc },
+        ];
+
+        let queued = queue_shift_click_commands(commands, Action::Whistle, true);
+        assert!(matches!(queued[0], PlayerCommand::SelectPc { .. }));
+        assert!(matches!(
+            queued[1],
+            PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                ..
+            }
+        ));
+        assert_eq!(queued.len(), 2);
+    }
+
+    #[test]
+    fn shift_suppresses_unclassified_live_simulation_commands() {
+        let pc = EntityId::Pc(robin_engine::entity_id::PcId(2));
+        let queued = queue_shift_click_commands(
+            vec![PlayerCommand::HeroSpeak {
+                pc_id: pc,
+                expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            }],
+            Action::NoAction,
+            true,
+        );
+        assert!(queued.is_empty());
+    }
+
     // ── resolve_left_click ──
 
     #[test]
@@ -2451,6 +2572,7 @@ mod tests {
             seat,
             Action::Beggar,
             true,
+            false,
         );
 
         assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
@@ -2470,6 +2592,7 @@ mod tests {
             MapPoint::new(300.0, 300.0),
             seat,
             Action::Beggar,
+            false,
             false,
         );
 
@@ -2500,6 +2623,7 @@ mod tests {
             seat,
             Action::HelpToClimb,
             false,
+            false,
         );
 
         assert_cmds!(
@@ -2528,6 +2652,7 @@ mod tests {
             MapPoint::new(300.0, 300.0),
             seat,
             Action::HelpToClimb,
+            false,
             false,
         );
 

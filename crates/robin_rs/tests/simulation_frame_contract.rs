@@ -57,6 +57,7 @@ fn production_drivers_do_not_bypass_advance_frame() {
         ".try_ezekiel_instakill(",
         ".send_simple_message(",
         ".replace_campaign_from_console(",
+        ".inject_recorded_drop_ale_route(",
     ];
     let mut violations = Vec::new();
     for path in files {
