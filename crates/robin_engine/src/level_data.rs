@@ -4796,7 +4796,12 @@ mod tests {
                 .filter(|soldier| soldier.allegiance == Some(allegiance))
                 .collect();
             assert_eq!(faction.len(), 12, "allegiance {allegiance}");
-            for profile in ["guard_a01", "soldier_a01", "archer01", "officier_b02"] {
+            let profiles = if [2, 4].contains(&allegiance) {
+                ["guard_a04", "soldier_a04", "archer04", "officier_b04"]
+            } else {
+                ["guard_a01", "soldier_a01", "archer01", "officier_b02"]
+            };
+            for profile in profiles {
                 assert_eq!(
                     faction
                         .iter()
