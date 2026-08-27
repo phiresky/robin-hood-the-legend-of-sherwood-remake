@@ -2132,7 +2132,7 @@ mod mission_level_builder_tests {
             reinforcement_points: vec![RawReinforcementPoint {
                 x: 10,
                 y: 20,
-                direction: 0,
+                direction: 14,
                 action: 0,
                 obstacle_index: 0,
                 sector: 1,
@@ -2146,6 +2146,30 @@ mod mission_level_builder_tests {
         engine.install_reinforcement_doors_stage(&assets, &loaded);
 
         let door = &engine.script_domains.interactables.doors[0];
+        let (computed_border, computed_outside) = crate::natives::compute_border_point_bbox(
+            engine.world.fast_grid.level.map_bbox,
+            (10.0, 20.0),
+            14,
+        );
+        assert_ne!(
+            computed_outside.0,
+            computed_outside.0.trunc(),
+            "fixture must exercise Original's float-to-SWORD narrowing"
+        );
+        assert_eq!(
+            door.point_mid,
+            MapPoint::new(
+                computed_border.0 as i16 as f32,
+                computed_border.1 as i16 as f32,
+            )
+        );
+        assert_eq!(
+            door.point_out,
+            MapPoint::new(
+                computed_outside.0 as i16 as f32,
+                computed_outside.1 as i16 as f32,
+            )
+        );
         assert_eq!(door.sector_in, crate::sector::SectorNumber::new(18));
         assert_eq!(
             door.sector_in_index,
