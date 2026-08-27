@@ -55,6 +55,31 @@ fn civilian_view(handle: u32, position: Position) -> crate::ai_entity_view::AiEn
 }
 
 #[test]
+fn drinking_ale_completes_on_event_done_without_fabricated_timer() {
+    let sim = crate::sim_rng::test_context();
+    let mut ai = EnemyAi::new(90);
+    ai.base.current_state = AiState::Wondering;
+    ai.base.current_substate = Substate::WonderingDrinkingAle;
+    ai.base.blood_alcohol = 17;
+    let ctx = AiContext::default();
+    let tick = AiPerTickData::stub();
+
+    ai.wondering_drinking_ale(&sim, StimulusType::EventTimer, &ctx, &tick);
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert_eq!(ai.base.blood_alcohol, 17);
+
+    ai.wondering_drinking_ale(&sim, StimulusType::EventDone, &ctx, &tick);
+    assert!(matches!(
+        ai.base.outbox.reentrant.owner_work.as_slice(),
+        [crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+    ));
+    assert_eq!(
+        ai.base.blood_alcohol, 17,
+        "the animation completion path owns the profile-specific beer increment"
+    );
+}
+
+#[test]
 fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(90);

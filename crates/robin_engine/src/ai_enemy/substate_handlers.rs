@@ -893,7 +893,6 @@ impl EnemyAi {
                         ));
                         self.base.outbox.actor.launch_sequences.push(seq);
                     }
-                    self.base.launch_timer(60, ctx.frame);
                 }
             }
             _ => {}
@@ -908,8 +907,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            self.base.blood_alcohol = self.base.blood_alcohol.saturating_add(30);
+        if stimulus_type == StimulusType::EventDone {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
         false
