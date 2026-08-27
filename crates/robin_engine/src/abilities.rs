@@ -15,6 +15,8 @@
 //!    restoration, etc.) from the returned [`AbilityTickResult`] values
 //!    *after* the mutable entity borrow is released.
 
+use std::collections::BTreeMap;
+
 use crate::coordinates::MapPoint;
 use crate::element::{
     ActionState, Command, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
@@ -3117,7 +3119,10 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
 /// This deliberately updates only the helper sprite. The general carried
 /// transform pass remains after order propagation: moving that whole pass
 /// earlier changes the rider's movement result on the terminal tick.
-pub fn sync_terminal_shoulder_animations(entities: &mut Entities) {
+pub fn sync_terminal_shoulder_animations(
+    entities: &mut Entities,
+    original_creation_orders: &BTreeMap<EntityId, u32>,
+) {
     let terminal_syncs: Vec<(EntityId, OrderType, u16, u16)> = entities
         .pcs()
         .filter_map(|(helper_pc_id, helper)| {
@@ -3135,8 +3140,38 @@ pub fn sync_terminal_shoulder_animations(entities: &mut Entities) {
                 OrderType::ClimbingDownFromShoulders => OrderType::TransitionHelpingClimbingDown,
                 _ => return None,
             };
+            let helper_id = EntityId::Pc(helper_pc_id);
+            let helper_order = original_creation_orders
+                .get(&helper_id)
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "shoulder helper {helper_id} has no authoritative Original creation order"
+                    )
+                });
+            let target_order = original_creation_orders
+                .get(&target_id)
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "shoulder climber {target_id} has no authoritative Original creation order"
+                    )
+                });
+            assert_ne!(
+                helper_order, target_order,
+                "shoulder helper and climber cannot share an Original creation order"
+            );
+
+            // Original executes actors in creation order. This end-of-batch
+            // sync emulates the climber's Execute, so it is needed only when
+            // the helper already ran. If the helper runs later, its Wait
+            // action must remain the final sprite state for this frame
+            // (RHelementactorpc.cpp:4648-4729).
+            if helper_order > target_order {
+                return None;
+            }
             Some((
-                EntityId::Pc(helper_pc_id),
+                helper_id,
                 helper_anim,
                 sprite.current_frame,
                 sprite.frame_count,
@@ -4857,7 +4892,10 @@ mod tests {
             climber.element_data_mut().sprite.last_motion_state =
                 Some(crate::sprite::MotionState::Terminated);
         }
-        sync_terminal_shoulder_animations(&mut entities);
+        let mut original_creation_orders = BTreeMap::new();
+        original_creation_orders.insert(helper_id, 1);
+        original_creation_orders.insert(climber_id, 2);
+        sync_terminal_shoulder_animations(&mut entities, &original_creation_orders);
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
             (
@@ -4867,6 +4905,28 @@ mod tests {
             ),
             (100, 5, 1),
             "the terminal climb Execute must synchronize the helper once before its motion latch clears"
+        );
+
+        {
+            let helper = entities.get_mut(helper_id).unwrap().element_data_mut();
+            helper.sprite.last_action = OrderType::WaitingCarryingOnShoulders;
+            helper.sprite.current_row = 777;
+            helper.sprite.current_frame = 0;
+            helper.sprite.frame_count = u16::MAX;
+        }
+        original_creation_orders.insert(climber_id, 1);
+        original_creation_orders.insert(helper_id, 2);
+        sync_terminal_shoulder_animations(&mut entities, &original_creation_orders);
+        let helper = entities.get(helper_id).unwrap().element_data();
+        assert_eq!(
+            (
+                helper.sprite.last_action,
+                helper.sprite.current_row,
+                helper.sprite.current_frame,
+                helper.sprite.frame_count,
+            ),
+            (OrderType::WaitingCarryingOnShoulders, 777, 0, u16::MAX),
+            "a helper that executes after the climber must keep its later idle animation"
         );
 
         {

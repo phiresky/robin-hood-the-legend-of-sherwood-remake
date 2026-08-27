@@ -6273,7 +6273,10 @@ impl EngineInner {
         // Preserve only the terminal shoulder-climb sprite synchronization
         // before the motion latch is consumed. Carried transforms remain in
         // their established post-propagation phase below.
-        abilities::sync_terminal_shoulder_animations(&mut self.world.entities);
+        abilities::sync_terminal_shoulder_animations(
+            &mut self.world.entities,
+            &self.world.original_creation_order_by_entity,
+        );
 
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
