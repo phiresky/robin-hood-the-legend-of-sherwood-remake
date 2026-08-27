@@ -1,5 +1,5 @@
 //! Smoke test: load a shipping `datadir.bin`, dump every `.pak`/`.res` raw
-//! entry to a temp file, and re-parse it via the existing parsers
+//! entry from the boot manifest and lazy mission files, and re-parse it
 //! (`read_pak_pictures`, `ResourceManager::attach_resource_file`). Confirms
 //! the converter's bzip2-stripping rewrite produces blobs the runtime can
 //! still read.
@@ -9,10 +9,10 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
-use robin_assets::shipping_datadir::ShippingDatadir;
+use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
 use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 
 fn main() -> Result<()> {
@@ -26,18 +26,37 @@ fn main() -> Result<()> {
 
     let tmp = tempfile::Builder::new().prefix("rh_pakres_").tempdir()?;
 
-    let mut keys: Vec<&String> = dd
-        .raw
-        .keys()
-        .filter(|k| k.ends_with(".pak") || k.ends_with(".res"))
-        .collect();
-    keys.sort();
+    let mut assets = std::collections::BTreeMap::<String, Vec<u8>>::new();
+    assets.extend(
+        dd.raw
+            .iter()
+            .filter(|(key, _)| key.ends_with(".pak") || key.ends_with(".res"))
+            .map(|(key, bytes)| (key.clone(), bytes.clone())),
+    );
+    let root = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut seen_files = std::collections::BTreeSet::new();
+    for reference in dd.missions.values() {
+        for file in &reference.files {
+            if !seen_files.insert(file) {
+                continue;
+            }
+            let payload_path = root.join(file);
+            let compressed = std::fs::read(&payload_path)
+                .with_context(|| format!("read {}", payload_path.display()))?;
+            let payload = decode_mission_compressed(&compressed)?;
+            assets.extend(
+                payload
+                    .raw
+                    .into_iter()
+                    .filter(|(key, _)| key.ends_with(".pak") || key.ends_with(".res")),
+            );
+        }
+    }
 
     println!("{:<48} {:>10} {:<5} result", "key", "bytes", "ext");
     let mut ok = 0usize;
     let mut fail = 0usize;
-    for k in keys {
-        let bytes = dd.raw.get(k).unwrap();
+    for (k, bytes) in &assets {
         let scratch = tmp.path().join("scratch");
         std::fs::write(&scratch, bytes)?;
         let result = if k.ends_with(".pak") {

@@ -2928,7 +2928,13 @@ impl EnemyAi {
             .iter()
             .find_map(|(handle, forecast)| (*handle == enemy).then_some(forecast))
             .or_else(|| {
-                (enemy == self.base.primary_target)
+                // Detection dispatch rebuilds the tick for the human carried
+                // by this exact stimulus. A preceding queued Think may have
+                // changed the AI member `primary_target`, or removed the
+                // falling-edge human from the live detectable list, but the
+                // target-specific snapshot still contains the authoritative
+                // ForecastDestinationForIA input for this OUTOFVIEW call.
+                (enemy == tick.primary_target_snapshot_handle)
                     .then_some(tick.primary_target_forecast.as_ref())
                     .flatten()
             })
@@ -4097,47 +4103,6 @@ impl EnemyAi {
             }
         }
 
-        // Handle special events processed during StartThink
-        match stimulus_type {
-            StimulusType::EventLoseConsciousness => {
-                self.base.break_macro();
-                self.base.clear_emoticon();
-                if self.base.current_substate.is_take_money()
-                    || self.base.current_substate.is_fight_for_money()
-                {
-                    self.forget_all_nearby_coins(ctx);
-                }
-                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
-                self.base.outbox.recovery.set_eye_status =
-                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
-                self.set_alert_status(AlertLevel::Green);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 13);
-                return false;
-            }
-            StimulusType::EventWasp => {
-                self.base.break_macro();
-                self.base.set_emoticon(EmoticonType::Thunderstorm);
-                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 14);
-                return false;
-            }
-            StimulusType::EventNet => {
-                self.base.break_macro();
-                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 15);
-                return false;
-            }
-            _ => {}
-        }
-
         // Reset standing around timer
         self.base.standing_around_timer = 0;
 
@@ -4185,6 +4150,50 @@ impl EnemyAi {
                 self.base.register_log_line(LogLineType::EventRefused, 7);
                 return false;
             }
+        }
+
+        // Handle special events processed during StartThink. In Original
+        // these run after the timer, dead, and sleeping-unconscious gates;
+        // notably, a second LoseConsciousness stimulus cannot rewrite the AI
+        // state of an actor whose death transition has already completed.
+        match stimulus_type {
+            StimulusType::EventLoseConsciousness => {
+                self.base.break_macro();
+                self.base.clear_emoticon();
+                if self.base.current_substate.is_take_money()
+                    || self.base.current_substate.is_fight_for_money()
+                {
+                    self.forget_all_nearby_coins(ctx);
+                }
+                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
+                self.base.outbox.recovery.set_eye_status =
+                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
+                self.set_alert_status(AlertLevel::Green);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 13);
+                return false;
+            }
+            StimulusType::EventWasp => {
+                self.base.break_macro();
+                self.base.set_emoticon(EmoticonType::Thunderstorm);
+                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 14);
+                return false;
+            }
+            StimulusType::EventNet => {
+                self.base.break_macro();
+                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 15);
+                return false;
+            }
+            _ => {}
         }
 
         true
@@ -4508,6 +4517,10 @@ impl EnemyAi {
                     GotoFlags::FIND_ACCESSIBLE,
                     ctx,
                 );
+                // RHArtificialMalignity::ReturnToDuty remembers where the
+                // patrol was interrupted so the soldier returns there after
+                // finishing this newly remembered ale.
+                self.return_to_patrol_point = ctx.position;
                 self.base.launch_timer(1, ctx.frame);
                 return;
             }
@@ -6930,6 +6943,43 @@ mod tests {
     }
 
     #[test]
+    fn return_to_duty_remembered_ale_saves_patrol_return_point() {
+        let sim = crate::sim_rng::test_context();
+        let here = Position {
+            x: 125.0,
+            y: 250.0,
+            sector: SectorHandle::new(4),
+            level: 2,
+        };
+        let ale_position = Position {
+            x: 400.0,
+            y: 500.0,
+            sector: SectorHandle::new(7),
+            level: 0,
+        };
+        let ale = 77;
+        let mut views = AiEntityViewMap::new();
+        views.insert(ale, soldier_view(ale_position));
+        let ctx = AiContext {
+            position: here,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingDrinkingAle;
+        ai.other_seen_ale.push(ale);
+
+        ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_state, AiState::Wondering);
+        assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
+        assert_eq!(ai.base.interesting_object, ale);
+        assert_eq!(ai.return_to_patrol_point, here);
+        assert_eq!(ai.base.last_goto_destination, ale_position);
+    }
+
+    #[test]
     fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         use crate::ai::{PathId, PatrolPath};
         use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
@@ -7861,12 +7911,17 @@ mod tests {
     #[test]
     fn start_think_blocks_dead() {
         let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Sleeping;
+        ai.base.current_substate = Substate::SleepingForever;
         let ctx = AiContext {
             self_is_dead: true,
             ..AiContext::default()
         };
-        let stimulus = Stimulus::new(StimulusType::EventView);
+        let stimulus = Stimulus::new(StimulusType::EventLoseConsciousness);
         assert!(!ai.start_think(&stimulus, &ctx, false));
+        assert_eq!(ai.base.current_state, AiState::Sleeping);
+        assert_eq!(ai.base.current_substate, Substate::SleepingForever);
+        assert_eq!(ai.base.outbox.recovery.set_eye_status, None);
     }
 
     #[test]
@@ -8497,5 +8552,49 @@ mod tests {
 
         assert_eq!(ai.list_them, vec![84]);
         assert_eq!(ai.missed_pc, 171);
+    }
+
+    #[test]
+    fn out_of_view_uses_exact_stimulus_target_forecast_after_detectable_removal() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(111);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingObserve;
+        // A preceding queued Think selected another primary target before
+        // this falling-edge OUTOFVIEW was delivered.
+        ai.base.primary_target = 84;
+        ai.list_them = vec![171];
+
+        let forecast_position = test_position(1226.175_4, 315.871_6);
+        let mut lost = soldier_view(forecast_position);
+        lost.kind = EntityKind::Pc;
+        lost.is_pc = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(171, lost);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 171;
+        tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
+            forecast_position,
+            4,
+        ));
+        // The live detectable list has already dropped 171, so there is no
+        // entry in `enemy_detectable_forecasts`.
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventOutOfView, 171),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.base.seek_position, forecast_position);
     }
 }

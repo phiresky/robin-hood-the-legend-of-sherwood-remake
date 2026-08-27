@@ -5960,6 +5960,7 @@ dependencies = [
  "fastrand",
  "ffmpeg-next",
  "fs2",
+ "futures",
  "geo",
  "getrandom 0.4.3",
  "gilrs",

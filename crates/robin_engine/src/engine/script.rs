@@ -1339,6 +1339,7 @@ impl EngineInner {
             } = self;
             let script = scripts.mission.as_mut()?;
             let campaign = &mut mission_domain.campaign;
+            let host_seat = &mut players.seats[0];
             let capabilities = crate::natives::NativeSessionCapabilities::new(
                 sim,
                 &mut world.entities,
@@ -1352,11 +1353,12 @@ impl EngineInner {
             )
             .with_queries(
                 &mut orders.sequence_manager,
-                &mut players.seats[0].selection,
+                &mut host_seat.selection,
                 &mut feedback.sound_sim.sources,
                 &world.weather,
                 &control.frame_counter,
             )
+            .with_selected_action(&mut host_seat.selected_action)
             .with_campaign(campaign, &mut mission_domain.mission_stat)
             .with_short_briefings(&mut mission_domain.short_briefings)
             .with_standard_view_radius(&mut ai.standard_view_polygon_radius)

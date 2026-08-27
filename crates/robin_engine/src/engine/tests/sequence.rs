@@ -915,6 +915,58 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
 }
 
 #[test]
+fn synchronous_accepted_zero_order_shoot_bow_stamps_in_progress_motion() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let shooter = engine.add_entity(make_test_soldier(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(shooter)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        // An already-aiming shooter needs no posture transition. The test PC
+        // deliberately has no belt hotspot, so CanShootWithBowAt rejects the
+        // body after Translate has accepted an entirely orderless element.
+        actor.action_state = ActionState::AimingWithBow;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut shot =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
+    shot.priority = SequencePriority::Normal;
+    shot.posture_after_transition = Posture::Upright;
+    shot.action_state_after_transition = ActionState::AimingWithBow;
+    let sequence = engine.launch_element_for_owner(&sim, &assets, shot);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+    let actor = engine.get_entity(shooter).unwrap().actor_data().unwrap();
+    assert_eq!(
+        actor.continuation.motion_state,
+        MotionState::InProgress,
+        "accepted empty ShootBow must retain Actor::Instruct's motion edge"
+    );
+    assert!(
+        actor.installed_order.is_none(),
+        "an orderless rejected shot must expose the fallback Wait command"
+    );
+}
+
+#[test]
 fn synchronous_assert_position_skips_instruct_epilogue() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
@@ -1668,6 +1720,185 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 }
 
 #[test]
+fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut root = SequenceElement::new(1, Command::QuitSwordfight, Some(owner));
+    root.priority = SequencePriority::PostponeEverythingButInjuries;
+    let root = engine.orders.sequence_manager.launch_element(root);
+    let mut tail = root;
+
+    // Unrelated weak/internal work for the same owner makes the owner-global
+    // Stop ceiling deliberately ineligible. The selected-chain aggregate must
+    // still prove that root's cross-only graph is effect-free.
+    let mut unrelated = Sequence::new();
+    for level in [1, 2] {
+        let mut element = SequenceElement::new(level, Command::Turn, Some(owner));
+        element.priority = SequencePriority::Normal;
+        unrelated.append_element(element);
+    }
+    let unrelated = engine.orders.sequence_manager.launch_sequence(unrelated);
+
+    for _ in 0..8192 {
+        let mut waiter = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        waiter.priority = SequencePriority::PostponeEverythingButInjuries;
+        let waiter = engine.orders.sequence_manager.launch_element(waiter);
+        engine.engine_postpone(root, 0, waiter, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(tail, 0)
+                .unwrap()
+                .cross_postponed,
+            Some((waiter, 0)),
+        );
+        tail = waiter;
+        engine.orders.sequence_manager.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(tail, 0)
+            .unwrap()
+            .cross_postponed,
+        None,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(tail, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(unrelated, 0)
+            .unwrap()
+            .state,
+        SequenceState::Todo,
+        "selected Stop must not touch unrelated weak owner work"
+    );
+
+    // An unrelated same-owner topology rewrite invalidates the owner-scoped
+    // append aggregate. One exact traversal repairs the selected no-op proof;
+    // all later calls must remain O(1) even though the unrelated weak/internal
+    // sequence keeps the actor-global ceiling ineligible.
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((unrelated, 0), Some((unrelated, 1)));
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((unrelated, 0), None);
+    engine.orders.sequence_manager.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    for _ in 0..8192 {
+        engine.orders.sequence_manager.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    // A weak element appended to the selected chain invalidates the strong
+    // aggregate and must be reached by the exact Original Stop traversal.
+    let mut weak = SequenceElement::new(1, Command::Turn, Some(owner));
+    weak.priority = SequencePriority::Normal;
+    let weak = engine.orders.sequence_manager.launch_element(weak);
+    engine.engine_postpone(root, 0, weak, 0);
+    engine.orders.sequence_manager.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(weak, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
+    );
+}
+
+#[test]
+fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let launch = |engine: &mut EngineInner, priority| {
+        let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        element.priority = priority;
+        engine.orders.sequence_manager.launch_element(element)
+    };
+
+    let root = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    let old_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    engine.engine_postpone(root, 0, old_tail, 0);
+
+    // Injury displaces the cached equal-priority tail, producing
+    // root -> injury -> old_tail through the PostponeCurrent branch.
+    let injury = launch(&mut engine, SequencePriority::Injury);
+    engine.engine_postpone(root, 0, injury, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(root, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((injury, 0))
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((old_tail, 0))
+    );
+
+    let new_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    engine.engine_postpone(root, 0, new_tail, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(old_tail, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((new_tail, 0)),
+        "append after PostponeCurrent must follow the rewritten topology"
+    );
+}
+
+#[test]
 fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
@@ -1686,16 +1917,9 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     let mut existing = SequenceElement::new(1, Command::StopParrySword, Some(owner));
     existing.priority = SequencePriority::Preference;
     let existing_sequence = engine.orders.sequence_manager.launch_element(existing);
-    engine
-        .orders
-        .sequence_manager
-        .postpone_element(existing_sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(blocker_sequence, 0)
-        .unwrap()
-        .cross_postponed = Some((existing_sequence, 0));
+    // Install through the ordinary append path so the tail cache is warm
+    // before InterruptCurrent detaches this successor.
+    engine.engine_postpone(blocker_sequence, 0, existing_sequence, 0);
 
     let mut waiter = SequenceElement::new(1, Command::WaitTimer, Some(owner));
     waiter.priority = SequencePriority::Normal;
@@ -3779,15 +4003,15 @@ fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
 }
 
 #[test]
-fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
+fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
 
-    let mut outgoing = SequenceElement::new(1, Command::SwordstrikeSmalltalkLeft, Some(owner));
-    outgoing.priority = SequencePriority::Wait;
+    let mut outgoing = SequenceElement::new(1, Command::ReceiveHitDamage, Some(owner));
+    outgoing.priority = SequencePriority::Injury;
     // Interrupt arbitration requires the in-progress element to carry its
     // current order, mirroring the assertion in the original manager.
     outgoing.orders.push_back(crate::order::Order::test_new(
@@ -3800,12 +4024,27 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
         .orders
         .sequence_manager
         .element_in_progress(outgoing_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, outgoing_sequence, 0);
 
-    let mut incoming = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
-    incoming.priority = SequencePriority::Injury;
+    let mut incoming = SequenceElement::new(1, Command::ReceiveDamage, Some(owner));
+    incoming.priority = SequencePriority::Lethal;
     let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
     assert!(engine.arbitrate_instruct(incoming_sequence, 0));
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, outgoing_sequence, 0),
+        "the reentrant lethal instruction must permanently supersede the outgoing injury callback"
+    );
 
+    // The sequence phase keeps the accepted incoming instruction selected
+    // while draining the outgoing injury's deferred condolence. Any Wait
+    // launched by that callback must queue behind the lethal instruction,
+    // not behind the now-interrupted injury.
     engine
         .orders
         .sequence_manager
@@ -3816,24 +4055,33 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
             .sequence_manager
             .current_element_for_actor(owner),
         Some((incoming_sequence, 0)),
-        "the outgoing SetState callback must observe incoming injury as selected"
+        "the outgoing SetState callback must observe incoming lethal damage as selected"
     );
 
-    let mut nested = SequenceElement::new(1, Command::Turn, Some(owner));
-    nested.priority = SequencePriority::Normal;
+    let mut nested = SequenceElement::new(1, Command::Wait, Some(owner));
+    nested.priority = SequencePriority::Wait;
     let nested_sequence = engine.orders.sequence_manager.launch_element(nested);
     assert!(
         !engine.arbitrate_instruct(nested_sequence, 0),
-        "recursive normal work must arbitrate against the selected injury"
+        "the injury callback's Wait must postpone behind selected lethal damage"
     );
-    assert_ne!(
+    assert_eq!(
         engine
             .orders
             .sequence_manager
             .get_element(nested_sequence, 0)
             .unwrap()
             .state,
-        SequenceState::InProgress
+        SequenceState::Postponed
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((nested_sequence, 0))
     );
 
     assert!(

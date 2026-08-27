@@ -313,6 +313,20 @@ fn is_custom_animation_order(order_type: OrderType) -> bool {
     )
 }
 
+fn play_anim_freeze_completed(
+    motion_state: MotionState,
+    command: Option<Command>,
+    selected_order: OrderType,
+) -> bool {
+    // Original launches PLAY_ANIM_FROZEN only from the
+    // RHNONANIMATION_PLAY_CUSTOM_FREEZE Execute arm. The sequence keeps its
+    // PlayAnimFreeze command while prerequisite posture/action transitions
+    // run, and those transitions can terminate too.
+    motion_state == MotionState::Terminated
+        && command == Some(Command::PlayAnimFreeze)
+        && selected_order == OrderType::PlayCustomFreeze
+}
+
 /// Complete the human `STANDING_UP_SWORD` arm after sprite playback.
 ///
 /// Original refreshes the goal from the live principal opponent only while
@@ -2152,12 +2166,7 @@ mod tests {
         entity.set_posture(Posture::Upright);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-        apply_under_net_cycle_side_effect(
-            sim,
-            &mut entity,
-            OrderType::LyingStuckUnderNet,
-            MotionState::Start,
-        );
+        apply_under_net_initialization_side_effect(sim, &mut entity, OrderType::LyingStuckUnderNet);
 
         assert_eq!(entity.element_data().posture, Posture::StuckUnderNet);
         assert_eq!(
@@ -2178,11 +2187,10 @@ mod tests {
         }
 
         crate::sim_rng::with_seed(1, |sim| {
-            apply_under_net_cycle_side_effect(
+            apply_under_net_initialization_side_effect(
                 sim,
                 &mut entity,
                 OrderType::WriggleUnderNet,
-                MotionState::Start,
             );
         });
 
@@ -2200,8 +2208,6 @@ mod tests {
 
     #[test]
     fn wriggle_under_net_terminated_clears_soldier_emoticon() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
         let mut entity = weak_soldier_at_action_done(0);
         if let Entity::Soldier(soldier) = &mut entity {
             soldier.npc.ai_brain =
@@ -2212,8 +2218,7 @@ mod tests {
             .unwrap()
             .set_emoticon(crate::ai::EmoticonType::Thunderstorm);
 
-        apply_under_net_cycle_side_effect(
-            sim,
+        apply_under_net_termination_side_effect(
             &mut entity,
             OrderType::WriggleUnderNet,
             MotionState::Terminated,
@@ -3467,6 +3472,28 @@ pub(crate) fn sprite_anim_for_order(
     }
 }
 
+fn default_actor_sprite_playback(
+    sprite: &crate::sprite::Sprite,
+    anim_type: OrderType,
+    effective_anim: OrderType,
+    owner_is_pc: bool,
+) -> (OrderType, FrameProgression) {
+    if matches!(anim_type, OrderType::LyingStuckUnderNet) {
+        // LYING_STUCK_UNDER_NET is a logical hold, not an authored
+        // animation. Original displays the frozen first frame of the
+        // wriggle animation until the 1/31 struggle gate fires.
+        (
+            OrderType::WriggleUnderNet,
+            FrameProgression::FrozenFirstFrame,
+        )
+    } else {
+        (
+            sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+            FrameProgression::Default,
+        )
+    }
+}
+
 /// Anims whose initialisation lifts the parent sequence element to
 /// `NonInterruptable`:
 /// - `FALLING_LADDER_WALL`
@@ -4158,74 +4185,72 @@ fn apply_sword_parry_side_effect(
     }
 }
 
-fn apply_under_net_cycle_side_effect(
+fn apply_under_net_initialization_side_effect(
     sim: &crate::sim_rng::SimulationContext,
+    entity: &mut Entity,
+    anim_type: OrderType,
+) {
+    use crate::ai::EmoticonType;
+    use crate::order::OrderType as OT;
 
+    if !matches!(anim_type, OT::LyingStuckUnderNet | OT::WriggleUnderNet) {
+        return;
+    }
+
+    let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+    let is_tied = entity.element_data().posture == Posture::Tied;
+    if !entity.is_dead() && !is_unconscious && !is_tied {
+        entity.set_posture(Posture::StuckUnderNet);
+    }
+    if let Some(actor) = entity.actor_data_mut() {
+        actor.action_state = ActionState::Waiting;
+    }
+
+    if matches!(anim_type, OT::WriggleUnderNet) {
+        match crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WriggleDirection, ..3) {
+            0 => {
+                let direction = (entity.element_data().direction() + 1) & 15;
+                entity.element_data_mut().set_direction_instantly(direction);
+            }
+            1 => {
+                let direction = (entity.element_data().direction() + 15) & 15;
+                entity.element_data_mut().set_direction_instantly(direction);
+            }
+            _ => {}
+        }
+
+        if matches!(entity, Entity::Soldier(_)) {
+            if let Some(ai) = entity.ai_controller_mut() {
+                ai.set_emoticon(EmoticonType::Thunderstorm);
+            } else {
+                // TODO(net-parity): level-loaded soldiers should always have an AI controller.
+                tracing::warn!(
+                    "WriggleUnderNet soldier has no AI controller for thunderstorm emoticon"
+                );
+            }
+        }
+    }
+}
+
+fn apply_under_net_termination_side_effect(
     entity: &mut Entity,
     anim_type: OrderType,
     motion: MotionState,
 ) {
-    use crate::ai::EmoticonType;
-    use crate::order::OrderType as OT;
-    use crate::sprite::MotionState as MS;
-
     if !matches!(
         (anim_type, motion),
-        (OT::LyingStuckUnderNet | OT::WriggleUnderNet, MS::Start)
-            | (OT::WriggleUnderNet, MS::Terminated)
+        (OrderType::WriggleUnderNet, MotionState::Terminated)
     ) {
         return;
     }
 
-    if matches!(motion, MS::Start) {
-        let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-        let is_tied = entity.element_data().posture == Posture::Tied;
-        if !entity.is_dead() && !is_unconscious && !is_tied {
-            entity.set_posture(Posture::StuckUnderNet);
+    if matches!(entity, Entity::Soldier(_)) {
+        if let Some(ai) = entity.ai_controller_mut() {
+            ai.clear_emoticon();
+        } else {
+            // TODO(net-parity): level-loaded soldiers should always have an AI controller.
+            tracing::warn!("WriggleUnderNet soldier has no AI controller to clear emoticon");
         }
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.action_state = ActionState::Waiting;
-        }
-    }
-
-    match (anim_type, motion) {
-        (OT::WriggleUnderNet, MS::Start) => {
-            match crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WriggleDirection, ..3) {
-                0 => {
-                    let direction = (entity.element_data().direction() + 1) & 15;
-                    entity.element_data_mut().set_direction_instantly(direction);
-                }
-                1 => {
-                    let direction = (entity.element_data().direction() + 15) & 15;
-                    entity.element_data_mut().set_direction_instantly(direction);
-                }
-                _ => {}
-            }
-
-            if matches!(entity, Entity::Soldier(_)) {
-                if let Some(ai) = entity.ai_controller_mut() {
-                    ai.set_emoticon(EmoticonType::Thunderstorm);
-                } else {
-                    // TODO(net-parity): level-loaded soldiers should always have an AI controller.
-                    tracing::warn!(
-                        "WriggleUnderNet soldier has no AI controller for thunderstorm emoticon"
-                    );
-                }
-            }
-        }
-        (OT::WriggleUnderNet, MS::Terminated) => {
-            if matches!(entity, Entity::Soldier(_)) {
-                if let Some(ai) = entity.ai_controller_mut() {
-                    ai.clear_emoticon();
-                } else {
-                    // TODO(net-parity): level-loaded soldiers should always have an AI controller.
-                    tracing::warn!(
-                        "WriggleUnderNet soldier has no AI controller to clear emoticon"
-                    );
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -5748,6 +5773,17 @@ impl EngineInner {
                     {
                         Some(MotionState::Terminated)
                     } else {
+                        // Human under-net initialization runs before
+                        // PerformAction in Original. Wriggling may rotate the
+                        // actor, and the new direction selects this tick's row.
+                        if order_is_initialising
+                            && matches!(
+                                anim_type,
+                                OrderType::LyingStuckUnderNet | OrderType::WriggleUnderNet
+                            )
+                        {
+                            apply_under_net_initialization_side_effect(sim, entity, anim_type);
+                        }
                         // Many per-anim handlers call `Turn()` each
                         // tick so the body keeps rotating toward the
                         // direction goal *while* the action animation
@@ -6054,9 +6090,11 @@ impl EngineInner {
                                     FrameProgression::FrozenLastFrame,
                                 )
                             } else {
-                                (
-                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
-                                    FrameProgression::Default,
+                                default_actor_sprite_playback(
+                                    sprite,
+                                    anim_type,
+                                    effective_anim,
+                                    owner_is_pc,
                                 )
                             };
                             if jump_ground_motion_step {
@@ -6415,7 +6453,7 @@ impl EngineInner {
                             motion_state,
                             principal_frames_from_now,
                         );
-                        apply_under_net_cycle_side_effect(sim, entity, anim_type, motion_state);
+                        apply_under_net_termination_side_effect(entity, anim_type, motion_state);
                         apply_smalltalk_start_and_recovery_side_effect(
                             entity,
                             anim_type,
@@ -6503,9 +6541,7 @@ impl EngineInner {
                                 .non_interruptable_lifts
                                 .push((seq_id, elem_idx));
                         }
-                        if matches!(motion_state, MotionState::Terminated)
-                            && cur_command == Some(Command::PlayAnimFreeze)
-                        {
+                        if play_anim_freeze_completed(motion_state, cur_command, anim_type) {
                             completion_outcomes.play_anim_frozen.push((
                                 entity_id,
                                 cur_command_level.unwrap_or(1),
@@ -6698,6 +6734,25 @@ mod soldier_take_drink_parity_tests {
     }
 
     #[test]
+    fn play_anim_freeze_followup_waits_for_the_custom_wrapper_to_terminate() {
+        assert!(!play_anim_freeze_completed(
+            MotionState::Terminated,
+            Some(Command::PlayAnimFreeze),
+            OrderType::TransitionParryingSwordWaitingSword,
+        ));
+        assert!(play_anim_freeze_completed(
+            MotionState::Terminated,
+            Some(Command::PlayAnimFreeze),
+            OrderType::PlayCustomFreeze,
+        ));
+        assert!(!play_anim_freeze_completed(
+            MotionState::InProgress,
+            Some(Command::PlayAnimFreeze),
+            OrderType::PlayCustomFreeze,
+        ));
+    }
+
+    #[test]
     fn attentive_movement_uses_the_original_alerted_animation_family() {
         use OrderType as OT;
 
@@ -6772,6 +6827,24 @@ mod soldier_take_drink_parity_tests {
         assert_eq!(
             sprite_anim_for_order(&sprite, OrderType::Taking, true),
             OrderType::Taking
+        );
+    }
+
+    #[test]
+    fn lying_under_net_hold_freezes_the_first_wriggle_frame() {
+        let sprite = crate::sprite::Sprite::default();
+
+        assert_eq!(
+            default_actor_sprite_playback(
+                &sprite,
+                OrderType::LyingStuckUnderNet,
+                OrderType::LyingStuckUnderNet,
+                false,
+            ),
+            (
+                OrderType::WriggleUnderNet,
+                FrameProgression::FrozenFirstFrame,
+            )
         );
     }
 

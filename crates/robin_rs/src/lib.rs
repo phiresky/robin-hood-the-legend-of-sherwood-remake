@@ -190,6 +190,7 @@ pub mod http_server;
 pub mod hud_text;
 pub mod level_loading_host;
 pub mod shader_preset;
+pub mod shipping_mission;
 /// Host-side runtime state used by the game loop and developer tooling.
 ///
 /// Engine and asset types are intentionally not re-exported from this crate;
@@ -206,6 +207,10 @@ pub mod key_config;
 pub mod key_config_store;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lua_session;
+#[cfg(target_arch = "wasm32")]
+#[path = "lua_session_wasm.rs"]
 pub mod lua_session;
 pub mod main_entry;
 pub mod main_menu;

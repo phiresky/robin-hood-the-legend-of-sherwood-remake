@@ -171,6 +171,47 @@ assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
 assert c.execute("select outcome from replay_runs").fetchone()[0] == "exact_eof"
 PY
 
+setup_case markerless_merged
+rm -- "$remote_root/$marker"
+merged_corpus='parity-save-replays/60s-random-input/final-merged'
+python3 - "$database" "$logical" "$merged_corpus" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+with c:
+    c.execute("update replays set completion_marker=NULL where logical_path=?", (sys.argv[2],))
+    c.execute("insert into corpora(logical_root,corpus_status,expected_replays) values(?,'active',1)", (sys.argv[3],))
+    corpus_id=c.execute("select corpus_id from corpora where logical_root=?", (sys.argv[3],)).fetchone()[0]
+    c.execute("update replays set corpus_id=? where logical_path=?", (corpus_id,sys.argv[2]))
+PY
+corpus=$merged_corpus
+FAKE_RUNNER_MODE=exact run_worker markerless-merged
+python3 - "$database" "$remote_audit" <<'PY'
+import pathlib,sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
+row=c.execute("select outcome,completion_marker_sha256 from replay_runs").fetchone()
+assert row == ("exact_eof",None)
+attestations=list(pathlib.Path(sys.argv[2]).glob("results/*/attestation.env"))
+assert len(attestations) == 1
+text=attestations[0].read_text()
+assert "COMPLETION_MARKER_STATUS=not-recorded\n" in text
+assert "COMPLETION_MARKER=" not in text
+PY
+
+setup_case missing_recorded_marker
+rm -- "$remote_root/$marker"
+set +e
+FAKE_RUNNER_MODE=exact run_remote_worker missing-recorded-marker
+status=$?
+set -e
+[[ $status == 1 && -f "$remote_audit/STOP.env" ]]
+python3 - "$database" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+assert c.execute("select count(*) from replay_runs").fetchone()[0] == 0
+assert c.execute("select count(*) from work_completions").fetchone()[0] == 0
+PY
+
 setup_case recovery_namespace
 # This is the pre-fix scratch location for the same reusable worker ID. Its
 # nonzero result represents retained evidence from an older runner rollout.

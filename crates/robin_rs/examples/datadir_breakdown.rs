@@ -12,7 +12,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use robin_assets::shipping_datadir::{ShippingDatadir, encode_native, zstd_max_compress};
+use robin_assets::shipping_datadir::{
+    ShippingDatadir, decode_mission_compressed, encode_native, zstd_max_compress,
+};
 
 fn main() -> Result<()> {
     let path = std::env::args()
@@ -77,6 +79,7 @@ fn main() -> Result<()> {
         dd.sprite_bank
     );
     field!("raw", dd.raw.len(), dd.raw);
+    field!("missions", dd.missions.len(), dd.missions);
 
     // Sort descending by compressed size so the biggest is first.
     rows.sort_by_key(|r| std::cmp::Reverse(r.3));
@@ -183,6 +186,43 @@ fn main() -> Result<()> {
                 human(*raw),
                 human(*z),
                 decode,
+            );
+        }
+    }
+
+    if !dd.missions.is_empty() {
+        println!();
+        println!("## Lazy mission files");
+        println!(
+            "{:<32} {:>8} {:>12} {:>12} {:>12}",
+            "mission", "files", "download", "sprites", "raw assets"
+        );
+        let root = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        for (mission, reference) in &dd.missions {
+            let mut bytes = 0u64;
+            let mut sprites = 0usize;
+            let mut raw = 0usize;
+            for file in &reference.files {
+                let payload_path = root.join(file);
+                let compressed = std::fs::read(&payload_path)
+                    .with_context(|| format!("read {}", payload_path.display()))?;
+                bytes += compressed.len() as u64;
+                let payload = decode_mission_compressed(&compressed)
+                    .with_context(|| format!("decode {}", payload_path.display()))?;
+                sprites += payload
+                    .sprite_bank
+                    .as_ref()
+                    .map(|bank| bank.sprites.iter().flatten().count())
+                    .unwrap_or(0);
+                raw += payload.raw.len();
+            }
+            println!(
+                "{:<32} {:>8} {:>12} {:>12} {:>12}",
+                truncate(mission, 32),
+                reference.files.len(),
+                human(bytes),
+                sprites,
+                raw,
             );
         }
     }

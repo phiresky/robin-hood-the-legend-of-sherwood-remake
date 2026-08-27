@@ -1200,9 +1200,18 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingDatadir, ShippingSprite, ShippingSpriteBank,
+    RhsData, ShippingDatadir, ShippingMission, ShippingMissionRef, ShippingSprite,
+    ShippingSpriteBank,
 };
 use robin_engine::level_data::LoadedLevel;
+
+#[derive(Default)]
+struct ShippingMissionBuild {
+    payload: ShippingMission,
+    required_rhs_profiles: std::collections::BTreeMap<String, BTreeSet<String>>,
+    map_names: BTreeSet<String>,
+    proto_filename: String,
+}
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
     let mut dd = ShippingDatadir::default();
@@ -1290,19 +1299,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     }
 
     // Missions → .rhp/.rhm/.scb/.red, also follow level sprite refs.
-    let mut required_rhs_profiles: std::collections::BTreeMap<String, BTreeSet<String>> =
-        std::collections::BTreeMap::new();
-    let mut map_names: BTreeSet<String> = BTreeSet::new();
-
-    // Demo boot hardcodes the party in `main_entry::detect_demo_mode`, so the
-    // trimmer must preserve those character RHS files even when the mission
-    // scripts do not reference them directly.
-    if in_path("Levels/Dem_Lei_MP.rhm").is_some() {
-        add_required_pc_profiles_for_pcs(&mut required_rhs_profiles, &cpf, "RJMT", &in_path);
-    }
-    if in_path("Levels/Demo_Lin.rhm").is_some() {
-        add_required_pc_profiles_for_pcs(&mut required_rhs_profiles, &cpf, "RSABC", &in_path);
-    }
+    let mut mission_builds = std::collections::BTreeMap::<String, ShippingMissionBuild>::new();
 
     for mp in &cpf.missions {
         if mp.proto_level_filename.is_empty() || mp.mission_filename.is_empty() {
@@ -1323,10 +1320,22 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         };
 
         let (proto, mission) = parse_level_pair(&rhp_path, &rhm_path, &beggar_ids)?;
+        let mut build = ShippingMissionBuild {
+            proto_filename: mp.proto_level_filename.clone(),
+            ..ShippingMissionBuild::default()
+        };
+        let required_rhs_profiles = &mut build.required_rhs_profiles;
+        // Demo boot hardcodes its party; preserve those profiles even when
+        // the mission script does not name them directly.
+        if mp.mission_filename == "Dem_Lei_MP" {
+            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RJMT", &in_path);
+        } else if mp.mission_filename == "Demo_Lin" {
+            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RSABC", &in_path);
+        }
         // Collect sprite/map refs.
         for p in &proto.patches {
             add_required_animation_rhs_profile(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 mission.header.ambiance,
                 &p.element_fx.sprite,
                 &in_path,
@@ -1334,25 +1343,25 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for fx in &proto.animations {
             add_required_animation_rhs_profile(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 mission.header.ambiance,
                 &fx.sprite,
                 &in_path,
             );
         }
         if !mission.header.map_filename.is_empty() {
-            map_names.insert(mission.header.map_filename.clone());
+            build.map_names.insert(mission.header.map_filename.clone());
         }
         for &idx in &mp.required_character_indices {
             if let Some((rel, profile)) =
                 existing_character_rhs_for_index(&cpf, idx as usize, &in_path)
             {
-                add_required_rhs_rel(&mut required_rhs_profiles, rel, &profile);
+                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
             }
         }
         for p in &mission.mission_patches {
             add_required_animation_rhs_profile(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 mission.header.ambiance,
                 &p.element_fx.sprite,
                 &in_path,
@@ -1360,7 +1369,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for target in &mission.targets {
             add_required_rhs_rel(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path),
                 &target.profile_name,
             );
@@ -1368,7 +1377,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         for mobile in &mission.mobile_elements {
             for fx in &mobile.sprites {
                 add_required_animation_rhs_profile(
-                    &mut required_rhs_profiles,
+                    required_rhs_profiles,
                     mission.header.ambiance,
                     &fx.sprite,
                     &in_path,
@@ -1378,7 +1387,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         for soldier in &mission.soldiers {
             if let Some(profile) = cpf.soldiers.get(soldier.profile_number as usize) {
                 add_required_rhs_rel(
-                    &mut required_rhs_profiles,
+                    required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
                     &profile.profile_name,
                 );
@@ -1387,7 +1396,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         for civilian in &mission.civilians {
             if let Some(profile) = cpf.civilians.get(civilian.profile_number as usize) {
                 add_required_rhs_rel(
-                    &mut required_rhs_profiles,
+                    required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
                     &profile.profile_name,
                 );
@@ -1397,14 +1406,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if let Some((rel, profile)) =
                 existing_character_rhs_for_index(&cpf, pc.profile_index as usize, &in_path)
             {
-                add_required_rhs_rel(&mut required_rhs_profiles, rel, &profile);
+                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
             }
         }
         for bonus in &mission.bonuses {
             if let Some((file, profile)) = bonus_type_to_sprite_asset_for_shipping(bonus.bonus_type)
             {
                 add_required_rhs_rel(
-                    &mut required_rhs_profiles,
+                    required_rhs_profiles,
                     format!("Characters/{file}.rhs"),
                     profile,
                 );
@@ -1412,29 +1421,30 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         if !mission.scrolls.is_empty() {
             add_required_rhs_rel(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 "Characters/BONUS_Parchment.rhs",
                 "BONUS Parchemin",
             );
             add_required_rhs_rel(
-                &mut required_rhs_profiles,
+                required_rhs_profiles,
                 "Characters/BONUS_FourLeavedClover.rhs",
                 "BONUS Trefle",
             );
         }
-        add_common_object_rhs_profiles(&mut required_rhs_profiles);
-        add_required_rhs_rel(
-            &mut required_rhs_profiles,
-            "Characters/Blip00.rhs",
-            "Blip 00",
-        );
+        add_common_object_rhs_profiles(required_rhs_profiles);
+        add_required_rhs_rel(required_rhs_profiles, "Characters/Blip00.rhs", "Blip 00");
 
-        dd.levels
+        build
+            .payload
+            .levels
             .insert(mp.mission_filename.clone(), LoadedLevel { proto, mission });
 
         if let Some(p) = in_path(&scb_rel) {
             let parsed = scb::parse_file(&p).map_err(|e| anyhow!("scb: {e}"))?;
-            dd.scripts.insert(mp.mission_filename.clone(), parsed);
+            build
+                .payload
+                .scripts
+                .insert(mp.mission_filename.clone(), parsed);
         } else {
             tracing::warn!("missing: {}", scb_rel);
         }
@@ -1442,95 +1452,135 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             let desc = res_descr::load(&p.to_string_lossy())?;
             dd.red_files.insert(res_descr::red_filename(mp.id), desc);
         }
+        mission_builds.insert(mp.mission_filename.clone(), build);
     }
 
-    // ── .rhs files needed by the converted missions ────────────────────
-    let mut used_sprite_ids: BTreeSet<u32> = BTreeSet::new();
-    let mut broad_rhs_sprite_ids: BTreeSet<u32> = BTreeSet::new();
-    let mut resolved_rhs_profiles = 0usize;
-    for (rel, required_profiles) in &required_rhs_profiles {
-        if rel.is_empty() {
-            continue;
-        }
-        if let Some(p) = in_path(rel) {
-            let (signature, profiles) =
-                sprite_script::SpriteScriptor::load_all_profiles(&p.to_string_lossy())
-                    .map_err(|e| anyhow!("rhs {rel}: {e}"))?;
-            let all_profiles_required = required_profiles.contains("");
-            let mut matched_profiles = BTreeSet::new();
-            for (profile_name, info) in &profiles {
-                for script in info.scripts.iter() {
-                    for &id in &script.frame_ids {
-                        broad_rhs_sprite_ids.insert(id);
-                        if all_profiles_required || required_profiles.contains(profile_name) {
-                            used_sprite_ids.insert(id);
-                        }
-                    }
-                }
-                if all_profiles_required || required_profiles.contains(profile_name) {
-                    matched_profiles.insert(profile_name.clone());
-                    resolved_rhs_profiles += 1;
-                }
-            }
-            for required in required_profiles {
-                if !required.is_empty() && !matched_profiles.contains(required) {
-                    tracing::warn!("rhs {rel}: missing required profile '{required}'");
-                }
-            }
-            dd.rhs_files.insert(
-                rel.clone(),
-                RhsData {
-                    signature,
-                    profiles,
-                },
-            );
-        } else {
-            tracing::warn!("missing: {}", rel);
-        }
-    }
-
-    // ── Sprite bank (always, since the engine needs it) ────────────────
+    // Load the source bank once. Each RHS gets one shared payload containing
+    // its metadata and reachable bank slots; missions reference these files
+    // instead of duplicating characters they have in common.
     let parent = data_in
         .parent()
         .ok_or_else(|| anyhow!("data dir has no parent"))?;
     let holder =
         FrameHolder::from_data_dir(&parent.to_string_lossy()).context("loading sprite bank")?;
-    // Keep the bank indices stable, but omit packed payloads for slots that
-    // no mission-start RHS profile references. Missing proto-level RHS refs
-    // are absent from the demo datadir already, so they do not contribute
-    // renderable sprite IDs here.
-    let sprites: Vec<Option<ShippingSprite>> = holder
-        .sprites()
-        .iter()
-        .enumerate()
-        .map(|(idx, s)| {
-            if used_sprite_ids.contains(&(idx as u32)) {
-                Some(ShippingSprite {
-                    width: s.width,
-                    height: s.height,
-                    dictionary_index: s.dictionary_index,
-                    packed_data: holder
-                        .packed_data(idx as u32)
-                        .map(<[u16]>::to_vec)
-                        .unwrap_or_default(),
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
-    tracing::info!(
-        "sprite bank: keeping {} / {} sprites ({} required RHS profiles, {} broad RHS refs)",
-        used_sprite_ids.len(),
-        holder.sprites().len(),
-        resolved_rhs_profiles,
-        broad_rhs_sprite_ids.len(),
-    );
     dd.sprite_bank = Some(ShippingSpriteBank {
         signature: holder.signature(),
         dictionaries: holder.dictionaries().to_vec(),
-        sprites,
+        sprites: vec![None; holder.sprites().len()],
     });
+    let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for build in mission_builds.values() {
+        for (rel, profiles) in &build.required_rhs_profiles {
+            rhs_requirements
+                .entry(rel.clone())
+                .or_default()
+                .extend(profiles.iter().cloned());
+        }
+    }
+    let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    for (rel, required_profiles) in &rhs_requirements {
+        if rel.is_empty() {
+            continue;
+        }
+        let Some(path) = in_path(rel) else {
+            tracing::warn!("missing shared RHS {rel}");
+            continue;
+        };
+        let mut used_sprite_ids = BTreeSet::<u32>::new();
+        let (signature, profiles) =
+            sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+        let all_profiles_required = required_profiles.contains("");
+        let mut matched_profiles = BTreeSet::new();
+        for (profile_name, info) in &profiles {
+            if all_profiles_required || required_profiles.contains(profile_name) {
+                matched_profiles.insert(profile_name.clone());
+                for script in info.scripts.iter() {
+                    used_sprite_ids.extend(script.frame_ids.iter().copied());
+                }
+            }
+        }
+        for required in required_profiles {
+            if !required.is_empty() && !matched_profiles.contains(required) {
+                tracing::warn!("rhs {rel} missing required profile '{required}'");
+            }
+        }
+        let mut payload = ShippingMission::default();
+        payload.rhs_files.insert(
+            rel.clone(),
+            RhsData {
+                signature,
+                profiles,
+            },
+        );
+        payload.raw.insert(
+            rel.to_ascii_lowercase(),
+            fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        );
+        let sprites = holder
+            .sprites()
+            .iter()
+            .enumerate()
+            .map(|(idx, sprite)| {
+                used_sprite_ids
+                    .contains(&(idx as u32))
+                    .then(|| ShippingSprite {
+                        width: sprite.width,
+                        height: sprite.height,
+                        dictionary_index: sprite.dictionary_index,
+                        packed_data: holder
+                            .packed_data(idx as u32)
+                            .map(<[u16]>::to_vec)
+                            .unwrap_or_default(),
+                    })
+            })
+            .collect();
+        payload.sprite_bank = Some(ShippingSpriteBank {
+            signature: holder.signature(),
+            dictionaries: Vec::new(),
+            sprites,
+        });
+        tracing::info!(
+            rhs = rel,
+            sprites = used_sprite_ids.len(),
+            required_rhs_profiles = matched_profiles.len(),
+            "built shared RHS sprite payload"
+        );
+        rhs_payloads.insert(rel.clone(), payload);
+    }
+
+    // Terrain/loading art stays with the small mission core. Maps remain JXL
+    // according to the chosen converter option.
+    for build in mission_builds.values_mut() {
+        for map in &build.map_names {
+            for sub in ["Day", "Night", "Fog"] {
+                for ext in [".map", ".min"] {
+                    let rel = format!("Levels/{sub}/{map}{ext}");
+                    let Some(path) = in_path(&rel) else { continue };
+                    let bytes = match (ext, opts.map_format) {
+                        (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&path, None)?,
+                        (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&path, Some(90))?,
+                        (".map", MapFormat::JxlQ85) => transcode_sixteen_to_jxl(&path, Some(85))?,
+                        (".map", MapFormat::JxlQ80) => transcode_sixteen_to_jxl(&path, Some(80))?,
+                        (".map", MapFormat::Raw) | (".min", _) => {
+                            transcode_sixteen_drop_bzip(&path)?
+                        }
+                        _ => fs::read(&path)?,
+                    };
+                    build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
+                }
+            }
+        }
+        for ambiance in [1, 2, 4] {
+            let rel = format!("Levels/{ambiance:02}/{}.pak", build.proto_filename);
+            if let Some(path) = in_path(&rel) {
+                build
+                    .payload
+                    .raw
+                    .insert(rel.to_ascii_lowercase(), transcode_pak_drop_bzip(&path)?);
+            }
+        }
+    }
 
     // Bake the `import_beam_mes` post-processing into the shipping
     // profile table.  Without this, runtime loaders that consume
@@ -1539,7 +1589,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // auto-gang-selection (see
     // `crates/robin_rs/src/main_entry.rs::load_profiles` for the
     // non-shipping equivalent).
-    if let Some(level_dir) = in_path("Levels").map(|p| p.to_string_lossy().into_owned()) {
+    if let Some(level_dir) = resolve_case_insensitive(&data_in.join("Levels"))
+        .filter(|path| path.is_dir())
+        .map(|path| path.to_string_lossy().into_owned())
+    {
         cpf.import_beam_mes(&level_dir);
     } else {
         tracing::warn!(
@@ -1548,35 +1601,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     }
     dd.profiles = Some(cpf);
 
-    // ── Raw blobs (not-yet-parsed file types) ──────────────────────────
-    // Terrain bitmaps referenced by missions; try each ambience subfolder.
-    // `.map` files can optionally be re-encoded as JXL to shrink the blob.
-    for map in &map_names {
-        for sub in ["Day", "Night", "Fog"] {
-            for ext in [".map", ".min"] {
-                let rel = format!("Levels/{sub}/{map}{ext}");
-                let Some(p) = in_path(&rel) else {
-                    continue;
-                };
-                let bytes = match (ext, opts.map_format) {
-                    (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&p, None)?,
-                    (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&p, Some(90))?,
-                    (".map", MapFormat::JxlQ85) => transcode_sixteen_to_jxl(&p, Some(85))?,
-                    (".map", MapFormat::JxlQ80) => transcode_sixteen_to_jxl(&p, Some(80))?,
-                    // Raw mode: decode the bzip2-packed SBPictureSixteen
-                    // and re-encode with `SixteenPacking::None`.  Required
-                    // for wasm builds (which stub out the bzip2 decoder)
-                    // and harmless for native — outer shipping zstd-22
-                    // catches the RGB565 redundancy that bzip2 was
-                    // removing, so the blob doesn't bloat.
-                    (".map", MapFormat::Raw) => transcode_sixteen_drop_bzip(&p)?,
-                    (".min", _) => transcode_sixteen_drop_bzip(&p)?,
-                    _ => fs::read(&p)?,
-                };
-                dd.raw.insert(rel.to_ascii_lowercase(), bytes);
-            }
-        }
-    }
     // Bundle the small-file types the engine opens by exact path — these
     // are the items that would otherwise fan out to hundreds of tiny HTTP
     // requests on wasm and a bunch of syscalls on native.  We deliberately
@@ -1585,18 +1609,18 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     //
     // Keyed by the path the engine passes to `SbFile::open` minus the
     // `Data/` prefix, which matches `asset_fs::bundle_key`.
-    const SMALL_FILE_EXTS: &[&str] = &[
+    const BOOT_FILE_EXTS: &[&str] = &[
         // Fonts
         "bfn", "tfn", "fnt", // Menu / cursor / interface configuration
         "cfg", "ini", // Resource bundles (text tables, cursors, loading screens)
-        "res", "pak", "red", // Binary game data
-        "cpf", "rhp", "rhm", "rhs", "scb",
+        "res", "pak", "red", // Small shared resource bundles
+        "cpf",
     ];
     walk_and_bundle_small(
         &mut dd,
         &data_in,
         &data_in,
-        SMALL_FILE_EXTS,
+        BOOT_FILE_EXTS,
         opts.interface_image_format,
     )?;
     for alt in &locale_dirs {
@@ -1604,15 +1628,50 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             &mut dd,
             &alt.data_dir,
             &alt.data_dir,
-            SMALL_FILE_EXTS,
+            BOOT_FILE_EXTS,
             opts.interface_image_format,
         )?;
     }
-    // Do not bundle the legacy `.bks` / `.dic` sprite-bank files here.
-    // Shipping output already contains a parsed `ShippingSpriteBank`, and
-    // `FrameHolder::initialize_sprite_bank_with_progress` short-circuits to
-    // it before attempting loose-file I/O. Keeping the legacy bank in `raw`
-    // nearly doubles the sprite payload in wasm shipping blobs.
+    // Keep one zstd stream per RHS rather than one file per sprite. The
+    // measurements in docs/COMPRESSION.md show that within-character
+    // cross-sprite matching retains the current compression ratio, while
+    // shared RHS files avoid duplicating heroes/accessories across missions.
+    let mission_dir = data_out.join("missions");
+    let rhs_dir = data_out.join("rhs");
+    fs::create_dir_all(&mission_dir)?;
+    fs::create_dir_all(&rhs_dir)?;
+    let mut rhs_files = std::collections::BTreeMap::<String, String>::new();
+    for (rel, payload) in rhs_payloads {
+        let compressed = encode_shipping_payload(&payload, opts.zstd_window_log)?;
+        let filename = shipping_payload_filename(&rel, &compressed);
+        let relative = format!("rhs/{filename}");
+        let path = rhs_dir.join(&filename);
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        rhs_files.insert(rel, relative);
+    }
+    for (mission_name, build) in mission_builds {
+        let compressed = encode_shipping_payload(&build.payload, opts.zstd_window_log)?;
+        let filename = shipping_payload_filename(&mission_name, &compressed);
+        let relative = format!("missions/{filename}");
+        let compressed_len = compressed.len();
+        let path = mission_dir.join(&filename);
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        let mut files = vec![relative.clone()];
+        for rel in build.required_rhs_profiles.keys() {
+            if let Some(file) = rhs_files.get(rel) {
+                files.push(file.clone());
+            }
+        }
+        tracing::info!(
+            mission = mission_name,
+            bytes = compressed_len,
+            dependencies = files.len(),
+            file = relative,
+            "wrote shipping mission payload"
+        );
+        dd.missions
+            .insert(mission_name, ShippingMissionRef { files });
+    }
 
     // Serialize + compress with the configured window log.
     let out_file = data_out.join("datadir.bin");
@@ -1627,6 +1686,33 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         opts.map_format
     );
     Ok(())
+}
+
+fn shipping_file_stem(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn shipping_payload_filename(name: &str, compressed: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(compressed);
+    let hash: String = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("{}-{hash}.rhmission.zst", shipping_file_stem(name))
+}
+
+fn encode_shipping_payload(payload: &ShippingMission, window_log: u32) -> Result<Vec<u8>> {
+    let encoded = robin_assets::shipping_datadir::encode_mission_native(payload);
+    robin_assets::shipping_datadir::zstd_compress_with_window(&encoded, window_log)
 }
 
 /// Decode an `SBPictureSixteen` (`.map`) file and re-encode it as JXL via
@@ -1833,6 +1919,14 @@ fn walk_and_bundle_small(
             .to_string_lossy()
             .replace('\\', "/")
             .to_ascii_lowercase();
+        if ext == "pak"
+            && rel.starts_with("levels/")
+            && !exts.iter().any(|candidate| *candidate == "rhm")
+        {
+            // Split shipping puts the selected level's loading screen in its
+            // mission payload; fetching all level paks at boot defeats that.
+            continue;
+        }
         if dd.raw.contains_key(&rel) {
             continue;
         }
@@ -2082,11 +2176,23 @@ fn add_required_pc_profiles_for_pcs(
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) {
     for profile_name in pcs.chars().filter_map(pc_code_profile_name) {
-        if let Some((rel, profile)) =
-            existing_character_rhs_for_profile_name(profiles, profile_name, in_path)
+        // Some logical PCs have multiple physical RHS files under the same
+        // localized profile name (notably RobinHood/RobinTown). The level
+        // loader swaps those variants according to forest/town ambiance, and
+        // campaign/save state may still ask to preload either one.
+        let mut found = false;
+        for profile in profiles
+            .characters
+            .iter()
+            .filter(|profile| profile.profile_name == profile_name)
         {
-            add_required_rhs_rel(required, rel, &profile);
-        } else {
+            let rel = format!("Characters/{}.rhs", profile.filename);
+            if in_path(&rel).is_some() {
+                add_required_rhs_rel(required, rel, &profile.profile_name);
+                found = true;
+            }
+        }
+        if !found {
             tracing::warn!("demo PC profile '{}' has no shipped RHS", profile_name);
         }
     }
@@ -2153,6 +2259,20 @@ fn add_common_object_rhs_profiles(
         ("ACCESSORIES_WaspSting", "Guepe"),
         ("BONUS_Nets", "BONUS Filets"),
         ("BONUS_WaspsNest", "BONUS Guepes"),
+        ("BONUS_Apples", "BONUS Pommes"),
+        ("BONUS_Ale", "BONUS Ale"),
+        ("BONUS_LegOfLamb", "BONUS Gigots"),
+        ("BONUS_Plants", "BONUS Plantes"),
+        ("BONUS_MoneyBag", "BONUS Bourses d'argent"),
+        ("BONUS_GoldBagsRansom", "BONUS Sac d'or rancon"),
+        ("BONUS_Shield", "Shield"),
+        ("RELIC_Ampulla", "Huile"),
+        ("RELIC_Spoon", "Cuillere"),
+        ("RELIC_Crown", "Couronne"),
+        ("RELIC_Stamp", "Sceau"),
+        ("RELIC_Sceptre", "Sceptre"),
+        ("RELIC_Book", "Registre"),
+        ("RELIC_Sword", "Epee"),
     ] {
         add_required_rhs_rel(required, format!("Characters/{file}.rhs"), profile);
     }

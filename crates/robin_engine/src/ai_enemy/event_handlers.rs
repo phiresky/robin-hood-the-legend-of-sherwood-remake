@@ -2805,6 +2805,11 @@ impl EnemyAi {
                 self.base.break_macro();
                 self.base.say(Remark::SeesObject);
                 if let Some(view) = ctx.entity_view(obj) {
+                    // Keep the position carried by the live object pointer.
+                    // The bottle may become inactive while React's timer is
+                    // pending, but Original can still read Position(pointer)
+                    // when that timer fires.
+                    self.base.seek_position = view.position;
                     self.base.face_position_at_elevation_with_ctx(
                         view.position,
                         f32::from(view.elevation as u16),
@@ -4028,13 +4033,28 @@ mod tests {
     #[test]
     fn event_sees_runtime_ale_reacts_but_bonus_ale_is_ignored() {
         let mut ai = EnemyAi::new(1);
-        let ctx = ctx_with_object(ObjectType::Ale);
+        let ale_position = Position {
+            x: 632.4453,
+            y: 1835.14,
+            sector: None,
+            level: 0,
+        };
+        let mut ale_view = object_view(ObjectType::Ale);
+        ale_view.position = ale_position;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, ale_view);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            posture: Posture::Upright,
+            ..AiContext::default()
+        };
 
         ai.event_sees_object_standard_procedure(2, &ctx, &AiPerTickData::stub());
 
         assert_eq!(ai.base.current_state, AiState::Wondering);
         assert_eq!(ai.base.current_substate, Substate::WonderingAleReactiontime);
         assert_eq!(ai.base.interesting_object, 2);
+        assert_eq!(ai.base.seek_position, ale_position);
 
         let mut ai = EnemyAi::new(1);
         let ctx = ctx_with_object(ObjectType::BonusAle);

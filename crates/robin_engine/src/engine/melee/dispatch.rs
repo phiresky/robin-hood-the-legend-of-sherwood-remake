@@ -262,6 +262,18 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        self.dispatch_enter_swordfight_impl(sim, assets, owner, opponent, seq_id, elem_idx)
+    }
+
+    fn dispatch_enter_swordfight_impl(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        opponent: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
         let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
             config.frame == self.control.frame_counter
                 && (config.participant == owner.index()
@@ -418,7 +430,44 @@ impl EngineInner {
                     crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(*id),
                     _ => None,
                 });
-            self.enter_swordfight_with_jump_line(sim, assets, owner, opp, false, aggressor_jl);
+            let entered =
+                self.enter_swordfight_with_jump_line(sim, assets, owner, opp, false, aggressor_jl);
+            if !entered {
+                // Original `RHCOMMAND_ENTER_SWORDFIGHT` translation detaches
+                // the matching postponed THRUST_A prerequisite when admission
+                // fails (`RHelementactorhuman.cpp:1525-1542`). Restarting that
+                // strike would translate the same higher-priority Enter pair
+                // again with no intervening state change, producing an
+                // unbounded reciprocal admission loop.
+                let postponed = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| element.cross_postponed)
+                    .filter(|(postponed_sequence, postponed_index)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(*postponed_sequence, *postponed_index)
+                            .is_some_and(|element| {
+                                element.owner == Some(owner)
+                                    && element.command == Command::SwordstrikeThrustA
+                                    && matches!(
+                                        element.data,
+                                        crate::sequence::SequenceElementData::Interaction {
+                                            antagonist: Some(target)
+                                        } if target == opp
+                                    )
+                            })
+                    });
+                if let Some((postponed_sequence, postponed_index)) = postponed {
+                    self.orders
+                        .sequence_manager
+                        .set_cross_postponed_link((seq_id, elem_idx), None);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(postponed_sequence, postponed_index);
+                }
+            }
         }
         if let Some(transition) = transition {
             let id = self.orders.allocate_order_id();

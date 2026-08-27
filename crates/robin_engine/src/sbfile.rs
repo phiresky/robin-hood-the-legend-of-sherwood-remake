@@ -8,7 +8,6 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 
 pub const SBFILE_NO_ERROR: i32 = 0;
@@ -60,7 +59,6 @@ fn global_file_system() -> &'static SbFileSystem {
 /// consult a pre-built case-folded index built at mount time.
 enum OverlayRoot {
     Directory(PathBuf),
-    #[cfg(not(target_arch = "wasm32"))]
     Zip(Arc<ZipOverlay>),
 }
 
@@ -68,7 +66,6 @@ impl OverlayRoot {
     fn display_path(&self) -> std::borrow::Cow<'_, str> {
         match self {
             OverlayRoot::Directory(p) => p.to_string_lossy(),
-            #[cfg(not(target_arch = "wasm32"))]
             OverlayRoot::Zip(z) => std::borrow::Cow::Borrowed(z.display_path.as_str()),
         }
     }
@@ -83,7 +80,6 @@ impl OverlayRoot {
 /// wrapped in an `English/` directory has that prefix stripped, and
 /// a zip with bare `*.rhm` files at the root has `Data/Levels/`
 /// prepended.  See `detect_zip_layout`.
-#[cfg(not(target_arch = "wasm32"))]
 struct ZipOverlay {
     display_path: String,
     archive: Mutex<zip::ZipArchive<fs::File>>,
@@ -91,7 +87,6 @@ struct ZipOverlay {
     index: HashMap<String, usize>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl ZipOverlay {
     /// Open a zip file, detect its layout, and build the index.
     fn open(path: &Path) -> Result<Self, i32> {
@@ -202,7 +197,6 @@ impl ZipOverlay {
 /// overlay (e.g. duplicate language-variant `.rhm` files: the
 /// detector picks one locale folder and the others land outside the
 /// indexed namespace).
-#[cfg(not(target_arch = "wasm32"))]
 pub fn detect_zip_layout(entries: &[String]) -> (String, String) {
     // First pass: find an entry whose path contains a "datadir root"
     // segment (either `Data/` or a numeric locale folder followed by
@@ -294,6 +288,7 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 // case-folding has to apply to every component, not just the leaf.
 // Dotfile entries (names starting with `.`) are skipped during the
 // case-fold scan.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
     let path_str = path.to_str()?;
     if cfg!(windows) {
@@ -820,7 +815,6 @@ impl SbFile {
     /// the root.
     ///
     /// `remove_overlay(zip_path)` undoes this.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn add_overlay_zip(zip_path: &str) -> i32 {
         global_file_system().add_overlay_zip(zip_path)
     }
@@ -883,9 +877,7 @@ impl SbFileSystem {
                             return Ok(true);
                         }
                     }
-                    #[cfg(not(target_arch = "wasm32"))]
                     OverlayRoot::Zip(zip) if zip.exists(&normalised) => return Ok(true),
-                    #[cfg(not(target_arch = "wasm32"))]
                     OverlayRoot::Zip(_) => {}
                 }
             }
@@ -966,7 +958,6 @@ impl SbFileSystem {
         SBFILE_ERROR_NO_FILE
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn add_overlay_zip(&self, zip_path: &str) -> i32 {
         let mut paths = self.overlay_paths.lock().unwrap();
         if paths
@@ -1007,7 +998,6 @@ impl SbFileSystem {
             .iter()
             .filter_map(|overlay| match overlay {
                 OverlayRoot::Directory(path) => Some(path.to_string_lossy().into_owned()),
-                #[cfg(not(target_arch = "wasm32"))]
                 OverlayRoot::Zip(_) => None,
             })
             .collect()
@@ -1074,7 +1064,6 @@ fn read_from_overlay(
             }
             try_read(file_system, &resolved.to_string_lossy())
         }
-        #[cfg(not(target_arch = "wasm32"))]
         OverlayRoot::Zip(z) => Ok(z.try_read(normalised)),
     }
 }

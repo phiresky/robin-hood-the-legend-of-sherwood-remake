@@ -1085,6 +1085,11 @@ pub(crate) fn push_strike_basis(direction: i16) -> ((f32, f32), (f32, f32)) {
 /// by the caller from the entity list. Positions are relative to the
 /// attacker, with Y stretched by `INVERSE_SWORDFIGHT_ASPECT_RATIO`.
 pub struct NearbyVictim<'a> {
+    /// Whether the human is currently active. Original's straight-strike
+    /// collector bypasses `IsPossibleSwordStrikeVictim` and can therefore
+    /// retain an inactive principal opponent, while the lateral collector
+    /// explicitly requires active humans.
+    pub is_active: bool,
     /// Whether Original's `IsPossibleSwordStrikeVictim` accepts this human.
     /// Lateral strike collection deliberately ignores this predicate and
     /// scans every active human; straight strikes use their separate
@@ -1156,6 +1161,9 @@ fn is_victim_in_strike_arc(
         // end = facing + initial. L→R: begin = facing - initial,
         // end = facing + final.
         WeaponThrustKind::Lateral => {
+            if !victim.is_active {
+                return false;
+            }
             // Original enters the collector only when `MaxNorm() < 150`,
             // then admits the victim only when both inclusive range
             // comparisons succeed.  Keep that positive formulation: a
@@ -1916,6 +1924,7 @@ mod tests {
             is_npc: true,
         };
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: false,
             dx: 20.0,
             dy_stretched: 0.0,
@@ -1935,6 +1944,56 @@ mod tests {
             (0, -1),
             "the lateral collector's broad active-human scan must still veto friendly corpses"
         );
+    }
+
+    #[test]
+    fn inactive_principal_is_only_eligible_for_straight_strike_arc() {
+        let mut profile = make_hth_profile();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            ..Default::default()
+        };
+        profile.thrusts[SwordStrike::B as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Lateral,
+            direction: WeaponThrustDirection::LeftToRight,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 0,
+            final_angle: 0,
+            ..Default::default()
+        };
+        let victim = NearbyVictim {
+            is_active: false,
+            eligible_for_regular_strikes: false,
+            dx: 20.0,
+            dy_stretched: 0.0,
+            distance: 20.0,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 100,
+            defender_profile: None,
+            is_primary_target: true,
+            is_walking_with_sword: false,
+        };
+
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim,
+            true,
+        ));
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::B,
+            0,
+            &victim,
+            true,
+        ));
     }
 
     #[test]
@@ -1959,6 +2018,7 @@ mod tests {
             ..Default::default()
         };
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: f32::NAN,
             dy_stretched: f32::NAN,
@@ -2005,6 +2065,7 @@ mod tests {
             ..Default::default()
         };
         let primary = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 1.292_724_6,
             dy_stretched: -39.592_773,
@@ -2019,6 +2080,7 @@ mod tests {
             is_walking_with_sword: false,
         };
         let friend = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 11.060_913,
             dy_stretched: -17.675_049,
@@ -2670,6 +2732,7 @@ mod tests {
         // ordinary ASPECT_RATIO classifier (the reverse direction is sector
         // 8, not the arc sector rotated by 8 to sector 9).
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 8.706_726,
             dy_stretched: -28.601_807,
@@ -2815,6 +2878,7 @@ mod tests {
         // Direction 0 points along -Y, making X the side distance. A width
         // of 5 therefore has Original's ULONG half-width 2, not 2.5.
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 2.25,
             dy_stretched: -10.0,
@@ -2867,6 +2931,7 @@ mod tests {
             ..Default::default()
         };
         let victim = |dx| NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx,
             dy_stretched: -100.0,

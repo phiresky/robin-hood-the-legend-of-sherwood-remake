@@ -548,7 +548,7 @@ def import_result(
         logical = workspace_relative(env["LOGICAL_TRACE"], workspace)
     else:
         raise ValueError(f"{result}: no logical trace identity")
-    completion = env.get("COMPLETION_MARKER")
+    completion = env.get("COMPLETION_MARKER") or None
     if completion is not None:
         completion = workspace_relative(completion, workspace)
     runner_id = upsert_runner(connection, env)
@@ -1886,6 +1886,7 @@ def enqueue_corpus_replay_work(
     logical_root: str,
     runner_trust: str,
     priority: int,
+    workspace: Path | None = None,
 ) -> dict[str, int]:
     """Create digest-bound replay work for every native artifact in a corpus.
 
@@ -1899,8 +1900,12 @@ def enqueue_corpus_replay_work(
     ).fetchone()
     if corpus is None:
         raise ValueError(f"unknown corpus: {logical_root}")
-    if corpus["corpus_path"] is None:
+    if corpus["corpus_path"] is None and workspace is None:
         raise ValueError(f"corpus has no authoritative artifact path: {logical_root}")
+    if workspace is not None:
+        workspace = workspace.resolve(strict=True)
+        if not workspace.is_dir():
+            raise ValueError(f"workspace is not a directory: {workspace}")
     runner = connection.execute(
         "SELECT runner_id FROM runners WHERE bundle_trust_sha256=?",
         (runner_trust.lower(),),
@@ -1924,26 +1929,42 @@ def enqueue_corpus_replay_work(
                WHERE corpus_id=? ORDER BY logical_path""",
             (corpus["corpus_id"],),
         ).fetchall()
-    corpus_path = Path(corpus["corpus_path"])
+    corpus_path = Path(corpus["corpus_path"]) if corpus["corpus_path"] else None
     artifacts: list[tuple[str, str]] = []
     missing = missing_marker = invalid_footer = 0
     for row in rows:
         logical = row["logical_path"]
-        if logical is None or not logical.startswith(logical_root + "/"):
-            raise ValueError(f"replay is outside corpus root: {logical}")
-        physical = corpus_path / logical[len(logical_root) + 1 :]
+        logical_path = Path(logical) if logical is not None else None
+        if logical_path is None or logical_path.is_absolute() or ".." in logical_path.parts:
+            raise ValueError(f"unsafe replay path: {logical}")
+        if workspace is not None:
+            physical = workspace / logical_path
+        else:
+            if not logical.startswith(logical_root + "/"):
+                raise ValueError(f"replay is outside corpus root: {logical}")
+            assert corpus_path is not None
+            physical = corpus_path / logical[len(logical_root) + 1 :]
         native = Path(f"{physical}.parity.bitcode.zst")
         if not native.is_file():
             missing += 1
             continue
         marker_logical = row["completion_marker"]
-        if marker_logical is None or not marker_logical.startswith(logical_root + "/"):
-            missing_marker += 1
-            continue
-        marker = corpus_path / marker_logical[len(logical_root) + 1 :]
-        if not marker.is_file():
-            missing_marker += 1
-            continue
+        if marker_logical is not None:
+            marker_path = Path(marker_logical)
+            if marker_path.is_absolute() or ".." in marker_path.parts:
+                raise ValueError(f"unsafe completion marker path: {marker_logical}")
+            if workspace is not None:
+                marker = workspace / marker_path
+            else:
+                if not marker_logical.startswith(logical_root + "/"):
+                    raise ValueError(
+                        f"completion marker is outside corpus root: {marker_logical}"
+                    )
+                assert corpus_path is not None
+                marker = corpus_path / marker_logical[len(logical_root) + 1 :]
+            if not marker.is_file():
+                missing_marker += 1
+                continue
         if native_extent(str(physical), None) is None:
             invalid_footer += 1
             continue
@@ -2004,14 +2025,14 @@ def claim_work(
                WHERE wi.operation=? AND done.work_id IS NULL
                  AND (claim.work_id IS NULL OR claim.lease_until_utc <= ?)
                  AND (? IS NULL OR ru.bundle_trust_sha256=?)
-                 AND (? IS NULL OR substr(r.logical_path,1,length(?) + 1)=? || '/')
+                 AND (? IS NULL OR r.corpus_id=(
+                       SELECT corpus_id FROM corpora WHERE logical_root=?))
                ORDER BY wi.priority DESC,wi.work_id LIMIT 1""",
             (
                 operation,
                 now_text,
                 runner_trust,
                 runner_trust.lower() if runner_trust else None,
-                logical_root,
                 logical_root,
                 logical_root,
             ),
@@ -2322,6 +2343,7 @@ def parser() -> argparse.ArgumentParser:
     enqueue.add_argument("logical_root")
     enqueue.add_argument("--runner-trust", required=True)
     enqueue.add_argument("--priority", type=int, default=100)
+    enqueue.add_argument("--workspace", type=Path)
     claim = commands.add_parser("claim-work")
     claim.add_argument("database", type=Path)
     claim.add_argument("operation", choices=("replay", "convert"))
@@ -2502,6 +2524,7 @@ def main() -> None:
     elif args.command == "enqueue-corpus-replays":
         print(json.dumps(enqueue_corpus_replay_work(
             connection, args.logical_root, args.runner_trust, args.priority,
+            args.workspace,
         ), sort_keys=True))
     elif args.command == "claim-work":
         print(json.dumps(claim_work(

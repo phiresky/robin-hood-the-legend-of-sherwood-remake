@@ -1490,6 +1490,53 @@ fn discard_lazy_door_pass_following_orders(pass: Option<&mut ActiveDoorPass>) {
     }
 }
 
+/// Materialize the zero-destination action points which precede the next
+/// authored door walk.
+///
+/// Original translates the complete door route up front. Rust normally
+/// materializes these steps one at a time, but a TillLastFrame continuation
+/// has to be inserted relative to the complete translated route. Moving this
+/// prefix into the concrete order queue first preserves Original's
+/// `Select -> PassingDoor -> copied walk` ordering.
+fn materialize_door_action_point_prefix(
+    pass: &mut ActiveDoorPass,
+    next_order_id: &mut u32,
+) -> Vec<crate::order::Order> {
+    let mut orders = Vec::new();
+    loop {
+        let Some(step) = pass.steps.front() else {
+            break;
+        };
+        let mut order = match step {
+            crate::element::DoorPassStep::Select { speed } => {
+                let mut order = crate::order::Order::new(
+                    OrderType::Select,
+                    0.0,
+                    0.0,
+                    crate::order::alloc_order_id(next_order_id),
+                );
+                order.compute_direction = true;
+                order.tolerance = *speed;
+                order
+            }
+            crate::element::DoorPassStep::PassingDoor => crate::order::Order::new(
+                OrderType::PassingDoor,
+                0.0,
+                0.0,
+                crate::order::alloc_order_id(next_order_id),
+            ),
+            _ => break,
+        };
+        // These action points now have concrete successors in the same order
+        // list, so generic DoNextOrder owns their completion. ResumeDoorPass
+        // would incorrectly materialize another lazy step alongside them.
+        order.completion = crate::order::OrderCompletion::AdvanceElement;
+        pass.steps.pop_front();
+        orders.push(order);
+    }
+    orders
+}
+
 /// Insert a materialized lazy door-pass step at the same side of a copied
 /// transition-distance continuation as Original's single translated order
 /// list.
@@ -1958,6 +2005,57 @@ mod door_pass_posture_tests {
         assert!(element.orders[3].transition_distance_continuation);
         assert!(!element.orders[4].transition_distance_continuation);
     }
+
+    #[test]
+    fn materialized_door_action_points_precede_copied_walk() {
+        let mut pass = ActiveDoorPass {
+            door_index: crate::gate::DoorIndex(43),
+            direct: true,
+            position_direct: true,
+            steps: [
+                crate::element::DoorPassStep::Select { speed: 2.0 },
+                crate::element::DoorPassStep::PassingDoor,
+                crate::element::DoorPassStep::Walk {
+                    destination: MapPoint::new(20.0, 30.0),
+                    action: OrderType::RunningUpright,
+                    reverse: false,
+                    compute_direction: true,
+                    tolerance: 0.0,
+                },
+                crate::element::DoorPassStep::PassingDoor,
+            ]
+            .into(),
+            triggers_fired: 0,
+            current_action: OrderType::TransitionWalkingUprightRunningUpright,
+            current_reverse: false,
+            saved_action_state: None,
+        };
+        let mut next_order_id = 1;
+
+        let orders = materialize_door_action_point_prefix(&mut pass, &mut next_order_id);
+
+        assert_eq!(
+            orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::Select, OrderType::PassingDoor]
+        );
+        assert!(
+            orders
+                .iter()
+                .all(|order| order.completion == crate::order::OrderCompletion::AdvanceElement)
+        );
+        assert!(matches!(
+            pass.steps.front(),
+            Some(crate::element::DoorPassStep::Walk {
+                destination,
+                action: OrderType::RunningUpright,
+                ..
+            }) if *destination == MapPoint::new(20.0, 30.0)
+        ));
+        assert_eq!(pass.steps.len(), 2, "the suffix remains lazily translated");
+    }
 }
 
 pub(super) fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
@@ -2406,17 +2504,25 @@ fn original_final_path_metadata(
     }
 }
 
-/// Drop the pathfinder's source point before materializing movement orders.
+/// Prepare the raw pathfinder points for movement-order post-processing.
 ///
 /// `RHEngine::ProcessPathRequests` starts its order loop at index one whenever
 /// `bUseFirstPoint` is false (`RHengine.cpp:8410-8423`).  Do not re-check that
 /// the first point equals the request source here: legacy floating-point
 /// equality is not the gate, and a source poisoned with NaNs must still be
 /// skipped rather than becoming a live movement order.
-fn discard_unrequested_path_source(waypoints: &mut Vec<MapPoint>, use_first_point: bool) {
+///
+/// Returns the raw count because final-order tolerance and antagonist
+/// metadata depend on the pre-skip path exactly as they do in Original.
+fn prepare_path_waypoints_for_postprocess(
+    waypoints: &mut Vec<MapPoint>,
+    use_first_point: bool,
+) -> usize {
+    let raw_waypoint_count = waypoints.len();
     if !use_first_point && waypoints.len() > 1 {
         waypoints.remove(0);
     }
+    raw_waypoint_count
 }
 
 fn is_in_place_movement_transition(order: OrderType) -> bool {
@@ -6128,12 +6234,28 @@ impl EngineInner {
         }
 
         // Pre-pass: drive the per-tick `TurnDrunken()` turn for every
-        // drunken soldier. `TurnDrunken()` picks
+        // drunken soldier on an ordinary movement. `TurnDrunken()` picks
         // between `TurnSlow(2)` and `TurnVerySlow()` (delay 5) so the
         // soldier's facing lags behind the movement vector.  This
         // must run before the main loop because the per-tick turn
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
+        //
+        // The soldier Execute branches call PerformSeek directly when
+        // RHMOVE_SEEK is set; they do not call TurnDrunken first. PerformSeek
+        // owns its normal Turn call, so adding this pre-pass there turns the
+        // actor twice in one frame.
+        let selected_uses_seek = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .is_some_and(|element| {
+                matches!(
+                    &element.data,
+                    crate::sequence::SequenceElementData::Movement { flags, .. }
+                        if flags.contains(crate::sequence::MoveFlags::SEEK)
+                )
+            });
         for (_, soldier) in self
             .world
             .entities
@@ -6166,42 +6288,10 @@ impl EngineInner {
             else {
                 continue;
             };
-            let goal = MapPoint::new(order.target_x, order.target_y);
-            let pos = soldier.element.position_map();
-            let dx = goal.x - pos.x;
-            let dy = goal.y - pos.y;
-            if dx * dx + dy * dy < 0.01 {
+            if !should_apply_drunken_turn(selected_uses_seek, order.order_type) {
                 continue;
             }
-            let goal_sector = vector_to_sector_0_to_15(dx, dy);
-            // Gate the facing-from-movement-vector goal update on
-            // the order's compute_direction flag.  When the order
-            // pushes a fixed facing (compute_direction = false), keep
-            // the goal direction the caller set and only run the slow
-            // turn — `TurnDrunken` reads the direction goal but never
-            // writes it.
-            let order_compute_direction = order.compute_direction;
-            {
-                let pi = &mut soldier.element.sprite.position_iface;
-                let current_dir = pi.get_direction();
-                let goal_for_turn = if order_compute_direction {
-                    pi.set_direction(crate::position_interface::Direction::from_raw(
-                        goal_sector as i32,
-                    ));
-                    goal_sector as u16
-                } else {
-                    u16::from(pi.get_direction_goal())
-                };
-                let very_slow = crate::engine::soldier_helpers::turn_drunken_is_very_slow(
-                    u16::from(current_dir),
-                    goal_for_turn,
-                );
-                if very_slow {
-                    pi.turn_very_slow();
-                } else {
-                    pi.turn_slow(2);
-                }
-            }
+            turn_drunken(&mut soldier.element.sprite.position_iface);
         }
 
         // Pre-pass: per-entity current-sector lift translation, for
@@ -6885,7 +6975,7 @@ impl EngineInner {
         // selections, so reproduce this re-entrant live-pointer seam
         // explicitly for post-seek launches only.
         for entity_id in post_seek_reentrant_order_advances {
-            self.advance_live_order_after_reentrant_seek(entity_id);
+            self.advance_live_order_after_terminal_handoff(entity_id);
         }
 
         // Drain collected waypoint pops against each actor's Move
@@ -7195,6 +7285,11 @@ impl EngineInner {
             "movement_execute_entry",
         );
         let is_pc = entity.is_pc();
+        let is_drunken_soldier = entity.is_soldier()
+            && entity
+                .npc_data()
+                .and_then(|npc| npc.ai_brain.base())
+                .is_some_and(|base| base.blood_alcohol > 0);
         let human_is_carried = entity
             .human_data()
             .is_some_and(|human| human.carrier.is_some());
@@ -7522,6 +7617,18 @@ impl EngineInner {
             deferred
                 .door_triggers
                 .push((eid, dp.door_index, dp.direct, trigger_num));
+
+            // A TillLastFrame continuation can force the action-point prefix
+            // into the concrete queue. In that case generic DoNextOrder must
+            // select the already-queued successor; advancing the lazy tail as
+            // well would skip ahead of the copied continuation.
+            if !is_final_waypoint {
+                self.orders.messenger.send(crate::messenger::Message::new(
+                    crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
+                ));
+                deferred.order_pops.push((move_seq_id, move_elem_idx));
+                return;
+            }
 
             let advance = Self::advance_door_pass(
                 actor,
@@ -8155,7 +8262,13 @@ impl EngineInner {
             // branch before the ordinary Turn/PerformMotion block. Do
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
-            if !sword_arm_without_face_turn {
+            if !sword_arm_without_face_turn
+                && should_apply_plain_movement_turn(
+                    is_drunken_soldier,
+                    active_move_flags,
+                    order_action,
+                )
+            {
                 super::animation::direction_provenance_snapshot(
                     &sprite.position_iface,
                     entity_id,
@@ -9090,6 +9203,15 @@ impl EngineInner {
                             })
                         });
                     let next_order_id = &mut self.orders.next_order_id;
+                    let concrete_door_prefix = if lazy_next_animation.is_some() {
+                        entity
+                            .actor_data_mut()
+                            .and_then(|actor| actor.active_door_pass.as_mut())
+                            .map(|pass| materialize_door_action_point_prefix(pass, next_order_id))
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                     let mut continuation_door_action = None;
                     let mut discard_lazy_door_followers = false;
                     if let Some(element) = self
@@ -9097,6 +9219,9 @@ impl EngineInner {
                         .sequence_manager
                         .get_element_mut(move_seq_id, move_elem_idx)
                     {
+                        for order in concrete_door_prefix {
+                            element.push_order(order);
+                        }
                         let current_action = element
                             .orders
                             .front()
@@ -11688,42 +11813,20 @@ impl EngineInner {
                     .then_some(tail_index)
             });
 
-        // Drunken-soldier path deviation.  Only applies to upright
-        // walking/running animations and not to PassDoor commands.
+        // ProcessPathRequests materializes movement orders beginning at
+        // `uwFirstPathIndex`, so an unrequested raw source never becomes an
+        // order seen by either actor or soldier PostProcessPath.
+        let raw_waypoint_count =
+            prepare_path_waypoints_for_postprocess(&mut waypoints, use_first_point);
+
+        // Drunken-soldier path deviation applies later, after actor
+        // PostProcessPath has inserted its transition orders. The Original
+        // soldier override skips those transitions and inserts midpoint
+        // copies only before upright walking/running orders.
         let is_movement_anim = matches!(
             move_action,
             OrderType::WalkingUpright | OrderType::RunningUpright
         );
-        if is_movement_anim && !is_pass_door {
-            let blood_alcohol = self
-                .world
-                .entities
-                .get(owner)
-                .and_then(|e| e.npc_data())
-                .and_then(|n| n.ai_brain.base())
-                .map(|b| b.blood_alcohol)
-                .unwrap_or(0);
-            if blood_alcohol > 0 {
-                let (half_diag, move_box) = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .map(|e| e.position_iface())
-                    .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
-                    .unwrap_or_default();
-                waypoints = crate::engine::tick::apply_drunken_path_deviation(
-                    sim,
-                    waypoints,
-                    source,
-                    blood_alcohol,
-                    move_action == OrderType::RunningUpright,
-                    entity_layer,
-                    &move_box,
-                    half_diag,
-                    &self.world.fast_grid,
-                );
-            }
-        }
 
         tracing::trace!(
             actor = ?owner,
@@ -11752,7 +11855,7 @@ impl EngineInner {
         // order with metadata, while a direct raw [goal] order keeps the
         // RHOrder constructor defaults.
         let (final_order_tolerance, final_order_antagonist) =
-            original_final_path_metadata(waypoints.len(), tolerance, antagonist);
+            original_final_path_metadata(raw_waypoint_count, tolerance, antagonist);
 
         // `use_first_point` handling: the emission loop starts at
         // index 0 if set, otherwise 1.
@@ -11772,7 +11875,6 @@ impl EngineInner {
         //   no-op: `[goal]` stays a single waypoint and the actor
         //   walks straight to goal — anti-collision handles the small
         //   obstacle clip on that first leg.)
-        discard_unrequested_path_source(&mut waypoints, use_first_point);
         let mut rewritten_installed_order = None;
         {
             let next_order_id = &mut self.orders.next_order_id;
@@ -11829,6 +11931,48 @@ impl EngineInner {
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
         self.post_process_path(seq_id, elem_idx);
+
+        if is_movement_anim && !is_pass_door {
+            let (blood_alcohol, half_diagonal, move_box) = self
+                .world
+                .entities
+                .get(owner)
+                .and_then(|entity| {
+                    let blood_alcohol = entity
+                        .npc_data()
+                        .and_then(|npc| npc.ai_brain.base())?
+                        .blood_alcohol;
+                    let position = entity.position_iface();
+                    Some((
+                        blood_alcohol,
+                        position.get_half_diagonal(),
+                        *position.get_move_box(),
+                    ))
+                })
+                .unwrap_or_default();
+            if blood_alcohol > 0 {
+                let grid = self.world.fast_grid.clone();
+                let next_order_id = &mut self.orders.next_order_id;
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                {
+                    crate::engine::tick::apply_drunken_order_deviation(
+                        sim,
+                        element,
+                        source,
+                        blood_alcohol,
+                        move_action == OrderType::RunningUpright,
+                        entity_layer,
+                        &move_box,
+                        half_diagonal,
+                        &grid,
+                        next_order_id,
+                    );
+                }
+            }
+        }
 
         // Install the derived Rust movement latch, but do not change the
         // actor's action state here. Original Translate/PostProcessPath only
@@ -12047,7 +12191,7 @@ impl EngineInner {
         self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
     }
 
-    pub(in crate::engine) fn advance_live_order_after_reentrant_seek(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn advance_live_order_after_terminal_handoff(&mut self, owner: EntityId) {
         if let Some((seq_id, elem_idx)) = self
             .orders
             .sequence_manager
@@ -12096,13 +12240,7 @@ impl EngineInner {
         }
     }
 
-    pub(in crate::engine) fn live_pending_seek_freezing_order(&self, owner: EntityId) -> bool {
-        let Some(actor) = self.world.entities.get(owner).and_then(Entity::actor_data) else {
-            return false;
-        };
-        if actor.seek_target.is_none() || actor.post_seek_sequence.is_none() {
-            return false;
-        }
+    pub(in crate::engine) fn live_pending_freezing_order(&self, owner: EntityId) -> bool {
         self.orders
             .sequence_manager
             .current_element_for_actor(owner)
@@ -12118,7 +12256,7 @@ impl EngineInner {
             })
     }
 
-    pub(in crate::engine) fn live_seek_has_completed_parallel_element(
+    pub(in crate::engine) fn live_move_has_completed_parallel_element(
         &self,
         owner: EntityId,
     ) -> bool {
@@ -12141,6 +12279,170 @@ impl EngineInner {
                 )
             })
             .unwrap_or(false)
+    }
+
+    pub(in crate::engine) fn recent_terminal_move_has_completed_sibling(
+        &self,
+        owner: EntityId,
+    ) -> bool {
+        // A Stop-rewritten Move can finish a multi-level arrival sequence
+        // immediately before its postponed replacement is instructed. The
+        // latest completed movement sequence mirrors the entry-latched
+        // `pSequenceElement`; a terminated non-movement sibling proves that
+        // Ready ran a continuation on that same terminal stack.
+        let live_sequence = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .map(|(sequence_id, _)| sequence_id);
+        self.orders
+            .sequence_manager
+            .sequences_iter()
+            .filter(|sequence| Some(sequence.id) != live_sequence)
+            .filter(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    element.owner == Some(owner)
+                        && element.data.is_movement()
+                        && element.state == crate::sequence::SequenceState::Terminated
+                })
+            })
+            .max_by_key(|sequence| sequence.id)
+            .is_some_and(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    !element.data.is_movement()
+                        && element.state == crate::sequence::SequenceState::Terminated
+                })
+            })
+    }
+}
+
+/// `RHElementActorSoldier::Execute` calls `TurnDrunken` before
+/// `RHSprite::PerformMotion`. On a fresh order this therefore observes the
+/// retained direction goal from the previous motion; PerformMotion installs
+/// the new order's goal afterwards through `ComputeIncrementAll`.
+fn turn_drunken(pi: &mut crate::position_interface::PositionInterface) {
+    let current = u16::from(pi.get_direction());
+    let goal = u16::from(pi.get_direction_goal());
+    if crate::engine::soldier_helpers::turn_drunken_is_very_slow(current, goal) {
+        pi.turn_very_slow();
+    } else {
+        pi.turn_slow(2);
+    }
+}
+
+fn should_apply_drunken_turn(
+    selected_uses_seek: bool,
+    order_action: crate::order::OrderType,
+) -> bool {
+    !selected_uses_seek && order_action == crate::order::OrderType::WalkingUpright
+}
+
+fn should_apply_plain_movement_turn(
+    is_drunken_soldier: bool,
+    flags: crate::sequence::MoveFlags,
+    order_action: crate::order::OrderType,
+) -> bool {
+    !is_drunken_soldier
+        || flags.contains(crate::sequence::MoveFlags::SEEK)
+        || order_action != crate::order::OrderType::WalkingUpright
+}
+
+#[cfg(test)]
+mod drunken_turn_timing_tests {
+    use super::{should_apply_drunken_turn, should_apply_plain_movement_turn, turn_drunken};
+    use crate::position_interface::{Direction, PositionInterface};
+
+    #[test]
+    fn fresh_order_turn_uses_retained_goal_before_motion_initialization() {
+        let mut position = PositionInterface::new();
+        position.set_direction_instantly(Direction::from_raw(8));
+
+        // The next movement order points north (sector 0), but Original does
+        // not install that direction goal until after this Execute prologue.
+        turn_drunken(&mut position);
+        assert_eq!(position.get_direction(), Direction::from_raw(8));
+        assert_eq!(position.get_direction_goal(), Direction::from_raw(8));
+
+        // Mirror the later PerformMotion/ComputeIncrementAll goal update: the
+        // sprite keeps the old facing for this frame while future drunken
+        // turns now see the new target.
+        position.set_direction(Direction::from_raw(0));
+        assert_eq!(position.get_direction(), Direction::from_raw(8));
+        assert_eq!(position.get_direction_goal(), Direction::from_raw(0));
+    }
+
+    #[test]
+    fn seek_movement_does_not_add_a_drunken_turn_before_perform_seek() {
+        assert!(!should_apply_drunken_turn(
+            true,
+            crate::order::OrderType::WalkingUpright
+        ));
+        assert!(should_apply_drunken_turn(
+            false,
+            crate::order::OrderType::WalkingUpright
+        ));
+    }
+
+    #[test]
+    fn drunken_and_seek_turn_branches_match_original_execute_matrix() {
+        for (name, drunk, seek, action, expect_drunken, expect_plain) in [
+            (
+                "drunk ordinary walk",
+                true,
+                false,
+                crate::order::OrderType::WalkingUpright,
+                true,
+                false,
+            ),
+            (
+                "drunk seek walk",
+                true,
+                true,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "drunk startup transition",
+                true,
+                false,
+                crate::order::OrderType::TransitionWaitingUprightWalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "sober ordinary walk",
+                false,
+                false,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "sober seek walk",
+                false,
+                true,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
+        ] {
+            assert_eq!(
+                drunk && should_apply_drunken_turn(seek, action),
+                expect_drunken,
+                "{name}: TurnDrunken branch"
+            );
+            let flags = if seek {
+                crate::sequence::MoveFlags::SEEK
+            } else {
+                crate::sequence::MoveFlags::empty()
+            };
+            assert_eq!(
+                should_apply_plain_movement_turn(drunk, flags, action),
+                expect_plain,
+                "{name}: plain Turn branch"
+            );
+        }
     }
 }
 

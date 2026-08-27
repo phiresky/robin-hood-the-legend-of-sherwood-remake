@@ -34,6 +34,38 @@ fn strike_collector_angles_and_push_width_keep_original_conversions() {
 }
 
 #[test]
+fn strike_estimation_collects_inactive_principal_only() {
+    let attacker = EntityId::Pc(crate::element::PcId(1));
+    let principal = EntityId::Soldier(crate::element::SoldierId(2));
+    let bystander = EntityId::Soldier(crate::element::SoldierId(3));
+
+    assert!(should_collect_strike_estimation_human(
+        principal,
+        attacker,
+        Some(principal),
+        false,
+    ));
+    assert!(!should_collect_strike_estimation_human(
+        bystander,
+        attacker,
+        Some(principal),
+        false,
+    ));
+    assert!(should_collect_strike_estimation_human(
+        bystander,
+        attacker,
+        Some(principal),
+        true,
+    ));
+    assert!(!should_collect_strike_estimation_human(
+        attacker,
+        attacker,
+        Some(attacker),
+        true,
+    ));
+}
+
+#[test]
 fn push_warning_and_done_effect_keep_distinct_elevation_and_max_norm_gates() {
     assert!(push_strike_elevation_allows(
         PushStrikePositionSpace::Map,
@@ -8492,6 +8524,207 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
             .opponents
             .contains(&opponent),
         "relationship changes still belong to Instruct"
+    );
+}
+
+#[test]
+fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let owner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+    let opponent = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 10.0,
+            ..WorldPoint3D::default()
+        },
+        None,
+    ));
+
+    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
+        1,
+        Command::SwordstrikeThrustA,
+        Some(owner),
+        Some(opponent),
+    ));
+    let mut enter =
+        crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+    enter.set_property(
+        crate::sequence::Field::Opponent,
+        crate::sequence::FieldValue::Element(opponent),
+    );
+    let admission = engine.launch_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((admission, 0), Some((postponed, 0)));
+
+    let Entity::Pc(opponent_entity) = engine.get_entity_mut(opponent).unwrap() else {
+        unreachable!("test opponent must remain a PC")
+    };
+    opponent_entity.pc.life_points = 0;
+
+    engine.dispatch_enter_swordfight(
+        &sim,
+        &LevelAssets::default(),
+        owner,
+        Some(opponent),
+        admission,
+        0,
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(admission, 0)
+            .unwrap()
+            .cross_postponed,
+        None,
+        "failed admission must sever the restart edge before terminal callbacks"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(postponed, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Impossible,
+        "the matching THRUST_A prerequisite must not recreate the failed admission"
+    );
+}
+
+#[test]
+fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let owner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+    let opponent = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 10.0,
+            ..WorldPoint3D::default()
+        },
+        None,
+    ));
+    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
+        1,
+        Command::SwordstrikeThrustB,
+        Some(owner),
+        Some(opponent),
+    ));
+    let mut enter =
+        crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+    enter.set_property(
+        crate::sequence::Field::Opponent,
+        crate::sequence::FieldValue::Element(opponent),
+    );
+    let admission = engine.launch_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((admission, 0), Some((postponed, 0)));
+    let Entity::Pc(opponent_entity) = engine.get_entity_mut(opponent).unwrap() else {
+        unreachable!("test opponent must remain a PC")
+    };
+    opponent_entity.pc.life_points = 0;
+
+    engine.dispatch_enter_swordfight(
+        &sim,
+        &LevelAssets::default(),
+        owner,
+        Some(opponent),
+        admission,
+        0,
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(admission, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((postponed, 0)),
+        "failure cleanup is specific to the THRUST_A admission prerequisite"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(postponed, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Todo
+    );
+}
+
+#[test]
+fn successful_enter_swordfight_retains_postponed_thrust_a() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let owner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+    let opponent = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 10.0,
+            ..WorldPoint3D::default()
+        },
+        None,
+    ));
+    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
+        1,
+        Command::SwordstrikeThrustA,
+        Some(owner),
+        Some(opponent),
+    ));
+    let mut enter =
+        crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+    enter.set_property(
+        crate::sequence::Field::Opponent,
+        crate::sequence::FieldValue::Element(opponent),
+    );
+    let admission = engine.launch_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((admission, 0), Some((postponed, 0)));
+
+    engine.dispatch_enter_swordfight(
+        &sim,
+        &LevelAssets::default(),
+        owner,
+        Some(opponent),
+        admission,
+        0,
+    );
+
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .opponents
+            .contains(&opponent),
+        "control admission must succeed"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(admission, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((postponed, 0)),
+        "successful admission retains the normal prerequisite chain"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(postponed, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Todo
     );
 }
 

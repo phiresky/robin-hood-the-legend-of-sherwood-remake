@@ -743,7 +743,7 @@ mod tests {
         ("DoorFightDispersion", 2),
         ("DoorFightTarget", 1),
         ("DrunkCombatFreeze", 2),
-        ("DrunkenPathDeviation", 2),
+        ("DrunkenPathDeviation", 4),
         ("EnemySeekDirectionShuffle", 1),
         ("EnemySeekLook", 2),
         ("EnemyWonderingLook", 5),

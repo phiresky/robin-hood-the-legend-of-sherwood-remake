@@ -31,6 +31,14 @@ A list of which additional features we have added, which ones we might still wan
   Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.
 
+- **Mission-selective shipping data.** Converted shipping datadirs now contain
+  a compact boot manifest plus independently compressed mission cores and
+  shared per-character RHS sprite payloads. Native, Android, and browser builds
+  load only the files referenced by the selected mission; decoded files remain
+  cached when missions share characters or when the player returns to a
+  mission. Per-RHS grouping deliberately preserves the strong within-character
+  zstd matches measured in `docs/COMPRESSION.md`.
+
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise

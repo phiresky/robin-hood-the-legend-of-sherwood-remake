@@ -91,7 +91,6 @@ impl LegacyCameraAdoptionPlan {
         }
         validate_point("camera_slide", saved.camera_slide)?;
         validate_finite("desired_zoom_factor", saved.desired_zoom_factor)?;
-        validate_finite("old_zoom_factor", saved.old_zoom_factor)?;
         validate_point("camera_wanted", saved.camera_wanted)?;
         validate_background(&saved.background_transform)?;
 
@@ -121,7 +120,7 @@ impl LegacyCameraAdoptionPlan {
             camera_wanted: point(saved.camera_wanted),
             fixed_camera_speed: saved.fixed_camera_speed,
             desired_zoom_factor: saved.desired_zoom_factor,
-            old_zoom_factor: saved.old_zoom_factor,
+            old_zoom_factor: restore_old_zoom_factor(saved.old_zoom_factor, saved.zoom_factor),
             background_transform,
             locker: saved.locker,
         })
@@ -164,6 +163,20 @@ impl LegacyCameraAdoptionPlan {
             display_op: DisplayOpCode::Redraw,
             frame_scrolled: [false; 4],
         }
+    }
+}
+
+fn restore_old_zoom_factor(saved_old: f32, current: f32) -> f32 {
+    // The Original serializes this interpolation scratch field but never reads
+    // it after loading; every later zoom transition overwrites it from
+    // `mfZoomFactor` first (`RHengine.cpp:4285,4318,4523,4539`). Some retail
+    // restart saves consequently contain an uninitialized NaN here. Keep a
+    // valid serialized value verbatim, and give the otherwise-dead scratch
+    // field the same neutral value a newly-started transition would assign.
+    if saved_old.is_finite() {
+        saved_old
+    } else {
+        current
     }
 }
 
@@ -405,5 +418,12 @@ mod tests {
             Err(LegacyCameraAdoptionError::NonFinite { field, .. })
                 if field == "background.scrolling.y"
         ));
+    }
+
+    #[test]
+    fn normalizes_uninitialized_old_zoom_scratch_from_retail_restart_saves() {
+        assert_eq!(restore_old_zoom_factor(0.5, 1.0), 0.5);
+        assert_eq!(restore_old_zoom_factor(f32::NAN, 1.0), 1.0);
+        assert_eq!(restore_old_zoom_factor(f32::INFINITY, 2.0), 2.0);
     }
 }

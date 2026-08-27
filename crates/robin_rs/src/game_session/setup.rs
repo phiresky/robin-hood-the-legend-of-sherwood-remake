@@ -1185,11 +1185,12 @@ pub(super) fn load_level_and_sprite_bank(
             .mission_filename
             .clone()
     });
-    let mut scripts: std::collections::BTreeMap<String, engine_scb::ScbFile> = host
-        .shipping
-        .as_ref()
-        .map(|dd| dd.scripts.clone().into_iter().collect())
-        .unwrap_or_default();
+    let mut scripts: std::collections::BTreeMap<String, engine_scb::ScbFile> = mission_name
+        .as_deref()
+        .and_then(|name| host.shipping.as_ref().map(|dd| dd.mission_scripts(name)))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     if let Some(name) = mission_name.as_ref()
         && !scripts.contains_key(name)
     {
@@ -1252,13 +1253,25 @@ pub(super) fn load_level_and_sprite_bank(
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
-        engine_api::level_loading::load_mission_for_campaign(
-            &campaign,
-            &assets.profile_manager,
-            &level_directory,
-            &mut progress,
-        )
-        .map_err(|e| format!("Level load failed: {e}"))
+        if let Some(name) = mission_name.as_deref()
+            && let Some(level) = host
+                .shipping
+                .as_ref()
+                .and_then(|datadir| datadir.loaded_level(name))
+        {
+            tracing::info!(mission = name, "level loaded from shipping mission payload");
+            progress(1.0);
+            progress(1.0);
+            Ok(level)
+        } else {
+            engine_api::level_loading::load_mission_for_campaign(
+                &campaign,
+                &assets.profile_manager,
+                &level_directory,
+                &mut progress,
+            )
+            .map_err(|e| format!("Level load failed: {e}"))
+        }
     };
     let loaded = match loaded_result {
         Ok(loaded) => loaded,

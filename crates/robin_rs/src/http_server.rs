@@ -2244,7 +2244,7 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_rpc {
     use super::{
-        GLOBAL, HttpPayload, HttpRequest, NativeCall, Reply, ReplyBody, Responder,
+        GLOBAL, HttpPayload, HttpRequest, NativeCall, PlayerCommand, Reply, ReplyBody, Responder,
         ScreenshotRequest,
     };
     use wasm_bindgen::JsValue;

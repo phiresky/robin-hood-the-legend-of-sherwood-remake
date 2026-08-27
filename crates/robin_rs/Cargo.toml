@@ -15,9 +15,7 @@ crate-type = ["rlib"]
 [dependencies]
 robin_engine.workspace = true
 robin_assets.workspace = true
-robin_lua.workspace = true
 robin_util.workspace = true
-mlua.workspace = true
 tempfile.workspace = true
 ab_glyph = "0.2"
 geo = { workspace = true, features = ["serde"] }
@@ -35,6 +33,7 @@ jiff = "0.2"
 fastrand.workspace = true
 rand = "0.10"
 anyhow.workspace = true
+futures = "0.3"
 libc = "0.2"
 bytemuck = { workspace = true, features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
@@ -45,6 +44,10 @@ bitcode.workspace = true
 zstd.workspace = true
 base64 = "0.22"
 sha2 = "0.11"
+# Zip-backed custom missions are compiled on wasm too. Browser builds do not
+# currently mount host paths, but the shared picker/launch code still needs the
+# archive reader and in-memory overlay types to type-check.
+zip.workspace = true
 # Windowing + input
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
 gilrs = "0.11"
@@ -75,8 +78,12 @@ async-channel = "2"
 # `std::time::Instant::now()` panics on `wasm32-unknown-unknown`.
 web-time.workspace = true
 
-# Native-only: tiny blocking HTTP server for the script-RPC endpoint.
+# Native-only runtime integrations (Lua, filesystem/process services, and
+# networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+robin_lua.workspace = true
+mlua.workspace = true
+fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
@@ -89,8 +96,6 @@ tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time", "io-
 parking_lot = "0.12"
 # Real memory / CPU-frequency queries for the options-menu hardware line.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-# Read .zip mod packs for the custom-mission selector.
-zip.workspace = true
 # Serverless matchmaking: hosts announce games on a well-known
 # iroh-gossip topic whose peers are found through the BitTorrent
 # Mainline DHT (distributed-topic-tracker) — no broker, no
@@ -137,6 +142,7 @@ web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",
     "Location",
     "Performance",
+    "Response",
     "Storage",
     "Url",
     "UrlSearchParams",

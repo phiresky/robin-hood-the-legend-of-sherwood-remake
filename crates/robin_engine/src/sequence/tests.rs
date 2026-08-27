@@ -784,6 +784,7 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     for root in pending_snapshot {
         mgr.stop_pending_element_from_root(owner, root, SequencePriority::Preference, &resolver);
     }
+    mgr.compact_terminal_elements_to_go();
     assert_eq!(
         mgr.get_element(callback_look_seq, 0).unwrap().state,
         SequenceState::Interrupted,
@@ -801,6 +802,256 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
         mgr.v48_elements_to_go()
             .contains(&(pending_card_look_seq, 0))
     );
+}
+
+#[test]
+fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    // Replays retain a large amount of historical sequence state until the
+    // Friday cleanup pass. Keep enough unrelated sequences here to catch a
+    // regression that scans the whole manager for every stopped chain node.
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+    }
+
+    let mut chain = Vec::with_capacity(4096);
+    for _ in 0..4096 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        if let Some(&previous) = chain.last() {
+            mgr.get_element_mut(previous, 0).unwrap().cross_postponed = Some((sequence, 0));
+        }
+        chain.push(sequence);
+    }
+
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((chain[0], 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+
+    for sequence in chain {
+        let element = mgr.get_element(sequence, 0).unwrap();
+        assert_eq!(element.state, SequenceState::Interrupted);
+        assert_eq!(element.cross_postponed, None);
+    }
+}
+
+#[test]
+fn repeated_preference_stops_skip_growing_strong_postponed_prefix() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+
+    let mut root_element = make_simple_element(1, Command::QuitSwordfight, Some(owner));
+    root_element.priority = SequencePriority::PostponeEverythingButInjuries;
+    let root = mgr.launch_element(root_element);
+    mgr.element_in_progress(root, 0);
+
+    // EnterSwordfight can add one equal-priority postponed element between
+    // successive PrepareToEnterSwordFight Stop(PREFERENCE) calls. Original's
+    // pointer walk is effect-free for this graph; rescanning the full prefix
+    // after every append makes the Rust representation triangular.
+    let mut tail = root;
+    let mut chain = Vec::with_capacity(8192);
+    for _ in 0..8192 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::PostponeEverythingButInjuries;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((sequence, 0));
+        tail = sequence;
+        chain.push(sequence);
+
+        mgr.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    assert_eq!(
+        mgr.get_element(root, 0).unwrap().state,
+        SequenceState::InProgress
+    );
+    assert!(chain.iter().all(|sequence| {
+        mgr.get_element(*sequence, 0).unwrap().state == SequenceState::Postponed
+    }));
+
+    // The ceiling is only an admission shortcut. A newly linked weak tail
+    // must disable it and remain observable to the exact Original traversal.
+    let mut weak = make_simple_element(1, Command::Turn, Some(owner));
+    weak.priority = SequencePriority::Normal;
+    let weak = mgr.launch_element(weak);
+    mgr.postpone_element(weak, 0);
+    mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((weak, 0));
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    assert_eq!(
+        mgr.get_element(weak, 0).unwrap().state,
+        SequenceState::Interrupted
+    );
+}
+
+#[test]
+fn strong_owner_summary_does_not_hide_weak_same_sequence_successor() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let successor_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let mut sequence = Sequence::new();
+    let mut root = make_simple_element(1, Command::QuitSwordfight, Some(owner));
+    root.priority = SequencePriority::PostponeEverythingButInjuries;
+    sequence.append_element(root);
+    let mut successor = make_simple_element(2, Command::Turn, Some(successor_owner));
+    successor.priority = SequencePriority::Normal;
+    sequence.append_element(successor);
+    let sequence = mgr.launch_sequence(sequence);
+
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((sequence, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+
+    assert_eq!(
+        mgr.get_element(sequence, 1).unwrap().state,
+        SequenceState::Interrupted,
+        "actor-wide priority shortcut must preserve Original's same-sequence recursion"
+    );
+}
+
+#[test]
+fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+    }
+    let _ = mgr.hourglass();
+
+    let mut roots = Vec::with_capacity(2048);
+    for _ in 0..2048 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        roots.push(sequence);
+    }
+
+    for &sequence in &roots {
+        mgr.stop_owner_current_from_root(
+            owner,
+            Some((sequence, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    for sequence in roots {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
+}
+
+#[test]
+fn stop_pending_matching_batches_terminal_link_cleanup() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+    }
+
+    let mut matching = Vec::with_capacity(4096);
+    for _ in 0..4096 {
+        let mut element = make_simple_element(1, Command::ShootBow, Some(owner));
+        element.priority = SequencePriority::Normal;
+        matching.push(mgr.launch_element(element));
+    }
+
+    assert_eq!(
+        mgr.stop_pending_elements_matching(
+            owner,
+            Command::ShootBow,
+            SequencePriority::Preference,
+            &|element| element.priority,
+        ),
+        matching.len(),
+    );
+    for sequence in matching {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
+
+    // EnterSwordfight performs this check for every queued entry even when
+    // there is no bow work left. Keep the retained manager large enough that
+    // an accidental all-sequence terminal-link cleanup per no-op call is
+    // immediately visible in this stress regression.
+    for _ in 0..4096 {
+        assert_eq!(
+            mgr.stop_pending_elements_matching(
+                owner,
+                Command::ShootBow,
+                SequencePriority::Preference,
+                &|element| element.priority,
+            ),
+            0,
+        );
+    }
+}
+
+#[test]
+fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+    }
+    let _ = mgr.hourglass();
+
+    let mut roots = Vec::with_capacity(2048);
+    for _ in 0..2048 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        roots.push(mgr.launch_element(element));
+    }
+
+    for &sequence in &roots {
+        mgr.stop_pending_element_from_root(
+            owner,
+            (sequence, 0),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+    mgr.compact_terminal_elements_to_go();
+
+    for sequence in roots {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
 }
 
 #[test]
@@ -2599,6 +2850,38 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
             "dead Human::Instruct rejects queued {command:?}"
         );
     }
+}
+
+#[test]
+fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(197));
+    let mut mgr = SequenceManager::new();
+
+    let damage = mgr.launch_element(SequenceElement::new(1, Command::ReceiveDamage, Some(owner)));
+    let wait = mgr.launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+    mgr.postpone_element(wait, 0);
+    mgr.get_element_mut(damage, 0).unwrap().cross_postponed = Some((wait, 0));
+
+    let rejected = mgr.launch_element(SequenceElement::new(1, Command::WaitTimer, Some(owner)));
+    mgr.postpone_element(rejected, 0);
+
+    mgr.kill_owner_sequences(owner, damage);
+
+    assert_eq!(
+        mgr.get_element(wait, 0).unwrap().state,
+        SequenceState::Postponed,
+        "Original Human::Kill leaves the dead-admissible Wait queued behind lethal damage"
+    );
+    assert_eq!(
+        mgr.get_element(damage, 0).unwrap().cross_postponed,
+        Some((wait, 0)),
+        "death cleanup must preserve the replacement's transferred postponed chain"
+    );
+    assert_eq!(
+        mgr.get_element(rejected, 0).unwrap().state,
+        SequenceState::Interrupted,
+        "non-whitelisted postponed work must still be discarded on death"
+    );
 }
 
 fn pending_drop_ale_seek(

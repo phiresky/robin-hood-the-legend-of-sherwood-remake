@@ -21,6 +21,7 @@ pub struct NativeSessionCapabilities<'a> {
     mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
     sequence_manager: Option<RefCell<&'a mut crate::sequence::SequenceManager>>,
     selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
+    selected_action: Option<RefCell<&'a mut crate::profiles::Action>>,
     short_briefings: Option<RefCell<&'a mut crate::short_briefings::ShortBriefings>>,
     standard_view_radius: Option<RefCell<&'a mut u16>>,
     view_radius_cache: Option<RefCell<&'a mut crate::ai_vision::ViewRadiusCache>>,
@@ -46,6 +47,7 @@ impl<'a> NativeSessionCapabilities<'a> {
             mission_stat: None,
             sequence_manager: None,
             selected_pcs: None,
+            selected_action: None,
             short_briefings: None,
             standard_view_radius: None,
             view_radius_cache: None,
@@ -69,6 +71,13 @@ impl<'a> NativeSessionCapabilities<'a> {
         self.sound_sources = Some(RefCell::new(sound_sources));
         self.weather = Some(weather);
         self.frame_counter = Some(frame_counter);
+        self
+    }
+
+    /// Attach `RHMessenger::muwAction`, the globally armed player action.
+    /// This is intentionally separate from each PC's remembered action.
+    pub fn with_selected_action(mut self, action: &'a mut crate::profiles::Action) -> Self {
+        self.selected_action = Some(RefCell::new(action));
         self
     }
 
@@ -245,6 +254,15 @@ impl<'a> NativeSessionCapabilities<'a> {
     }
 
     #[doc(hidden)]
+    pub fn selected_action_option(&self) -> Option<RefMut<'_, crate::profiles::Action>> {
+        self.selected_action.as_ref().map(|selected_action| {
+            RefMut::map(selected_action.borrow_mut(), |selected_action| {
+                &mut **selected_action
+            })
+        })
+    }
+
+    #[doc(hidden)]
     pub fn short_briefings_option(
         &self,
     ) -> Option<RefMut<'_, crate::short_briefings::ShortBriefings>> {
@@ -315,6 +333,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) mission_stat: Option<RefMut<'ctx, crate::mission_stat::MissionStat>>,
     pub(crate) sequence_manager: Option<RefMut<'ctx, crate::sequence::SequenceManager>>,
     pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
+    pub(crate) selected_action: Option<RefMut<'ctx, crate::profiles::Action>>,
     pub(crate) short_briefings: Option<RefMut<'ctx, crate::short_briefings::ShortBriefings>>,
     pub(crate) standard_view_radius: Option<RefMut<'ctx, u16>>,
     pub(crate) view_radius_cache: Option<RefMut<'ctx, crate::ai_vision::ViewRadiusCache>>,
@@ -347,6 +366,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            selected_action: capabilities.selected_action_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
             view_radius_cache: capabilities.view_radius_cache_option(),
@@ -380,6 +400,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            selected_action: capabilities.selected_action_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
             view_radius_cache: capabilities.view_radius_cache_option(),
@@ -414,6 +435,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            selected_action: capabilities.selected_action_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
             view_radius_cache: capabilities.view_radius_cache_option(),
