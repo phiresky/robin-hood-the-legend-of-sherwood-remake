@@ -7032,7 +7032,17 @@ impl EngineInner {
                 actor
                     .active_door_pass
                     .as_ref()
-                    .map(|dp| (dp.door_index, entity.is_pc()))
+                    .map(|dp| dp.door_index)
+                    .or_else(|| {
+                        // Original v48 saves serialize the translated PassDoor
+                        // order chain and PositionInterface's live door, but
+                        // have no Rust-only ActiveDoorPass mirror.  Until the
+                        // first PassingDoor action consumes that pointer it is
+                        // the authoritative door for transition completion.
+                        let door = entity.position_iface().get_door();
+                        (!door.is_null()).then(|| crate::gate::DoorIndex::from(door.0))
+                    })
+                    .map(|door_index| (door_index, entity.is_pc()))
             })
         }) else {
             return;

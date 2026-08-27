@@ -3188,6 +3188,61 @@ mod tests {
     }
 
     #[test]
+    fn restored_ladder_pass_uses_serialized_live_door_for_transition_completion() {
+        use crate::element::ActionState;
+        use crate::position_interface::DoorHandle;
+
+        for (action, initial_posture, initial_state, expected_posture, expected_state) in [
+            (
+                OrderType::TransitionWaitingCrouchedClimbingLadderDown,
+                Posture::Crouched,
+                ActionState::Waiting,
+                Posture::OnLadder,
+                ActionState::Moving,
+            ),
+            (
+                OrderType::TransitionClimbingLadderDownWaitingUprightAlerted,
+                Posture::OnLadder,
+                ActionState::Moving,
+                Posture::Upright,
+                ActionState::Waiting,
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            engine
+                .script_domains
+                .interactables
+                .doors
+                .push(default_door());
+            let owner = engine.add_entity(make_pc(7));
+            {
+                let entity = engine.world.entities.get_mut(owner).unwrap();
+                entity.set_posture(initial_posture);
+                entity.actor_data_mut().unwrap().action_state = initial_state;
+                entity.position_iface_mut().set_door(DoorHandle(0), true);
+                assert!(entity.actor_data().unwrap().active_door_pass.is_none());
+            }
+
+            engine.apply_door_pass_transition_completion_side_effects(
+                &LevelAssets::new(),
+                owner,
+                action,
+            );
+
+            let entity = engine.world.entities.get(owner).unwrap();
+            assert_eq!(entity.element_data().posture, expected_posture);
+            assert_eq!(entity.actor_data().unwrap().action_state, expected_state);
+            if action == OrderType::TransitionWaitingCrouchedClimbingLadderDown {
+                assert_eq!(
+                    entity.element_data().position_map(),
+                    MapPoint::new(30.0, 30.0),
+                    "ladder-entry completion snaps to the serialized door's inside point"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn direct_door_completion_does_not_reconstruct_an_already_committed_endpoint() {
         let mut engine = EngineInner::new();
         let endpoint = MapPoint::new(250.0, 270.0);
