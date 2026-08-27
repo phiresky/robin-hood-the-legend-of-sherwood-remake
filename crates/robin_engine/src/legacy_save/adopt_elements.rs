@@ -5,7 +5,7 @@
 //! yet: later stages must first adopt the remaining leaf, sequence, AI, and
 //! manager state into the same candidate engine.
 
-use std::num::NonZeroU32;
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 use thiserror::Error;
 
@@ -39,8 +39,8 @@ use super::{
         LegacyStimulus, LegacyStimulusInfo, LegacyStimulusPosition,
     },
     payload_base::{
-        LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyNpcPayload,
-        LegacyNpcView, LegacyPoint2, LegacySpritePayload,
+        LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyLineRef,
+        LegacyNpcPayload, LegacyNpcView, LegacyPoint2, LegacySpritePayload,
     },
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
@@ -710,6 +710,12 @@ struct ConvertedLocalAiCommon {
     stimulus_queue: Vec<Stimulus>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SavedHumanGeometry {
+    map: MapPoint,
+    sector: Option<SectorHandle>,
+}
+
 impl LegacyStaticElementAdoption {
     /// Validate and convert every element record without mutating `engine`.
     pub fn preflight(
@@ -719,7 +725,8 @@ impl LegacyStaticElementAdoption {
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
     ) -> Result<Self, LegacyElementAdoptError> {
-        let line_topology = LegacyLineTopology::derive(engine)?;
+        let line_topology = LegacyLineTopology::derive(engine, assets)?;
+        let saved_human_geometries = saved_human_geometries(payloads, entities, position_topology)?;
         let mut records = Vec::with_capacity(payloads.records.len());
         for record in &payloads.records {
             if matches!(
@@ -772,6 +779,7 @@ impl LegacyStaticElementAdoption {
                     .map(|npc| {
                         convert_npc(
                             npc,
+                            engine,
                             runtime
                                 .npc_data()
                                 .expect("NPC kind was validated immediately above"),
@@ -782,6 +790,7 @@ impl LegacyStaticElementAdoption {
                             assets,
                             &engine.ai.global,
                             &line_topology,
+                            &saved_human_geometries,
                         )
                     })
                     .transpose()?,
@@ -1154,8 +1163,135 @@ fn convert_actor(
     })
 }
 
+fn saved_human_geometries(
+    payloads: &LegacyElementPayloadStream,
+    entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
+) -> Result<BTreeMap<EntityId, SavedHumanGeometry>, LegacyElementAdoptError> {
+    let mut geometries = BTreeMap::new();
+    for record in &payloads.records {
+        let position = match &record.payload {
+            LegacyElementPayload::ActorPc(pc) => &pc.human.actor.element.sprite.position,
+            LegacyElementPayload::ActorNpcSoldier(soldier) => {
+                &soldier.npc.human.actor.element.sprite.position
+            }
+            LegacyElementPayload::ActorNpcCivilian(civilian) => {
+                &civilian.npc.human.actor.element.sprite.position
+            }
+            _ => continue,
+        };
+        let creation_order = record.header.creation_order;
+        let entity_id = entities
+            .by_creation_order
+            .get(&creation_order)
+            .copied()
+            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
+        geometries.insert(
+            entity_id,
+            SavedHumanGeometry {
+                map: MapPoint::new(position.map.x, position.map.y),
+                sector: sector(
+                    position.sector.0,
+                    topology,
+                    creation_order,
+                    "position.sector",
+                )?,
+            },
+        );
+    }
+    Ok(geometries)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_saved_enemy_jump_line(
+    reference: LegacyLineRef,
+    primary_target: LegacyAiElementRef,
+    owner_id: EntityId,
+    owner_creation_order: u32,
+    entities: &LegacyEntityFixups,
+    geometries: &BTreeMap<EntityId, SavedHumanGeometry>,
+    topology: &LegacyLineTopology,
+    engine: &EngineInner,
+    assets: &LevelAssets,
+) -> Result<Option<crate::jump_line::JumpLineIndex>, LegacyElementAdoptError> {
+    match topology.resolve("local_ai.enemy.jump_line", reference) {
+        Ok(line) => return Ok(line),
+        Err(LegacyLineTopologyError::Missing { .. }) => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let target_id = entities
+        .resolve_ai_element(primary_target)?
+        .ok_or_else(|| shifted_enemy_line_error(reference, owner_creation_order, 0))?;
+    let target_creation_order = entities
+        .creation_order_by_entity
+        .get(&target_id)
+        .copied()
+        .ok_or_else(|| {
+            shifted_enemy_line_error(reference, owner_creation_order, target_id.index())
+        })?;
+    let owner_geometry = geometries.get(&owner_id).ok_or_else(|| {
+        shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
+    })?;
+    let target_geometry = geometries.get(&target_id).ok_or_else(|| {
+        shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
+    })?;
+    let owner_sector = owner_geometry.sector.ok_or_else(|| {
+        shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
+    })?;
+    let target_sector = target_geometry.sector.ok_or_else(|| {
+        shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
+    })?;
+    let owner =
+        engine
+            .world
+            .entities
+            .get(owner_id)
+            .ok_or(LegacyElementAdoptError::MissingEntity {
+                creation_order: owner_creation_order,
+                entity_id: owner_id,
+            })?;
+    let maximal_sword_range =
+        crate::engine::melee::get_hth_weapon_id_full(owner, &assets.profile_manager)
+            .and_then(|weapon| assets.profile_manager.get_hth_weapon(weapon))
+            .map(|weapon| weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
+            .ok_or_else(|| {
+                shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
+            })?;
+
+    topology
+        .resolve_enemy_jump_line(
+            "local_ai.enemy.jump_line",
+            reference,
+            &engine.world.fast_grid,
+            owner_creation_order,
+            owner_sector,
+            target_creation_order,
+            target_sector,
+            target_geometry.map,
+            maximal_sword_range,
+        )
+        .map_err(Into::into)
+}
+
+fn shifted_enemy_line_error(
+    reference: LegacyLineRef,
+    owner: u32,
+    target: u32,
+) -> LegacyElementAdoptError {
+    LegacyLineTopologyError::MissingGeometryIdentity {
+        field: "local_ai.enemy.jump_line",
+        layer: reference.layer.unwrap_or(u16::MAX),
+        index: reference.index.unwrap_or(-1),
+        owner,
+        target,
+    }
+    .into()
+}
+
 fn convert_npc(
     saved: &LegacyNpcPayload,
+    engine: &EngineInner,
     runtime: &NpcData,
     entity_id: EntityId,
     creation_order: u32,
@@ -1164,6 +1300,7 @@ fn convert_npc(
     assets: &LevelAssets,
     ai_global: &AiGlobalState,
     line_topology: &LegacyLineTopology,
+    saved_human_geometries: &BTreeMap<EntityId, SavedHumanGeometry>,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
     finite(
         saved.initial_position.x,
@@ -1265,6 +1402,8 @@ fn convert_npc(
             assets,
             ai_global,
             line_topology,
+            saved_human_geometries,
+            engine,
             alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
         )?,
     })
@@ -1452,6 +1591,8 @@ fn convert_local_ai(
     assets: &LevelAssets,
     ai_global: &AiGlobalState,
     line_topology: &LegacyLineTopology,
+    saved_human_geometries: &BTreeMap<EntityId, SavedHumanGeometry>,
+    engine: &EngineInner,
     view_alert_status: AlertLevel,
 ) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
     let owner = entities.resolve_ai_element(saved.common.owner)?;
@@ -1725,9 +1866,18 @@ fn convert_local_ai(
                     "local_ai.enemy.already_seen_bodies",
                     entities,
                 )?,
-                my_line_jump: line_topology
-                    .resolve("local_ai.enemy.jump_line", tail.jump_line)?
-                    .map(crate::jump_line::JumpLineIndex::get),
+                my_line_jump: resolve_saved_enemy_jump_line(
+                    tail.jump_line,
+                    saved.common.primary_target,
+                    entity_id,
+                    creation_order,
+                    entities,
+                    saved_human_geometries,
+                    line_topology,
+                    engine,
+                    assets,
+                )?
+                .map(crate::jump_line::JumpLineIndex::get),
                 shield_bearer_direction: tail.shield_bearer_direction,
                 phalanx_aborted: tail.phalanx_aborted,
                 changed_to_alert_path: tail.changed_to_alert_path,

@@ -280,7 +280,7 @@ impl LegacyPcHumanAdoptionPlan {
         live_campaign: &LegacyCampaign,
         assets: &LevelAssets,
     ) -> Result<Self, LegacyPcHumanAdoptError> {
-        let line_topology = LegacyLineTopology::derive(engine)?;
+        let line_topology = LegacyLineTopology::derive(engine, assets)?;
         let mut records = Vec::new();
         for record in &payloads.records {
             let creation_order = record.header.creation_order;
