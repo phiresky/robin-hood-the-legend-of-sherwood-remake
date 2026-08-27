@@ -1131,7 +1131,14 @@ impl EngineInner {
                             1,
                         );
                     }
-                    self.remove_entity(tick.net);
+                    // RemoveElement unlinks the net from Original's active
+                    // element arrays but deliberately leaves its allocation
+                    // alive because orders may still reference it. Preserve
+                    // that stable entity slot and only deactivate it here.
+                    self.get_entity_mut(tick.net)
+                        .expect("TakingNet net disappeared during deactivation")
+                        .element_data_mut()
+                        .active = false;
                     let actor = self
                         .get_entity_mut(tick.taker)
                         .and_then(Entity::actor_data_mut)
@@ -1638,7 +1645,12 @@ mod tests {
         );
 
         engine.drain_taking_net_ticks(&assets, vec![tick]);
-        assert!(engine.get_entity(net).is_none());
+        assert!(
+            !engine
+                .get_entity(net)
+                .expect("removed net allocation remains referenceable")
+                .is_active()
+        );
         assert_eq!(
             engine
                 .get_entity(taker)
