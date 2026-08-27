@@ -6232,12 +6232,28 @@ impl EngineInner {
         }
 
         // Pre-pass: drive the per-tick `TurnDrunken()` turn for every
-        // drunken soldier. `TurnDrunken()` picks
+        // drunken soldier on an ordinary movement. `TurnDrunken()` picks
         // between `TurnSlow(2)` and `TurnVerySlow()` (delay 5) so the
         // soldier's facing lags behind the movement vector.  This
         // must run before the main loop because the per-tick turn
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
+        //
+        // The soldier Execute branches call PerformSeek directly when
+        // RHMOVE_SEEK is set; they do not call TurnDrunken first. PerformSeek
+        // owns its normal Turn call, so adding this pre-pass there turns the
+        // actor twice in one frame.
+        let selected_uses_seek = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .is_some_and(|element| {
+                matches!(
+                    &element.data,
+                    crate::sequence::SequenceElementData::Movement { flags, .. }
+                        if flags.contains(crate::sequence::MoveFlags::SEEK)
+                )
+            });
         for (_, soldier) in self
             .world
             .entities
@@ -6250,7 +6266,7 @@ impl EngineInner {
                 .base()
                 .map(|b| b.blood_alcohol > 0)
                 .unwrap_or(false);
-            if !is_drunk {
+            if !is_drunk || !should_apply_drunken_turn(selected_uses_seek) {
                 continue;
             }
             // Compute the movement goal vector.  Skip entities without
@@ -12298,9 +12314,13 @@ fn turn_drunken(pi: &mut crate::position_interface::PositionInterface) {
     }
 }
 
+fn should_apply_drunken_turn(selected_uses_seek: bool) -> bool {
+    !selected_uses_seek
+}
+
 #[cfg(test)]
 mod drunken_turn_timing_tests {
-    use super::turn_drunken;
+    use super::{should_apply_drunken_turn, turn_drunken};
     use crate::position_interface::{Direction, PositionInterface};
 
     #[test]
@@ -12320,6 +12340,12 @@ mod drunken_turn_timing_tests {
         position.set_direction(Direction::from_raw(0));
         assert_eq!(position.get_direction(), Direction::from_raw(8));
         assert_eq!(position.get_direction_goal(), Direction::from_raw(0));
+    }
+
+    #[test]
+    fn seek_movement_does_not_add_a_drunken_turn_before_perform_seek() {
+        assert!(!should_apply_drunken_turn(true));
+        assert!(should_apply_drunken_turn(false));
     }
 }
 
