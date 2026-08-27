@@ -1,10 +1,10 @@
 {
   "title": "Four Armies — 12 Soldiers Each",
-  "map_filename": "Nottingham",
+  "map_filename": "OpenBattlefield",
   "reveal_all": true,
-  "spawn": [300, 300],
+  "spawn": [1222, 1772],
   "spawn_player": false,
-  "walkable_polygon": [[200, 200], [2250, 200], [2250, 3450], [200, 3450]],
+  "walkable_polygon": [[80, 80], [2992, 80], [2992, 2992], [80, 2992]],
   "volumes": [],
   "soldiers": [
     {"position": [1030, 1635], "profile": "guard_a01",  "allegiance": 2, "direction": 6},
