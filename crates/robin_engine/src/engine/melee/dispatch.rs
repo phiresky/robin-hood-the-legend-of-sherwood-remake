@@ -262,6 +262,26 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        let preparation = self.orders.sequence_manager.take_swordfight_preparation(
+            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+        );
+        if let Some(pair) = preparation {
+            return super::swordfight::with_deferred_swordfight_preparation(pair, || {
+                self.dispatch_enter_swordfight_impl(sim, assets, owner, opponent, seq_id, elem_idx)
+            });
+        }
+        self.dispatch_enter_swordfight_impl(sim, assets, owner, opponent, seq_id, elem_idx)
+    }
+
+    fn dispatch_enter_swordfight_impl(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        opponent: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
         let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
             config.frame == self.control.frame_counter
                 && (config.participant == owner.index()

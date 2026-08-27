@@ -1810,6 +1810,9 @@ impl EngineInner {
         &mut self,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
+        let swordfight_preparation = (elem.command == crate::element::Command::EnterSwordfight)
+            .then(crate::engine::melee::active_swordfight_preparation)
+            .flatten();
         let attentive_owner = elem.owner.filter(|_| {
             matches!(
                 elem.command,
@@ -1827,6 +1830,12 @@ impl EngineInner {
             );
         }
         let seq_id = self.orders.sequence_manager.launch_element(elem);
+        if let Some(pair) = swordfight_preparation {
+            self.orders.sequence_manager.attach_swordfight_preparation(
+                crate::sequence::SequenceElementRef::new(seq_id, 0),
+                pair,
+            );
+        }
         if let Some(owner) = attentive_owner {
             self.trace_attentive_owner_handoff(
                 "launch_after",

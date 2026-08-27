@@ -2624,6 +2624,7 @@ mod evaluate;
 mod speech;
 mod strikes;
 mod swordfight;
+pub(in crate::engine) use swordfight::active_swordfight_preparation;
 
 #[cfg(test)]
 mod tests;

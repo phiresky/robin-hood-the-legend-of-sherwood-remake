@@ -57,10 +57,32 @@ fn with_swordfight_preparation_scope<R>(
     Some(body())
 }
 
+pub(in crate::engine) fn active_swordfight_preparation() -> Option<(EntityId, EntityId)> {
+    SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow().last().copied())
+}
+
+pub(in crate::engine) fn with_deferred_swordfight_preparation<R>(
+    pair: (EntityId, EntityId),
+    body: impl FnOnce() -> R,
+) -> R {
+    let already_active = SWORDFIGHT_PREPARATION_STACK
+        .with(|stack| stack.borrow().iter().any(|active| *active == pair));
+    if already_active {
+        return body();
+    }
+    SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow_mut().push(pair));
+    let _guard = SwordfightPreparationGuard { pair };
+    body()
+}
+
 #[cfg(test)]
 mod preparation_scope_tests {
-    use super::with_swordfight_preparation_scope;
-    use crate::element::{EntityId, PcId, SoldierId};
+    use super::{
+        active_swordfight_preparation, with_deferred_swordfight_preparation,
+        with_swordfight_preparation_scope,
+    };
+    use crate::element::{Command, EntityId, PcId, SoldierId};
+    use crate::sequence::{SequenceElement, SequenceElementRef, SequenceManager};
 
     #[test]
     fn reciprocal_same_pair_reentry_allocates_once() {
@@ -101,6 +123,66 @@ mod preparation_scope_tests {
         .expect("outer preparation should run");
 
         assert_eq!(preparations, [first_opponent, second_opponent]);
+    }
+
+    #[test]
+    fn deferred_same_pair_token_is_one_shot_and_cancellation_drops_it() {
+        let actor = EntityId::Soldier(SoldierId(82));
+        let opponent = EntityId::Pc(PcId(134));
+        let pair = (actor, opponent);
+        let mut manager = SequenceManager::new();
+
+        let sequence_id = with_swordfight_preparation_scope(actor, opponent, || {
+            let sequence_id = manager.launch_element(SequenceElement::new_generic(
+                1,
+                Command::EnterSwordfight,
+                Some(opponent),
+            ));
+            manager.attach_swordfight_preparation(
+                SequenceElementRef::new(sequence_id, 0),
+                active_swordfight_preparation().expect("preparation scope must be active"),
+            );
+            sequence_id
+        })
+        .expect("outer preparation should run");
+
+        let token = manager
+            .take_swordfight_preparation(SequenceElementRef::new(sequence_id, 0))
+            .expect("deferred Enter must inherit its preparation scope");
+        let mut repeated_prepare_ran = false;
+        with_deferred_swordfight_preparation(token, || {
+            assert!(
+                with_swordfight_preparation_scope(actor, opponent, || {
+                    repeated_prepare_ran = true;
+                })
+                .is_none()
+            );
+        });
+        assert!(!repeated_prepare_ran);
+        assert!(
+            manager
+                .take_swordfight_preparation(SequenceElementRef::new(sequence_id, 0))
+                .is_none(),
+            "dispatch consumes the continuation token exactly once"
+        );
+        assert!(
+            with_swordfight_preparation_scope(actor, opponent, || {}).is_some(),
+            "a later independent admission remains allowed"
+        );
+
+        let cancelled_id = manager.launch_element(SequenceElement::new_generic(
+            1,
+            Command::EnterSwordfight,
+            Some(opponent),
+        ));
+        manager.attach_swordfight_preparation(SequenceElementRef::new(cancelled_id, 0), pair);
+        manager.element_impossible(cancelled_id, 0);
+        assert!(
+            manager
+                .take_swordfight_preparation(SequenceElementRef::new(cancelled_id, 0))
+                .is_none(),
+            "terminal cancellation must not leak a preparation token"
+        );
     }
 }
 
