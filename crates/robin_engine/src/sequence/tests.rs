@@ -843,6 +843,40 @@ fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
 }
 
 #[test]
+fn stop_pending_matching_batches_terminal_link_cleanup() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+    }
+
+    let mut matching = Vec::with_capacity(4096);
+    for _ in 0..4096 {
+        let mut element = make_simple_element(1, Command::ShootBow, Some(owner));
+        element.priority = SequencePriority::Normal;
+        matching.push(mgr.launch_element(element));
+    }
+
+    assert_eq!(
+        mgr.stop_pending_elements_matching(
+            owner,
+            Command::ShootBow,
+            SequencePriority::Preference,
+            &|element| element.priority,
+        ),
+        matching.len(),
+    );
+    for sequence in matching {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
+}
+
+#[test]
 fn stop_owner_walks_nested_cross_postponed_graph() {
     let mut mgr = SequenceManager::new();
     let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));

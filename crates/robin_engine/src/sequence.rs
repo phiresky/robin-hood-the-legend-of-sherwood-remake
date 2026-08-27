@@ -6042,7 +6042,6 @@ impl SequenceManager {
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) -> usize {
         let mut to_remove = Vec::new();
-        let mut stopped = Vec::new();
 
         for i in 0..self.elements_to_go.len() {
             let (seq_id, elem_idx) = self.elements_to_go[i];
@@ -6066,14 +6065,17 @@ impl SequenceManager {
                 .expect("validated pending sequence disappeared")
                 .stop_element(elem_idx, stop_priority, resolver);
             for effects in effects_vec {
-                self.process_effects(seq_id, effects, "stop_pending_elements_matching");
+                self.process_effects_deferring_cross_cleanup(
+                    seq_id,
+                    effects,
+                    "stop_pending_elements_matching",
+                );
             }
 
             if let Some(seq) = self.sequences.get(&seq_id)
                 && seq.elements[elem_idx].state == SequenceState::Interrupted
             {
                 to_remove.push(i);
-                stopped.push((seq_id, elem_idx));
             }
         }
 
@@ -6102,28 +6104,23 @@ impl SequenceManager {
                 .expect("collected postponed sequence disappeared")
                 .stop_element(elem_idx, stop_priority, resolver);
             for effects in effects_vec {
-                self.process_effects(seq_id, effects, "stop_postponed_elements_matching");
+                self.process_effects_deferring_cross_cleanup(
+                    seq_id,
+                    effects,
+                    "stop_postponed_elements_matching",
+                );
             }
 
             if let Some(seq) = self.sequences.get(&seq_id)
                 && seq.elements[elem_idx].state == SequenceState::Interrupted
             {
-                stopped.push((seq_id, elem_idx));
                 stopped_count += 1;
             }
         }
 
-        if !stopped.is_empty() {
-            for seq in self.sequences.values_mut() {
-                for elem in &mut seq.elements {
-                    if let Some(cross) = elem.cross_postponed
-                        && stopped.contains(&cross)
-                    {
-                        elem.cross_postponed = None;
-                    }
-                }
-            }
-        }
+        // As in `stop_owner_current_from_root`, clear inbound links once for
+        // the completed batch instead of rescanning the complete manager for
+        // every matching pending or postponed element.
         self.clear_terminal_cross_postponed_links();
 
         stopped_count
