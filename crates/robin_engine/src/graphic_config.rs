@@ -173,8 +173,8 @@ impl Default for GraphicConfig {
             display_shadow: true,
             framed_view_cone: false,
             display_titbits: true,
-            resolution_x: 800.0,
-            resolution_y: 600.0,
+            resolution_x: 1024.0,
+            resolution_y: 768.0,
             fullscreen: false,
             hardware_cursor: true,
             scale_mode: TextureScaleMode::default(),
@@ -213,8 +213,8 @@ mod tests {
         assert!(cfg.display_shadow);
         assert!(!cfg.framed_view_cone);
         assert!(cfg.display_titbits);
-        assert_eq!(cfg.resolution_x, 800.0);
-        assert_eq!(cfg.resolution_y, 600.0);
+        assert_eq!(cfg.resolution_x, 1024.0);
+        assert_eq!(cfg.resolution_y, 768.0);
         assert!(!cfg.fullscreen);
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);

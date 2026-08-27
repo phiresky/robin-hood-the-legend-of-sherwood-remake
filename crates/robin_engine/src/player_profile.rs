@@ -293,7 +293,7 @@ impl PlayerProfileManager {
     ///
     /// Convenience wrapper around [`create_profile_with_screen_dims`]
     /// for callers that have no live screen dimensions to offer (the
-    /// resolution-fallback chain collapses to `active.resolution → 800×600`).
+    /// resolution-fallback chain collapses to `active.resolution → 1024×768`).
     pub fn create_profile(&mut self, name: String, difficulty: DifficultyLevel) -> usize {
         self.create_profile_with_screen_dims(name, difficulty, None)
     }
@@ -302,7 +302,7 @@ impl PlayerProfileManager {
     /// priority chain:
     ///   1. If an active profile exists, copy its resolution.
     ///   2. Else if `screen_dims` is `Some` (window already open), use it.
-    ///   3. Else fall back to 800×600.
+    ///   3. Else fall back to 1024×768.
     pub fn create_profile_with_screen_dims(
         &mut self,
         name: String,
@@ -320,7 +320,7 @@ impl PlayerProfileManager {
             profile.graphic_config.resolution_x = w as f32;
             profile.graphic_config.resolution_y = h as f32;
         }
-        // Else: GraphicConfig::default() already produces 800×600.
+        // Else: GraphicConfig::default() already produces 1024×768.
 
         self.profiles.push(profile);
         self.profiles.len() - 1
