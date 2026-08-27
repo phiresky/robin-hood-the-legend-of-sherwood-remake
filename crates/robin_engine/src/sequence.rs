@@ -5110,17 +5110,18 @@ impl SequenceManager {
                 if elem.owner != Some(actor) {
                     continue;
                 }
-                let pending_command_admitted_while_dead = elem.state == SequenceState::Todo
-                    && matches!(
-                        elem.command,
-                        Command::ReceiveHitDamage
-                            | Command::ReceiveSwordDamage
-                            | Command::ReceiveArrowDamage
-                            | Command::ReceiveDamage
-                            | Command::ReceiveMobileDamage
-                            | Command::Wait
-                            | Command::GetKilledAtBottom
-                    );
+                let pending_command_admitted_while_dead =
+                    matches!(elem.state, SequenceState::Todo | SequenceState::Postponed)
+                        && matches!(
+                            elem.command,
+                            Command::ReceiveHitDamage
+                                | Command::ReceiveSwordDamage
+                                | Command::ReceiveArrowDamage
+                                | Command::ReceiveDamage
+                                | Command::ReceiveMobileDamage
+                                | Command::Wait
+                                | Command::GetKilledAtBottom
+                        );
                 if pending_command_admitted_while_dead {
                     continue;
                 }

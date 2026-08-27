@@ -2690,6 +2690,38 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
     }
 }
 
+#[test]
+fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(197));
+    let mut mgr = SequenceManager::new();
+
+    let damage = mgr.launch_element(SequenceElement::new(1, Command::ReceiveDamage, Some(owner)));
+    let wait = mgr.launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+    mgr.postpone_element(wait, 0);
+    mgr.get_element_mut(damage, 0).unwrap().cross_postponed = Some((wait, 0));
+
+    let rejected = mgr.launch_element(SequenceElement::new(1, Command::WaitTimer, Some(owner)));
+    mgr.postpone_element(rejected, 0);
+
+    mgr.kill_owner_sequences(owner, damage);
+
+    assert_eq!(
+        mgr.get_element(wait, 0).unwrap().state,
+        SequenceState::Postponed,
+        "Original Human::Kill leaves the dead-admissible Wait queued behind lethal damage"
+    );
+    assert_eq!(
+        mgr.get_element(damage, 0).unwrap().cross_postponed,
+        Some((wait, 0)),
+        "death cleanup must preserve the replacement's transferred postponed chain"
+    );
+    assert_eq!(
+        mgr.get_element(rejected, 0).unwrap().state,
+        SequenceState::Interrupted,
+        "non-whitelisted postponed work must still be discarded on death"
+    );
+}
+
 fn pending_drop_ale_seek(
     owner: EntityId,
     destination: crate::coordinates::MapPoint,
