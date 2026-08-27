@@ -3123,257 +3123,271 @@ impl EngineInner {
     ) {
         use crate::sequence::PriorityDecision;
 
-        assert_ne!(
-            (blocker_seq, blocker_idx),
-            (waiter_seq, waiter_idx),
-            "engine_postpone cannot postpone a sequence element behind itself"
-        );
+        let mut blocker_seq = blocker_seq;
+        let mut blocker_idx = blocker_idx;
+        let mut depth = depth;
 
-        tracing::trace!(
-            target: "parity_launch",
-            depth,
-            blocker = ?(blocker_seq, blocker_idx),
-            waiter = ?(waiter_seq, waiter_idx),
-            "engine_postpone enter"
-        );
-
-        if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
-            let sequence_graph = |seq_id| {
-                self.orders
-                    .sequence_manager
-                    .get_sequence(seq_id)
-                    .map(|sequence| {
-                        sequence
-                            .elements
-                            .iter()
-                            .enumerate()
-                            .map(|(index, element)| {
-                                (
-                                    index,
-                                    element.owner,
-                                    element.command,
-                                    element.command_level,
-                                    element.state,
-                                    element.priority,
-                                    element
-                                        .orders
-                                        .iter()
-                                        .map(|order| (order.order_type, order.order_id, order.done))
-                                        .collect::<Vec<_>>(),
-                                    element.postponed_element_index,
-                                    element.cross_postponed,
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    })
-            };
-            let waiter_last_order = self
-                .orders
-                .sequence_manager
-                .get_element(waiter_seq, waiter_idx)
-                .and_then(|element| {
-                    element
-                        .orders
-                        .back()
-                        .map(|order| (order.order_type, order.order_id, order.done))
-                });
-            let blocker_graph = sequence_graph(blocker_seq);
-            let waiter_graph = sequence_graph(waiter_seq);
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                frame = self.control.frame_counter,
-                depth,
-                blocker = ?(blocker_seq, blocker_idx),
-                waiter = ?(waiter_seq, waiter_idx),
-                ?waiter_last_order,
-                ?blocker_graph,
-                ?waiter_graph,
-                "engine_postpone before topology arbitration"
+        // A single actor can legitimately retain thousands of equal-priority
+        // postponed elements. Original walks that chain recursively, but a
+        // Rust frame for this dispatcher is substantially larger and can
+        // exhaust the process stack first. The `Postpone` arm is a pure tail
+        // call, so walk that arm iteratively while retaining recursion for the
+        // non-tail `PostponeCurrent` topology rewrite.
+        loop {
+            assert_ne!(
+                (blocker_seq, blocker_idx),
+                (waiter_seq, waiter_idx),
+                "engine_postpone cannot postpone a sequence element behind itself"
             );
-        }
 
-        // If blocker already has a postponed successor, arbitrate
-        // between that existing successor and the new waiter.
-        let existing_postponed = self
-            .orders
-            .sequence_manager
-            .get_element(blocker_seq, blocker_idx)
-            .and_then(|e| e.cross_postponed);
-        if let Some((existing_seq, existing_idx)) = existing_postponed {
             tracing::trace!(
                 target: "parity_launch",
                 depth,
                 blocker = ?(blocker_seq, blocker_idx),
-                existing = ?(existing_seq, existing_idx),
-                "engine_postpone existing"
+                waiter = ?(waiter_seq, waiter_idx),
+                "engine_postpone enter"
             );
-            let existing_priority = self
+
+            if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
+                let sequence_graph = |seq_id| {
+                    self.orders
+                        .sequence_manager
+                        .get_sequence(seq_id)
+                        .map(|sequence| {
+                            sequence
+                                .elements
+                                .iter()
+                                .enumerate()
+                                .map(|(index, element)| {
+                                    (
+                                        index,
+                                        element.owner,
+                                        element.command,
+                                        element.command_level,
+                                        element.state,
+                                        element.priority,
+                                        element
+                                            .orders
+                                            .iter()
+                                            .map(|order| {
+                                                (order.order_type, order.order_id, order.done)
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        element.postponed_element_index,
+                                        element.cross_postponed,
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                };
+                let waiter_last_order = self
+                    .orders
+                    .sequence_manager
+                    .get_element(waiter_seq, waiter_idx)
+                    .and_then(|element| {
+                        element
+                            .orders
+                            .back()
+                            .map(|order| (order.order_type, order.order_id, order.done))
+                    });
+                let blocker_graph = sequence_graph(blocker_seq);
+                let waiter_graph = sequence_graph(waiter_seq);
+                tracing::trace!(
+                    target: "parity_owner_handoff",
+                    frame = self.control.frame_counter,
+                    depth,
+                    blocker = ?(blocker_seq, blocker_idx),
+                    waiter = ?(waiter_seq, waiter_idx),
+                    ?waiter_last_order,
+                    ?blocker_graph,
+                    ?waiter_graph,
+                    "engine_postpone before topology arbitration"
+                );
+            }
+
+            // If blocker already has a postponed successor, arbitrate
+            // between that existing successor and the new waiter.
+            let existing_postponed = self
                 .orders
                 .sequence_manager
-                .get_element(existing_seq, existing_idx)
-                .map(|e| e.priority)
-                .unwrap_or(crate::sequence::SequencePriority::None);
-            let waiter_priority = self
+                .get_element(blocker_seq, blocker_idx)
+                .and_then(|e| e.cross_postponed);
+            if let Some((existing_seq, existing_idx)) = existing_postponed {
+                tracing::trace!(
+                    target: "parity_launch",
+                    depth,
+                    blocker = ?(blocker_seq, blocker_idx),
+                    existing = ?(existing_seq, existing_idx),
+                    "engine_postpone existing"
+                );
+                let existing_priority = self
+                    .orders
+                    .sequence_manager
+                    .get_element(existing_seq, existing_idx)
+                    .map(|e| e.priority)
+                    .unwrap_or(crate::sequence::SequencePriority::None);
+                let waiter_priority = self
+                    .orders
+                    .sequence_manager
+                    .get_element(waiter_seq, waiter_idx)
+                    .map(|e| e.priority)
+                    .unwrap_or(crate::sequence::SequencePriority::None);
+
+                let decision =
+                    crate::sequence::decide_priorities(existing_priority, waiter_priority);
+                tracing::trace!(
+                    target: "parity_owner_handoff",
+                    frame = self.control.frame_counter,
+                    depth,
+                    blocker = ?(blocker_seq, blocker_idx),
+                    existing = ?(existing_seq, existing_idx),
+                    waiter = ?(waiter_seq, waiter_idx),
+                    ?existing_priority,
+                    ?waiter_priority,
+                    ?decision,
+                    "engine_postpone existing-successor branch"
+                );
+                match decision {
+                    PriorityDecision::Abandon => {
+                        // existing wins — take over waiter's postponed
+                        // chain and abandon waiter.
+                        self.orders.sequence_manager.take_over_postponed(
+                            existing_seq,
+                            existing_idx,
+                            waiter_seq,
+                            waiter_idx,
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(waiter_seq, waiter_idx);
+                        return;
+                    }
+                    PriorityDecision::Postpone => {
+                        // Waiter queues behind existing. This is a tail call;
+                        // continue iteratively so a long legitimate postponed
+                        // chain cannot overflow Rust's larger dispatcher stack.
+                        blocker_seq = existing_seq;
+                        blocker_idx = existing_idx;
+                        depth += 1;
+                        continue;
+                    }
+                    PriorityDecision::PostponeCurrent => {
+                        // existing becomes postponed behind waiter.  Keep
+                        // blocker→waiter link (set below after the fall-
+                        // through) and install existing behind waiter.
+                        // First detach existing from blocker's slot so we
+                        // don't leave a dangling link while recursing.
+                        if let Some(b) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(blocker_seq, blocker_idx)
+                        {
+                            b.cross_postponed = None;
+                        }
+                        self.engine_postpone_with_debug_depth(
+                            waiter_seq,
+                            waiter_idx,
+                            existing_seq,
+                            existing_idx,
+                            depth + 1,
+                        );
+                        // Fall through to install waiter in blocker's slot.
+                    }
+                    PriorityDecision::InterruptCurrent => {
+                        // waiter inherits existing's postponed chain;
+                        // existing becomes Interrupted. Original SetState calls
+                        // SendCondolationCard synchronously before the outer
+                        // Instruct resumes and installs waiter in blocker's slot.
+                        self.orders.sequence_manager.take_over_postponed(
+                            waiter_seq,
+                            waiter_idx,
+                            existing_seq,
+                            existing_idx,
+                        );
+                        if let Some(b) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(blocker_seq, blocker_idx)
+                        {
+                            b.cross_postponed = None;
+                        }
+                        self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
+                        self.orders.sequence_manager.element_interrupted(
+                            existing_seq,
+                            existing_idx,
+                            crate::sequence::CascadeFlags::NEXT_LEVEL,
+                        );
+                        self.orders
+                            .sequence_manager
+                            .install_cross_postponed_after_condolation(
+                                (existing_seq, existing_idx),
+                                (blocker_seq, blocker_idx),
+                                (waiter_seq, waiter_idx),
+                            );
+                        return;
+                    }
+                }
+            }
+
+            // When the waiter already has orders and its last order is
+            // done, just terminate it instead of postponing.  Otherwise
+            // install it in the blocker's postponed slot.
+            let should_terminate_instead = self
                 .orders
                 .sequence_manager
                 .get_element(waiter_seq, waiter_idx)
-                .map(|e| e.priority)
-                .unwrap_or(crate::sequence::SequencePriority::None);
+                .map(|e| {
+                    e.command != crate::element::Command::MoveOk
+                        && e.orders.back().is_some_and(|o| o.done)
+                })
+                .unwrap_or(false);
 
-            let decision = crate::sequence::decide_priorities(existing_priority, waiter_priority);
             tracing::trace!(
                 target: "parity_owner_handoff",
                 frame = self.control.frame_counter,
                 depth,
                 blocker = ?(blocker_seq, blocker_idx),
-                existing = ?(existing_seq, existing_idx),
                 waiter = ?(waiter_seq, waiter_idx),
-                ?existing_priority,
-                ?waiter_priority,
-                ?decision,
-                "engine_postpone existing-successor branch"
+                should_terminate_instead,
+                branch = if should_terminate_instead {
+                    "terminate_done_waiter"
+                } else {
+                    "install_postponed_waiter"
+                },
+                "engine_postpone final branch"
             );
-            match decision {
-                PriorityDecision::Abandon => {
-                    // existing wins — take over waiter's postponed
-                    // chain and abandon waiter.
-                    self.orders.sequence_manager.take_over_postponed(
-                        existing_seq,
-                        existing_idx,
-                        waiter_seq,
-                        waiter_idx,
-                    );
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(waiter_seq, waiter_idx);
-                    return;
+
+            if should_terminate_instead {
+                if let Some(e) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(waiter_seq, waiter_idx)
+                {
+                    e.orders.clear();
                 }
-                PriorityDecision::Postpone => {
-                    // waiter queues behind existing — recurse.
-                    self.engine_postpone_with_debug_depth(
-                        existing_seq,
-                        existing_idx,
-                        waiter_seq,
-                        waiter_idx,
-                        depth + 1,
-                    );
-                    return;
-                }
-                PriorityDecision::PostponeCurrent => {
-                    // existing becomes postponed behind waiter.  Keep
-                    // blocker→waiter link (set below after the fall-
-                    // through) and install existing behind waiter.
-                    // First detach existing from blocker's slot so we
-                    // don't leave a dangling link while recursing.
-                    if let Some(b) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(blocker_seq, blocker_idx)
-                    {
-                        b.cross_postponed = None;
-                    }
-                    self.engine_postpone_with_debug_depth(
-                        waiter_seq,
-                        waiter_idx,
-                        existing_seq,
-                        existing_idx,
-                        depth + 1,
-                    );
-                    // Fall through to install waiter in blocker's slot.
-                }
-                PriorityDecision::InterruptCurrent => {
-                    // waiter inherits existing's postponed chain;
-                    // existing becomes Interrupted. Original SetState calls
-                    // SendCondolationCard synchronously before the outer
-                    // Instruct resumes and installs waiter in blocker's slot.
-                    self.orders.sequence_manager.take_over_postponed(
-                        waiter_seq,
-                        waiter_idx,
-                        existing_seq,
-                        existing_idx,
-                    );
-                    if let Some(b) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(blocker_seq, blocker_idx)
-                    {
-                        b.cross_postponed = None;
-                    }
-                    self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
-                    self.orders.sequence_manager.element_interrupted(
-                        existing_seq,
-                        existing_idx,
-                        crate::sequence::CascadeFlags::NEXT_LEVEL,
-                    );
-                    self.orders
-                        .sequence_manager
-                        .install_cross_postponed_after_condolation(
-                            (existing_seq, existing_idx),
-                            (blocker_seq, blocker_idx),
-                            (waiter_seq, waiter_idx),
-                        );
-                    return;
-                }
+                self.orders
+                    .sequence_manager
+                    .element_terminated(waiter_seq, waiter_idx);
+                return;
             }
-        }
 
-        // When the waiter already has orders and its last order is
-        // done, just terminate it instead of postponing.  Otherwise
-        // install it in the blocker's postponed slot.
-        let should_terminate_instead = self
-            .orders
-            .sequence_manager
-            .get_element(waiter_seq, waiter_idx)
-            .map(|e| {
-                e.command != crate::element::Command::MoveOk
-                    && e.orders.back().is_some_and(|o| o.done)
-            })
-            .unwrap_or(false);
-
-        tracing::trace!(
-            target: "parity_owner_handoff",
-            frame = self.control.frame_counter,
-            depth,
-            blocker = ?(blocker_seq, blocker_idx),
-            waiter = ?(waiter_seq, waiter_idx),
-            should_terminate_instead,
-            branch = if should_terminate_instead {
-                "terminate_done_waiter"
-            } else {
-                "install_postponed_waiter"
-            },
-            "engine_postpone final branch"
-        );
-
-        if should_terminate_instead {
-            if let Some(e) = self
+            if let Some(b) = self
                 .orders
                 .sequence_manager
-                .get_element_mut(waiter_seq, waiter_idx)
+                .get_element_mut(blocker_seq, blocker_idx)
             {
-                e.orders.clear();
+                b.cross_postponed = Some((waiter_seq, waiter_idx));
             }
-            self.orders
-                .sequence_manager
-                .element_terminated(waiter_seq, waiter_idx);
+            self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
+            tracing::trace!(
+                target: "parity_launch",
+                depth,
+                blocker = ?(blocker_seq, blocker_idx),
+                waiter = ?(waiter_seq, waiter_idx),
+                "engine_postpone exit"
+            );
             return;
         }
-
-        if let Some(b) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(blocker_seq, blocker_idx)
-        {
-            b.cross_postponed = Some((waiter_seq, waiter_idx));
-        }
-        self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
-        tracing::trace!(
-            target: "parity_launch",
-            depth,
-            blocker = ?(blocker_seq, blocker_idx),
-            waiter = ?(waiter_seq, waiter_idx),
-            "engine_postpone exit"
-        );
     }
 
     fn prepare_cross_postponed_waiter(

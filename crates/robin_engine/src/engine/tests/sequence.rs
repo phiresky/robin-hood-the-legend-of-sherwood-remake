@@ -1720,6 +1720,57 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 }
 
 #[test]
+fn postponing_walks_long_equal_priority_chain_without_recursing() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut chain = Vec::with_capacity(4096);
+
+    for _ in 0..4096 {
+        let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::PostponeEverythingButInjuries;
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine.orders.sequence_manager.postpone_element(sequence, 0);
+        if let Some(&previous) = chain.last() {
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(previous, 0)
+                .unwrap()
+                .cross_postponed = Some((sequence, 0));
+        }
+        chain.push(sequence);
+    }
+
+    let mut waiter = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+    waiter.priority = SequencePriority::PostponeEverythingButInjuries;
+    let waiter_sequence = engine.orders.sequence_manager.launch_element(waiter);
+
+    engine.engine_postpone(chain[0], 0, waiter_sequence, 0);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(*chain.last().unwrap(), 0)
+            .unwrap()
+            .cross_postponed,
+        Some((waiter_sequence, 0)),
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(waiter_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed,
+    );
+}
+
+#[test]
 fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
