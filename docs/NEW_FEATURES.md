@@ -14,7 +14,8 @@ A list of which additional features we have added, which ones we might still wan
   their allegiance from the original hostile/attitude profile flags.
   Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
   autonomous PCs automatically enter swordfights with their nearest hostile
-  autonomous PC. Four launchable test arenas live under `mods/multi-team-*`:
+  autonomous PC and use the full A-I strike selection rather than passive PC
+  smalltalk attacks. Four launchable test arenas live under `mods/multi-team-*`:
   three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
   and autonomous Robin versus Little John. Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.

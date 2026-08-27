@@ -1107,7 +1107,27 @@ impl EngineInner {
         }
 
         if is_pc && !selected_pc {
-            self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
+            let autonomous = match self.get_entity(entity_id) {
+                Some(Entity::Pc(pc)) => pc.pc.autonomous,
+                Some(_) => panic!(
+                    "EvaluateSwordfight owner {entity_id:?} stopped being a PC before strike proposal"
+                ),
+                None => {
+                    panic!("EvaluateSwordfight owner {entity_id:?} vanished before strike proposal")
+                }
+            };
+            let launched = self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
+
+            // Normal deselected PCs retain the Original's passive smalltalk
+            // fallback below. Custom-mission autonomous PCs instead keep
+            // evaluating until a proper A-I strike is viable, making them
+            // full combatants rather than background sparring partners.
+            if autonomous {
+                if !launched {
+                    self.update_swordfight_distance(sim, assets, entity_id);
+                }
+                return;
+            }
         }
 
         if let Some(destination) = self.is_step_back_needed(sim, entity_id, assets) {
@@ -1182,7 +1202,7 @@ impl EngineInner {
         assets: &LevelAssets,
         pc_id: EntityId,
         target_id: EntityId,
-    ) {
+    ) -> bool {
         // Skip if PC already has an active strike in flight.
         let pc = self.get_entity(pc_id).unwrap_or_else(|| {
             panic!("EvaluateSwordfight strike proposal PC {pc_id:?} is missing")
@@ -1193,7 +1213,7 @@ impl EngineInner {
             .current_order_for_actor(pc_id)
             .is_some_and(|(_, _, order)| sword_strike_from_animation(order.order_type).is_some());
         if already_striking {
-            return;
+            return false;
         }
 
         // Read PC profile + sprite snapshots up front.
@@ -1214,6 +1234,7 @@ impl EngineInner {
         let fighting_ability = character.fighting;
         let direction = pc.element_data().direction();
         let elevation = pc.element_data().position().z;
+        let attacker_camp = pc.camp();
         let attacker_pos = (
             pc.element_data().position_map().x,
             pc.element_data().position_map().y,
@@ -1327,7 +1348,7 @@ impl EngineInner {
             is_rank_soldier: false,
             attacker_direction: direction,
             attacker_elevation: elevation,
-            attacker_camp: crate::element::Camp::Royalists,
+            attacker_camp,
             is_swordfighting,
             opponent_time_limit,
             strike_startup_frames: attacker_sprite_frames,
@@ -1385,7 +1406,7 @@ impl EngineInner {
 
         let strike = match proposed {
             Some(crate::combat::ProposedCombatAction::Strike(s)) => s,
-            _ => return,
+            _ => return false,
         };
 
         // Launch the strike as a per-target interaction.
@@ -1393,6 +1414,7 @@ impl EngineInner {
         let elem =
             crate::sequence::SequenceElement::new_interaction(1, cmd, Some(pc_id), Some(target_id));
         self.launch_element(elem);
+        true
     }
 
     /// Decides whether the actor should take a one-step backward
