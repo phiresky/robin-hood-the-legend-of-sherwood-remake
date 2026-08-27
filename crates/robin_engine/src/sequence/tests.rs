@@ -784,6 +784,7 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     for root in pending_snapshot {
         mgr.stop_pending_element_from_root(owner, root, SequencePriority::Preference, &resolver);
     }
+    mgr.compact_terminal_elements_to_go();
     assert_eq!(
         mgr.get_element(callback_look_seq, 0).unwrap().state,
         SequenceState::Interrupted,
@@ -888,6 +889,42 @@ fn stop_pending_matching_batches_terminal_link_cleanup() {
                 &|element| element.priority,
             ),
             0,
+        );
+    }
+}
+
+#[test]
+fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+    }
+    let _ = mgr.hourglass();
+
+    let mut roots = Vec::with_capacity(2048);
+    for _ in 0..2048 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        roots.push(mgr.launch_element(element));
+    }
+
+    for &sequence in &roots {
+        mgr.stop_pending_element_from_root(
+            owner,
+            (sequence, 0),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+    mgr.compact_terminal_elements_to_go();
+
+    for sequence in roots {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
         );
     }
 }

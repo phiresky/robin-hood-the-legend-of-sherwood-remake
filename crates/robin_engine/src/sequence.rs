@@ -3663,6 +3663,9 @@ impl SequenceManager {
 
     pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
         self.elements_to_go.contains(&(seq_id, elem_idx))
+            && self
+                .get_element(seq_id, elem_idx)
+                .is_some_and(|element| element.state != SequenceState::Interrupted)
     }
 
     /// Snapshot the deferred manager FIFO without changing registration.
@@ -5911,6 +5914,45 @@ impl SequenceManager {
         }
     }
 
+    /// Clear dead cross-postponed successors only from sequences visited by a
+    /// bounded Stop graph. This is the local equivalent of Original nulling a
+    /// postponed pointer while that recursive call unwinds.
+    fn clear_terminal_cross_postponed_links_in(&mut self, source_sequences: &HashSet<SequenceId>) {
+        let mut candidate_links = Vec::new();
+        for sequence_id in source_sequences {
+            let Some(sequence) = self.sequences.get(sequence_id) else {
+                continue;
+            };
+            for (element_index, element) in sequence.elements.iter().enumerate() {
+                if let Some(target) = element.cross_postponed {
+                    candidate_links.push((*sequence_id, element_index, target));
+                }
+            }
+        }
+
+        let dead_sources = candidate_links
+            .into_iter()
+            .filter_map(|(sequence_id, element_index, target)| {
+                self.get_element(target.0, target.1)
+                    .is_some_and(|target_element| {
+                        matches!(
+                            target_element.state,
+                            SequenceState::Terminated
+                                | SequenceState::Interrupted
+                                | SequenceState::Impossible
+                        )
+                    })
+                    .then_some((sequence_id, element_index))
+            })
+            .collect::<Vec<_>>();
+
+        for (sequence_id, element_index) in dead_sources {
+            self.get_element_mut(sequence_id, element_index)
+                .expect("visited cross-postponed source disappeared")
+                .cross_postponed = None;
+        }
+    }
+
     fn clear_cross_postponed_links_to(&mut self, target: (SequenceId, usize)) {
         for sequence in self.sequences.values_mut() {
             for element in &mut sequence.elements {
@@ -5936,6 +5978,7 @@ impl SequenceManager {
         // targets returned by Rust's split-storage representation.
         let roots = self.pending_elements_for_owner(owner);
         self.stop_pending_roots(owner, roots, stop_priority, resolver);
+        self.compact_terminal_elements_to_go();
     }
 
     /// Snapshot the entries which Original's
@@ -5947,10 +5990,27 @@ impl SequenceManager {
             .iter()
             .copied()
             .filter(|(seq_id, elem_idx)| {
-                self.get_element(*seq_id, *elem_idx)
-                    .is_some_and(|element| element.owner == Some(owner))
+                self.get_element(*seq_id, *elem_idx).is_some_and(|element| {
+                    element.owner == Some(owner) && element.state != SequenceState::Interrupted
+                })
             })
             .collect()
+    }
+
+    /// Physically remove terminal tombstones after a callback-separated
+    /// pending Stop scan. State-aware registration queries hide each stopped
+    /// entry immediately; compacting once after the snapshot finishes keeps
+    /// the stable manager queue identical to Original without an O(queue)
+    /// retain after every root.
+    pub(crate) fn compact_terminal_elements_to_go(&mut self) {
+        self.elements_to_go.retain(|(seq_id, elem_idx)| {
+            self.sequences.get(seq_id).is_none_or(|sequence| {
+                sequence
+                    .elements
+                    .get(*elem_idx)
+                    .is_none_or(|element| element.state != SequenceState::Interrupted)
+            })
+        });
     }
 
     /// Stop one root from a previously captured pending-list snapshot.
@@ -5975,6 +6035,7 @@ impl SequenceManager {
     ) {
         let mut targets = roots.into_iter().collect::<VecDeque<_>>();
         let mut visited = HashSet::new();
+        let mut touched_sequences = HashSet::new();
 
         while let Some((seq_id, elem_idx)) = targets.pop_front() {
             if !visited.insert((seq_id, elem_idx)) {
@@ -5986,6 +6047,7 @@ impl SequenceManager {
             if elem_idx >= seq.elements.len() {
                 continue;
             }
+            touched_sequences.insert(seq_id);
             assert_eq!(
                 seq.elements[elem_idx].owner,
                 Some(owner),
@@ -6011,15 +6073,12 @@ impl SequenceManager {
             }
         }
 
-        self.elements_to_go.retain(|(seq_id, elem_idx)| {
-            self.sequences.get(seq_id).is_none_or(|sequence| {
-                sequence
-                    .elements
-                    .get(*elem_idx)
-                    .is_none_or(|element| element.state != SequenceState::Interrupted)
-            })
-        });
-        self.clear_terminal_cross_postponed_links();
+        // This API is called once per captured pending root so the engine can
+        // dispatch that root's synchronous condolence before advancing the
+        // snapshot. A global retained-sequence cleanup here makes the whole
+        // scan quadratic. Every cross edge followed by this bounded Stop has
+        // its source in a touched sequence, so restrict cleanup to that set.
+        self.clear_terminal_cross_postponed_links_in(&touched_sequences);
     }
 
     /// Stop queued elements for `owner` whose command matches `command`.

@@ -3592,6 +3592,9 @@ impl EngineInner {
             }
             self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
+        self.orders
+            .sequence_manager
+            .compact_terminal_elements_to_go();
     }
 
     fn stop_owner_phase(
