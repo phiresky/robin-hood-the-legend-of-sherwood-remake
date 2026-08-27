@@ -1722,7 +1722,7 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 #[test]
 fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
     use crate::element::{Command, Posture};
-    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
@@ -1730,6 +1730,17 @@ fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
     root.priority = SequencePriority::PostponeEverythingButInjuries;
     let root = engine.orders.sequence_manager.launch_element(root);
     let mut tail = root;
+
+    // Unrelated weak/internal work for the same owner makes the owner-global
+    // Stop ceiling deliberately ineligible. The selected-chain aggregate must
+    // still prove that root's cross-only graph is effect-free.
+    let mut unrelated = Sequence::new();
+    for level in [1, 2] {
+        let mut element = SequenceElement::new(level, Command::Turn, Some(owner));
+        element.priority = SequencePriority::Normal;
+        unrelated.append_element(element);
+    }
+    let unrelated = engine.orders.sequence_manager.launch_sequence(unrelated);
 
     for _ in 0..8192 {
         let mut waiter = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
@@ -1746,6 +1757,12 @@ fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
             Some((waiter, 0)),
         );
         tail = waiter;
+        engine.orders.sequence_manager.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
     }
 
     assert_eq!(
@@ -1765,6 +1782,38 @@ fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
             .unwrap()
             .state,
         SequenceState::Postponed,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(unrelated, 0)
+            .unwrap()
+            .state,
+        SequenceState::Todo,
+        "selected Stop must not touch unrelated weak owner work"
+    );
+
+    // A weak element appended to the selected chain invalidates the strong
+    // aggregate and must be reached by the exact Original Stop traversal.
+    let mut weak = SequenceElement::new(1, Command::Turn, Some(owner));
+    weak.priority = SequencePriority::Normal;
+    let weak = engine.orders.sequence_manager.launch_element(weak);
+    engine.engine_postpone(root, 0, weak, 0);
+    engine.orders.sequence_manager.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(weak, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
     );
 }
 

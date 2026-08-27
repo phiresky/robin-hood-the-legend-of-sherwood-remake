@@ -2991,6 +2991,16 @@ struct ActorStopSummary {
     cross_only: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PostponeTailSummary {
+    tail: SequenceElementRef,
+    hops: usize,
+    weakest_priority: SequencePriority,
+    /// Every node in this cross chain has no same-sequence successor that a
+    /// Stop would additionally traverse.
+    cross_only: bool,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -3048,10 +3058,8 @@ pub struct SequenceManager {
     #[serde(skip)]
     #[bitcode(skip)]
     #[state_hash(skip)]
-    postpone_tail_cache: BTreeMap<
-        EntityId,
-        BTreeMap<(SequenceElementRef, SequencePriority), (SequenceElementRef, usize)>,
-    >,
+    postpone_tail_cache:
+        BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
@@ -5402,11 +5410,12 @@ impl SequenceManager {
                     root.0, root.1
                 )
             });
-        if let Some(&(tail, hops)) = self
+        if let Some(&summary) = self
             .postpone_tail_cache
             .get(&owner)
             .and_then(|cache| cache.get(&(root_ref, waiter_priority)))
         {
+            let tail = summary.tail;
             let tail_element = self
                 .get_element(tail.sequence_id, tail.element_index)
                 .unwrap_or_else(|| {
@@ -5426,11 +5435,13 @@ impl SequenceManager {
                 tail.sequence_id,
                 tail.element_index
             );
-            return ((tail.sequence_id, tail.element_index), hops, true);
+            return ((tail.sequence_id, tail.element_index), summary.hops, true);
         }
 
         let mut current = root;
         let mut hops = 0;
+        let mut weakest_priority = SequencePriority::NonInterruptable;
+        let mut cross_only = true;
         let mut visited = HashSet::new();
         loop {
             assert!(
@@ -5452,10 +5463,21 @@ impl SequenceManager {
                 current.0,
                 current.1
             );
+            weakest_priority = weakest_priority.max(element.priority);
+            cross_only &= self
+                .get_sequence(current.0)
+                .and_then(|sequence| sequence.following_element_index(current.1))
+                .is_none()
+                && element.postponed_element_index.is_none();
             let Some(next) = element.cross_postponed else {
                 self.postpone_tail_cache.entry(owner).or_default().insert(
                     (root_ref, waiter_priority),
-                    (SequenceElementRef::new(current.0, current.1), hops),
+                    PostponeTailSummary {
+                        tail: SequenceElementRef::new(current.0, current.1),
+                        hops,
+                        weakest_priority,
+                        cross_only,
+                    },
                 );
                 return (current, hops, true);
             };
@@ -5495,6 +5517,26 @@ impl SequenceManager {
             .and_then(|element| element.owner)
             .expect("postpone append waiter is missing or ownerless");
         assert_eq!(owner, waiter_owner, "postpone append crosses owners");
+        let prior_summary = *self
+            .postpone_tail_cache
+            .get(&owner)
+            .and_then(|cache| {
+                cache.get(&(SequenceElementRef::new(root.0, root.1), waiter_priority))
+            })
+            .expect("cacheable postpone append lost its root summary");
+        assert_eq!(
+            prior_summary.tail,
+            SequenceElementRef::new(blocker.0, blocker.1),
+            "cacheable postpone append blocker is not the cached tail"
+        );
+        assert_eq!(prior_summary.hops, prior_hops);
+        let waiter_cross_only = self
+            .get_sequence(waiter.0)
+            .and_then(|sequence| sequence.following_element_index(waiter.1))
+            .is_none()
+            && self
+                .get_element(waiter.0, waiter.1)
+                .is_some_and(|element| element.postponed_element_index.is_none());
         self.invalidate_postpone_tail_cache_for(owner);
         let blocker_element = self
             .get_element_mut(blocker.0, blocker.1)
@@ -5507,9 +5549,48 @@ impl SequenceManager {
         if decide_priorities(waiter_priority, waiter_priority) == PriorityDecision::Postpone {
             self.postpone_tail_cache.entry(owner).or_default().insert(
                 (SequenceElementRef::new(root.0, root.1), waiter_priority),
-                (SequenceElementRef::new(waiter.0, waiter.1), prior_hops + 1),
+                PostponeTailSummary {
+                    tail: SequenceElementRef::new(waiter.0, waiter.1),
+                    hops: prior_hops + 1,
+                    weakest_priority: prior_summary.weakest_priority.max(waiter_priority),
+                    cross_only: prior_summary.cross_only && waiter_cross_only,
+                },
             );
         }
+    }
+
+    fn selected_cross_chain_all_stronger(
+        &self,
+        root: (SequenceId, usize),
+        stop_priority: SequencePriority,
+    ) -> bool {
+        let Some(owner) = self
+            .get_element(root.0, root.1)
+            .and_then(|element| element.owner)
+        else {
+            return false;
+        };
+        let root_ref = SequenceElementRef::new(root.0, root.1);
+        let Some(summary) = self.postpone_tail_cache.get(&owner).and_then(|cache| {
+            cache.iter().find_map(|((cached_root, _), summary)| {
+                (*cached_root == root_ref).then_some(*summary)
+            })
+        }) else {
+            return false;
+        };
+        let tail = self
+            .get_element(summary.tail.sequence_id, summary.tail.element_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected Stop cache references missing tail {:?}/{}",
+                    summary.tail.sequence_id, summary.tail.element_index
+                )
+            });
+        assert!(
+            tail.cross_postponed.is_none(),
+            "selected Stop cache was not invalidated before its tail changed"
+        );
+        summary.cross_only && summary.weakest_priority < stop_priority
     }
 
     pub(crate) fn set_cross_postponed_link(
@@ -6124,10 +6205,13 @@ impl SequenceManager {
                         && element.priority == SequencePriority::Wait)
             })
         });
+        let selected_chain_is_all_stronger =
+            root.is_some_and(|root| self.selected_cross_chain_all_stronger(root, stop_priority));
         if root_is_live
-            && self.actor_stop_summary(owner).is_some_and(|summary| {
-                summary.cross_only && summary.weakest_priority < stop_priority
-            })
+            && (selected_chain_is_all_stronger
+                || self.actor_stop_summary(owner).is_some_and(|summary| {
+                    summary.cross_only && summary.weakest_priority < stop_priority
+                }))
         {
             tracing::trace!(
                 target: "parity_stop",
