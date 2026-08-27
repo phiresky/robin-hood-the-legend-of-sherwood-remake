@@ -36,7 +36,7 @@
       "profile": 0,
       "allegiance": 2,
       "direction": 0,
-      "autonomous": true
+      "autonomous": true, "aggressive_combat": true
     },
     {
       "position": [
@@ -46,7 +46,7 @@
       "profile": 2,
       "allegiance": 3,
       "direction": 8,
-      "autonomous": true
+      "autonomous": true, "aggressive_combat": true
     }
   ]
 }

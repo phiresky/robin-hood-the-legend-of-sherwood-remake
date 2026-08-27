@@ -1969,6 +1969,10 @@ pub struct PcData {
     /// are excluded from player selection.
     #[serde(default)]
     pub autonomous: bool,
+    /// Custom-mission combat tuning. This affects offensive decision cadence
+    /// only and is deliberately independent from autonomous control itself.
+    #[serde(default)]
+    pub aggressive_combat: bool,
 
     /// Whether the per-PC UI panel should be hidden.  Toggled today by
     /// the `CALL <initial> HIDEINTERFACE|DISPLAYINTERFACE` console
@@ -2108,6 +2112,7 @@ impl Default for PcData {
             campaign_description_index: None,
             playable: true,
             autonomous: false,
+            aggressive_combat: false,
             interface_hidden: false,
             current_action: Action::default(),
             saved_action: Action::default(),

@@ -28,9 +28,9 @@
     {"position": [1830, 1880], "profile": "officier_b03", "allegiance": 5, "direction": 8}
   ],
   "pcs": [
-    {"position": [1470, 1490], "profile": 0, "allegiance": 2, "direction": 4, "autonomous": true},
-    {"position": [1470, 2030], "profile": 2, "allegiance": 3, "direction": 12, "autonomous": true},
-    {"position": [1170, 1760], "profile": 3, "allegiance": 4, "direction": 0, "autonomous": true},
-    {"position": [1770, 1760], "profile": 4, "allegiance": 5, "direction": 8, "autonomous": true}
+    {"position": [1470, 1490], "profile": 0, "allegiance": 2, "direction": 4, "autonomous": true, "aggressive_combat": true},
+    {"position": [1470, 2030], "profile": 2, "allegiance": 3, "direction": 12, "autonomous": true, "aggressive_combat": true},
+    {"position": [1170, 1760], "profile": 3, "allegiance": 4, "direction": 0, "autonomous": true, "aggressive_combat": true},
+    {"position": [1770, 1760], "profile": 4, "allegiance": 5, "direction": 8, "autonomous": true, "aggressive_combat": true}
   ]
 }

@@ -945,6 +945,10 @@ pub struct RawPcRescue {
     pub allegiance: Option<u16>,
     #[serde(default)]
     pub autonomous: bool,
+    /// Skip the initial offensive hesitation roll while retaining all normal
+    /// strike legality, skill, timing, damage, tiredness, and defence rules.
+    #[serde(default)]
+    pub aggressive_combat: bool,
     /// Makes a custom-mission PC immediately player-controllable instead of
     /// treating it as a normal rescue target.
     #[serde(default)]
@@ -2023,6 +2027,9 @@ pub struct HackablePc {
     /// nearest hostile autonomous PC.
     #[serde(default)]
     pub autonomous: bool,
+    /// Opt-in high-activity combat behavior for autonomous battle examples.
+    #[serde(default)]
+    pub aggressive_combat: bool,
     #[serde(default)]
     pub playable: bool,
 }
@@ -2229,6 +2236,7 @@ impl LoadedLevel {
                 profile_index: pc.profile,
                 allegiance: Some(pc.allegiance),
                 autonomous: pc.autonomous,
+                aggressive_combat: pc.aggressive_combat,
                 playable: pc.playable,
                 attributes: 0,
                 script_class: None,
@@ -3532,6 +3540,7 @@ fn read_pcs_to_rescue(
             profile_index,
             allegiance: None,
             autonomous: false,
+            aggressive_combat: false,
             playable: false,
             attributes,
             script_class,
@@ -4712,7 +4721,7 @@ mod tests {
                     {"position": [80, 20], "profile": 1, "allegiance": 9}
                 ],
                 "pcs": [
-                    {"position": [50, 80], "profile": 2, "allegiance": 7, "autonomous": true}
+                    {"position": [50, 80], "profile": 2, "allegiance": 7, "autonomous": true, "aggressive_combat": true}
                 ]
             }"#,
         )
@@ -4724,6 +4733,7 @@ mod tests {
         assert_eq!(level.mission.soldiers[1].allegiance, Some(9));
         assert_eq!(level.mission.pcs_to_rescue[0].allegiance, Some(7));
         assert!(level.mission.pcs_to_rescue[0].autonomous);
+        assert!(level.mission.pcs_to_rescue[0].aggressive_combat);
     }
 
     #[test]
@@ -4734,6 +4744,20 @@ mod tests {
             ("multi-team-ten-way", "MultiTeamTenWay", 10, 0),
             ("multi-team-four-armies", "MultiTeamFourArmies", 48, 0),
             ("multi-team-four-grades", "MultiTeamFourGrades", 48, 0),
+            ("multi-team-all-pcs-circle", "MultiTeamAllPcsCircle", 0, 10),
+            (
+                "multi-team-arrow-crossfire",
+                "MultiTeamArrowCrossfire",
+                32,
+                0,
+            ),
+            ("multi-team-twenty-robins", "MultiTeamTwentyRobins", 20, 20),
+            (
+                "multi-team-champions-retinues",
+                "MultiTeamChampionsRetinues",
+                16,
+                4,
+            ),
             (
                 "multi-team-all-variants-wheel",
                 "MultiTeamAllVariantsWheel",
@@ -4774,8 +4798,53 @@ mod tests {
         );
         let duel = LoadedLevel::hackable_from_json(&fs::read(duel_path).unwrap()).unwrap();
         assert!(duel.mission.pcs_to_rescue.iter().all(|pc| pc.autonomous));
+        assert!(
+            duel.mission
+                .pcs_to_rescue
+                .iter()
+                .all(|pc| pc.aggressive_combat)
+        );
         assert_eq!(duel.mission.pcs_to_rescue[0].profile_index, 0);
         assert_eq!(duel.mission.pcs_to_rescue[1].profile_index, 2);
+
+        let pc_circle_path = repo
+            .join("mods/multi-team-all-pcs-circle/Data/Levels/MultiTeamAllPcsCircle.level.json");
+        let pc_circle =
+            LoadedLevel::hackable_from_json(&fs::read(pc_circle_path).unwrap()).unwrap();
+        assert!(
+            pc_circle
+                .mission
+                .pcs_to_rescue
+                .iter()
+                .all(|pc| pc.autonomous && pc.aggressive_combat)
+        );
+        let pc_profiles: std::collections::BTreeSet<_> = pc_circle
+            .mission
+            .pcs_to_rescue
+            .iter()
+            .map(|pc| pc.profile_index)
+            .collect();
+        let pc_allegiances: std::collections::BTreeSet<_> = pc_circle
+            .mission
+            .pcs_to_rescue
+            .iter()
+            .map(|pc| pc.allegiance)
+            .collect();
+        assert_eq!(pc_profiles, (0..10).collect());
+        assert_eq!(pc_allegiances.len(), 10);
+
+        let robins_path =
+            repo.join("mods/multi-team-twenty-robins/Data/Levels/MultiTeamTwentyRobins.level.json");
+        let robins = LoadedLevel::hackable_from_json(&fs::read(robins_path).unwrap()).unwrap();
+        assert!(robins.mission.soldiers.iter().all(|soldier| {
+            soldier.allegiance == Some(3) && soldier.profile_id.as_deref() == Some("soldier_b04")
+        }));
+        assert!(robins.mission.pcs_to_rescue.iter().all(|pc| {
+            pc.allegiance == Some(2)
+                && pc.profile_index == 0
+                && pc.autonomous
+                && pc.aggressive_combat
+        }));
 
         let armies_path =
             repo.join("mods/multi-team-four-armies/Data/Levels/MultiTeamFourArmies.level.json");

@@ -3190,6 +3190,7 @@ impl EngineInner {
                 &nearby,
                 &mut attack.boredom,
                 false,
+                false,
                 debug,
                 &mut sweep_rebase,
             );

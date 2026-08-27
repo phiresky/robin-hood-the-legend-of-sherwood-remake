@@ -1497,6 +1497,7 @@ pub fn propose_good_sword_strike(
         nearby,
         sword_strike_boredom,
         also_parade,
+        false,
         None,
         &mut None,
     )
@@ -1530,6 +1531,10 @@ pub(crate) fn propose_good_sword_strike_with_debug(
     nearby: &[NearbyVictim],
     sword_strike_boredom: &mut Vec<u16>,
     also_parade: bool,
+    // Custom-mission autonomous PCs use the ordinary strike evaluator but
+    // should not spend half their turns failing its initial hesitation roll.
+    // Candidate skill requirements and every other combat rule still apply.
+    skip_initial_skill_gate: bool,
     debug: Option<SwordStrikeProposalDebug>,
     sweep_rebase: &mut Option<StrikeSelectionSweepRebase>,
 ) -> Option<ProposedCombatAction> {
@@ -1589,7 +1594,7 @@ pub(crate) fn propose_good_sword_strike_with_debug(
             );
         }
     }
-    if skill_roll >= threshold {
+    if initial_strike_skill_gate_rejects(skill_roll, threshold, skip_initial_skill_gate) {
         if also_parade {
             // NPCs always get parade fallback. PCs need a second
             // fighting_ability roll — higher skill means they're more likely
@@ -1794,6 +1799,14 @@ pub(crate) fn propose_good_sword_strike_with_debug(
     result
 }
 
+fn initial_strike_skill_gate_rejects(
+    skill_roll: u32,
+    threshold: u32,
+    skip_initial_skill_gate: bool,
+) -> bool {
+    !skip_initial_skill_gate && skill_roll >= threshold
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Tests
 // ═══════════════════════════════════════════════════════════════════
@@ -1802,6 +1815,13 @@ pub(crate) fn propose_good_sword_strike_with_debug(
 mod tests {
     use super::*;
     use crate::profiles::*;
+
+    #[test]
+    fn aggressive_combat_skips_only_the_initial_strike_skill_gate() {
+        assert!(initial_strike_skill_gate_rejects(75, 50, false));
+        assert!(!initial_strike_skill_gate_rejects(75, 50, true));
+        assert!(!initial_strike_skill_gate_rejects(25, 50, false));
+    }
 
     fn default_ctx() -> ConcussionContext {
         ConcussionContext::default()

@@ -539,6 +539,7 @@ impl EngineInner {
                     immortal: config.highlander,
                     playable: raw.playable,
                     autonomous: raw.autonomous,
+                    aggressive_combat: raw.aggressive_combat,
                     ..Default::default()
                 },
             });

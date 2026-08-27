@@ -1,0 +1,22 @@
+{
+  "title": "All Heroes — Circle Free-for-All",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [1500, 1700],
+  "spawn_player": false,
+  "walkable_polygon": [[80, 80], [2428, 80], [2428, 2428], [80, 2428]],
+  "volumes": [],
+  "soldiers": [],
+  "pcs": [
+    {"position": [1760, 1700], "profile": 0, "allegiance": 2, "direction": 8, "autonomous": true, "aggressive_combat": true},
+    {"position": [1710, 1853], "profile": 1, "allegiance": 3, "direction": 10, "autonomous": true, "aggressive_combat": true},
+    {"position": [1580, 1947], "profile": 2, "allegiance": 4, "direction": 11, "autonomous": true, "aggressive_combat": true},
+    {"position": [1420, 1947], "profile": 3, "allegiance": 5, "direction": 13, "autonomous": true, "aggressive_combat": true},
+    {"position": [1290, 1853], "profile": 4, "allegiance": 6, "direction": 14, "autonomous": true, "aggressive_combat": true},
+    {"position": [1240, 1700], "profile": 5, "allegiance": 7, "direction": 0, "autonomous": true, "aggressive_combat": true},
+    {"position": [1290, 1547], "profile": 6, "allegiance": 8, "direction": 2, "autonomous": true, "aggressive_combat": true},
+    {"position": [1420, 1453], "profile": 7, "allegiance": 9, "direction": 3, "autonomous": true, "aggressive_combat": true},
+    {"position": [1580, 1453], "profile": 8, "allegiance": 10, "direction": 5, "autonomous": true, "aggressive_combat": true},
+    {"position": [1710, 1547], "profile": 9, "allegiance": 11, "direction": 6, "autonomous": true, "aggressive_combat": true}
+  ]
+}

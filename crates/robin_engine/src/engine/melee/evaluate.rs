@@ -1240,6 +1240,7 @@ impl EngineInner {
             pc.element_data().position_map().y,
         );
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
+        let aggressive_combat = pc_data.pc.aggressive_combat;
         let is_swordfighting = !pc_data.human.opponents.is_empty();
         let attacker_profile = assets
             .profile_manager
@@ -1378,6 +1379,7 @@ impl EngineInner {
             &nearby,
             &mut boredom,
             false,
+            aggressive_combat,
             debug,
             &mut sweep_rebase,
         );
@@ -2087,6 +2089,7 @@ impl EngineInner {
                 &nearby,
                 &mut pc_boredom,
                 true, // also_parade
+                false,
                 debug,
                 &mut sweep_rebase,
             );
@@ -2514,6 +2517,7 @@ impl EngineInner {
             &nearby,
             &mut victim_boredom,
             true, // also_parade — this is the reactive parry path
+            false,
             debug,
             &mut sweep_rebase,
         );

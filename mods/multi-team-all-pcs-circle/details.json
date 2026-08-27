@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-all-pcs-circle",
+  "title": "All Heroes — Circle Free-for-All",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Test"],
+  "description": "Every playable-character profile begins in an autonomous ten-way free-for-all around a compact circle.",
+  "hackable_mission": "MultiTeamAllPcsCircle"
+}
