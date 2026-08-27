@@ -4509,6 +4509,10 @@ impl EnemyAi {
                     GotoFlags::FIND_ACCESSIBLE,
                     ctx,
                 );
+                // RHArtificialMalignity::ReturnToDuty remembers where the
+                // patrol was interrupted so the soldier returns there after
+                // finishing this newly remembered ale.
+                self.return_to_patrol_point = ctx.position;
                 self.base.launch_timer(1, ctx.frame);
                 return;
             }
@@ -6924,6 +6928,43 @@ mod tests {
                 .all(|order| (order.target_x, order.target_y) != (100.0, 0.0)),
             "the near AI Position endpoint must not admit the raw-far chief"
         );
+    }
+
+    #[test]
+    fn return_to_duty_remembered_ale_saves_patrol_return_point() {
+        let sim = crate::sim_rng::test_context();
+        let here = Position {
+            x: 125.0,
+            y: 250.0,
+            sector: SectorHandle::new(4),
+            level: 2,
+        };
+        let ale_position = Position {
+            x: 400.0,
+            y: 500.0,
+            sector: SectorHandle::new(7),
+            level: 0,
+        };
+        let ale = 77;
+        let mut views = AiEntityViewMap::new();
+        views.insert(ale, soldier_view(ale_position));
+        let ctx = AiContext {
+            position: here,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingDrinkingAle;
+        ai.other_seen_ale.push(ale);
+
+        ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_state, AiState::Wondering);
+        assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
+        assert_eq!(ai.base.interesting_object, ale);
+        assert_eq!(ai.return_to_patrol_point, here);
+        assert_eq!(ai.base.last_goto_destination, ale_position);
     }
 
     #[test]
