@@ -152,7 +152,10 @@ impl EngineInner {
     /// immediately even though the sprite does not execute it until its next
     /// actor slot. Keep Rust's detached installed-order copy and the lazy
     /// door-pass mirror pointed at that rewritten action without publishing a
-    /// newly inserted, not-yet-installed order.
+    /// newly inserted, not-yet-installed order. Call this both before and
+    /// after `post_process_path`: ordinary paths insert a new transition ID
+    /// that the second call rejects, while loaded PassDoor tails can rewrite
+    /// the live legacy order in place during post-processing.
     fn synchronize_rewritten_selected_order(
         &mut self,
         entity: EntityId,
@@ -224,6 +227,7 @@ impl EngineInner {
             }
             self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity, selected_movement);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             // Base SequenceElement::MakeFast still recurses into a same-owner
             // following/postponed movement even when the selected element is
@@ -251,6 +255,7 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             self.orders.sequence_manager.make_slow(entity);
         }
@@ -379,6 +384,7 @@ impl EngineInner {
                     return;
                 }
                 self.after_make_rewrite(sim, entity, selected_movement);
+                self.synchronize_rewritten_selected_order(entity, action_before);
                 return;
             }
         }
@@ -409,6 +415,7 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
             if self.selected_element(entity).is_some() {
                 // As in SequenceElement::MakeCrouched, recurse into its linked
