@@ -75,6 +75,29 @@ pub(in crate::engine) fn active_swordfight_preparation() -> Option<(EntityId, En
     SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow().last().copied())
 }
 
+/// Return the Original preparation scope inherited by a reciprocal
+/// `EnterSwordfight` authored from inside that scope.
+///
+/// The scope is stored on the actor being prepared, `(actor, opponent)`, while
+/// the callback authors the reciprocal command as `opponent -> actor`.  Do not
+/// tag unrelated or same-orientation Enter commands that merely happen to be
+/// launched by a nested script callback.
+pub(crate) fn deferred_swordfight_preparation_for_enter(
+    element: &crate::sequence::SequenceElement,
+) -> Option<(EntityId, EntityId)> {
+    if element.command != Command::EnterSwordfight {
+        return None;
+    }
+    let authored_owner = element.owner?;
+    let authored_opponent = match element.get_property(crate::sequence::Field::Opponent)? {
+        crate::sequence::FieldValue::Element(opponent) => *opponent,
+        _ => return None,
+    };
+    active_swordfight_preparation().filter(|(prepared_actor, preparation_opponent)| {
+        authored_owner == *preparation_opponent && authored_opponent == *prepared_actor
+    })
+}
+
 pub(in crate::engine) fn with_deferred_swordfight_preparation<R>(
     pair: (EntityId, EntityId),
     body: impl FnOnce() -> R,
@@ -104,11 +127,19 @@ pub(in crate::engine) fn with_deferred_swordfight_preparation<R>(
 #[cfg(test)]
 mod preparation_scope_tests {
     use super::{
-        active_swordfight_preparation, with_deferred_swordfight_preparation,
-        with_swordfight_preparation_scope,
+        active_swordfight_preparation, deferred_swordfight_preparation_for_enter,
+        with_deferred_swordfight_preparation, with_swordfight_preparation_scope,
     };
     use crate::element::{Command, EntityId, PcId, SoldierId};
-    use crate::sequence::{SequenceElement, SequenceElementRef, SequenceManager};
+    use crate::sequence::{
+        Field, FieldValue, SequenceElement, SequenceElementRef, SequenceManager,
+    };
+
+    fn enter(owner: EntityId, opponent: EntityId) -> SequenceElement {
+        let mut element = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+        element.set_property(Field::Opponent, FieldValue::Element(opponent));
+        element
+    }
 
     #[test]
     fn reciprocal_same_pair_reentry_allocates_once() {
@@ -149,6 +180,38 @@ mod preparation_scope_tests {
         .expect("outer preparation should run");
 
         assert_eq!(preparations, [first_opponent, second_opponent]);
+    }
+
+    #[test]
+    fn only_reciprocal_authored_enter_inherits_preparation_scope() {
+        let prepared_actor = EntityId::Soldier(SoldierId(82));
+        let preparation_opponent = EntityId::Pc(PcId(134));
+        let unrelated = EntityId::Pc(PcId(135));
+
+        with_swordfight_preparation_scope(prepared_actor, preparation_opponent, || {
+            assert_eq!(
+                deferred_swordfight_preparation_for_enter(&enter(
+                    preparation_opponent,
+                    prepared_actor,
+                )),
+                Some((prepared_actor, preparation_opponent)),
+                "the callback-authored reciprocal Enter must carry the active Original scope"
+            );
+            assert_eq!(
+                deferred_swordfight_preparation_for_enter(&enter(
+                    prepared_actor,
+                    preparation_opponent,
+                )),
+                None,
+                "same-orientation Enter is not the deferred reciprocal callback"
+            );
+            assert_eq!(
+                deferred_swordfight_preparation_for_enter(&enter(unrelated, prepared_actor)),
+                None,
+                "unrelated Enter work must remain independent"
+            );
+        })
+        .expect("outer preparation should run");
     }
 
     #[test]

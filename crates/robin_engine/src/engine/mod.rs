@@ -1810,9 +1810,8 @@ impl EngineInner {
         &mut self,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        let swordfight_preparation = (elem.command == crate::element::Command::EnterSwordfight)
-            .then(crate::engine::melee::active_swordfight_preparation)
-            .flatten();
+        let swordfight_preparation =
+            crate::engine::melee::deferred_swordfight_preparation_for_enter(&elem);
         let attentive_owner = elem.owner.filter(|_| {
             matches!(
                 elem.command,
@@ -2573,36 +2572,29 @@ impl EngineInner {
         &mut self,
         seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        let swordfight_preparation = crate::engine::melee::active_swordfight_preparation();
-        let inherited_enter_indices = swordfight_preparation
-            .is_some()
-            .then(|| {
-                seq.elements
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, element)| {
-                        (element.command == crate::element::Command::EnterSwordfight)
-                            .then_some(index)
-                    })
-                    .collect::<Vec<_>>()
+        let inherited_enter_indices = seq
+            .elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| {
+                crate::engine::melee::deferred_swordfight_preparation_for_enter(element)
+                    .map(|pair| (index, pair))
             })
-            .unwrap_or_default();
+            .collect::<Vec<_>>();
         let sequence_id = self.orders.sequence_manager.launch_sequence(seq);
-        if let Some(pair) = swordfight_preparation {
-            for element_index in inherited_enter_indices {
-                tracing::trace!(
-                    target: "parity_swordfight_scope",
-                    ?sequence_id,
-                    element_index,
-                    ?pair,
-                    source = "launch_sequence",
-                    "attaching deferred swordfight preparation"
-                );
-                self.orders.sequence_manager.attach_swordfight_preparation(
-                    crate::sequence::SequenceElementRef::new(sequence_id, element_index),
-                    pair,
-                );
-            }
+        for (element_index, pair) in inherited_enter_indices {
+            tracing::trace!(
+                target: "parity_swordfight_scope",
+                ?sequence_id,
+                element_index,
+                ?pair,
+                source = "launch_sequence",
+                "attaching deferred swordfight preparation"
+            );
+            self.orders.sequence_manager.attach_swordfight_preparation(
+                crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                pair,
+            );
         }
         sequence_id
     }

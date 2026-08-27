@@ -709,11 +709,34 @@ impl NativeContext<'_, '_> {
                 };
             }
         }
+        let inherited_swordfight_preparations = sequence
+            .elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| {
+                crate::engine::melee::deferred_swordfight_preparation_for_enter(element)
+                    .map(|pair| (index, pair))
+            })
+            .collect::<Vec<_>>();
         let sequence_manager = self
             .sequence_manager
             .as_mut()
             .expect("script sequence launch requires a live SequenceManager");
-        sequence_manager.launch_sequence(sequence);
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        for (element_index, pair) in inherited_swordfight_preparations {
+            tracing::trace!(
+                target: "parity_swordfight_scope",
+                ?sequence_id,
+                element_index,
+                ?pair,
+                source = "launch_script_sequence",
+                "attaching deferred swordfight preparation"
+            );
+            sequence_manager.attach_swordfight_preparation(
+                crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                pair,
+            );
+        }
         if let Some(action) = sequence_manager.pop_pending_immediate_action() {
             let continuation = sequence_manager.take_pending_synchronous_actions();
             self.pending_yield = Some(crate::interp::NativeYield {
