@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 21;
+pub const NET_PROTOCOL_VERSION: u32 = 22;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -355,11 +355,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_native_full_frame_snapshot_contract() {
-        // Version 21 combines native bitcode with the resolved-route and
-        // point-Seek provenance snapshot contract. Older peers fail before
-        // decoding bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 21);
+    fn protocol_version_includes_chunked_facade_snapshot_contract() {
+        // Version 22 combines the facade-owned chunked engine snapshot with
+        // the resolved-route and point-Seek provenance contract. Older peers
+        // fail during the handshake before attempting to decode incompatible
+        // snapshot bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 22);
     }
 
     #[test]

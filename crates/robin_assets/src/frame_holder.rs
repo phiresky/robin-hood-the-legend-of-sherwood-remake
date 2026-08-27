@@ -272,7 +272,7 @@ fn bank_span_for_index(
 ///
 /// Each entry is 4 consecutive u16 pixels (stored as a u64 / `UOCTA`).
 /// During decompression, a single dictionary index is expanded to 4 pixels.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct FrameDictionary {
     /// Number of entries (each entry = 4 pixels = 8 bytes).
     num_entries: u16,

@@ -4151,9 +4151,9 @@ mod tests {
         let input = SimulationFrameInput::no_hourglass().with_external_facts(
             ExternalFacts::default().with_recorded_drop_ale_routes(vec![fact.clone()]),
         );
-        let encoded = bitcode::serialize(&input).expect("serialize typed frame fact");
+        let encoded = bitcode::encode(&input);
         let decoded: SimulationFrameInput =
-            bitcode::deserialize(&encoded).expect("deserialize typed frame fact");
+            bitcode::decode(&encoded).expect("decode typed frame fact");
         let mut direct = engine.clone();
         let mut replayed = engine.clone();
         direct

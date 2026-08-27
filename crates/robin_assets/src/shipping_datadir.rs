@@ -1,4 +1,4 @@
-//! Shipping datadir — a single bitcode+zstd blob with every parsed
+//! Shipping datadir — a single versioned native-bitcode+zstd blob with every parsed
 //! subsystem the engine needs at boot.
 //!
 //! Produced by the `convert_datadir --format shipping` binary and loaded
@@ -25,7 +25,11 @@ use robin_engine::sprite_script::SpriteInfo;
 /// Keys mirror the on-disk relative path under `Data/` so loaders can find
 /// things under the same names they use for legacy I/O (e.g.
 /// `"Interface/DEFAULT.RES"`, `"Levels/Dem_Lei_MP.rhm"`).
-#[derive(Default, Debug, Serialize, Deserialize)]
+// TODO(shipping-streaming): replace this monolithic payload with a small
+// versioned manifest and independently compressed global/proto/mission chunks.
+// Replay and mission setup should fetch only the chunks named by their mission
+// metadata before installing them into the synchronous asset VFS.
+#[derive(Default, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingDatadir {
     pub profiles: Option<ProfileManager>,
     pub res_files: std::collections::BTreeMap<String, ResourceManager>,
@@ -43,7 +47,7 @@ pub struct ShippingDatadir {
     pub raw: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct RhsData {
     pub signature: u32,
     pub profiles: Vec<(String, SpriteInfo)>,
@@ -52,7 +56,7 @@ pub struct RhsData {
 /// Shipping-ready sprite bank. Unlike the runtime [`crate::frame_holder::FrameHolder`],
 /// this carries every sprite's packed pixel data inline (the runtime
 /// version marks `packed_data` `#[serde(skip)]` so savegames stay small).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingSpriteBank {
     pub signature: u32,
     pub dictionaries: Vec<FrameDictionary>,
@@ -60,7 +64,7 @@ pub struct ShippingSpriteBank {
     pub sprites: Vec<Option<ShippingSprite>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingSprite {
     pub width: u16,
     pub height: u16,
@@ -74,7 +78,7 @@ pub struct ShippingSprite {
 // ---------------------------------------------------------------------------
 
 impl ShippingDatadir {
-    /// Parse a shipping datadir blob: zstd decompress + bitcode deserialize.
+    /// Parse a shipping datadir blob: zstd decompress + native bitcode decode.
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let compressed =
             robin_util::asset_fs::read(path).with_context(|| format!("read {}", path.display()))?;
@@ -109,8 +113,7 @@ impl ShippingDatadir {
             .context("zstd window_log_max=30")?;
         let mut blob = Vec::with_capacity(compressed.len() * 4);
         std::io::Read::read_to_end(&mut decoder, &mut blob).context("zstd decompress")?;
-        let dd: ShippingDatadir =
-            bitcode::deserialize(&blob).map_err(|e| anyhow!("bitcode decode: {e:?}"))?;
+        let dd = decode_native(&blob)?;
         tracing::info!(
             "loaded shipping datadir ({} → {} bytes)",
             compressed.len(),
@@ -118,6 +121,39 @@ impl ShippingDatadir {
         );
         Ok(dd)
     }
+}
+
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT2";
+pub const SHIPPING_DATADIR_VERSION: u32 = 2;
+
+/// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
+pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
+    let payload = bitcode::encode(datadir);
+    let mut encoded = Vec::with_capacity(12 + payload.len());
+    encoded.extend_from_slice(&SHIPPING_DATADIR_MAGIC);
+    encoded.extend_from_slice(&SHIPPING_DATADIR_VERSION.to_le_bytes());
+    encoded.extend_from_slice(&payload);
+    encoded
+}
+
+fn decode_native(encoded: &[u8]) -> Result<ShippingDatadir> {
+    let Some((header, payload)) = encoded.split_at_checked(12) else {
+        return Err(anyhow!(
+            "shipping datadir is shorter than its native header"
+        ));
+    };
+    if header[..8] != SHIPPING_DATADIR_MAGIC {
+        return Err(anyhow!(
+            "shipping datadir is not native format version {SHIPPING_DATADIR_VERSION}; regenerate datadir.bin"
+        ));
+    }
+    let version = u32::from_le_bytes(header[8..12].try_into().expect("fixed header length"));
+    if version != SHIPPING_DATADIR_VERSION {
+        return Err(anyhow!(
+            "unsupported shipping datadir version {version}; expected {SHIPPING_DATADIR_VERSION}"
+        ));
+    }
+    bitcode::decode(payload).map_err(|error| anyhow!("native bitcode decode: {error:?}"))
 }
 
 /// zstd level 22 with a 31-bit long-range window. Matches the converter.
@@ -237,6 +273,21 @@ pub fn global_assets() -> Option<&'static Arc<ShippingAssets>> {
 mod tests {
     use super::*;
     use robin_util::asset_fs::{AssetVfs, Bundle};
+
+    #[test]
+    fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.raw.insert("test.bin".into(), vec![1, 2, 3]);
+
+        let encoded = encode_native(&datadir);
+        assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
+        let decoded = decode_native(&encoded).expect("decode native shipping datadir");
+        assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
+
+        let legacy_unversioned = bitcode::encode(&datadir);
+        let error = decode_native(&legacy_unversioned).unwrap_err();
+        assert!(error.to_string().contains("regenerate datadir.bin"));
+    }
 
     #[test]
     fn shipping_installation_owns_vfs_and_has_first_priority() {

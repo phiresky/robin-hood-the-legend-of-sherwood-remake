@@ -27,7 +27,7 @@ robin_util = { path = "crates/robin_util" }
 # Dependencies shared by multiple workspace crates. Keep crate-specific feature
 # selections in the member manifests when they differ between consumers.
 anyhow = "1"
-bitcode = { git = "https://github.com/SoftbearStudios/bitcode.git", rev = "7ae88076943b74151e99713f33635ac5a5d4f4bf", features = ["serde"] }
+bitcode = { git = "https://github.com/SoftbearStudios/bitcode.git", rev = "7ae88076943b74151e99713f33635ac5a5d4f4bf" }
 bitflags = "2"
 bytemuck = "1"
 enum-map = "2"

@@ -54,7 +54,7 @@ use robin_engine::sbfile::SbFile;
 
 /// A single dialogue descriptor: points at a text table and a wave
 /// table in the resource manager, plus per-sentence portrait indices.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct DialogueDescriptor {
     /// Resource ID of the TEXT string table (one string per sentence).
     pub text_table_id: ResourceId,
@@ -65,21 +65,21 @@ pub struct DialogueDescriptor {
 }
 
 /// Mission description metadata.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct MissionDescription {
     pub text_table_id: ResourceId,
     pub picture_id: ResourceId,
 }
 
 /// Popup-text descriptors for a level.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct PopupTextDescriptor {
     pub text_table_id: ResourceId,
     pub picture_ids: Vec<ResourceId>,
 }
 
 /// Debriefing descriptors (win / lose text tables).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct DebriefingDescriptor {
     pub win_count: u32,
     pub win_text_table_id: ResourceId,
@@ -88,7 +88,7 @@ pub struct DebriefingDescriptor {
 }
 
 /// Short-briefing descriptor.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShortBriefingDescriptor {
     pub briefing_count: u32,
     pub text_table_id: ResourceId,
@@ -97,7 +97,7 @@ pub struct ShortBriefingDescriptor {
 /// All resource descriptors for a single level.
 ///
 /// Loaded from an `RHLevel<ID>.red` file.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct LevelDescriptors {
     pub mission_description: MissionDescription,
     pub dialogues: Vec<DialogueDescriptor>,

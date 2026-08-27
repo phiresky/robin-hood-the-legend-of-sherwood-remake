@@ -64,15 +64,15 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 14 is the combined full-frame/native
-/// bitcode boundary: every admitted [`SimulationFrameInput`] and host control
-/// is explicit, serialized command chains are non-recursive, stored movement
-/// actions carry exact routes, and point-Seek state carries explicit route
-/// provenance. Two pre-merge formats independently used version 13, so neither
-/// is accepted by this build. There is deliberately no Rust-schema
-/// compatibility adapter: earlier incompatible layouts are rejected at the
-/// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 14;
+/// On-disk replay schema version. Version 15 combines the completed native
+/// bitcode campaign/compact encoding with the strict full-frame boundary:
+/// every admitted [`SimulationFrameInput`] and host control is explicit,
+/// serialized command chains are non-recursive, stored movement actions carry
+/// exact routes, and point-Seek state carries explicit route provenance. Two
+/// incompatible pre-merge formats independently used version 14, so neither is
+/// accepted by this build. There is deliberately no Rust-schema compatibility
+/// adapter: earlier incompatible layouts are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 15;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 14);
+        assert_eq!(REPLAY_SCHEMA_VERSION, 15);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn every_pre_merge_jsonl_schema_is_rejected() {
-        for version in [10, 12, 13] {
+        for version in [10, 12, 13, 14] {
             let input = format!(
                 "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
             );
