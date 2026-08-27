@@ -232,6 +232,7 @@ export interface Mission {
     position_y: number;
     allegiance?: number;
     autonomous?: boolean;
+    playable?: boolean;
     [k: string]: unknown;
   }[];
   scrolls: { position_x: number; position_y: number; [k: string]: unknown }[];

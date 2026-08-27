@@ -538,10 +538,7 @@ impl EngineInner {
                     has_climb,
                     has_jump,
                     immortal: config.highlander,
-                    // This PC is a rescue target, not initially
-                    // controllable.  The portrait bar will pick this up
-                    // via entity state sync.
-                    playable: false,
+                    playable: raw.playable,
                     autonomous: raw.autonomous,
                     ..Default::default()
                 },

@@ -938,6 +938,10 @@ pub struct RawPcRescue {
     pub allegiance: Option<u16>,
     #[serde(default)]
     pub autonomous: bool,
+    /// Makes a custom-mission PC immediately player-controllable instead of
+    /// treating it as a normal rescue target.
+    #[serde(default)]
+    pub playable: bool,
     pub attributes: u32,
     pub script_class: Option<String>,
 }
@@ -1998,6 +2002,8 @@ pub struct HackablePc {
     /// nearest hostile autonomous PC.
     #[serde(default)]
     pub autonomous: bool,
+    #[serde(default)]
+    pub playable: bool,
 }
 
 /// One simplified, convex architectural volume in a hackable level descriptor.
@@ -2192,6 +2198,7 @@ impl LoadedLevel {
                 profile_index: pc.profile,
                 allegiance: Some(pc.allegiance),
                 autonomous: pc.autonomous,
+                playable: pc.playable,
                 attributes: 0,
                 script_class: None,
             })
@@ -3490,6 +3497,7 @@ fn read_pcs_to_rescue(
             profile_index,
             allegiance: None,
             autonomous: false,
+            playable: false,
             attributes,
             script_class,
         });

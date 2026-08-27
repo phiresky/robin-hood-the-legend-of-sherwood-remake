@@ -1934,6 +1934,40 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 }
 
 #[test]
+fn all_autonomous_pc_battle_does_not_trigger_default_loss() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+
+    for _ in 0..2 {
+        engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                playable: false,
+                autonomous: true,
+                life_points: 100,
+                ..Default::default()
+            },
+        }));
+    }
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let result = engine
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+        .code;
+
+    assert_eq!(result, GameCode::LevelInProgress);
+}
+
+#[test]
 fn zoom_step_completes_after_8_steps() {
     let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();

@@ -2,8 +2,8 @@
   "title": "All Variants Allegiance Wheel",
   "map_filename": "Dover",
   "spawn": [
-    2000,
-    2000
+    400,
+    400
   ],
   "spawn_player": false,
   "walkable_polygon": [
@@ -642,13 +642,14 @@
   "pcs": [
     {
       "position": [
-        2700,
-        2000
+        400,
+        400
       ],
       "profile": 0,
       "allegiance": 70,
       "direction": 8,
-      "autonomous": true
+      "autonomous": false,
+      "playable": true
     },
     {
       "position": [

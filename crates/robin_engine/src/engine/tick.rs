@@ -3142,7 +3142,16 @@ impl EngineInner {
             // Original: RHEngine::PerformHourglass checks the PC's explicit
             // IsPlayable() flag and guard state. Death paths are responsible
             // for clearing playability; do not substitute an HP/posture test.
-            if !self.world.pc_ids.is_empty() {
+            // An all-autonomous custom battle has no player party to defeat.
+            // Keep the legacy rule for ordinary missions, including missions
+            // containing only non-playable rescue PCs.
+            let has_non_autonomous_pc = self.world.pc_ids.iter().any(|&pc_id| {
+                matches!(
+                    self.world.entities.get(pc_id),
+                    Some(Entity::Pc(pc)) if !pc.pc.autonomous
+                )
+            });
+            if has_non_autonomous_pc {
                 let any_playable_and_free = self.world.pc_ids.iter().any(|&pc_id| {
                     if let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) {
                         let guarded = pc.pc.guard.is_some();
