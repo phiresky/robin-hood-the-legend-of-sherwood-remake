@@ -2502,17 +2502,25 @@ fn original_final_path_metadata(
     }
 }
 
-/// Drop the pathfinder's source point before materializing movement orders.
+/// Prepare the raw pathfinder points for movement-order post-processing.
 ///
 /// `RHEngine::ProcessPathRequests` starts its order loop at index one whenever
 /// `bUseFirstPoint` is false (`RHengine.cpp:8410-8423`).  Do not re-check that
 /// the first point equals the request source here: legacy floating-point
 /// equality is not the gate, and a source poisoned with NaNs must still be
 /// skipped rather than becoming a live movement order.
-fn discard_unrequested_path_source(waypoints: &mut Vec<MapPoint>, use_first_point: bool) {
+///
+/// Returns the raw count because final-order tolerance and antagonist
+/// metadata depend on the pre-skip path exactly as they do in Original.
+fn prepare_path_waypoints_for_postprocess(
+    waypoints: &mut Vec<MapPoint>,
+    use_first_point: bool,
+) -> usize {
+    let raw_waypoint_count = waypoints.len();
     if !use_first_point && waypoints.len() > 1 {
         waypoints.remove(0);
     }
+    raw_waypoint_count
 }
 
 fn is_in_place_movement_transition(order: OrderType) -> bool {
@@ -11808,6 +11816,14 @@ impl EngineInner {
                     .then_some(tail_index)
             });
 
+        // ProcessPathRequests first materializes movement orders from the raw
+        // path, beginning at `uwFirstPathIndex`, and only then invokes the
+        // soldier's PostProcessPath override. Remove an unrequested raw source
+        // before drunken post-processing so it cannot consume RNG as a
+        // zero-length movement segment.
+        let raw_waypoint_count =
+            prepare_path_waypoints_for_postprocess(&mut waypoints, use_first_point);
+
         // Drunken-soldier path deviation.  Only applies to upright
         // walking/running animations and not to PassDoor commands.
         let is_movement_anim = matches!(
@@ -11872,7 +11888,7 @@ impl EngineInner {
         // order with metadata, while a direct raw [goal] order keeps the
         // RHOrder constructor defaults.
         let (final_order_tolerance, final_order_antagonist) =
-            original_final_path_metadata(waypoints.len(), tolerance, antagonist);
+            original_final_path_metadata(raw_waypoint_count, tolerance, antagonist);
 
         // `use_first_point` handling: the emission loop starts at
         // index 0 if set, otherwise 1.
@@ -11892,7 +11908,6 @@ impl EngineInner {
         //   no-op: `[goal]` stays a single waypoint and the actor
         //   walks straight to goal — anti-collision handles the small
         //   obstacle clip on that first leg.)
-        discard_unrequested_path_source(&mut waypoints, use_first_point);
         let mut rewritten_installed_order = None;
         {
             let next_order_id = &mut self.orders.next_order_id;

@@ -1156,14 +1156,15 @@ mod suite {
     }
 
     #[test]
-    fn path_source_is_skipped_even_when_nan_breaks_source_equality() {
+    fn path_source_is_skipped_before_postprocess_even_when_nan_breaks_source_equality() {
         let mut waypoints = vec![
             MapPoint::new(f32::from_bits(0xffc0_0000), f32::from_bits(0xffc0_0000)),
             MapPoint::new(342.5066, 1546.6641),
         ];
 
-        discard_unrequested_path_source(&mut waypoints, false);
+        let raw_waypoint_count = prepare_path_waypoints_for_postprocess(&mut waypoints, false);
 
+        assert_eq!(raw_waypoint_count, 2);
         assert_eq!(waypoints, vec![MapPoint::new(342.5066, 1546.6641)]);
     }
 
