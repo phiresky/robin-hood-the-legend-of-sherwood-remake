@@ -1488,6 +1488,53 @@ fn discard_lazy_door_pass_following_orders(pass: Option<&mut ActiveDoorPass>) {
     }
 }
 
+/// Materialize the zero-destination action points which precede the next
+/// authored door walk.
+///
+/// Original translates the complete door route up front. Rust normally
+/// materializes these steps one at a time, but a TillLastFrame continuation
+/// has to be inserted relative to the complete translated route. Moving this
+/// prefix into the concrete order queue first preserves Original's
+/// `Select -> PassingDoor -> copied walk` ordering.
+fn materialize_door_action_point_prefix(
+    pass: &mut ActiveDoorPass,
+    next_order_id: &mut u32,
+) -> Vec<crate::order::Order> {
+    let mut orders = Vec::new();
+    loop {
+        let Some(step) = pass.steps.front() else {
+            break;
+        };
+        let mut order = match step {
+            crate::element::DoorPassStep::Select { speed } => {
+                let mut order = crate::order::Order::new(
+                    OrderType::Select,
+                    0.0,
+                    0.0,
+                    crate::order::alloc_order_id(next_order_id),
+                );
+                order.compute_direction = true;
+                order.tolerance = *speed;
+                order
+            }
+            crate::element::DoorPassStep::PassingDoor => crate::order::Order::new(
+                OrderType::PassingDoor,
+                0.0,
+                0.0,
+                crate::order::alloc_order_id(next_order_id),
+            ),
+            _ => break,
+        };
+        // These action points now have concrete successors in the same order
+        // list, so generic DoNextOrder owns their completion. ResumeDoorPass
+        // would incorrectly materialize another lazy step alongside them.
+        order.completion = crate::order::OrderCompletion::AdvanceElement;
+        pass.steps.pop_front();
+        orders.push(order);
+    }
+    orders
+}
+
 /// Insert a materialized lazy door-pass step at the same side of a copied
 /// transition-distance continuation as Original's single translated order
 /// list.
@@ -1955,6 +2002,57 @@ mod door_pass_posture_tests {
         );
         assert!(element.orders[3].transition_distance_continuation);
         assert!(!element.orders[4].transition_distance_continuation);
+    }
+
+    #[test]
+    fn materialized_door_action_points_precede_copied_walk() {
+        let mut pass = ActiveDoorPass {
+            door_index: crate::gate::DoorIndex(43),
+            direct: true,
+            position_direct: true,
+            steps: [
+                crate::element::DoorPassStep::Select { speed: 2.0 },
+                crate::element::DoorPassStep::PassingDoor,
+                crate::element::DoorPassStep::Walk {
+                    destination: MapPoint::new(20.0, 30.0),
+                    action: OrderType::RunningUpright,
+                    reverse: false,
+                    compute_direction: true,
+                    tolerance: 0.0,
+                },
+                crate::element::DoorPassStep::PassingDoor,
+            ]
+            .into(),
+            triggers_fired: 0,
+            current_action: OrderType::TransitionWalkingUprightRunningUpright,
+            current_reverse: false,
+            saved_action_state: None,
+        };
+        let mut next_order_id = 1;
+
+        let orders = materialize_door_action_point_prefix(&mut pass, &mut next_order_id);
+
+        assert_eq!(
+            orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::Select, OrderType::PassingDoor]
+        );
+        assert!(
+            orders
+                .iter()
+                .all(|order| order.completion == crate::order::OrderCompletion::AdvanceElement)
+        );
+        assert!(matches!(
+            pass.steps.front(),
+            Some(crate::element::DoorPassStep::Walk {
+                destination,
+                action: OrderType::RunningUpright,
+                ..
+            }) if *destination == MapPoint::new(20.0, 30.0)
+        ));
+        assert_eq!(pass.steps.len(), 2, "the suffix remains lazily translated");
     }
 }
 
@@ -7521,6 +7619,18 @@ impl EngineInner {
                 .door_triggers
                 .push((eid, dp.door_index, dp.direct, trigger_num));
 
+            // A TillLastFrame continuation can force the action-point prefix
+            // into the concrete queue. In that case generic DoNextOrder must
+            // select the already-queued successor; advancing the lazy tail as
+            // well would skip ahead of the copied continuation.
+            if !is_final_waypoint {
+                self.orders.messenger.send(crate::messenger::Message::new(
+                    crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
+                ));
+                deferred.order_pops.push((move_seq_id, move_elem_idx));
+                return;
+            }
+
             let advance = Self::advance_door_pass(
                 actor,
                 eid,
@@ -9088,6 +9198,15 @@ impl EngineInner {
                             })
                         });
                     let next_order_id = &mut self.orders.next_order_id;
+                    let concrete_door_prefix = if lazy_next_animation.is_some() {
+                        entity
+                            .actor_data_mut()
+                            .and_then(|actor| actor.active_door_pass.as_mut())
+                            .map(|pass| materialize_door_action_point_prefix(pass, next_order_id))
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                     let mut continuation_door_action = None;
                     let mut discard_lazy_door_followers = false;
                     if let Some(element) = self
@@ -9095,6 +9214,9 @@ impl EngineInner {
                         .sequence_manager
                         .get_element_mut(move_seq_id, move_elem_idx)
                     {
+                        for order in concrete_door_prefix {
+                            element.push_order(order);
+                        }
                         let current_action = element
                             .orders
                             .front()
