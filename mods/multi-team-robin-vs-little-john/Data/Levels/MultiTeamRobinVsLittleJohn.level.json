@@ -1,6 +1,7 @@
 {
   "title": "Autonomous Robin vs Little John",
-  "map_filename": "Dover",
+  "map_filename": "Leicester",
+  "reveal_all": true,
   "spawn": [
     2000,
     2000
@@ -12,16 +13,16 @@
       200
     ],
     [
-      3800,
+      3050,
       200
     ],
     [
-      3800,
-      3800
+      3050,
+      1900
     ],
     [
       200,
-      3800
+      1900
     ]
   ],
   "volumes": [],
@@ -29,8 +30,8 @@
   "pcs": [
     {
       "position": [
-        1600,
-        2000
+        1000,
+        1000
       ],
       "profile": 0,
       "allegiance": 2,
@@ -39,8 +40,8 @@
     },
     {
       "position": [
-        2400,
-        2000
+        1100,
+        1000
       ],
       "profile": 2,
       "allegiance": 3,

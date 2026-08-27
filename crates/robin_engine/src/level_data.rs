@@ -816,6 +816,9 @@ pub struct RawSoldier {
     /// derive allegiance from `SoldierProfile::hostile` as before.
     #[serde(default)]
     pub allegiance: Option<u16>,
+    /// Custom missions may bypass the normal town-map fog silhouette.
+    #[serde(default)]
+    pub revealed: bool,
     pub tower_guard: bool,
     pub company_number: u32,
     pub drunk_level: u32,
@@ -1967,6 +1970,9 @@ pub struct HackableLevelDescriptor {
     /// Whether to create the ordinary player-controlled beam-me PC.
     #[serde(default = "default_true")]
     pub spawn_player: bool,
+    /// Spawn authored NPCs fully revealed rather than as fog silhouettes.
+    #[serde(default)]
+    pub reveal_all: bool,
     pub walkable_polygon: Vec<(i16, i16)>,
     #[serde(default)]
     pub volumes: Vec<HackableLevelVolume>,
@@ -2143,6 +2149,7 @@ impl LoadedLevel {
                 .element_group_order
                 .push(MissionElementGroup::Soldier);
         }
+        let reveal_all = descriptor.reveal_all;
         level.mission.soldiers = descriptor
             .soldiers
             .into_iter()
@@ -2166,6 +2173,7 @@ impl LoadedLevel {
                     material: 0,
                     profile_number: soldier.profile,
                     allegiance: Some(soldier.allegiance),
+                    revealed: reveal_all,
                     tower_guard: false,
                     company_number: 0,
                     drunk_level: 0,
@@ -3225,6 +3233,7 @@ fn read_soldiers(
             material,
             profile_number,
             allegiance: None,
+            revealed: false,
             tower_guard,
             company_number,
             drunk_level,
@@ -4719,8 +4728,17 @@ mod tests {
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
             let level = LoadedLevel::hackable_from_json(&bytes)
                 .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+            assert_ne!(level.mission.header.map_filename, "Dover", "{mission}");
             assert_eq!(level.mission.soldiers.len(), soldiers, "{mission}");
             assert_eq!(level.mission.pcs_to_rescue.len(), pcs, "{mission}");
+            assert!(
+                level
+                    .mission
+                    .soldiers
+                    .iter()
+                    .all(|soldier| soldier.revealed),
+                "{mission} must reveal its complete test roster"
+            );
         }
         let duel_path = repo.join(
             "mods/multi-team-robin-vs-little-john/Data/Levels/MultiTeamRobinVsLittleJohn.level.json",

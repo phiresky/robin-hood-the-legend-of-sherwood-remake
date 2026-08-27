@@ -1,9 +1,10 @@
 {
   "title": "Three-way Allegiance Arena",
-  "map_filename": "Dover",
+  "map_filename": "Nottingham",
+  "reveal_all": true,
   "spawn": [
-    2000,
-    2000
+    300,
+    300
   ],
   "spawn_player": false,
   "walkable_polygon": [
@@ -12,24 +13,24 @@
       200
     ],
     [
-      3800,
+      2250,
       200
     ],
     [
-      3800,
-      3800
+      2250,
+      3450
     ],
     [
       200,
-      3800
+      3450
     ]
   ],
   "volumes": [],
   "soldiers": [
     {
       "position": [
-        2650,
-        2000
+        1212,
+        1760
       ],
       "profile": 1,
       "allegiance": 2,
@@ -37,8 +38,8 @@
     },
     {
       "position": [
-        1675,
-        2563
+        1122,
+        1812
       ],
       "profile": 7,
       "allegiance": 3,
@@ -46,8 +47,8 @@
     },
     {
       "position": [
-        1675,
-        1437
+        1122,
+        1708
       ],
       "profile": 13,
       "allegiance": 4,

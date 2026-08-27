@@ -958,6 +958,12 @@ impl EngineInner {
         );
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
+        // PCs can participate in direct swordfights but have no NPC AI
+        // controller or AI-owned recovery effects to drain.
+        if !had_ai_at_entry && matches!(self.world.entities.get(npc_id), Some(Entity::Pc(_))) {
+            return handled;
+        }
+
         // StartThink applies SetViewStatus synchronously for
         // LOSE_CONSCIOUSNESS, WASP, and NET. FITAGAIN can publish its
         // resurrection work at this same boundary. The typed AI records
@@ -973,13 +979,6 @@ impl EngineInner {
         // EVENT_RETURN_TO_DUTY before later orders or condolations from the
         // outer handler can settle.
         self.dispatch_pending_waypoint_script_for_owner(sim, npc_id, assets);
-
-        // A missing entity or NPC shell without AI is a legitimate unhandled
-        // no-op. An existing AI may also return false after running a handler,
-        // so only the entry-state no-AI case can skip the synchronous drain.
-        if !handled && !had_ai_at_entry {
-            return false;
-        }
 
         // EventViewStandardProcedure explicitly marks an accepted VIEW after
         // all StartThink and handler guards. Mirror that one-shot onto the

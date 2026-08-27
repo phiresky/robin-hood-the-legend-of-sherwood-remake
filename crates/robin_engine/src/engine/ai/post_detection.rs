@@ -534,6 +534,14 @@ impl EngineInner {
                 stimulus_info = ?stimulus.info,
                 "dispatching RefreshDetection stimulus"
             );
+            // Consume the matching retained scan record even if a preceding
+            // synchronous stimulus removed this target and delivery below is
+            // consequently skipped.
+            let detection_aggregate = take_enemy_detection_tick_data(
+                queue_index,
+                &stimulus,
+                &mut enemy_detection_tick_data,
+            );
             // Original Think is a synchronous boundary. Its EndThink (and any
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
@@ -545,6 +553,20 @@ impl EngineInner {
                     )
                 })
                 .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
+            if let crate::ai::StimulusInfo::Human(handle) = stimulus.info
+                && !scratch.ai_entity_views.contains_key(&handle)
+            {
+                // A preceding synchronous stimulus can kill/remove this
+                // target before the next queued detection stimulus runs.
+                // TODO: remove target-owned queued stimuli at deletion time.
+                tracing::warn!(
+                    npc = npc_id.index(),
+                    target = handle,
+                    stimulus_type = ?stimulus.stimulus_type,
+                    "dropping queued detection stimulus after its target left the live world"
+                );
+                continue;
+            }
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let mut ctx = {
                 let Some(entity) = self.world.entities.get(npc_id) else {
@@ -572,14 +594,15 @@ impl EngineInner {
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
-                    let view = ctx.entity_view(handle).unwrap_or_else(|| {
-                        panic!(
-                            "queued {:?} for NPC {} references missing entity {}",
-                            stimulus.stimulus_type,
-                            npc_id.index(),
-                            handle
-                        )
-                    });
+                    let Some(view) = ctx.entity_view(handle) else {
+                        tracing::warn!(
+                            npc = npc_id.index(),
+                            target = handle,
+                            stimulus_type = ?stimulus.stimulus_type,
+                            "dropping queued detection stimulus after its target left the typed live view"
+                        );
+                        continue;
+                    };
                     ctx.antagonist = Some(crate::ai::AntagonistInfo {
                         position: view.position,
                         camp: view.camp,
@@ -596,11 +619,6 @@ impl EngineInner {
             // The Enemy VIEW / OUTOFVIEW block retains the completed scan
             // aggregate, but all tactical and target-specific inputs are
             // rebuilt from the live world for this exact stimulus.
-            let detection_aggregate = take_enemy_detection_tick_data(
-                queue_index,
-                &stimulus,
-                &mut enemy_detection_tick_data,
-            );
             let mut tick_data = if let Some(aggregate) = detection_aggregate {
                 let target_id = match stimulus.info {
                     crate::ai::StimulusInfo::Human(handle) => {

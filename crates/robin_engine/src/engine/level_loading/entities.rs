@@ -99,12 +99,6 @@ impl EngineInner {
         let profiles = assets.profile_manager.clone();
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
-        let frame_kind = if self.world.weather.is_forest_level {
-            crate::sprite_script::FrameKind::Character
-        } else {
-            crate::sprite_script::FrameKind::CharacterBlipped
-        };
-
         let highlander2 = config.highlander2;
         // Mission PATCH_2 precedes ELEMENT in shipped mission streams. The
         // patch animations therefore belong here in the flat script-element
@@ -134,6 +128,11 @@ impl EngineInner {
         // dynamic NPC construction; Original's global counter never resets.
         for (npc_register_number, raw) in loaded.mission.civilians.iter().enumerate() {
             let mut sprite = crate::sprite::Sprite::default();
+            let frame_kind = if self.world.weather.is_forest_level {
+                crate::sprite_script::FrameKind::Character
+            } else {
+                crate::sprite_script::FrameKind::CharacterBlipped
+            };
             let civ_profile = profiles.get_civilian(raw.profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
                     kind: "civilian",
@@ -561,12 +560,6 @@ impl EngineInner {
         let profiles = assets.profile_manager.clone();
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
-        let frame_kind = if self.world.weather.is_forest_level {
-            crate::sprite_script::FrameKind::Character
-        } else {
-            crate::sprite_script::FrameKind::CharacterBlipped
-        };
-
         let highlander2 = config.highlander2;
         // Spawn soldiers (EVIL sub-chunk). Original's one NPC-only counter
         // continues after every CIVI constructor.
@@ -579,6 +572,11 @@ impl EngineInner {
                 .and_then(|value| u16::try_from(value).ok())
                 .expect("soldier NPC register number exceeds u16");
             let mut sprite = crate::sprite::Sprite::default();
+            let frame_kind = if raw.revealed || self.world.weather.is_forest_level {
+                crate::sprite_script::FrameKind::Character
+            } else {
+                crate::sprite_script::FrameKind::CharacterBlipped
+            };
             let soldier_profile = profiles.get_soldier(raw.profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
                     kind: "soldier",
@@ -739,7 +737,7 @@ impl EngineInner {
                     // Non-forest levels start soldiers as blipped shadows that
                     // get revealed by proximity detection (SeesBlip) or the
                     // Listen ability.
-                    blipped: !self.world.weather.is_forest_level,
+                    blipped: !raw.revealed && !self.world.weather.is_forest_level,
                     // Default posture is Upright.  Without an explicit
                     // initializer posture defaults to `Undefined`, which
                     // stranded freshly-spawned soldiers because the

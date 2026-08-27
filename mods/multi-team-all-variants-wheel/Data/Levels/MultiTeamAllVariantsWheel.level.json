@@ -1,35 +1,36 @@
 {
   "title": "All Variants Allegiance Wheel",
   "map_filename": "Nottingham",
+  "reveal_all": true,
   "spawn": [
-    400,
-    400
+    180,
+    3300
   ],
   "spawn_player": false,
   "walkable_polygon": [
     [
-      200,
-      200
+      50,
+      50
     ],
     [
-      3800,
-      200
+      2250,
+      50
     ],
     [
-      3800,
-      3800
+      2250,
+      3450
     ],
     [
-      200,
-      3800
+      50,
+      3450
     ]
   ],
   "volumes": [],
   "soldiers": [
     {
       "position": [
-        3300,
-        2000
+        1552,
+        2600
       ],
       "profile": 0,
       "allegiance": 2,
@@ -37,8 +38,8 @@
     },
     {
       "position": [
-        3294,
-        2120
+        1550,
+        2637
       ],
       "profile": 1,
       "allegiance": 3,
@@ -46,8 +47,8 @@
     },
     {
       "position": [
-        3278,
-        2239
+        1545,
+        2674
       ],
       "profile": 2,
       "allegiance": 4,
@@ -55,8 +56,8 @@
     },
     {
       "position": [
-        3250,
-        2356
+        1537,
+        2710
       ],
       "profile": 3,
       "allegiance": 5,
@@ -64,8 +65,8 @@
     },
     {
       "position": [
-        3212,
-        2470
+        1525,
+        2745
       ],
       "profile": 4,
       "allegiance": 6,
@@ -73,8 +74,8 @@
     },
     {
       "position": [
-        3164,
-        2579
+        1510,
+        2778
       ],
       "profile": 5,
       "allegiance": 7,
@@ -82,8 +83,8 @@
     },
     {
       "position": [
-        3105,
-        2684
+        1492,
+        2811
       ],
       "profile": 6,
       "allegiance": 8,
@@ -91,8 +92,8 @@
     },
     {
       "position": [
-        3037,
-        2783
+        1471,
+        2841
       ],
       "profile": 7,
       "allegiance": 9,
@@ -100,8 +101,8 @@
     },
     {
       "position": [
-        2961,
-        2876
+        1448,
+        2870
       ],
       "profile": 8,
       "allegiance": 10,
@@ -109,8 +110,8 @@
     },
     {
       "position": [
-        2876,
-        2961
+        1422,
+        2896
       ],
       "profile": 9,
       "allegiance": 11,
@@ -118,8 +119,8 @@
     },
     {
       "position": [
-        2783,
-        3037
+        1393,
+        2919
       ],
       "profile": 10,
       "allegiance": 12,
@@ -127,8 +128,8 @@
     },
     {
       "position": [
-        2684,
-        3105
+        1363,
+        2940
       ],
       "profile": 11,
       "allegiance": 13,
@@ -136,8 +137,8 @@
     },
     {
       "position": [
-        2579,
-        3164
+        1330,
+        2958
       ],
       "profile": 12,
       "allegiance": 14,
@@ -145,8 +146,8 @@
     },
     {
       "position": [
-        2470,
-        3212
+        1297,
+        2973
       ],
       "profile": 13,
       "allegiance": 15,
@@ -154,8 +155,8 @@
     },
     {
       "position": [
-        2356,
-        3250
+        1262,
+        2985
       ],
       "profile": 14,
       "allegiance": 16,
@@ -163,8 +164,8 @@
     },
     {
       "position": [
-        2239,
-        3278
+        1226,
+        2993
       ],
       "profile": 15,
       "allegiance": 17,
@@ -172,8 +173,8 @@
     },
     {
       "position": [
-        2120,
-        3294
+        1189,
+        2998
       ],
       "profile": 16,
       "allegiance": 18,
@@ -181,8 +182,8 @@
     },
     {
       "position": [
-        2000,
-        3300
+        1152,
+        3000
       ],
       "profile": 17,
       "allegiance": 19,
@@ -190,8 +191,8 @@
     },
     {
       "position": [
-        1880,
-        3294
+        1115,
+        2998
       ],
       "profile": 18,
       "allegiance": 20,
@@ -199,8 +200,8 @@
     },
     {
       "position": [
-        1761,
-        3278
+        1078,
+        2993
       ],
       "profile": 19,
       "allegiance": 21,
@@ -208,8 +209,8 @@
     },
     {
       "position": [
-        1644,
-        3250
+        1042,
+        2985
       ],
       "profile": 20,
       "allegiance": 22,
@@ -217,8 +218,8 @@
     },
     {
       "position": [
-        1530,
-        3212
+        1007,
+        2973
       ],
       "profile": 21,
       "allegiance": 23,
@@ -226,8 +227,8 @@
     },
     {
       "position": [
-        1421,
-        3164
+        974,
+        2958
       ],
       "profile": 22,
       "allegiance": 24,
@@ -235,8 +236,8 @@
     },
     {
       "position": [
-        1316,
-        3105
+        941,
+        2940
       ],
       "profile": 23,
       "allegiance": 25,
@@ -244,8 +245,8 @@
     },
     {
       "position": [
-        1217,
-        3037
+        911,
+        2919
       ],
       "profile": 24,
       "allegiance": 26,
@@ -253,8 +254,8 @@
     },
     {
       "position": [
-        1124,
-        2961
+        882,
+        2896
       ],
       "profile": 25,
       "allegiance": 27,
@@ -262,8 +263,8 @@
     },
     {
       "position": [
-        1039,
-        2876
+        856,
+        2870
       ],
       "profile": 26,
       "allegiance": 28,
@@ -271,8 +272,8 @@
     },
     {
       "position": [
-        963,
-        2783
+        833,
+        2841
       ],
       "profile": 27,
       "allegiance": 29,
@@ -280,8 +281,8 @@
     },
     {
       "position": [
-        895,
-        2684
+        812,
+        2811
       ],
       "profile": 28,
       "allegiance": 30,
@@ -289,8 +290,8 @@
     },
     {
       "position": [
-        836,
-        2579
+        794,
+        2778
       ],
       "profile": 29,
       "allegiance": 31,
@@ -298,8 +299,8 @@
     },
     {
       "position": [
-        788,
-        2470
+        779,
+        2745
       ],
       "profile": 30,
       "allegiance": 32,
@@ -307,8 +308,8 @@
     },
     {
       "position": [
-        750,
-        2356
+        767,
+        2710
       ],
       "profile": 31,
       "allegiance": 33,
@@ -316,8 +317,8 @@
     },
     {
       "position": [
-        722,
-        2239
+        759,
+        2674
       ],
       "profile": 32,
       "allegiance": 34,
@@ -325,8 +326,8 @@
     },
     {
       "position": [
-        706,
-        2120
+        754,
+        2637
       ],
       "profile": 33,
       "allegiance": 35,
@@ -334,8 +335,8 @@
     },
     {
       "position": [
-        700,
-        2000
+        752,
+        2600
       ],
       "profile": 34,
       "allegiance": 36,
@@ -343,8 +344,8 @@
     },
     {
       "position": [
-        706,
-        1880
+        754,
+        2563
       ],
       "profile": 35,
       "allegiance": 37,
@@ -352,8 +353,8 @@
     },
     {
       "position": [
-        722,
-        1761
+        759,
+        2526
       ],
       "profile": 36,
       "allegiance": 38,
@@ -361,8 +362,8 @@
     },
     {
       "position": [
-        750,
-        1644
+        767,
+        2490
       ],
       "profile": 37,
       "allegiance": 39,
@@ -370,8 +371,8 @@
     },
     {
       "position": [
-        788,
-        1530
+        779,
+        2455
       ],
       "profile": 38,
       "allegiance": 40,
@@ -379,8 +380,8 @@
     },
     {
       "position": [
-        836,
-        1421
+        794,
+        2422
       ],
       "profile": 39,
       "allegiance": 41,
@@ -388,8 +389,8 @@
     },
     {
       "position": [
-        895,
-        1316
+        812,
+        2389
       ],
       "profile": 40,
       "allegiance": 42,
@@ -397,8 +398,8 @@
     },
     {
       "position": [
-        963,
-        1217
+        833,
+        2359
       ],
       "profile": 41,
       "allegiance": 43,
@@ -406,8 +407,8 @@
     },
     {
       "position": [
-        1039,
-        1124
+        856,
+        2330
       ],
       "profile": 42,
       "allegiance": 44,
@@ -415,8 +416,8 @@
     },
     {
       "position": [
-        1124,
-        1039
+        882,
+        2304
       ],
       "profile": 43,
       "allegiance": 45,
@@ -424,8 +425,8 @@
     },
     {
       "position": [
-        1217,
-        963
+        911,
+        2281
       ],
       "profile": 44,
       "allegiance": 46,
@@ -433,8 +434,8 @@
     },
     {
       "position": [
-        1316,
-        895
+        941,
+        2260
       ],
       "profile": 45,
       "allegiance": 47,
@@ -442,8 +443,8 @@
     },
     {
       "position": [
-        1421,
-        836
+        974,
+        2242
       ],
       "profile": 46,
       "allegiance": 48,
@@ -451,8 +452,8 @@
     },
     {
       "position": [
-        1530,
-        788
+        1007,
+        2227
       ],
       "profile": 47,
       "allegiance": 49,
@@ -460,8 +461,8 @@
     },
     {
       "position": [
-        1644,
-        750
+        1042,
+        2215
       ],
       "profile": 48,
       "allegiance": 50,
@@ -469,8 +470,8 @@
     },
     {
       "position": [
-        1761,
-        722
+        1078,
+        2207
       ],
       "profile": 49,
       "allegiance": 51,
@@ -478,8 +479,8 @@
     },
     {
       "position": [
-        1880,
-        706
+        1115,
+        2202
       ],
       "profile": 50,
       "allegiance": 52,
@@ -487,8 +488,8 @@
     },
     {
       "position": [
-        2000,
-        700
+        1152,
+        2200
       ],
       "profile": 51,
       "allegiance": 53,
@@ -496,8 +497,8 @@
     },
     {
       "position": [
-        2120,
-        706
+        1189,
+        2202
       ],
       "profile": 52,
       "allegiance": 54,
@@ -505,8 +506,8 @@
     },
     {
       "position": [
-        2239,
-        722
+        1226,
+        2207
       ],
       "profile": 53,
       "allegiance": 55,
@@ -514,8 +515,8 @@
     },
     {
       "position": [
-        2356,
-        750
+        1262,
+        2215
       ],
       "profile": 54,
       "allegiance": 56,
@@ -523,8 +524,8 @@
     },
     {
       "position": [
-        2470,
-        788
+        1297,
+        2227
       ],
       "profile": 55,
       "allegiance": 57,
@@ -532,8 +533,8 @@
     },
     {
       "position": [
-        2579,
-        836
+        1330,
+        2242
       ],
       "profile": 56,
       "allegiance": 58,
@@ -541,8 +542,8 @@
     },
     {
       "position": [
-        2684,
-        895
+        1363,
+        2260
       ],
       "profile": 57,
       "allegiance": 59,
@@ -550,8 +551,8 @@
     },
     {
       "position": [
-        2783,
-        963
+        1393,
+        2281
       ],
       "profile": 58,
       "allegiance": 60,
@@ -559,8 +560,8 @@
     },
     {
       "position": [
-        2876,
-        1039
+        1422,
+        2304
       ],
       "profile": 59,
       "allegiance": 61,
@@ -568,8 +569,8 @@
     },
     {
       "position": [
-        2961,
-        1124
+        1448,
+        2330
       ],
       "profile": 60,
       "allegiance": 62,
@@ -577,8 +578,8 @@
     },
     {
       "position": [
-        3037,
-        1217
+        1471,
+        2359
       ],
       "profile": 61,
       "allegiance": 63,
@@ -586,8 +587,8 @@
     },
     {
       "position": [
-        3105,
-        1316
+        1492,
+        2389
       ],
       "profile": 62,
       "allegiance": 64,
@@ -595,8 +596,8 @@
     },
     {
       "position": [
-        3164,
-        1421
+        1510,
+        2422
       ],
       "profile": 63,
       "allegiance": 65,
@@ -604,8 +605,8 @@
     },
     {
       "position": [
-        3212,
-        1530
+        1525,
+        2455
       ],
       "profile": 64,
       "allegiance": 66,
@@ -613,8 +614,8 @@
     },
     {
       "position": [
-        3250,
-        1644
+        1537,
+        2490
       ],
       "profile": 65,
       "allegiance": 67,
@@ -622,8 +623,8 @@
     },
     {
       "position": [
-        3278,
-        1761
+        1545,
+        2526
       ],
       "profile": 66,
       "allegiance": 68,
@@ -631,8 +632,8 @@
     },
     {
       "position": [
-        3294,
-        1880
+        1550,
+        2563
       ],
       "profile": 67,
       "allegiance": 69,
@@ -642,8 +643,8 @@
   "pcs": [
     {
       "position": [
-        400,
-        400
+        180,
+        3300
       ],
       "profile": 0,
       "allegiance": 70,
@@ -653,8 +654,8 @@
     },
     {
       "position": [
-        2566,
-        2411
+        1232,
+        2600
       ],
       "profile": 1,
       "allegiance": 71,
@@ -663,8 +664,8 @@
     },
     {
       "position": [
-        2216,
-        2666
+        1214,
+        2652
       ],
       "profile": 2,
       "allegiance": 72,
@@ -673,8 +674,8 @@
     },
     {
       "position": [
-        1784,
-        2666
+        1166,
+        2679
       ],
       "profile": 3,
       "allegiance": 73,
@@ -683,8 +684,8 @@
     },
     {
       "position": [
-        1434,
-        2411
+        1112,
+        2670
       ],
       "profile": 4,
       "allegiance": 74,
@@ -693,8 +694,8 @@
     },
     {
       "position": [
-        1300,
-        2000
+        1077,
+        2600
       ],
       "profile": 5,
       "allegiance": 75,
@@ -703,8 +704,8 @@
     },
     {
       "position": [
-        1434,
-        1589
+        1077,
+        2572
       ],
       "profile": 6,
       "allegiance": 76,
@@ -713,8 +714,8 @@
     },
     {
       "position": [
-        1784,
-        1334
+        1112,
+        2530
       ],
       "profile": 7,
       "allegiance": 77,
@@ -723,8 +724,8 @@
     },
     {
       "position": [
-        2216,
-        1334
+        1166,
+        2521
       ],
       "profile": 8,
       "allegiance": 78,
@@ -733,8 +734,8 @@
     },
     {
       "position": [
-        2566,
-        1589
+        1214,
+        2548
       ],
       "profile": 9,
       "allegiance": 79,

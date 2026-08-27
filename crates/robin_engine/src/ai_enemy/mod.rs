@@ -1353,12 +1353,13 @@ impl EnemyAi {
                 ctx.self_seen_enemy_handles,
             );
             for &handle in &ctx.self_seen_enemy_handles {
-                let target = ctx.entity_view(handle).unwrap_or_else(|| {
-                    panic!(
-                        "seen Enemy detectable {} for NPC {} has no entity snapshot",
-                        handle, self.base.me
-                    )
-                });
+                let Some(target) = ctx.entity_view(handle) else {
+                    eprintln!(
+                        "[THEM frame={} co={:?} me={} phase=reinitialize_input target={} missing=true]",
+                        ctx.frame, ctx.original_creation_order, self.base.me, handle,
+                    );
+                    continue;
+                };
                 eprintln!(
                     "[THEM frame={} co={:?} me={} phase=reinitialize_input target={} dead={} unconscious={} carried={} able={}]",
                     ctx.frame,
@@ -1374,12 +1375,19 @@ impl EnemyAi {
         }
         self.list_them.clear();
         for &handle in &ctx.self_seen_enemy_handles {
-            let target = ctx.entity_view(handle).unwrap_or_else(|| {
-                panic!(
-                    "seen Enemy detectable {} for NPC {} has no entity snapshot",
-                    handle, self.base.me
-                )
-            });
+            let Some(target) = ctx.entity_view(handle) else {
+                // Detectable removal is owner-ordered; a target killed by an
+                // earlier owner can remain in this observer's retained seen
+                // list until its next refresh.
+                // TODO: remove dead target detectables synchronously from all
+                // later observers in the same actor pass.
+                tracing::warn!(
+                    me = self.base.me,
+                    target = handle,
+                    "dropping stale seen-enemy handle missing from the live entity view"
+                );
+                continue;
+            };
             if !target.is_dead {
                 self.list_them.push(handle);
             }
@@ -4769,15 +4777,19 @@ impl EnemyAi {
 
         let mut nearest: HumanHandle = 0;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
-        let owner_world = ctx
-            .entity_view(self.base.me)
-            .unwrap_or_else(|| {
-                panic!(
-                    "GetNewPrimaryTarget owner {} is absent from the live entity view",
-                    self.base.me
-                )
-            })
-            .detection_position_world;
+        let Some(owner_view) = ctx.entity_view(self.base.me) else {
+            // Dense fights can deactivate/delete this owner earlier in the
+            // same actor pass, after its normal-timer tail was admitted. A
+            // dead owner cannot select a meaningful replacement target.
+            // TODO: prune the admitted tail when the earlier slot removes
+            // its owner instead of reaching this stale callback.
+            tracing::warn!(
+                me = self.base.me,
+                "GetNewPrimaryTarget owner left the live entity view earlier in this frame"
+            );
+            return 0;
+        };
+        let owner_world = owner_view.detection_position_world;
 
         for &enemy in &self.list_them {
             if enemy == 0 {

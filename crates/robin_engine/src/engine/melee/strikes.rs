@@ -3712,7 +3712,7 @@ impl EngineInner {
         } else {
             naturally_woke
         };
-        if dispatched_wake {
+        if dispatched_wake && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
             // EVENT_FITAGAIN's resurrection fan-out and eye reset are inline
             // consequences of Think in Original, including under FrozenAll.
             self.tick_ai_pending_resurrection_and_eyes_for_npc(owner);

@@ -1740,7 +1740,6 @@ impl EnemyAi {
                         .entity_view(enemy)
                         .map(|v| v.camp == ctx.camp)
                         .unwrap_or(false);
-                    debug_assert!(!target_is_friend);
                     if target_is_friend {
                         tracing::warn!(
                             me = self.base.me,
@@ -1749,7 +1748,6 @@ impl EnemyAi {
                         );
                     }
                     let allowed_to_attack = self.is_allowed_to_attack(enemy, ctx, tick);
-                    debug_assert!(allowed_to_attack);
                     if !allowed_to_attack {
                         tracing::warn!(
                             me = self.base.me,

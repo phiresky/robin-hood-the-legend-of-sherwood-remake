@@ -589,6 +589,17 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        if ctx.entity_view(self.base.me).is_none() {
+            // An earlier actor slot can remove this soldier after its timer
+            // tail was admitted. There is no live owner on which to apply a
+            // tactical decision.
+            // TODO: cancel admitted owner tails at the removal boundary.
+            tracing::warn!(
+                me = self.base.me,
+                "BattleDecisions skipped after owner left the live entity view"
+            );
+            return;
+        }
         // BattleDecisions does not use FillListWithAllNearFighters. Original
         // scans the complete same-camp fighter registry and gates each entry
         // with the owner's IsDetecting360Degrees (whose radius is profile /
