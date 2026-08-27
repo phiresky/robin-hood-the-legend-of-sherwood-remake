@@ -328,9 +328,11 @@ impl FriendlyAi {
     // the door lookup against `ai_global.door_seek_infos` at
     // post-think time.  The reference flow is synchronous:
     // `GetNearestDoor` → `SetState(FLEEING_RUN_TO_DOOR)` → `GoTo(door)`.
-    // The default `FleeingPanic` transition here is the fallback the
-    // engine layer will override to `FleeingRunToDoor` on a
-    // successful door lookup.
+    // The pure AI stages `FleeingPanic` so its remaining borrowed tail sees
+    // the conservative fallback state. The engine-side request drain folds
+    // that placeholder into the final door/no-door transition before script
+    // callbacks run: Original performs the lookup synchronously and exposes
+    // only that final SetState to FilterAIEvent.
 
     /// Panic fleeing from a specific point, tagged with the sector
     /// and level of its origin so the engine's door lookup can
@@ -348,10 +350,6 @@ impl FriendlyAi {
         self.base.panic_center_y = center.y;
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
-        // Original stages SetState only after its door search and only when
-        // `bNewPanic` remains true. Preserve the eager fallback staging used
-        // by new Rust requests, but do not let a repeated panic re-enter the
-        // civilian state setter and lower an existing red alert to yellow.
         if !was_already_fleeing {
             self.set_state(AiState::Fleeing, Substate::FleeingPanic);
         }
