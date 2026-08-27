@@ -393,6 +393,170 @@ small manifest, a mission fetches only its dependency closure, and later
 missions reuse already cached RHS files. Production map artifacts should still
 use `--map-format jxl-q80` (or the selected quality) and window log 30 for wasm.
 
+## Wasm transfer and resident-memory follow-up (2026-08-28)
+
+The split format changes what should be measured. There are now three different
+budgets, and improving one does not necessarily improve the others:
+
+1. bytes transferred before the menu;
+2. additional bytes transferred at the mission boundary; and
+3. the decoded wasm heap and GPU/audio allocations retained after loading.
+
+The development wasm seen in a local Vite session was **88,035,056 B**. That is
+not the shipping size: it includes development code and debug information. The
+same source built with the `wasm-release` profile, passed through `wasm-bindgen`,
+then through `wasm-opt -Oz --strip-debug --strip-dwarf` and `wasm-strip`, is
+**13,114,717 B**, or **4,923,318 B** with gzip level 9. The optimized module is
+10.88 MiB code and 1.55 MiB initialized data; the rest is wasm metadata. The
+publish workflow must run `wasm-bindgen` *before* Binaryen: optimizing the raw
+Rust wasm first can remove wasm-bindgen adapter metadata and makes the pinned
+wasm-bindgen reject the module.
+
+The data path has larger opportunities than another compiler flag:
+
+- The current boot manifest is **9,446,491 B compressed -> 73,238,365 B
+  bitcode**. Its largest decoded fields are the raw bundle (about 37.2 MiB),
+  parsed resource files (about 28.6 MiB), and sprite dictionaries (about
+  3.9 MiB). In particular, `Interface/DEFAULT.RES` exists both as a roughly
+  21.6 MiB raw archive and as parsed `ResourceManager` data. Zstd can match the
+  duplicate bytes on the wire, but wasm retains both representations.
+- The first full-game mission (`H01_Lin_VL`) fetches **56 files / 32,024,402
+  B**: one mission core plus 55 RHS chunks. First-mission shipping transfer is
+  therefore **41,470,893 B** including the boot manifest, before HTTP cache
+  reuse. The installed payload exposes 61 raw files and 55 parsed RHS entries.
+- The publish workflow eagerly fetches **527** demo audio files before boot,
+  one request after another. They total **9,162,515 B** (8,029,994 B if each is
+  gzip-9 encoded). This is independent of the shipping datadir and is currently
+  paid even when a mission never plays most of those files.
+- Every RHS payload contains a `Vec<Option<ShippingSprite>>` with one slot for
+  every global bank id. The full-game vector has about **404,855 slots**, even
+  when one RHS owns only a few sprites. An option is approximately 20 bytes on
+  wasm32 before its `packed_data`, so each decoded RHS starts with roughly
+  **7.7 MiB of sparse index storage**. A mission with 55 RHS dependencies can
+  therefore transiently retain more than 400 MiB just in mostly-`None` vectors.
+- `loaded_files` retains every decoded RHS part, while `install_mission_parts`
+  clones its profiles, raw bytes, and sprites into a merged mission. Activating
+  the mission clones `payload.raw` once more for the VFS, and an `SbFile` read
+  currently clones the selected raw file again. This makes resident memory much
+  larger than either the compressed download or the raw bitcode byte count.
+- Each independently compressed part currently advertises the requested
+  `windowLog=30` (a 1 GiB zstd window), including RHS files only a few MiB in
+  size. The decoder does not necessarily commit a full GiB for every frame, but
+  the frame's requirement is needlessly high and generic zstd tools refuse it
+  unless explicitly allowed. Per-file adaptive windows should cap the window at
+  the smallest power of two that covers that payload; the manifest alone needs
+  a larger value.
+
+### Recommended order of work
+
+1. **Make RHS sprite storage sparse.** Encode sorted `(u32, ShippingSprite)`
+   pairs, or parallel `ids`/`sprites` vectors, in each RHS part. Allocate the
+   dense runtime bank only once while installing the selected mission. This is
+   primarily a several-hundred-MiB heap and decode-time win; compressed size may
+   improve modestly because bitcode no longer emits 400k enum tags per file.
+2. **Stop retaining two mission representations.** Cache compressed bytes or an
+   `Arc`-backed compact decoded part, move data into the active mission, and
+   discard parts that are not needed for a future mission. Make VFS blobs
+   `Arc<[u8]>` (with a serialization DTO if bitcode should remain plain-`Vec`)
+   so mounting and `SbFile` reads do not copy whole RHS/map files.
+3. **Remove the redundant RHS representation.** Runtime sprite scripting still
+   opens the raw RHS through `SbFile`; the parsed `rhs_files: RhsData` copy is
+   used to build the shipping payload but not to execute the mission. Either
+   omit `RhsData` after conversion, or migrate runtime lookup to it and omit the
+   raw RHS. Do not keep both.
+4. **Remove boot-time raw/parsed duplication.** Audit `ShippingDatadir::raw`
+   against `res_files`, profiles, fonts, and other parsed fields, then retain
+   exactly the representation each wasm loader consumes. `DEFAULT.RES` is the
+   first target. This attacks the 73.2 MiB boot heap even if the 9.45 MiB wire
+   size changes little.
+5. **Make dependencies depend on runtime state.** A mission manifest can know
+   mission-authored actors, but not the player's current gang, inventory, or a
+   replay's initial state. Store an RHS-name-to-content-file index in the boot
+   manifest and add those runtime names at the async mission boundary. Avoid
+   unconditional loading of every bonus, relic, and accessory merely because a
+   save could contain it.
+6. **Make audio mission-selective.** Boot only the menu music/UI sounds; fetch
+   the selected mission's music, voices, and required effects at the same async
+   boundary as its RHS files. The current preload loop should also fetch in
+   parallel or load a small number of content-addressed packs instead of making
+   527 serial requests. Demo audio is overwhelmingly WAV; lossless repacking or
+   Vorbis/Opus conversion should be benchmarked, but lazy selection is the
+   unconditional first win.
+7. **Use adaptive zstd windows and benchmark a shared dictionary.** Independent
+   RHS frames lost the cross-file matches of the old monolith. Zstd explicitly
+   recommends trained dictionaries for collections of small related payloads.
+   Put one content-addressed RHS dictionary in the boot manifest, reuse a
+   prepared decoder dictionary, and measure total mission closure size and
+   decode peak before adopting it. A smaller advertised window is valuable even
+   if the dictionary does not win.
+8. **Trim wasm features by target, then measure again.** Kira's default feature
+   set includes FLAC, MP3, Ogg/Vorbis, PCM, and WAV decoders. The demo payload is
+   490 WAV files plus non-audio metadata, although full-game data also contains
+   Ogg. A wasm-specific `kira` feature set should include only the formats that
+   the web publisher actually emits. Keep native features separate. Repeat this
+   process for archive/editor paths that wasm never invokes; do not infer savings
+   from a Cargo dependency list without comparing post-`wasm-opt` artifacts.
+
+A `twiggy` pass over the 20,007,360-byte pre-bindgen release module explains
+part of the compiler-side difference. Debug function names alone are 4,038,689
+bytes and wasm-bindgen's adapter metadata is 734,321 bytes; both disappear from
+the served artifact. The largest named executable bodies include native-bitcode
+decoders for `ActorCivilian` (290,064 bytes) and `ActorSoldier` (289,696 bytes),
+plus their encoders. Legacy-save adoption/read paths and JSON `PlayerCommand`
+decoding also appear among the largest individual bodies. Follow-up code-size
+experiments should therefore be controlled builds of:
+
+- wasm-specific Kira features (WAV plus Ogg/Vorbis only if the published data
+  uses it), compared after `wasm-bindgen` and `wasm-opt`;
+- browser builds without legacy binary-save import and obsolete JSON replay
+  decode, if product requirements confirm those imports are not exposed;
+- separate WebGPU and WebGL fallback artifacts. The current universal module
+  contains both wgpu paths, and the tested Firefox/Radeon machine actually
+  selected GL, so removing WebGL from the only artifact is not viable.
+
+The large bitcode bodies are not dead compatibility code: compact replay and
+snapshot decoding needs them. Reducing those requires a narrower wire DTO or a
+different snapshot boundary, not merely hiding derives behind cfg attributes.
+
+### Sprite format candidates
+
+The earlier measurements remain decisive: the original RLE/VQ bytes plus zstd
+beat per-sprite PNG/QOI/AVIF/JXL, whole-character JXL and lossless WebP atlases,
+palettes, exact mirror deduplication, and canvas-aligned XOR deltas. The next
+experiments should
+therefore use whole-RHS or whole-character samples and include decoder/code-size
+and GPU-memory costs:
+
+- **Lossless WebP atlas:** now measured and rejected. RobinTown's 7,584 unique
+  frames are 2.95 MiB as current RLE/VQ + zstd, versus 3.84 MiB as either an
+  exact keyed-RGB or alpha-cleared RGBA WebP atlas (**1.30x larger**). This is
+  before charging for atlas coordinates, a Rust decoder or asynchronous browser
+  image plumbing, and the much larger decoded atlas. The benchmark uses
+  libwebp's lossless mode, method 6, and `exact=true` through ImageMagick.
+- **Near-lossless WebP / quantized RLE-VQ:** only if small color changes are
+  acceptable. Compare frame-edge halos and the green transparency key, not only
+  aggregate SSIM. A palette or endpoint quantizer applied *inside* the existing
+  RLE/VQ representation is more promising than replacing its spatial model.
+- **Basis Universal ETC1S/UASTC in KTX2:** useful mainly for reducing resident
+  GPU texture memory and upload cost. It can transcode to BC/ETC/ASTC depending
+  on the adapter, but WebGL exposes those formats through optional extensions
+  and fallback devices need RGBA. It also wants atlas-oriented rendering and a
+  transcoder in the wasm/JS payload. Benchmark it only after the sparse-bank
+  work, and count the fallback plus transcoder. It is not expected to beat the
+  current representation for network transfer of small pixel-art frames.
+- **GPU atlases without a new transport codec:** potentially useful after load.
+  Keep RLE/VQ+zstd on the wire, decode an action/character on demand, pack it
+  into a texture atlas, then release its CPU pixels. This separates the proven
+  transport format from a renderer optimization and avoids paying an RGBA atlas
+  for sprites never drawn.
+
+Primary references for the candidates: the
+[WebP lossless bitstream specification](https://chromium.googlesource.com/webm/libwebp/+/refs/heads/main/doc/webp-lossless-bitstream-spec.txt),
+[Basis Universal transcoder documentation](https://github.com/BinomialLLC/basis_universal/wiki/How-to-Use-and-Configure-the-Transcoder),
+[Khronos WebGL S3TC extension](https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_s3tc/),
+[WebGPU feature guarantees](https://gpuweb.github.io/gpuweb/#adapter-capability-guarantees),
+and the [zstd dictionary API](https://facebook.github.io/zstd/zstd_manual.html#Chapter5).
+
 ## Reproducing
 
 ```

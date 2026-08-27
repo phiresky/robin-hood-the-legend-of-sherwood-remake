@@ -28,6 +28,20 @@ use std::collections::HashMap;
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 use std::io::Cursor;
 
+#[cfg(all(feature = "audio", target_arch = "wasm32"))]
+thread_local! {
+    /// CPAL closes its Web Audio context synchronously from `Stream::drop`,
+    /// even though `AudioContext::resume()` is asynchronous. Firefox rejects
+    /// that close when a menu click is still completing the resume, leaving
+    /// the following mission without a usable audio stream. Keep idle Kira
+    /// managers process-local and reuse them across menu/mission ownership
+    /// boundaries instead.
+    // TODO: Remove this pool once CPAL sequences Web Audio resume/close.
+    static IDLE_AUDIO_MANAGERS: std::cell::RefCell<Vec<AudioManager>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 type MusicHandle = StreamingSoundHandle<FromFileError>;
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
@@ -36,7 +50,9 @@ type MusicHandle = StaticSoundHandle;
 /// Kira-backed audio backend.
 #[cfg(feature = "audio")]
 pub struct KiraAudioBackend {
-    manager: AudioManager,
+    // `Option` lets the wasm Drop implementation transfer the manager into
+    // the process-local reuse pool before CPAL drops its stream.
+    manager: Option<AudioManager>,
     sound_dir: PathBuf,
     /// Cached `StaticSoundData` (decoded audio) keyed by file path.
     /// kira's `StaticSoundData` is cheap to clone — clones share the
@@ -68,8 +84,17 @@ pub struct KiraAudioBackend {
 impl KiraAudioBackend {
     /// Construct a new audio backend.
     pub fn new(sound_dir: impl Into<PathBuf>, num_channels: u32) -> Result<Self, String> {
-        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
-            .map_err(|e| format!("kira AudioManager init failed: {e}"))?;
+        #[cfg(target_arch = "wasm32")]
+        let reused = IDLE_AUDIO_MANAGERS.with(|managers| managers.borrow_mut().pop());
+        #[cfg(not(target_arch = "wasm32"))]
+        let reused: Option<AudioManager> = None;
+
+        let reused_manager = reused.is_some();
+        let mut manager = match reused {
+            Some(manager) => manager,
+            None => AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
+                .map_err(|e| format!("kira AudioManager init failed: {e}"))?,
+        };
         let listener = manager
             .add_listener(
                 mint::Vector3 {
@@ -89,9 +114,12 @@ impl KiraAudioBackend {
             .map_err(|e| format!("kira add_listener failed: {e}"))?;
         let channels = (0..num_channels).map(|_| None).collect();
         let spatial_tracks = (0..num_channels).map(|_| None).collect();
-        tracing::info!("kira audio initialised: {num_channels} channel slots");
+        tracing::info!(
+            reused_manager,
+            "kira audio initialised: {num_channels} channel slots"
+        );
         Ok(Self {
-            manager,
+            manager: Some(manager),
             sound_dir: sound_dir.into(),
             sample_cache: HashMap::new(),
             channels,
@@ -183,6 +211,8 @@ impl KiraAudioBackend {
             let listener_id = self.listener.id();
             let track = self
                 .manager
+                .as_mut()
+                .expect("live Kira backend lost its AudioManager")
                 .add_spatial_sub_track(
                     listener_id,
                     mint_pos,
@@ -287,7 +317,12 @@ impl AudioBackend for KiraAudioBackend {
             data
         };
         let idx = self.find_free_channel()?;
-        match self.manager.play(data) {
+        match self
+            .manager
+            .as_mut()
+            .expect("live Kira backend lost its AudioManager")
+            .play(data)
+        {
             Ok(handle) => {
                 self.channels[idx] = Some(handle);
                 Some(idx as i32)
@@ -381,7 +416,12 @@ impl AudioBackend for KiraAudioBackend {
         if let Some(h) = &mut self.music_handle {
             h.stop(Tween::default());
         }
-        match self.manager.play(data) {
+        match self
+            .manager
+            .as_mut()
+            .expect("live Kira backend lost its AudioManager")
+            .play(data)
+        {
             Ok(handle) => {
                 self.music_handle = Some(handle);
                 self.was_music_playing = true;
@@ -452,7 +492,12 @@ impl AudioBackend for KiraAudioBackend {
             }
         };
         let idx = self.find_free_channel()?;
-        match self.manager.play(data) {
+        match self
+            .manager
+            .as_mut()
+            .expect("live Kira backend lost its AudioManager")
+            .play(data)
+        {
             Ok(handle) => {
                 self.channels[idx] = Some(handle);
                 self.jingle_channel = Some(idx);
@@ -530,6 +575,17 @@ impl AudioBackend for KiraAudioBackend {
                 Tween::default(),
             );
         }
+    }
+}
+
+#[cfg(all(feature = "audio", target_arch = "wasm32"))]
+impl Drop for KiraAudioBackend {
+    fn drop(&mut self) {
+        let manager = self
+            .manager
+            .take()
+            .expect("Kira backend dropped without its AudioManager");
+        IDLE_AUDIO_MANAGERS.with(|managers| managers.borrow_mut().push(manager));
     }
 }
 
