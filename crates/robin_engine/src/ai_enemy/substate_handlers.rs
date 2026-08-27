@@ -797,7 +797,7 @@ impl EnemyAi {
         false
     }
 
-    // Ale reactiontime: if shall-take-ale and beer is alive:
+    // Ale reactiontime: if shall-take-ale:
     // stash beer as object_of_desire, transition to
     // ApproachingAle, set SUN emoticon (20-tick), Say(AleYes),
     // GoNear, save return point, 20-tick timer.  Otherwise
@@ -812,9 +812,18 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            if self.answer_question(Question::ShallITakeAle, ctx)
-                && let Some(obj_pos) = ctx.entity_position(self.base.interesting_object)
-            {
+            if self.answer_question(Question::ShallITakeAle, ctx) {
+                assert_ne!(
+                    self.base.interesting_object, 0,
+                    "ale reaction timer requires the retained bottle pointer"
+                );
+                // Original reads Position(mpInterestingObject) even when a
+                // different soldier has just consumed and deactivated the
+                // bottle. Inactive objects are absent from AiContext, so use
+                // the position latched by EventSeesObject in that case.
+                let obj_pos = ctx
+                    .entity_position(self.base.interesting_object)
+                    .unwrap_or(self.base.seek_position);
                 self.base.object_of_desire = self.base.interesting_object;
                 self.set_state(AiState::Wondering, Substate::WonderingApproachingAle);
                 self.base

@@ -80,6 +80,47 @@ fn drinking_ale_completes_on_event_done_without_fabricated_timer() {
 }
 
 #[test]
+fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
+    let sim = crate::sim_rng::test_context();
+    let mut ai = EnemyAi::new(90);
+    ai.base.current_state = AiState::Wondering;
+    ai.base.current_substate = Substate::WonderingAleReactiontime;
+    ai.base.interesting_object = 321;
+    ai.base.seek_position = Position {
+        x: 632.4453,
+        y: 1835.14,
+        sector: None,
+        level: 0,
+    };
+    ai.soldier_profile_beer = 1;
+    let ctx = AiContext {
+        self_is_active: true,
+        ..AiContext::default()
+    };
+
+    // No view for object 321: the bottle was consumed while React's timer
+    // was pending. Original still commits to the retained pointer/position.
+    ai.wondering_ale_reactiontime(&sim, StimulusType::EventTimer, &ctx, &AiPerTickData::stub());
+
+    assert_eq!(ai.base.current_state, AiState::Wondering);
+    assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
+    assert_eq!(ai.base.object_of_desire, 321);
+    assert_eq!(ai.base.seek_position.x, 632.4453);
+    assert_eq!(ai.base.seek_position.y, 1835.14);
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .any(|work| matches!(
+                work,
+                crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }
+            ))
+    );
+}
+
+#[test]
 fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(90);
