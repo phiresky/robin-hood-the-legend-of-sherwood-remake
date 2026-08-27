@@ -1,0 +1,51 @@
+{
+  "title": "Autonomous Robin vs Little John",
+  "map_filename": "Dover",
+  "spawn": [
+    2000,
+    2000
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      200,
+      200
+    ],
+    [
+      3800,
+      200
+    ],
+    [
+      3800,
+      3800
+    ],
+    [
+      200,
+      3800
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [],
+  "pcs": [
+    {
+      "position": [
+        1600,
+        2000
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 0,
+      "autonomous": true
+    },
+    {
+      "position": [
+        2400,
+        2000
+      ],
+      "profile": 2,
+      "allegiance": 3,
+      "direction": 8,
+      "autonomous": true
+    }
+  ]
+}

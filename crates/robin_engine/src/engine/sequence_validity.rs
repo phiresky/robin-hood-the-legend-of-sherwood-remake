@@ -83,7 +83,7 @@ impl EngineInner {
                     let is_vip = self.is_entity_vip(assets, victim);
                     let is_rider = victim.soldier_data().map(|s| s.rider).unwrap_or(false);
                     let out_of_order = is_human_out_of_order(victim);
-                    let camp_ok = victim.camp() == crate::element::Camp::Lacklandists;
+                    let camp_ok = victim.camp().is_hostile_to(crate::element::Camp::Royalists);
                     let hit_civilian_ok = element.command == Command::HitCmd || !is_civilian;
                     if in_building
                         || victim.element_data().blipped
@@ -788,7 +788,7 @@ impl EngineInner {
                 let target_ok = if victim.is_human() {
                     !victim.element_data().blipped
                         && victim.is_soldier()
-                        && victim.camp() != crate::element::Camp::Royalists
+                        && victim.camp().is_hostile_to(crate::element::Camp::Royalists)
                         && !is_human_out_of_order(victim)
                 } else {
                     true
@@ -826,7 +826,7 @@ impl EngineInner {
                 let target_ok = if victim.is_human() {
                     !victim.element_data().blipped
                         && victim.is_soldier()
-                        && victim.camp() != crate::element::Camp::Royalists
+                        && victim.camp().is_hostile_to(crate::element::Camp::Royalists)
                         && !is_human_out_of_order(victim)
                         && !self.is_entity_vip(assets, victim)
                 } else {

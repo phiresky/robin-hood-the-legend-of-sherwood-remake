@@ -929,7 +929,7 @@ impl EngineInner {
 
         let mut score = 0;
         for (_, s) in self.world.entities.soldiers() {
-            if s.camp() == Camp::Lacklandists
+            if s.camp().is_hostile_to(Camp::Royalists)
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
             {
@@ -950,7 +950,7 @@ impl EngineInner {
         let mut living = 0u32;
         let mut dead = 0u32;
         for (_, s) in self.world.entities.soldiers() {
-            if s.camp() == Camp::Lacklandists {
+            if s.camp().is_hostile_to(Camp::Royalists) {
                 if s.life_points() > 0 {
                     living += 1;
                 } else {

@@ -644,6 +644,8 @@ pub enum MotionMethod {
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Hash,
     Serialize,
     Deserialize,
@@ -657,22 +659,49 @@ pub enum Camp {
     Lacklandists,
     #[default]
     Error,
+    /// A custom mission allegiance. IDs 0 and 1 are reserved for the
+    /// Royalist and Lacklandist legacy camps respectively.
+    Custom(u16),
 }
 
 impl Camp {
-    pub fn enemy(self) -> Self {
-        match self {
-            Self::Royalists => Self::Lacklandists,
-            Self::Lacklandists => Self::Royalists,
-            Self::Error => Self::Error,
+    pub const ROYALIST_ID: u16 = 0;
+    pub const LACKLANDIST_ID: u16 = 1;
+    pub const FIRST_CUSTOM_ID: u16 = 2;
+
+    /// Resolve a mission-authored allegiance ID.
+    pub fn from_allegiance_id(id: u16) -> Self {
+        match id {
+            Self::ROYALIST_ID => Self::Royalists,
+            Self::LACKLANDIST_ID => Self::Lacklandists,
+            id => Self::Custom(id),
         }
     }
-    pub fn index(self) -> Option<usize> {
+
+    pub fn allegiance_id(self) -> Option<u16> {
         match self {
-            Self::Royalists => Some(0),
-            Self::Lacklandists => Some(1),
+            Self::Royalists => Some(Self::ROYALIST_ID),
+            Self::Lacklandists => Some(Self::LACKLANDIST_ID),
+            Self::Custom(id) => Some(id),
             Self::Error => None,
         }
+    }
+
+    /// Custom missions currently use the simple diplomacy rule that every
+    /// distinct valid allegiance is hostile to every other allegiance.
+    pub fn is_hostile_to(self, other: Self) -> bool {
+        match (self.allegiance_id(), other.allegiance_id()) {
+            (Some(left), Some(right)) => left != right,
+            _ => false,
+        }
+    }
+
+    pub fn is_player_aligned(self) -> bool {
+        self == Self::Royalists
+    }
+
+    pub fn index(self) -> Option<usize> {
+        self.allegiance_id().map(usize::from)
     }
 }
 

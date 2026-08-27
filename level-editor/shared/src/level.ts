@@ -194,6 +194,8 @@ export interface Soldier {
   direction: number;
   layer: number;
   profile_number: number;
+  /** Rust-port extension; 0/1 are legacy camps, 2+ are custom allegiances. */
+  allegiance?: number;
   tower_guard: boolean;
   company_number: number;
   path_id: number;
@@ -207,6 +209,7 @@ export interface Civilian {
   direction: number;
   layer: number;
   profile_number: number;
+  allegiance?: number;
   path_id: number;
   [k: string]: unknown;
 }
@@ -224,7 +227,13 @@ export interface Mission {
   civilians: Civilian[];
   targets: { position_x: number; position_y: number; [k: string]: unknown }[];
   bonuses: { position_x: number; position_y: number; bonus_type: number; [k: string]: unknown }[];
-  pcs_to_rescue: { position_x: number; position_y: number; [k: string]: unknown }[];
+  pcs_to_rescue: {
+    position_x: number;
+    position_y: number;
+    allegiance?: number;
+    autonomous?: boolean;
+    [k: string]: unknown;
+  }[];
   scrolls: { position_x: number; position_y: number; [k: string]: unknown }[];
   hiking_paths: HikingPath[];
   script_objects: { points: unknown[]; lines: unknown[]; sectors: unknown[] };

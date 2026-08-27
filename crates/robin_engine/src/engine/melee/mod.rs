@@ -1266,7 +1266,10 @@ fn fighting_ability_from_profile(
                 .get_soldier(s.soldier.soldier_profile_index)
                 .map(|p| p.fighting)
                 .unwrap_or(50);
-            if s.soldier.cached_camp == crate::element::Camp::Lacklandists {
+            if s.soldier
+                .cached_camp
+                .is_hostile_to(crate::element::Camp::Royalists)
+            {
                 difficulty.modify_capacity(
                     base,
                     crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
@@ -1365,7 +1368,7 @@ pub(in crate::engine) fn should_enter_swordfight_after_strike(
     if victim.is_civilian() {
         return false;
     }
-    if victim.camp() != attacker.camp().enemy() {
+    if !victim.camp().is_hostile_to(attacker.camp()) {
         return false;
     }
     let attacker_is_robin = matches!(attacker, Entity::Pc(pc) if pc.pc.robin);
@@ -1490,18 +1493,17 @@ fn sector_to_vector_iso(sector: u16, _aspect_ratio: f32) -> (f32, f32) {
     (x, y)
 }
 
-/// Get an entity's camp (faction). PCs are always Royalists.
+/// Get an entity's allegiance.
 fn entity_camp<I: Into<EntityId>>(
     entities: &crate::entities::Entities,
     id: I,
 ) -> crate::element::Camp {
     let id = id.into();
-    match entities.get(id) {
-        Some(Entity::Pc(_)) => crate::element::Camp::Royalists,
-        Some(Entity::Soldier(s)) => s.soldier.cached_camp,
-        Some(Entity::Civilian(c)) => c.civilian.cached_camp,
-        _ => crate::element::Camp::Error,
-    }
+    entities
+        .get(id)
+        .filter(|entity| entity.is_human())
+        .map(Entity::camp)
+        .unwrap_or(crate::element::Camp::Error)
 }
 
 /// Check whether `sector` refers to a building sector in the grid.

@@ -812,6 +812,10 @@ pub struct RawSoldier {
     pub layer: u16,
     pub material: u32,
     pub profile_number: u32,
+    /// Optional Rust-port extension. Legacy RHM files leave this unset and
+    /// derive allegiance from `SoldierProfile::hostile` as before.
+    #[serde(default)]
+    pub allegiance: Option<u16>,
     pub tower_guard: bool,
     pub company_number: u32,
     pub drunk_level: u32,
@@ -843,6 +847,10 @@ pub struct RawCivilian {
     pub layer: u16,
     pub material: u32,
     pub profile_number: u32,
+    /// Optional Rust-port extension. Legacy RHM files leave this unset and
+    /// derive allegiance from the civilian profile attitude as before.
+    #[serde(default)]
+    pub allegiance: Option<u16>,
     pub path_id: u16,
     pub money: u32,
     /// Scroll sets for beggars (10 sets, each a list of scroll IDs).
@@ -925,6 +933,11 @@ pub struct RawPcRescue {
     pub layer: u16,
     pub material: u32,
     pub profile_index: u32,
+    /// Optional Rust-port extension for custom multi-team missions.
+    #[serde(default)]
+    pub allegiance: Option<u16>,
+    #[serde(default)]
+    pub autonomous: bool,
     pub attributes: u32,
     pub script_class: Option<String>,
 }
@@ -1947,9 +1960,44 @@ pub struct HackableLevelDescriptor {
     pub title: Option<String>,
     pub map_filename: String,
     pub spawn: (i16, i16),
+    /// Whether to create the ordinary player-controlled beam-me PC.
+    #[serde(default = "default_true")]
+    pub spawn_player: bool,
     pub walkable_polygon: Vec<(i16, i16)>,
     #[serde(default)]
     pub volumes: Vec<HackableLevelVolume>,
+    #[serde(default)]
+    pub soldiers: Vec<HackableSoldier>,
+    #[serde(default)]
+    pub pcs: Vec<HackablePc>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(deny_unknown_fields)]
+pub struct HackableSoldier {
+    pub position: (i16, i16),
+    pub profile: u32,
+    pub allegiance: u16,
+    #[serde(default)]
+    pub direction: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(deny_unknown_fields)]
+pub struct HackablePc {
+    pub position: (i16, i16),
+    pub profile: u32,
+    pub allegiance: u16,
+    #[serde(default)]
+    pub direction: u32,
+    /// Starts this PC in an automatically evaluated swordfight against the
+    /// nearest hostile autonomous PC.
+    #[serde(default)]
+    pub autonomous: bool,
 }
 
 /// One simplified, convex architectural volume in a hackable level descriptor.
@@ -2060,20 +2108,94 @@ impl LoadedLevel {
             mission_profile_id: 0,
         };
         level.mission.element_chunk_order = vec![MissionElementChunk::Element];
-        level.mission.element_group_order = vec![MissionElementGroup::BeamMe];
-        level.mission.beam_mes = vec![BeamMe {
-            position: MapPoint::new(f32::from(descriptor.spawn.0), f32::from(descriptor.spawn.1)),
-            direction: 0,
-            action: 0,
-            projection_area: u16::MAX,
-            sector: 0,
-            layer: 0,
-            material: 0,
-            action_required: BeamMeActions::default(),
-            index: 0,
-            script: None,
-            required_pc: 0,
-        }];
+        level.mission.element_group_order = Vec::new();
+        if descriptor.spawn_player {
+            level
+                .mission
+                .element_group_order
+                .push(MissionElementGroup::BeamMe);
+            level.mission.beam_mes = vec![BeamMe {
+                position: MapPoint::new(
+                    f32::from(descriptor.spawn.0),
+                    f32::from(descriptor.spawn.1),
+                ),
+                direction: 0,
+                action: 0,
+                projection_area: u16::MAX,
+                sector: 0,
+                layer: 0,
+                material: 0,
+                action_required: BeamMeActions::default(),
+                index: 0,
+                script: None,
+                required_pc: 0,
+            }];
+        }
+        if !descriptor.soldiers.is_empty() {
+            level
+                .mission
+                .element_group_order
+                .push(MissionElementGroup::Soldier);
+        }
+        level.mission.soldiers = descriptor
+            .soldiers
+            .into_iter()
+            .map(|soldier| {
+                Ok(RawSoldier {
+                    position_x: soldier
+                        .position
+                        .0
+                        .try_into()
+                        .map_err(|_| "hackable soldier x must be non-negative")?,
+                    position_y: soldier
+                        .position
+                        .1
+                        .try_into()
+                        .map_err(|_| "hackable soldier y must be non-negative")?,
+                    direction: soldier.direction,
+                    action: 0,
+                    obstacle_index: u16::MAX,
+                    sector: 0,
+                    layer: 0,
+                    material: 0,
+                    profile_number: soldier.profile,
+                    allegiance: Some(soldier.allegiance),
+                    tower_guard: false,
+                    company_number: 0,
+                    drunk_level: 0,
+                    money: 0,
+                    subordinate_ids: Vec::new(),
+                    path_id: 0,
+                    alert_path_id: 0,
+                    script_class: None,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if !descriptor.pcs.is_empty() {
+            level
+                .mission
+                .element_group_order
+                .push(MissionElementGroup::PcToRescue);
+        }
+        level.mission.pcs_to_rescue = descriptor
+            .pcs
+            .into_iter()
+            .map(|pc| RawPcRescue {
+                position_x: pc.position.0,
+                position_y: pc.position.1,
+                direction: pc.direction,
+                action: 0,
+                obstacle_index: u16::MAX,
+                sector: 0,
+                layer: 0,
+                material: 0,
+                profile_index: pc.profile,
+                allegiance: Some(pc.allegiance),
+                autonomous: pc.autonomous,
+                attributes: 0,
+                script_class: None,
+            })
+            .collect();
         Ok(level)
     }
 
@@ -3011,6 +3133,7 @@ fn read_civilians(
             layer,
             material,
             profile_number,
+            allegiance: None,
             path_id,
             money,
             beggar_scroll_sets,
@@ -3094,6 +3217,7 @@ fn read_soldiers(
             layer,
             material,
             profile_number,
+            allegiance: None,
             tower_guard,
             company_number,
             drunk_level,
@@ -3364,6 +3488,8 @@ fn read_pcs_to_rescue(
             layer,
             material,
             profile_index,
+            allegiance: None,
+            autonomous: false,
             attributes,
             script_class,
         });
@@ -4528,6 +4654,73 @@ mod tests {
         )
         .expect_err("two-point walkable polygon must be rejected");
         assert!(error.contains("walkable_polygon"));
+    }
+
+    #[test]
+    fn hackable_descriptor_authors_multiple_soldier_and_pc_allegiances() {
+        let level = LoadedLevel::hackable_from_json(
+            br#"{
+                "map_filename": "Arena",
+                "spawn": [50, 50],
+                "spawn_player": false,
+                "walkable_polygon": [[0, 0], [100, 0], [100, 100]],
+                "soldiers": [
+                    {"position": [20, 20], "profile": 0, "allegiance": 2},
+                    {"position": [80, 20], "profile": 1, "allegiance": 9}
+                ],
+                "pcs": [
+                    {"position": [50, 80], "profile": 2, "allegiance": 7, "autonomous": true}
+                ]
+            }"#,
+        )
+        .expect("multi-team hackable descriptor");
+        assert!(level.mission.beam_mes.is_empty());
+        assert_eq!(level.mission.soldiers.len(), 2);
+        assert_eq!(level.mission.soldiers[0].allegiance, Some(2));
+        assert_eq!(level.mission.soldiers[1].allegiance, Some(9));
+        assert_eq!(level.mission.pcs_to_rescue[0].allegiance, Some(7));
+        assert!(level.mission.pcs_to_rescue[0].autonomous);
+    }
+
+    #[test]
+    fn bundled_multi_team_missions_parse_and_cover_requested_rosters() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let cases = [
+            ("multi-team-three-way", "MultiTeamThreeWay", 3, 0),
+            ("multi-team-ten-way", "MultiTeamTenWay", 10, 0),
+            (
+                "multi-team-all-variants-wheel",
+                "MultiTeamAllVariantsWheel",
+                68,
+                10,
+            ),
+            (
+                "multi-team-robin-vs-little-john",
+                "MultiTeamRobinVsLittleJohn",
+                0,
+                2,
+            ),
+        ];
+        for (slug, mission, soldiers, pcs) in cases {
+            let path = repo
+                .join("mods")
+                .join(slug)
+                .join("Data/Levels")
+                .join(format!("{mission}.level.json"));
+            let bytes = fs::read(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let level = LoadedLevel::hackable_from_json(&bytes)
+                .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+            assert_eq!(level.mission.soldiers.len(), soldiers, "{mission}");
+            assert_eq!(level.mission.pcs_to_rescue.len(), pcs, "{mission}");
+        }
+        let duel_path = repo.join(
+            "mods/multi-team-robin-vs-little-john/Data/Levels/MultiTeamRobinVsLittleJohn.level.json",
+        );
+        let duel = LoadedLevel::hackable_from_json(&fs::read(duel_path).unwrap()).unwrap();
+        assert!(duel.mission.pcs_to_rescue.iter().all(|pc| pc.autonomous));
+        assert_eq!(duel.mission.pcs_to_rescue[0].profile_index, 0);
+        assert_eq!(duel.mission.pcs_to_rescue[1].profile_index, 2);
     }
 
     /// Build a chunk: tag(4) + size(4) + version(4) + payload.

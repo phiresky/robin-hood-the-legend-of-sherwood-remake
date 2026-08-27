@@ -1389,12 +1389,7 @@ fn tick_arrows_matching(
                 );
                 return None;
             };
-            let camp = match e {
-                Entity::Pc(_) => Some(crate::element::Camp::Royalists),
-                Entity::Soldier(s) => Some(s.soldier.cached_camp),
-                Entity::Civilian(c) => Some(c.civilian.cached_camp),
-                _ => None,
-            };
+            let camp = Some(e.camp());
             let Some(actor) = e.actor_data() else {
                 tracing::warn!(
                     entity = entity_id.index(),
@@ -1444,12 +1439,7 @@ fn tick_arrows_matching(
             if !e.is_human() {
                 return None;
             }
-            let camp = match e {
-                Entity::Pc(_) => Some(crate::element::Camp::Royalists),
-                Entity::Soldier(s) => Some(s.soldier.cached_camp),
-                Entity::Civilian(c) => Some(c.civilian.cached_camp),
-                _ => None,
-            };
+            let camp = Some(e.camp());
             Some(ShooterTraits {
                 id: entity_id,
                 is_pc: e.is_pc(),

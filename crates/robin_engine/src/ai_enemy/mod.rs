@@ -589,7 +589,7 @@ impl EnemyAi {
         // GetIQ -> GetModifiedCapacity scales only when the NPC's camp
         // is Lacklandists; Royalist soldiers (also EnemyAi-driven)
         // get the raw intelligence.
-        if ctx.camp != crate::element::Camp::Lacklandists {
+        if !ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
             return self.soldier_profile_iq;
         }
         ctx.difficulty.modify_capacity(
@@ -613,7 +613,7 @@ impl EnemyAi {
     /// bow-aim timer — without this override the timer would track
     /// the soldier's *intelligence* instead of its shooting skill.
     pub fn get_shooting_ability(&self, ctx: &AiContext) -> u16 {
-        let mut shooting = if ctx.camp == crate::element::Camp::Lacklandists {
+        let mut shooting = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
             ctx.difficulty.modify_capacity(
                 self.soldier_profile_shooting,
                 difficulty::EASY_ENEMY_FIGHTING,
@@ -4711,7 +4711,7 @@ impl EnemyAi {
         // Royalist soldiers (also EnemyAi-driven) and Medium difficulty leave
         // the modifier at 1.0. The original's Easy==Hard copy-paste bug is
         // optional: the gameplay tweak selects the intended Hard constant.
-        let modifier = if ctx.camp == crate::element::Camp::Lacklandists {
+        let modifier = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
             match ctx.difficulty {
                 crate::player_profile::DifficultyLevel::Easy => difficulty::EASY_REACTIONTIME,
                 crate::player_profile::DifficultyLevel::Hard if tick.fix_hard_reaction_times => {

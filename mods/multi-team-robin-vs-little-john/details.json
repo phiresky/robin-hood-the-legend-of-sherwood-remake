@@ -1,0 +1,14 @@
+{
+  "slug": "multi-team-robin-vs-little-john",
+  "title": "Autonomous Robin vs Little John",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Multi-team test arena",
+  "uploaded": "Aug 27, 2026",
+  "tags": [
+    "Hackable",
+    "Test"
+  ],
+  "description": "Robin and Little John are non-playable autonomous PCs on different allegiances and begin a swordfight automatically.",
+  "hackable_mission": "MultiTeamRobinVsLittleJohn"
+}

@@ -854,16 +854,22 @@ impl EngineInner {
             Focus::Hit => {
                 !blipped
                     && !is_out_of_order
-                    && camp == Camp::Lacklandists
+                    && camp.is_hostile_to(Camp::Royalists)
                     && is_soldier
                     && !is_vip
                     && !is_rider
             }
             // Apple has no VIP/rider exclusion.
-            Focus::Apple => !blipped && !is_out_of_order && is_soldier && camp != Camp::Royalists,
+            Focus::Apple => {
+                !blipped && !is_out_of_order && is_soldier && camp.is_hostile_to(Camp::Royalists)
+            }
             // Stone excludes VIPs.
             Focus::Stone => {
-                !blipped && !is_out_of_order && is_soldier && camp != Camp::Royalists && !is_vip
+                !blipped
+                    && !is_out_of_order
+                    && is_soldier
+                    && camp.is_hostile_to(Camp::Royalists)
+                    && !is_vip
             }
             Focus::View => !blipped,
             // Sword rejects only on blipped / out-of-order / Royalists
@@ -874,7 +880,7 @@ impl EngineInner {
                 !blipped
                     && !is_out_of_order
                     && is_soldier
-                    && camp != Camp::Royalists
+                    && camp.is_hostile_to(Camp::Royalists)
                     && !is_fast_rider
             }
             // Strangle has two branches keyed on whether a macro is
@@ -894,7 +900,11 @@ impl EngineInner {
                 if self.is_recording_macro() {
                     blipped || !(is_dead || camp == Camp::Royalists || is_vip || is_rider)
                 } else {
-                    !blipped && !is_out_of_order && camp != Camp::Royalists && !is_vip && !is_rider
+                    !blipped
+                        && !is_out_of_order
+                        && camp.is_hostile_to(Camp::Royalists)
+                        && !is_vip
+                        && !is_rider
                 }
             }
             // Contextual use.
@@ -930,7 +940,7 @@ impl EngineInner {
                     && is_unconscious
                     && posture == Posture::Lying
                     && is_soldier
-                    && camp != Camp::Royalists
+                    && camp.is_hostile_to(Camp::Royalists)
                     && !is_vip
                     && self.selected_pc_has_contextual_action(
                         assets,

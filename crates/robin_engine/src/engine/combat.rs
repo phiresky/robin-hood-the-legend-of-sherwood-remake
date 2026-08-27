@@ -384,7 +384,11 @@ impl EngineInner {
                 // The shooting-ability lookup applies FIGHTING modifiers
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
-                let mut shooting = if s.soldier.cached_camp == crate::element::Camp::Lacklandists {
+                let mut shooting = if s
+                    .soldier
+                    .cached_camp
+                    .is_hostile_to(crate::element::Camp::Royalists)
+                {
                     let diff = self.control.sim_config.difficulty;
                     diff.modify_capacity(
                         profile.shooting,
@@ -1212,18 +1216,8 @@ impl EngineInner {
         let shooter_is_npc = shooter.is_npc();
         let shooter_is_pc = shooter.is_pc();
         let shooter_is_soldier = shooter.is_soldier();
-        let shooter_camp = Some(match shooter {
-            Entity::Pc(_) => crate::element::Camp::Royalists,
-            Entity::Soldier(s) => s.soldier.cached_camp,
-            Entity::Civilian(c) => c.civilian.cached_camp,
-            _ => crate::element::Camp::Royalists,
-        });
-        let victim_camp = match victim {
-            Entity::Pc(_) => Some(crate::element::Camp::Royalists),
-            Entity::Soldier(s) => Some(s.soldier.cached_camp),
-            Entity::Civilian(c) => Some(c.civilian.cached_camp),
-            _ => None,
-        };
+        let shooter_camp = shooter.is_human().then(|| shooter.camp());
+        let victim_camp = victim.is_human().then(|| victim.camp());
         let same_camp = matches!(
             (shooter_camp, victim_camp),
             (Some(sc), Some(vc)) if sc == vc,

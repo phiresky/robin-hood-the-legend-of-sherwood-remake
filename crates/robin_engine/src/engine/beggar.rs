@@ -115,7 +115,7 @@ pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
                 difficulty_params::HARD_ENEMY_IQ,
                 100,
             );
-            (soldier.soldier.cached_camp == Camp::Lacklandists
+            (soldier.soldier.cached_camp.is_hostile_to(Camp::Royalists)
                 && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())
             .then_some(soldier_id)

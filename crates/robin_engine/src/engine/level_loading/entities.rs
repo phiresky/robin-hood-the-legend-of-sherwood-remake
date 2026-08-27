@@ -157,11 +157,16 @@ impl EngineInner {
                 );
             }
 
-            let cached_camp = if civ_profile.attitude == crate::profiles::Attitude::Hostile {
-                crate::element::Camp::Lacklandists
-            } else {
-                crate::element::Camp::Royalists
-            };
+            let cached_camp = raw
+                .allegiance
+                .map(crate::element::Camp::from_allegiance_id)
+                .unwrap_or_else(|| {
+                    if civ_profile.attitude == crate::profiles::Attitude::Hostile {
+                        crate::element::Camp::Lacklandists
+                    } else {
+                        crate::element::Camp::Royalists
+                    }
+                });
             let cached_civilian_type = civ_profile.civilian_type;
 
             let mut ai = crate::ai_friendly::FriendlyAi::default();
@@ -523,6 +528,10 @@ impl EngineInner {
                     robin: is_robin,
                     profile_index: profile_idx,
                     list_index,
+                    cached_camp: raw
+                        .allegiance
+                        .map(crate::element::Camp::from_allegiance_id)
+                        .unwrap_or(crate::element::Camp::Royalists),
                     campaign_description_index: Some(char_idx as u32),
                     kind,
                     has_lockpick,
@@ -533,6 +542,7 @@ impl EngineInner {
                     // controllable.  The portrait bar will pick this up
                     // via entity state sync.
                     playable: false,
+                    autonomous: raw.autonomous,
                     ..Default::default()
                 },
             });
@@ -597,18 +607,23 @@ impl EngineInner {
                 })?;
 
             let mut cached_max_lp = soldier_profile.life_point as i16;
-            let cached_camp = if soldier_profile.hostile {
-                crate::element::Camp::Lacklandists
-            } else {
-                crate::element::Camp::Royalists
-            };
+            let cached_camp = raw
+                .allegiance
+                .map(crate::element::Camp::from_allegiance_id)
+                .unwrap_or_else(|| {
+                    if soldier_profile.hostile {
+                        crate::element::Camp::Lacklandists
+                    } else {
+                        crate::element::Camp::Royalists
+                    }
+                });
 
             // Modify life points for Lacklandist (enemy) soldiers based
             // on difficulty level.  VIPs are excluded from the modifier.
             // We scale cached_max_lp itself so both cached_max_life_points
             // and initial life_points start at the difficulty-adjusted
             // value.
-            if cached_camp == crate::element::Camp::Lacklandists && !soldier_profile.vip {
+            if cached_camp.is_hostile_to(crate::element::Camp::Royalists) && !soldier_profile.vip {
                 let diff = config.difficulty;
                 cached_max_lp = diff.modify_capacity(
                     cached_max_lp as u16,
@@ -797,7 +812,7 @@ impl EngineInner {
             // debriefing screen stay at 0 — and the `money` console cheat
             // miscomputes the delta.
             self.mission_domain.mission_stat.soldier_money += raw.money;
-            if cached_camp == crate::element::Camp::Lacklandists {
+            if cached_camp.is_hostile_to(crate::element::Camp::Royalists) {
                 self.mission_domain.mission_stat.total_soldier_count += 1;
             }
         }

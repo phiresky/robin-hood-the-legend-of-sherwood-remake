@@ -807,7 +807,7 @@ impl EngineInner {
         let is_soldier_vip =
             matches!(entity, Entity::Soldier(_)) && self.is_entity_vip(assets, entity);
 
-        let camp = if entity.camp() == crate::element::Camp::Lacklandists {
+        let camp = if entity.camp().is_hostile_to(crate::element::Camp::Royalists) {
             MmCamp::Lacklandists
         } else {
             MmCamp::Other

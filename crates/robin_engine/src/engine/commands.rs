@@ -4407,7 +4407,7 @@ impl EngineInner {
             let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
             let (is_lacklandist, scroll_attached) = match target {
                 Entity::Soldier(s) => (
-                    s.camp() == Camp::Lacklandists,
+                    s.camp().is_hostile_to(Camp::Royalists),
                     s.npc.attached_scroll.is_some(),
                 ),
                 _ => (false, false),

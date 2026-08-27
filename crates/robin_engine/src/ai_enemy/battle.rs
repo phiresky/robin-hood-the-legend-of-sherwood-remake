@@ -1292,7 +1292,7 @@ impl EnemyAi {
                 {
                     // Too proud to fight alongside commoners.
                     decision = Decision::TooProudToAttack;
-                } else if ctx.camp == crate::element::Camp::Lacklandists
+                } else if ctx.camp.is_hostile_to(crate::element::Camp::Royalists)
                     && !soldiers_with_lower_pride
                     && enough_nearer_friends_to_observe(
                         friends_nearer_to_enemy,
@@ -1960,17 +1960,17 @@ impl EnemyAi {
                                 // otherwise-best candidate when its interior
                                 // already contains any PC. A rejected house
                                 // does not update the running minimum.
-                                let dangerous_house = ctx.camp
-                                    == crate::element::Camp::Lacklandists
-                                    && global
-                                        .houses
-                                        .iter()
-                                        .find(|h| h.sector_index == door.sector_in as u32)
-                                        .is_some_and(|h| {
-                                            h.occupant_ids.iter().any(|id| {
-                                                matches!(id, crate::element::EntityId::Pc(_))
-                                            })
-                                        });
+                                let dangerous_house =
+                                    ctx.camp.is_hostile_to(crate::element::Camp::Royalists)
+                                        && global
+                                            .houses
+                                            .iter()
+                                            .find(|h| h.sector_index == door.sector_in as u32)
+                                            .is_some_and(|h| {
+                                                h.occupant_ids.iter().any(|id| {
+                                                    matches!(id, crate::element::EntityId::Pc(_))
+                                                })
+                                            });
                                 if !dangerous_house {
                                     best = Some(door.position_in);
                                     minimum_distance = distance;

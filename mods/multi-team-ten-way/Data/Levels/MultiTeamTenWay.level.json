@@ -1,0 +1,121 @@
+{
+  "title": "Ten-way Allegiance Arena",
+  "map_filename": "Dover",
+  "spawn": [
+    2000,
+    2000
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      200,
+      200
+    ],
+    [
+      3800,
+      200
+    ],
+    [
+      3800,
+      3800
+    ],
+    [
+      200,
+      3800
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        2900,
+        2000
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        2728,
+        2529
+      ],
+      "profile": 1,
+      "allegiance": 3,
+      "direction": 10
+    },
+    {
+      "position": [
+        2278,
+        2856
+      ],
+      "profile": 2,
+      "allegiance": 4,
+      "direction": 11
+    },
+    {
+      "position": [
+        1722,
+        2856
+      ],
+      "profile": 3,
+      "allegiance": 5,
+      "direction": 13
+    },
+    {
+      "position": [
+        1272,
+        2529
+      ],
+      "profile": 4,
+      "allegiance": 6,
+      "direction": 14
+    },
+    {
+      "position": [
+        1100,
+        2000
+      ],
+      "profile": 5,
+      "allegiance": 7,
+      "direction": 0
+    },
+    {
+      "position": [
+        1272,
+        1471
+      ],
+      "profile": 6,
+      "allegiance": 8,
+      "direction": 2
+    },
+    {
+      "position": [
+        1722,
+        1144
+      ],
+      "profile": 7,
+      "allegiance": 9,
+      "direction": 3
+    },
+    {
+      "position": [
+        2278,
+        1144
+      ],
+      "profile": 8,
+      "allegiance": 10,
+      "direction": 5
+    },
+    {
+      "position": [
+        2728,
+        1471
+      ],
+      "profile": 9,
+      "allegiance": 11,
+      "direction": 6
+    }
+  ],
+  "pcs": []
+}

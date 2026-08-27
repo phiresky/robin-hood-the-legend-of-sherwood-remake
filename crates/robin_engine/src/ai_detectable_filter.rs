@@ -22,15 +22,16 @@ pub fn should_add_enemy_detectable(
     target_is_soldier: bool,
     target_camp: Camp,
 ) -> bool {
-    match (npc_camp, npc_is_soldier) {
-        (Camp::Royalists, true) => target_is_soldier && target_camp == Camp::Lacklandists,
-        (Camp::Royalists, false) => target_is_pc,
-        (Camp::Lacklandists, true) => {
-            (target_is_soldier && target_camp == Camp::Royalists) || target_is_pc
-        }
-        (Camp::Lacklandists, false) => target_is_pc,
-        (Camp::Error, _) => false,
+    if npc_camp == Camp::Error || target_camp == Camp::Error {
+        return false;
     }
+    if !npc_is_soldier {
+        // Preserve Original's unusual legacy behavior for both built-in
+        // civilian camps. Custom civilians use allegiance-based hostility.
+        return target_is_pc
+            && (!matches!(npc_camp, Camp::Custom(_)) || npc_camp.is_hostile_to(Camp::Royalists));
+    }
+    (target_is_soldier || target_is_pc) && npc_camp.is_hostile_to(target_camp)
 }
 
 #[cfg(test)]
@@ -139,5 +140,28 @@ mod tests {
             true,
             Camp::Royalists
         ));
+    }
+
+    #[test]
+    fn custom_soldiers_detect_every_distinct_allegiance() {
+        let observer = Camp::Custom(7);
+        assert!(!should_add_enemy_detectable(
+            observer,
+            true,
+            false,
+            true,
+            Camp::Custom(7),
+        ));
+        for id in 2..12 {
+            if id != 7 {
+                assert!(should_add_enemy_detectable(
+                    observer,
+                    true,
+                    false,
+                    true,
+                    Camp::Custom(id),
+                ));
+            }
+        }
     }
 }

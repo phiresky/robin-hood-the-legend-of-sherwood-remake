@@ -1927,6 +1927,10 @@ pub struct PcPortraitState {
     pub quick_icons: [PcPortraitQuickIconState; 3],
 }
 
+fn default_pc_camp() -> Camp {
+    Camp::Royalists
+}
+
 /// PC-level data.
 #[derive(
     Debug,
@@ -1944,6 +1948,10 @@ pub struct PcData {
     pub robin: bool,
     pub already_selected: bool,
     pub list_index: u8,
+    /// Mission-authored allegiance. Ordinary campaign PCs use the player
+    /// allegiance assigned during construction.
+    #[serde(default = "default_pc_camp")]
+    pub cached_camp: Camp,
     /// Exact index of Original's `mpDescription` pointer in
     /// `RHCampaign::mapPCDescription`.
     ///
@@ -1957,6 +1965,10 @@ pub struct PcData {
     /// Set/cleared by the `Activate` and `Deactivate` script natives,
     /// and by rescue-PC spawn logic.
     pub playable: bool,
+    /// Custom-mission control mode. Autonomous PCs participate in combat but
+    /// are excluded from player selection.
+    #[serde(default)]
+    pub autonomous: bool,
 
     /// Whether the per-PC UI panel should be hidden.  Toggled today by
     /// the `CALL <initial> HIDEINTERFACE|DISPLAYINTERFACE` console
@@ -2092,8 +2104,10 @@ impl Default for PcData {
             robin: false,
             already_selected: false,
             list_index: 0,
+            cached_camp: Camp::Royalists,
             campaign_description_index: None,
             playable: true,
+            autonomous: false,
             interface_hidden: false,
             current_action: Action::default(),
             saved_action: Action::default(),
@@ -4058,7 +4072,7 @@ impl Entity {
     /// `Camp::Error`.
     pub fn camp(&self) -> Camp {
         match self {
-            Self::Pc(_) => Camp::Royalists,
+            Self::Pc(pc) => pc.pc.cached_camp,
             Self::Soldier(s) => s.soldier.cached_camp,
             Self::Civilian(c) => c.civilian.cached_camp,
             _ => Camp::Error,
@@ -4960,10 +4974,19 @@ pub trait Human: Actor {
         self.human_data().tiredness
     }
     fn is_enemy_of(&self, other_camp: Camp) -> bool {
-        self.camp() != other_camp
+        self.camp().is_hostile_to(other_camp)
     }
     fn enemy_camp(&self) -> Camp {
-        self.camp().enemy()
+        // TODO(multi-team-diplomacy): remove this binary compatibility
+        // accessor once remaining callers request concrete hostile actors.
+        match self.camp() {
+            Camp::Royalists => Camp::Lacklandists,
+            Camp::Lacklandists => Camp::Royalists,
+            Camp::Custom(id) => {
+                panic!("custom allegiance {id} has multiple possible enemy camps; use is_enemy_of")
+            }
+            Camp::Error => panic!("invalid camp has no enemy camp"),
+        }
     }
     fn is_robin(&self) -> bool {
         false
@@ -5946,8 +5969,16 @@ mod tests {
 
     #[test]
     fn camp_enemy() {
-        assert_eq!(Camp::Royalists.enemy(), Camp::Lacklandists);
-        assert_eq!(Camp::Lacklandists.enemy(), Camp::Royalists);
+        assert!(Camp::Royalists.is_hostile_to(Camp::Lacklandists));
+        assert!(Camp::Lacklandists.is_hostile_to(Camp::Royalists));
+        assert!(!Camp::Royalists.is_hostile_to(Camp::Royalists));
+        let ten_teams: Vec<_> = (0..10).map(Camp::from_allegiance_id).collect();
+        for (left_index, left) in ten_teams.iter().enumerate() {
+            for (right_index, right) in ten_teams.iter().enumerate() {
+                assert_eq!(left.is_hostile_to(*right), left_index != right_index);
+            }
+        }
+        assert!(!Camp::Error.is_hostile_to(Camp::Royalists));
     }
 
     #[test]

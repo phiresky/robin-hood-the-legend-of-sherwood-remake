@@ -1,0 +1,58 @@
+{
+  "title": "Three-way Allegiance Arena",
+  "map_filename": "Dover",
+  "spawn": [
+    2000,
+    2000
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      200,
+      200
+    ],
+    [
+      3800,
+      200
+    ],
+    [
+      3800,
+      3800
+    ],
+    [
+      200,
+      3800
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        2650,
+        2000
+      ],
+      "profile": 1,
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1675,
+        2563
+      ],
+      "profile": 7,
+      "allegiance": 3,
+      "direction": 13
+    },
+    {
+      "position": [
+        1675,
+        1437
+      ],
+      "profile": 13,
+      "allegiance": 4,
+      "direction": 3
+    }
+  ],
+  "pcs": []
+}

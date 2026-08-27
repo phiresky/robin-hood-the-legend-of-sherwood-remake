@@ -32,6 +32,7 @@ impl EngineInner {
         // think-method recursion depth = 0
         self.ai.global.there_are_royalist_soldiers = false;
         self.ai.global.there_are_lacklandist_soldiers = false;
+        self.ai.global.soldier_camps.clear();
         self.ai.global.overall_alert_status = crate::ai::AlertLevel::Green;
         self.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Green;
         self.ai.global.init_green_yellow_red_alert_soldiers();
@@ -392,6 +393,9 @@ impl EngineInner {
             // Easy/Hard scaling on the Lacklandist arm is already
             // applied at spawn time in `level_loading::spawn_soldier`.
             if is_enemy {
+                if self_camp != Camp::Error {
+                    self.ai.global.soldier_camps.insert(self_camp);
+                }
                 match self_camp {
                     Camp::Royalists => self.ai.global.there_are_royalist_soldiers = true,
                     Camp::Lacklandists => self.ai.global.there_are_lacklandist_soldiers = true,

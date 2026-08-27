@@ -5302,6 +5302,7 @@ mod tests {
             layer: 0,
             material: 0,
             profile_number: 0,
+            allegiance: None,
             tower_guard: false,
             company_number: 0,
             drunk_level: 0,

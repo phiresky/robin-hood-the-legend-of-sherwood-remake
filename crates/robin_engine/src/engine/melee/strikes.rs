@@ -3125,12 +3125,7 @@ impl EngineInner {
                         dy_stretched: vdy,
                         distance: dist,
                         direction_sector: sector,
-                        camp: match e {
-                            Entity::Pc(_) => crate::element::Camp::Royalists,
-                            Entity::Soldier(s) => s.soldier.cached_camp,
-                            Entity::Civilian(c) => c.civilian.cached_camp,
-                            _ => crate::element::Camp::Error,
-                        },
+                        camp: e.camp(),
                         facing_direction: elem.direction(),
                         elevation: elem.position().z,
                         life_points: lp,

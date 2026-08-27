@@ -1,0 +1,14 @@
+{
+  "slug": "multi-team-all-variants-wheel",
+  "title": "All Variants Allegiance Wheel",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Multi-team test arena",
+  "uploaded": "Aug 27, 2026",
+  "tags": [
+    "Hackable",
+    "Test"
+  ],
+  "description": "Every soldier profile and every PC profile arranged in two large circles; every actor has a unique allegiance.",
+  "hackable_mission": "MultiTeamAllVariantsWheel"
+}

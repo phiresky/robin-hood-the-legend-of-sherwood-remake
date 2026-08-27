@@ -942,7 +942,10 @@ impl EngineInner {
             .unwrap_or(false);
         let victim_is_lacklandist =
             match self.expect_entity(victim_id, "sword-damage hero-speech victim") {
-                Entity::Soldier(s) => s.soldier.cached_camp == crate::element::Camp::Lacklandists,
+                Entity::Soldier(s) => s
+                    .soldier
+                    .cached_camp
+                    .is_hostile_to(crate::element::Camp::Royalists),
                 _ => false,
             };
 
@@ -3286,7 +3289,7 @@ impl EngineInner {
             .unwrap_or(false);
         let bump_lacklandist_score = self
             .get_entity(victim_id)
-            .map(|e| e.is_soldier() && e.camp() == Camp::Lacklandists)
+            .map(|e| e.is_soldier() && e.camp().is_hostile_to(Camp::Royalists))
             .unwrap_or(false);
         if bump_lacklandist_score
             && !projectile_death

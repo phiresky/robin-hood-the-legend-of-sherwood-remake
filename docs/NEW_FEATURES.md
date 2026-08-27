@@ -4,6 +4,21 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Data-driven mission allegiances.** Hackable JSON missions may assign a
+  numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
+  the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
+  distinct valid allegiances are mutually hostile. Runtime target detection,
+  combat, minimap classification, cursor actions, difficulty modifiers, and
+  NPC-enemy availability use relationship queries instead of assuming one
+  opposing camp. Legacy RHM actors without the optional field still derive
+  their allegiance from the original hostile/attitude profile flags.
+  Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
+  autonomous PCs automatically enter swordfights with their nearest hostile
+  autonomous PC. Four launchable test arenas live under `mods/multi-team-*`:
+  three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
+  and autonomous Robin versus Little John. Diplomacy beyond the current
+  different-ID-is-hostile rule remains a future extension.
+
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise

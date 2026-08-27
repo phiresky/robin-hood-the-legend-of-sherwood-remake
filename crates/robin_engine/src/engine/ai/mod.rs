@@ -1077,11 +1077,7 @@ pub(super) fn build_detectable_enemies_for(
             // - Royalist (Good) soldier → detects enemy (Lacklandist) soldiers.
             // - Lacklandist (Evil) soldier → detects good (Royalist) soldiers
             //   AND PCs.
-            match self_camp {
-                Camp::Royalists => pd.is_soldier && pd.camp == Camp::Lacklandists,
-                Camp::Lacklandists => pd.is_pc || (pd.is_soldier && pd.camp == Camp::Royalists),
-                Camp::Error => false,
-            }
+            (pd.is_pc || pd.is_soldier) && self_camp.is_hostile_to(pd.camp)
         };
         if is_detectable {
             out.push(Detectable {
@@ -4319,10 +4315,10 @@ impl EngineInner {
         let door_indices = house.door_indices.clone();
         let occupant_ids = house.occupant_ids.clone();
 
-        // Split occupants into royalists / lacklandists / civilians,
-        // skipping dead and unconscious.  PCs count as royalists.
-        let mut royalist_ids: Vec<EntityId> = Vec::new();
-        let mut lacklandist_ids: Vec<EntityId> = Vec::new();
+        // Group live fighters by allegiance. Original used two fixed lists;
+        // custom missions may have any number of groups in one building.
+        let mut fighter_ids: std::collections::BTreeMap<crate::element::Camp, Vec<EntityId>> =
+            std::collections::BTreeMap::new();
         let mut civilian_ids: Vec<EntityId> = Vec::new();
         for &eid in &occupant_ids {
             let Some(entity) = self.world.entities.get(eid) else {
@@ -4333,10 +4329,11 @@ impl EngineInner {
                     if s.npc.life_points <= 0 || s.human.unconscious {
                         continue;
                     }
-                    match s.soldier.cached_camp {
-                        crate::element::Camp::Royalists => royalist_ids.push(eid),
-                        crate::element::Camp::Lacklandists => lacklandist_ids.push(eid),
-                        _ => {}
+                    if let Some(_) = s.soldier.cached_camp.allegiance_id() {
+                        fighter_ids
+                            .entry(s.soldier.cached_camp)
+                            .or_default()
+                            .push(eid);
                     }
                 }
                 Entity::Civilian(c) => {
@@ -4346,7 +4343,7 @@ impl EngineInner {
                     civilian_ids.push(eid);
                 }
                 Entity::Pc(pc) if pc.pc.life_points > 0 && !pc.human.unconscious => {
-                    royalist_ids.push(eid);
+                    fighter_ids.entry(entity.camp()).or_default().push(eid);
                 }
                 _ => {}
             }
@@ -4366,8 +4363,18 @@ impl EngineInner {
                 source,
                 self.world.original_creation_order(source),
                 describe(&occupant_ids),
-                describe(&royalist_ids),
-                describe(&lacklandist_ids),
+                describe(
+                    fighter_ids
+                        .get(&crate::element::Camp::Royalists)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[])
+                ),
+                describe(
+                    fighter_ids
+                        .get(&crate::element::Camp::Lacklandists)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[])
+                ),
                 describe(&civilian_ids),
             );
             for &eid in &occupant_ids {
@@ -4402,10 +4409,23 @@ impl EngineInner {
             }
         }
 
-        // No battle unless both camps present.
-        if royalist_ids.is_empty() || lacklandist_ids.is_empty() {
+        let source_camp = self
+            .world
+            .entities
+            .get(source)
+            .map(Entity::camp)
+            .unwrap_or(crate::element::Camp::Error);
+        let Some(source_ids) = fighter_ids.get(&source_camp).cloned() else {
             return;
-        }
+        };
+        let Some(opposing_ids) = fighter_ids
+            .iter()
+            .filter(|(camp, ids)| source_camp.is_hostile_to(**camp) && !ids.is_empty())
+            .max_by_key(|(_, ids)| ids.len())
+            .map(|(_, ids)| ids.clone())
+        else {
+            return;
+        };
 
         // Every live civilian panics.
         let panic_runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
@@ -4414,10 +4434,15 @@ impl EngineInner {
         }
 
         // Outnumbered side flees; the stronger side pursues.
-        let (fleeing, pursuing) = if royalist_ids.len() > lacklandist_ids.len() {
-            (lacklandist_ids, royalist_ids)
+        // A doorway battle has two sides. Dispatch the alerting allegiance
+        // against its largest hostile group; other allegiances remain valid
+        // independent combatants and can dispatch their own alerts.
+        // TODO(multi-team-door-battles): schedule every hostile pair when the
+        // door coordinator can own more than one simultaneous battle.
+        let (fleeing, pursuing) = if source_ids.len() > opposing_ids.len() {
+            (opposing_ids, source_ids)
         } else {
-            (royalist_ids, lacklandist_ids)
+            (source_ids, opposing_ids)
         };
 
         self.init_battle_before_door(sim, assets, &door_indices, &fleeing, &pursuing);
@@ -4969,7 +4994,7 @@ impl EngineInner {
         // `pick_door` closure doesn't need to borrow `self.world.entities`
         // (which is re-borrowed mutably after door selection).
         let dangerous_house_sectors: std::collections::HashSet<u32> =
-            if ctx.camp == crate::element::Camp::Lacklandists {
+            if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
                 self.ai
                     .global
                     .houses

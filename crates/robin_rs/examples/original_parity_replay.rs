@@ -10033,6 +10033,7 @@ fn camp_name(camp: robin_engine::element::Camp) -> &'static str {
         robin_engine::element::Camp::Royalists => "royalists",
         robin_engine::element::Camp::Lacklandists => "lacklandists",
         robin_engine::element::Camp::Error => "error",
+        robin_engine::element::Camp::Custom(_) => "custom",
     }
 }
 
@@ -10041,6 +10042,7 @@ fn camp_ordinal(camp: robin_engine::element::Camp) -> i32 {
         robin_engine::element::Camp::Royalists => 0,
         robin_engine::element::Camp::Lacklandists => 1,
         robin_engine::element::Camp::Error => 2,
+        robin_engine::element::Camp::Custom(id) => i32::from(id),
     }
 }
 

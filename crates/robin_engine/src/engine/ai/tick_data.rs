@@ -1593,7 +1593,7 @@ impl EngineInner {
             let has_formation = soldier_profile.formation;
             let fighting_ability = {
                 let base = soldier_profile.fighting;
-                if s.soldier.cached_camp == Camp::Lacklandists {
+                if s.soldier.cached_camp.is_hostile_to(Camp::Royalists) {
                     let diff = self.control.sim_config.difficulty;
                     diff.modify_capacity(
                         base,

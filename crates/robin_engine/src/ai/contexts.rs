@@ -1445,6 +1445,10 @@ pub struct AiGlobalState {
 
     pub there_are_royalist_soldiers: bool,
     pub there_are_lacklandist_soldiers: bool,
+    /// All valid soldier allegiances present in the mission. This replaces
+    /// Original's two booleans for multi-team hostility decisions while the
+    /// booleans remain for legacy state/parity surfaces.
+    pub soldier_camps: std::collections::BTreeSet<crate::element_kinds::Camp>,
 
     pub stupid_soldiers_cheat: bool,
     pub freeze: bool,
@@ -1546,6 +1550,7 @@ impl Default for AiGlobalState {
             red_alert_soldiers: 0,
             there_are_royalist_soldiers: false,
             there_are_lacklandist_soldiers: false,
+            soldier_camps: std::collections::BTreeSet::new(),
             stupid_soldiers_cheat: false,
             freeze: false,
             overall_alert_status: AlertLevel::Green,
@@ -1578,7 +1583,12 @@ impl Default for AiGlobalState {
 
 impl AiGlobalState {
     pub fn npcs_can_be_enemies(&self) -> bool {
-        self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers
+        self.soldier_camps.iter().enumerate().any(|(index, camp)| {
+            self.soldier_camps
+                .iter()
+                .skip(index + 1)
+                .any(|other| camp.is_hostile_to(*other))
+        }) || (self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers)
     }
 
     pub fn overall_villain_alert(&self) -> AlertLevel {

@@ -777,7 +777,7 @@ fn non_enemy_visibility_blocked_before_cadence(
     viewer_camp: Camp,
     type_gate_blocked: bool,
 ) -> bool {
-    eye_status.is_blind() || viewer_camp != Camp::Lacklandists || type_gate_blocked
+    eye_status.is_blind() || !viewer_camp.is_hostile_to(Camp::Royalists) || type_gate_blocked
 }
 
 fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
@@ -791,7 +791,10 @@ fn apply_enemy_beggar_disguise(
     order_type: crate::order::OrderType,
     visibility: f32,
 ) -> f32 {
-    if viewer_camp != Camp::Lacklandists || !target_is_pc || *got_beggar_trick || visibility <= 0.0
+    if !viewer_camp.is_hostile_to(Camp::Royalists)
+        || !target_is_pc
+        || *got_beggar_trick
+        || visibility <= 0.0
     {
         return visibility;
     }
@@ -2626,7 +2629,7 @@ impl EngineInner {
                 // targets before its PC-vs-soldier cadence branch. Keep the
                 // detectable (CleanUpDetectables only removes dead enemies),
                 // but clear both live visibility and the cached sample.
-                if viewer.camp == Camp::Lacklandists && target.hollow_man {
+                if viewer.camp.is_hostile_to(Camp::Royalists) && target.hollow_man {
                     det.seen_now = false;
                     det.last_visibility = 0.0;
                     continue;
@@ -2635,7 +2638,7 @@ impl EngineInner {
                 // Original's Lacklandist PC-only blip and guard gates run
                 // before the PC cadence decision. They invalidate the cached
                 // sample even when this frame would otherwise reuse it.
-                if viewer.camp == Camp::Lacklandists
+                if viewer.camp.is_hostile_to(Camp::Royalists)
                     && target.is_pc
                     && viewer_blipped
                     && !viewer_inside_building
@@ -2644,7 +2647,7 @@ impl EngineInner {
                     det.last_visibility = 0.0;
                     continue;
                 }
-                if viewer.camp == Camp::Lacklandists
+                if viewer.camp.is_hostile_to(Camp::Royalists)
                     && target.is_pc
                     && !det.seen_last_frame
                     && target.guarded
@@ -2660,7 +2663,7 @@ impl EngineInner {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_PC
                 };
                 let gate_open = modified_frame.is_multiple_of(frequency)
-                    || (viewer.camp == Camp::Lacklandists && lacklandist_refresh_always);
+                    || (viewer.camp.is_hostile_to(Camp::Royalists) && lacklandist_refresh_always);
                 tracing::trace!(
                     observer = ?npc_id,
                     target = ?target_id,
@@ -2845,7 +2848,7 @@ impl EngineInner {
                 // already has it baked in.
                 let mut visibility = if gate_open {
                     let detection_speed_factor =
-                        if target.is_pc && viewer.camp == Camp::Lacklandists {
+                        if target.is_pc && viewer.camp.is_hostile_to(Camp::Royalists) {
                             let detection_speed_pct = if is_forest_level {
                                 target.detection_speed_in_forest
                             } else {
@@ -2991,7 +2994,7 @@ impl EngineInner {
             }
 
             let my_camp = viewer.camp;
-            if viewer.camp == Camp::Lacklandists
+            if viewer.camp.is_hostile_to(Camp::Royalists)
                 && let Some(enemy_ai) = npc.ai_brain.enemy_mut()
             {
                 // Pre-resolve target metadata when the primary target is a

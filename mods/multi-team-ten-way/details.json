@@ -1,0 +1,14 @@
+{
+  "slug": "multi-team-ten-way",
+  "title": "Ten-way Allegiance Arena",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Multi-team test arena",
+  "uploaded": "Aug 27, 2026",
+  "tags": [
+    "Hackable",
+    "Test"
+  ],
+  "description": "Ten mutually hostile allegiances, one soldier in each team.",
+  "hackable_mission": "MultiTeamTenWay"
+}

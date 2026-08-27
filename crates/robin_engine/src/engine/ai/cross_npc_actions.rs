@@ -224,9 +224,10 @@ impl EngineInner {
             let entity = self.world.entities.get(npc_id)?;
             let include = match entity {
                 Entity::Civilian(_) => true,
-                Entity::Soldier(s) => {
-                    s.soldier.cached_camp == crate::element_kinds::Camp::Lacklandists
-                }
+                Entity::Soldier(s) => s
+                    .soldier
+                    .cached_camp
+                    .is_hostile_to(crate::element_kinds::Camp::Royalists),
                 _ => false,
             };
             if !include {
