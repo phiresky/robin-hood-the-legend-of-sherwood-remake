@@ -1558,6 +1558,26 @@ impl FastFindGrid {
         }
     }
 
+    /// Effective type for an exact live sector identity.
+    ///
+    /// A sector's public number is script-facing and is not an index into the
+    /// flat arena: building sectors routinely have public numbers larger than
+    /// the arena length. Live geometry queries must therefore retain and use
+    /// the arena provenance carried by [`SectorHandle`].
+    #[inline]
+    pub fn sector_type_for_handle(
+        &self,
+        sector: crate::position_interface::SectorHandle,
+    ) -> crate::sector::SectorType {
+        let arena = sector.arena_index().unwrap_or_else(|| {
+            panic!(
+                "live sector {} lacks exact arena provenance for type lookup",
+                sector.get()
+            )
+        });
+        self.sector_type(u32::from(arena))
+    }
+
     /// OR `extra` into the runtime overlay for `sector_idx`. Used by
     /// the ScApex script command.
     pub fn or_sector_type_overlay(&mut self, sector_idx: u32, extra: crate::sector::SectorType) {
@@ -4822,6 +4842,49 @@ mod tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         }
+    }
+
+    #[test]
+    fn sector_type_handle_uses_arena_identity_not_public_number() {
+        use crate::position_interface::SectorHandle;
+        use crate::sector::SectorType;
+
+        let mut grid = FastFindGrid::new();
+        grid.add_sector(
+            square_sector(
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(10.0, 10.0),
+                SectorType::MOTION | SectorType::AREA,
+                0,
+                0,
+            ),
+            0,
+        );
+        let lift_arena = grid.add_sector(
+            square_sector(
+                MapPoint::new(20.0, 20.0),
+                MapPoint::new(30.0, 30.0),
+                SectorType::MOTION | SectorType::LIFT,
+                1,
+                130,
+            ),
+            1,
+        );
+        let handle = SectorHandle::new(130)
+            .expect("public sector number is valid")
+            .with_arena_index(SectorIndex::new(lift_arena).expect("arena index is valid"));
+
+        assert!(grid.sector_type_for_handle(handle).is_lift());
+    }
+
+    #[test]
+    #[should_panic(expected = "lacks exact arena provenance for type lookup")]
+    fn sector_type_handle_rejects_number_only_live_identity() {
+        let grid = FastFindGrid::new();
+        let handle = crate::position_interface::SectorHandle::new(130)
+            .expect("public sector number is valid");
+
+        let _ = grid.sector_type_for_handle(handle);
     }
 
     #[test]

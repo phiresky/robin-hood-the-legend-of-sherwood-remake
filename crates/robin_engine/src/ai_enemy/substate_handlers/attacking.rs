@@ -2414,7 +2414,7 @@ impl EnemyAi {
                         self.base.me, self.base.primary_target
                     )
                 });
-                g.sector_type(u32::from(sector)).is_lift()
+                g.sector_type_for_handle(sector).is_lift()
             });
             if target_on_lift {
                 self.base.face_entity(self.base.primary_target, ctx);
