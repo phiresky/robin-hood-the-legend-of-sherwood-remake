@@ -99,6 +99,7 @@ impl EngineInner {
         operation: crate::interp::SynchronousSequenceOperation,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
+        crate::engine::script::debug_swordfight_sequence_operation("drive_detached", &operation);
         let failed_element = synchronous_action_element_ref(&operation.action);
         let dispatch_result =
             self.dispatch_script_synchronous_action(sim, assets, operation.action, active_scripts);

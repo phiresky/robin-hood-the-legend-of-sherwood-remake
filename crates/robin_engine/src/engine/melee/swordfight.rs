@@ -71,7 +71,7 @@ fn with_swordfight_preparation_scope<R>(
     Some(body())
 }
 
-pub(in crate::engine) fn active_swordfight_preparation() -> Option<(EntityId, EntityId)> {
+pub(crate) fn active_swordfight_preparation() -> Option<(EntityId, EntityId)> {
     SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow().last().copied())
 }
 
@@ -93,7 +93,16 @@ pub(crate) fn deferred_swordfight_preparation_for_enter(
         crate::sequence::FieldValue::Element(opponent) => *opponent,
         _ => return None,
     };
-    active_swordfight_preparation().filter(|(prepared_actor, preparation_opponent)| {
+    let active = active_swordfight_preparation();
+    if std::env::var_os("PARITY_DEBUG_SWORDFIGHT_YIELD").is_some() {
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 128 {
+            eprintln!(
+                "PARITY_SWORDFIGHT_YIELD stage=enter_launch_candidate owner={authored_owner:?} opponent={authored_opponent:?} active={active:?}"
+            );
+        }
+    }
+    active.filter(|(prepared_actor, preparation_opponent)| {
         authored_owner == *preparation_opponent && authored_opponent == *prepared_actor
     })
 }
