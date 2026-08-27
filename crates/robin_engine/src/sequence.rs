@@ -6041,7 +6041,20 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) -> usize {
+        let has_matching_live_element = self.actor_live.get(&owner).is_some_and(|refs| {
+            refs.iter().any(|element_ref| {
+                self.get_element(element_ref.sequence_id, element_ref.element_index)
+                    .is_some_and(|element| {
+                        element.command == command && element.state != SequenceState::InProgress
+                    })
+            })
+        });
+        if !has_matching_live_element {
+            return 0;
+        }
+
         let mut to_remove = Vec::new();
+        let mut terminal_effects_processed = false;
 
         for i in 0..self.elements_to_go.len() {
             let (seq_id, elem_idx) = self.elements_to_go[i];
@@ -6064,6 +6077,7 @@ impl SequenceManager {
                 .get_mut(&seq_id)
                 .expect("validated pending sequence disappeared")
                 .stop_element(elem_idx, stop_priority, resolver);
+            terminal_effects_processed |= !effects_vec.is_empty();
             for effects in effects_vec {
                 self.process_effects_deferring_cross_cleanup(
                     seq_id,
@@ -6084,17 +6098,33 @@ impl SequenceManager {
             self.elements_to_go.remove(idx);
         }
 
-        let mut postponed_targets = Vec::new();
-        for (seq_id, seq) in &self.sequences {
-            for (elem_idx, elem) in seq.elements.iter().enumerate() {
-                if elem.owner == Some(owner)
-                    && elem.command == command
-                    && elem.state == SequenceState::Postponed
-                {
-                    postponed_targets.push((*seq_id, elem_idx));
-                }
-            }
-        }
+        // `actor_live` contains every Todo/InProgress/Postponed element for
+        // this owner. Use it to avoid a complete retained-sequence scan for
+        // the overwhelmingly common no-match case (for example each queued
+        // EnterSwordfight checking for an old ShootBow). Restore manager
+        // insertion order before dispatch so loaded non-monotonic sequence IDs
+        // preserve Original's first-to-last traversal.
+        let mut postponed_targets = self
+            .actor_live
+            .get(&owner)
+            .into_iter()
+            .flat_map(|refs| refs.iter())
+            .filter_map(|element_ref| {
+                self.get_element(element_ref.sequence_id, element_ref.element_index)
+                    .is_some_and(|element| {
+                        element.command == command && element.state == SequenceState::Postponed
+                    })
+                    .then_some((element_ref.sequence_id, element_ref.element_index))
+            })
+            .collect::<Vec<_>>();
+        postponed_targets.sort_by_key(|(sequence_id, element_index)| {
+            (
+                self.sequences
+                    .get_index_of(sequence_id)
+                    .unwrap_or_else(|| panic!("actor-live sequence {sequence_id:?} disappeared")),
+                *element_index,
+            )
+        });
 
         let mut stopped_count = count;
         for (seq_id, elem_idx) in postponed_targets {
@@ -6103,6 +6133,7 @@ impl SequenceManager {
                 .get_mut(&seq_id)
                 .expect("collected postponed sequence disappeared")
                 .stop_element(elem_idx, stop_priority, resolver);
+            terminal_effects_processed |= !effects_vec.is_empty();
             for effects in effects_vec {
                 self.process_effects_deferring_cross_cleanup(
                     seq_id,
@@ -6118,10 +6149,12 @@ impl SequenceManager {
             }
         }
 
-        // As in `stop_owner_current_from_root`, clear inbound links once for
-        // the completed batch instead of rescanning the complete manager for
-        // every matching pending or postponed element.
-        self.clear_terminal_cross_postponed_links();
+        if terminal_effects_processed {
+            // As in `stop_owner_current_from_root`, clear inbound links once
+            // for the completed batch instead of rescanning the complete
+            // manager for every matching pending or postponed element.
+            self.clear_terminal_cross_postponed_links();
+        }
 
         stopped_count
     }

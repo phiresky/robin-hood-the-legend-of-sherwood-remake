@@ -874,6 +874,22 @@ fn stop_pending_matching_batches_terminal_link_cleanup() {
             SequenceState::Interrupted
         );
     }
+
+    // EnterSwordfight performs this check for every queued entry even when
+    // there is no bow work left. Keep the retained manager large enough that
+    // an accidental all-sequence terminal-link cleanup per no-op call is
+    // immediately visible in this stress regression.
+    for _ in 0..4096 {
+        assert_eq!(
+            mgr.stop_pending_elements_matching(
+                owner,
+                Command::ShootBow,
+                SequencePriority::Preference,
+                &|element| element.priority,
+            ),
+            0,
+        );
+    }
 }
 
 #[test]
