@@ -431,14 +431,71 @@ impl StateHash for fastrand::Rng {
 
 // ─── Computing the final hash ─────────────────────────────────────
 
-/// Compute a single u64 hash of `value` using FxHasher — ~5–10× faster
-/// than SipHash for the small-integer / byte-stream pattern that
-/// `StateHash` produces, and fully deterministic (no random seed).
+/// Fixed-width adapter around XXH3.
+///
+/// `Hasher`'s default integer methods use native-endian bytes, while some
+/// hashers (including `rustc_hash::FxHasher`) also use pointer-width state.
+/// Neither is suitable for replay hashes shared by native 64-bit and wasm32.
+/// This adapter gives every integer an explicit little-endian encoding and
+/// widens pointer-sized integers to 64 bits.
+#[derive(Default)]
+struct StableHasher(xxhash_rust::xxh3::Xxh3);
+
+macro_rules! stable_write {
+    ($($method:ident($ty:ty)),* $(,)?) => {
+        $(
+            #[inline]
+            fn $method(&mut self, value: $ty) {
+                self.write(&value.to_le_bytes());
+            }
+        )*
+    };
+}
+
+impl Hasher for StableHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0.digest()
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    stable_write! {
+        write_u8(u8),
+        write_u16(u16),
+        write_u32(u32),
+        write_u64(u64),
+        write_u128(u128),
+        write_i8(i8),
+        write_i16(i16),
+        write_i32(i32),
+        write_i64(i64),
+        write_i128(i128),
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    #[inline]
+    fn write_isize(&mut self, value: isize) {
+        self.write_i64(value as i64);
+    }
+}
+
+/// Compute a single u64 hash of `value` using fixed-width XXH3.
+///
+/// XXH3 is fast enough to hash the engine after every simulation tick, and
+/// the adapter above makes its input and output independent of target pointer
+/// width and endianness.
 /// Collision resistance is not required: this is a replay-divergence
 /// detector, not a crypto hash.
 pub fn compute<T: StateHash + ?Sized>(value: &T) -> u64 {
-    use std::hash::Hasher;
-    let mut h = rustc_hash::FxHasher::default();
+    let mut h = StableHasher::default();
     value.state_hash(&mut h);
     h.finish()
 }
@@ -463,6 +520,22 @@ mod tests {
     fn distinct_floats_differ() {
         assert_ne!(compute(&1.0_f32), compute(&2.0_f32));
         assert_ne!(compute(&1.0_f64), compute(&1.0000001_f64));
+    }
+
+    #[test]
+    fn pointer_sized_integers_use_fixed_width_encoding() {
+        assert_eq!(compute(&42_usize), compute(&42_u64));
+        assert_eq!(compute(&-42_isize), compute(&-42_i64));
+    }
+
+    #[test]
+    fn stable_hash_has_known_value() {
+        // This pins both the algorithm and canonical integer encoding so a
+        // dependency update cannot silently invalidate replay hashes.
+        assert_eq!(
+            compute(&(0x1234_u16, 0x5678_9abc_u32)),
+            0x5fa9_363e_0f5c_5389
+        );
     }
 
     #[test]
