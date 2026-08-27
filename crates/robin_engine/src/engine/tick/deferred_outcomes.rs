@@ -1084,11 +1084,16 @@ impl EngineInner {
                 else {
                     unreachable!()
                 };
-                net.object.animation = if crumpled {
+                let animation = if crumpled {
                     Animation::NetBeingTakenCrumpled
                 } else {
                     Animation::NetBeingTaken
                 };
+                net.object.animation = animation;
+                // RHElementObject::SetAnimation immediately calls
+                // RHSprite::ForceAnimation, so the first snapshot on the
+                // DONE edge already exposes frame zero of the pickup row.
+                net.element.sprite.force_animation(animation, 0);
                 net.element
                     .sprite
                     .position_iface
@@ -1101,11 +1106,12 @@ impl EngineInner {
                 actor.seek_refresh_wait = 8;
             }
 
-            // `pOrder->bDone` becomes true on the first DONE edge. The same
-            // owner slot immediately consumes the first of eight movement
-            // ticks; removal happens one owner slot after the counter reaches
+            // Actor::Execute observes `pOrder->bDone` before the enclosing
+            // hourglass marks the order done. Consequently the DONE edge only
+            // initializes the tail; pulling begins on the following owner
+            // slot, and removal happens one slot after the counter reaches
             // zero.
-            if tick.action_done || tick.order_was_done {
+            if tick.order_was_done {
                 let wait = self
                     .get_entity(tick.taker)
                     .and_then(Entity::actor_data)
