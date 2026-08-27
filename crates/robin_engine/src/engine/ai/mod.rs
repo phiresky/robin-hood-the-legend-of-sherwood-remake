@@ -674,8 +674,8 @@ mod directed_panic_front_tests {
 mod panic_boundary_tests {
     use super::*;
     use crate::element::{
-        ActorData, ActorSoldier, AiBrain, ElementData, ElementKind, HumanData, NpcData, Posture,
-        SoldierData,
+        ActorData, ActorPc, ActorSoldier, AiActorData, AiBrain, ElementData, ElementKind,
+        HumanData, NpcData, PcData, Posture, SoldierData,
     };
 
     fn enemy_soldier() -> Entity {
@@ -699,6 +699,88 @@ mod panic_boundary_tests {
             },
             soldier: SoldierData::default(),
         })
+    }
+
+    fn autonomous_enemy_pc() -> Entity {
+        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+        enemy_ai.hth_weapon_id = 1;
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                autonomous: true,
+                aggressive_combat: true,
+                ai: Some(Box::new(AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..AiActorData::default()
+                })),
+                ..PcData::default()
+            },
+        })
+    }
+
+    #[test]
+    fn panic_state_dispatch_accepts_autonomous_pc_enemy_ai() {
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(autonomous_enemy_pc());
+
+        engine.set_typed_npc_state(
+            pc_id,
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+            "Panic run entry",
+        );
+
+        let ai = engine
+            .get_entity(pc_id)
+            .and_then(Entity::enemy_ai)
+            .expect("autonomous PC must retain its Enemy AI");
+        assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingPanic);
+    }
+
+    #[test]
+    fn autonomous_pc_completes_new_no_door_panic_boundary() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let mut assets = LevelAssets::default();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::CharacterProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+        let request = crate::ai::PanicRequest {
+            center: None,
+            runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: true,
+        };
+
+        engine.begin_panic_no_door_branch(
+            &sim,
+            &assets,
+            pc_id,
+            &request,
+            &AiContext::default(),
+            false,
+        );
+
+        let ai = engine
+            .get_entity(pc_id)
+            .and_then(Entity::enemy_ai)
+            .expect("autonomous PC must retain its Enemy AI");
+        assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingHiding);
     }
 
     #[test]
@@ -5434,8 +5516,10 @@ impl EngineInner {
     }
 
     /// Enter a virtual Enemy/Friendly `SetState` call after releasing the
-    /// engine's prior controller borrow. Required callers must not degrade a
-    /// missing owner or mismatched brain into a silent no-op.
+    /// engine's prior controller borrow. Dispatch follows the actor's AI brain,
+    /// not its entity kind: custom-mission PCs may own the same [`EnemyAi`] as
+    /// soldiers. Required callers must not degrade a missing owner or
+    /// mismatched brain into a silent no-op.
     pub(super) fn set_typed_npc_state(
         &mut self,
         npc_id: EntityId,
@@ -5443,28 +5527,24 @@ impl EngineInner {
         substate: crate::ai::Substate,
         context: &'static str,
     ) {
-        match self.world.entities.get_mut(npc_id) {
-            Some(Entity::Soldier(s)) => s
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .unwrap_or_else(|| panic!("{context} owner {} requires Enemy AI", npc_id.index()))
-                .set_state(state, substate),
-            Some(Entity::Civilian(c)) => c
-                .npc
-                .ai_brain
-                .friendly_mut()
-                .unwrap_or_else(|| {
-                    panic!("{context} owner {} requires Friendly AI", npc_id.index())
-                })
-                .set_state(state, substate),
-            Some(other) => panic!(
-                "{context} owner {} has invalid entity kind {:?}",
-                npc_id.index(),
-                other.element_data().kind
-            ),
-            None => panic!("{context} owner {} disappeared", npc_id.index()),
+        let entity = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("{context} owner {} disappeared", npc_id.index()));
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.set_state(state, substate);
+            return;
         }
+        if let Some(friendly) = entity.friendly_ai_mut() {
+            friendly.set_state(state, substate);
+            return;
+        }
+        panic!(
+            "{context} owner {} has entity kind {:?} but no typed AI brain",
+            npc_id.index(),
+            entity.element_data().kind
+        );
     }
 
     /// Enter the pre-filter half of typed `StartThink(NO_EVENT)`.
