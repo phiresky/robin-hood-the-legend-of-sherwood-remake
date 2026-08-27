@@ -1661,6 +1661,97 @@ fn make_enemy_strike_pair(
     (attacker, target)
 }
 
+fn make_autonomous_pc_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
+    let attacker = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 0.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let target = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 10.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+
+    for (owner, opponent, camp, authorize_strike) in [
+        (attacker, target, crate::element::Camp::Custom(2), true),
+        (target, attacker, crate::element::Camp::Custom(3), false),
+    ] {
+        let Entity::Pc(pc) = engine.get_entity_mut(owner).unwrap() else {
+            unreachable!()
+        };
+        pc.actor.action_state = ActionState::WaitingSword;
+        pc.human.opponents.push(opponent);
+        pc.pc.cached_camp = camp;
+        pc.pc.autonomous = true;
+        pc.pc.aggressive_combat = true;
+        let mut ai = crate::ai_enemy::EnemyAi::new(owner.index());
+        ai.base.current_state = crate::ai::AiState::Attacking;
+        ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
+        ai.base.primary_target = opponent.index();
+        ai.hth_weapon_id = 1;
+        ai.pending_sword_strike_consideration = authorize_strike;
+        pc.pc.ai = Some(Box::new(crate::element::AiActorData {
+            ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
+            ..Default::default()
+        }));
+        pc.element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            action_done: 1,
+            frame_ids: vec![0, 1, 2],
+            delays: vec![1, 1, 1],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+            ..Default::default()
+        }]);
+        pc.element.sprite.conversion =
+            std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+    }
+
+    (attacker, target)
+}
+
+#[test]
+fn autonomous_pc_consumes_enemy_sword_strike_proposal() {
+    let mut engine = make_engine();
+    let (attacker, _) = make_autonomous_pc_strike_pair(&mut engine);
+    let mut assets = assets_with_sword_profile(7, 30);
+    std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].fighting = 100;
+    engine.control.rng = SimulationRng::with_original_replay(vec![0]);
+
+    engine.with_simulation_context(|engine, sim| {
+        engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+    });
+
+    let ai = engine
+        .get_entity(attacker)
+        .and_then(Entity::enemy_ai)
+        .expect("autonomous PC must retain its Enemy AI");
+    assert!(ai.pending_special_strike);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(attacker, Command::is_swordstrike),
+        "the authorized autonomous PC proposal must launch a real strike"
+    );
+    assert_eq!(
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .current_outline,
+        crate::element::OutlineColorName::Default,
+        "attacking another autonomous PC must not use the player-warning hulk delay"
+    );
+}
+
 #[test]
 fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
     let mut engine = make_engine();
