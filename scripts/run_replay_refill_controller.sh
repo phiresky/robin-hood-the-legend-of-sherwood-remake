@@ -106,6 +106,8 @@ stop_lane() {
 printf '%s controller-start corpus=%s min=%s max=%s\n' \
     "$(timestamp)" "$corpus" "$min_lanes" "$max_lanes"
 last_enqueue=0
+enqueue_pid=
+enqueue_output=
 target=$min_lanes
 while true; do
     configured_trust=$(current_trust)
@@ -120,9 +122,22 @@ while true; do
     fi
 
     now=$(date +%s)
-    if (( now - last_enqueue >= enqueue_seconds )); then
-        printf '%s enqueue %s\n' "$(timestamp)" "$(enqueue_ready)"
+    if [[ -n "$enqueue_pid" ]] && ! kill -0 "$enqueue_pid" 2>/dev/null; then
+        if wait "$enqueue_pid"; then
+            printf '%s enqueue %s\n' "$(timestamp)" "$(<"$enqueue_output")"
+        else
+            printf '%s enqueue-failed %s\n' "$(timestamp)" "$(<"$enqueue_output")"
+        fi
+        rm -f -- "$enqueue_output"
+        enqueue_pid=
+        enqueue_output=
+    fi
+    if [[ -z "$enqueue_pid" ]] && (( now - last_enqueue >= enqueue_seconds )); then
+        enqueue_output=$(mktemp "$audit/.enqueue.XXXXXX")
+        enqueue_ready >"$enqueue_output" 2>&1 &
+        enqueue_pid=$!
         last_enqueue=$now
+        printf '%s enqueue-started pid=%s\n' "$(timestamp)" "$enqueue_pid"
     fi
 
     available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
