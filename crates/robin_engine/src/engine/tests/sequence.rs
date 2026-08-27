@@ -915,6 +915,58 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
 }
 
 #[test]
+fn synchronous_accepted_zero_order_shoot_bow_stamps_in_progress_motion() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let shooter = engine.add_entity(make_test_soldier(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(shooter)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        // An already-aiming shooter needs no posture transition. The test PC
+        // deliberately has no belt hotspot, so CanShootWithBowAt rejects the
+        // body after Translate has accepted an entirely orderless element.
+        actor.action_state = ActionState::AimingWithBow;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut shot =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
+    shot.priority = SequencePriority::Normal;
+    shot.posture_after_transition = Posture::Upright;
+    shot.action_state_after_transition = ActionState::AimingWithBow;
+    let sequence = engine.launch_element_for_owner(&sim, &assets, shot);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+    let actor = engine.get_entity(shooter).unwrap().actor_data().unwrap();
+    assert_eq!(
+        actor.continuation.motion_state,
+        MotionState::InProgress,
+        "accepted empty ShootBow must retain Actor::Instruct's motion edge"
+    );
+    assert!(
+        actor.installed_order.is_none(),
+        "an orderless rejected shot must expose the fallback Wait command"
+    );
+}
+
+#[test]
 fn synchronous_assert_position_skips_instruct_epilogue() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

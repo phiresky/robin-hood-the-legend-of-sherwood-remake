@@ -198,6 +198,18 @@ impl EngineInner {
                     .sequence_manager
                     .element_in_progress(seq_id, elem_idx);
             } else {
+                // Actor::Instruct writes IN_PROGRESS before publishing the
+                // translated current order. An accepted shot whose body and
+                // transition are both empty therefore retains that one-frame
+                // motion edge even though the null order immediately
+                // terminates and detaches the element.
+                self.world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("accepted empty held ShootBow lost its actor")
+                    .continuation
+                    .motion_state = crate::sprite::MotionState::InProgress;
                 self.orders
                     .sequence_manager
                     .element_terminated(seq_id, elem_idx);
@@ -1207,6 +1219,19 @@ impl EngineInner {
                                             .sequence_manager
                                             .element_in_progress(seq_id, elem_idx);
                                     } else {
+                                        // `RHElementActor::Instruct` stamps
+                                        // mmotionState=IN_PROGRESS before it
+                                        // discovers that Translate produced no
+                                        // current order. The element then
+                                        // terminates, but that acceptance edge
+                                        // remains visible for this frame.
+                                        self.world
+                                            .entities
+                                            .get_mut(owner)
+                                            .and_then(Entity::actor_data_mut)
+                                            .expect("accepted empty ShootBow lost its actor")
+                                            .continuation
+                                            .motion_state = crate::sprite::MotionState::InProgress;
                                         self.orders
                                             .sequence_manager
                                             .element_terminated(seq_id, elem_idx);
