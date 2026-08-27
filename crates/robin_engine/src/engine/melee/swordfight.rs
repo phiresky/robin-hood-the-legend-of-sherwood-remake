@@ -8,6 +8,102 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::SequenceElementData;
 
+thread_local! {
+    /// Original's `RHElementActorHuman::mpSwordfightPreparationScope` is a
+    /// non-serialized synchronous call-stack guard. Key the equivalent
+    /// transient stack by the actor being prepared as well as their opponent:
+    /// separate actors and nested preparations against a different opponent
+    /// must remain admissible.
+    static SWORDFIGHT_PREPARATION_STACK: std::cell::RefCell<Vec<(EntityId, EntityId)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+struct SwordfightPreparationGuard {
+    pair: (EntityId, EntityId),
+}
+
+impl Drop for SwordfightPreparationGuard {
+    fn drop(&mut self) {
+        SWORDFIGHT_PREPARATION_STACK.with(|stack| {
+            let popped = stack.borrow_mut().pop();
+            assert_eq!(
+                popped,
+                Some(self.pair),
+                "swordfight preparation scopes must unwind in call order"
+            );
+        });
+    }
+}
+
+/// Run the synchronous `PrepareToEnterSwordFight` body unless this exact
+/// actor/opponent pair is already being prepared higher in the callback stack.
+///
+/// Original provenance: `RHSwordfightPreparationScope` and
+/// `RHElementActorHuman::PrepareToEnterSwordFight` in
+/// `original-code/RHelementactorhuman.cpp:221-245,7757-7789`.
+fn with_swordfight_preparation_scope<R>(
+    actor: EntityId,
+    opponent: EntityId,
+    body: impl FnOnce() -> R,
+) -> Option<R> {
+    let pair = (actor, opponent);
+    let already_preparing = SWORDFIGHT_PREPARATION_STACK
+        .with(|stack| stack.borrow().iter().any(|active| *active == pair));
+    if already_preparing {
+        return None;
+    }
+    SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow_mut().push(pair));
+    let _guard = SwordfightPreparationGuard { pair };
+    Some(body())
+}
+
+#[cfg(test)]
+mod preparation_scope_tests {
+    use super::with_swordfight_preparation_scope;
+    use crate::element::{EntityId, PcId, SoldierId};
+
+    #[test]
+    fn reciprocal_same_pair_reentry_allocates_once() {
+        let actor = EntityId::Soldier(SoldierId(82));
+        let opponent = EntityId::Pc(PcId(134));
+        let mut allocated_reciprocals = Vec::new();
+
+        let outer = with_swordfight_preparation_scope(actor, opponent, || {
+            allocated_reciprocals.push(1);
+            let nested = with_swordfight_preparation_scope(actor, opponent, || {
+                allocated_reciprocals.push(2);
+            });
+            assert!(nested.is_none());
+        });
+
+        assert!(outer.is_some());
+        assert_eq!(
+            allocated_reciprocals,
+            [1],
+            "same-pair callback reentry must not allocate another reciprocal sequence"
+        );
+    }
+
+    #[test]
+    fn different_pair_nesting_remains_admissible() {
+        let actor = EntityId::Soldier(SoldierId(82));
+        let first_opponent = EntityId::Pc(PcId(134));
+        let second_opponent = EntityId::Pc(PcId(135));
+        let mut preparations = Vec::new();
+
+        with_swordfight_preparation_scope(actor, first_opponent, || {
+            preparations.push(first_opponent);
+            let nested = with_swordfight_preparation_scope(actor, second_opponent, || {
+                preparations.push(second_opponent);
+            });
+            assert!(nested.is_some());
+        })
+        .expect("outer preparation should run");
+
+        assert_eq!(preparations, [first_opponent, second_opponent]);
+    }
+}
+
 fn opponent_order_debug_matches(frame: u32, owner: EntityId) -> bool {
     if std::env::var_os("PARITY_DEBUG_OPPONENT_ORDER").is_none() {
         return false;
@@ -750,70 +846,78 @@ impl EngineInner {
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
         if should_prepare_opponent {
-            self.stop_owner_current(opponent, crate::sequence::SequencePriority::Preference);
-            // Original `PrepareToEnterSwordFight` calls `Stop(PREFERENCE)`
-            // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches
-            // `SetState(INTERRUPTED)`, whose `SendCondolationCard` callback
-            // is synchronous: the interrupted command's EventDone/
-            // EventImpossible reaction must therefore finish while the NPC
-            // is still in its old AI substate. Leaving the card queued until
-            // after EventEnterSwordfight lets that old completion run as a
-            // swordfight completion and can immediately quit the new fight.
-            self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
-            // Actor::Stop resumes after that synchronous card and only now
-            // calls StopNotYetLaunchedSequenceElements. The old completion
-            // can have queued fresh overview work (LookLeft in the retained
-            // linux3 control), which must be included in this trailing scan.
-            // The finish phase snapshots the queue before its scan, matching
-            // Original's fixed `uwNumberOfSeqElements`, but closes each
-            // stopped root's card before advancing to the next captured root.
-            self.stop_owner_pending_after_callback(
-                sim,
-                assets,
-                opponent,
-                crate::sequence::SequencePriority::Preference,
-            );
-            // Synchronous Think on the opponent if they're a soldier.
-            let is_soldier = matches!(
-                self.expect_entity(opponent, "enter_swordfight opponent"),
-                Entity::Soldier(_)
-            );
-            if is_soldier {
-                let ctx = {
-                    let entity = self
-                        .world
-                        .entities
-                        .get(opponent)
-                        .expect("opponent existence checked above");
-                    crate::engine::ai::build_ai_context_from_entity(
-                        entity,
-                        self.control.frame_counter,
-                        None,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.hiking_paths,
-                        &assets.hiking_waypoint_sectors,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
-                    )
-                };
-                let stimulus = crate::ai::Stimulus::with_human(
-                    crate::ai::StimulusType::EventEnterSwordfight,
-                    initiator.index(),
-                );
-                let tick_data = self.build_npc_tick_data_for_target(
+            // EVENT_ENTER_SWORDFIGHT can synchronously re-enter admission for
+            // this pair before either opponent list has been published.
+            // Original suppresses only the nested Prepare body; the nested
+            // EnterSwordFight call continues and publishes the relationship.
+            let _ = with_swordfight_preparation_scope(opponent, initiator, || {
+                self.stop_owner_current(opponent, crate::sequence::SequencePriority::Preference);
+                // Original `PrepareToEnterSwordFight` calls `Stop(PREFERENCE)`
+                // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches
+                // `SetState(INTERRUPTED)`, whose `SendCondolationCard` callback
+                // is synchronous: the interrupted command's EventDone/
+                // EventImpossible reaction must therefore finish while the NPC
+                // is still in its old AI substate. Leaving the card queued until
+                // after EventEnterSwordfight lets that old completion run as a
+                // swordfight completion and can immediately quit the new fight.
+                self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
+                // Actor::Stop resumes after that synchronous card and only now
+                // calls StopNotYetLaunchedSequenceElements. The old completion
+                // can have queued fresh overview work (LookLeft in the retained
+                // linux3 control), which must be included in this trailing scan.
+                // The finish phase snapshots the queue before its scan, matching
+                // Original's fixed `uwNumberOfSeqElements`, but closes each
+                // stopped root's card before advancing to the next captured root.
+                self.stop_owner_pending_after_callback(
                     sim,
-                    opponent,
-                    &scratch,
                     assets,
-                    Some(initiator),
+                    opponent,
+                    crate::sequence::SequencePriority::Preference,
                 );
-                self.dispatch_think_with_drain(sim, opponent, &stimulus, &ctx, &tick_data, assets);
-            }
+                // Synchronous Think on the opponent if they're a soldier.
+                let is_soldier = matches!(
+                    self.expect_entity(opponent, "enter_swordfight opponent"),
+                    Entity::Soldier(_)
+                );
+                if is_soldier {
+                    let ctx = {
+                        let entity = self
+                            .world
+                            .entities
+                            .get(opponent)
+                            .expect("opponent existence checked above");
+                        crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            self.control.frame_counter,
+                            None,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        )
+                    };
+                    let stimulus = crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventEnterSwordfight,
+                        initiator.index(),
+                    );
+                    let tick_data = self.build_npc_tick_data_for_target(
+                        sim,
+                        opponent,
+                        &scratch,
+                        assets,
+                        Some(initiator),
+                    );
+                    self.dispatch_think_with_drain(
+                        sim, opponent, &stimulus, &ctx, &tick_data, assets,
+                    );
+                }
+            });
         }
 
         if !can_enter_swordfight_with(
