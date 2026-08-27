@@ -276,12 +276,28 @@ impl ApplicationContext {
             let amount_of_speaking = active.sound_config.amount_of_speaking;
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
 
-            profiles.save().map_err(|error| {
-                format!("failed to persist first-launch player profile: {error}")
-            })?;
-            key_configs.save().map_err(|error| {
-                format!("failed to persist first-launch key configuration: {error}")
-            })?;
+            if let Err(error) = profiles.save() {
+                #[cfg(not(target_arch = "wasm32"))]
+                return Err(format!(
+                    "failed to persist first-launch player profile: {error}"
+                ));
+                #[cfg(target_arch = "wasm32")]
+                tracing::warn!(
+                    "Browser profile persistence is unavailable; keeping the first-launch profile in memory for this session: {error}"
+                );
+            }
+            if let Err(error) = key_configs.save() {
+                #[cfg(not(target_arch = "wasm32"))]
+                return Err(format!(
+                    "failed to persist first-launch key configuration: {error}"
+                ));
+                #[cfg(target_arch = "wasm32")]
+                tracing::warn!(
+                    "Browser key-config persistence is unavailable; keeping the first-launch configuration in memory for this session: {error}"
+                );
+            }
+            // TODO: Persist browser profiles and key configurations in
+            // IndexedDB instead of keeping first-launch changes session-only.
             (
                 profile_id,
                 difficulty,

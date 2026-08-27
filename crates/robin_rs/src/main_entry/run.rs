@@ -93,7 +93,7 @@ pub async fn run_rust_game(
                 pending.paused,
             )?;
         let mut callbacks = RustCallbacks::new(application_context.clone());
-        let outcome = run_mission(
+        let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
             replay_campaign,
@@ -103,7 +103,7 @@ pub async fn run_rust_game(
             &replay_args,
             replay_rng_seed,
             replay_sim_config,
-        )
+        ))
         .await;
         outcome.result?;
         return Ok(0);
@@ -117,7 +117,7 @@ pub async fn run_rust_game(
         let (replay_campaign, idx, location, replay_args, rng_seed, sim_config) =
             crate::game_session::prepare_replay_mission(&profiles, args, data, false)?;
         let mut callbacks = RustCallbacks::new(application_context.clone());
-        let outcome = run_mission(
+        let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
             replay_campaign,
@@ -127,7 +127,7 @@ pub async fn run_rust_game(
             &replay_args,
             rng_seed,
             sim_config,
-        )
+        ))
         .await;
         outcome.result?;
         return Ok(0);
@@ -151,7 +151,7 @@ pub async fn run_rust_game(
         force_mission_launch(&mut campaign, &mut profiles, &application_context, args)?
     {
         let mut callbacks = RustCallbacks::new(application_context.clone());
-        let outcome = run_mission(
+        let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
             campaign,
@@ -161,7 +161,7 @@ pub async fn run_rust_game(
             args,
             0,
             crate::game_session::initial_sim_config(args),
-        )
+        ))
         .await;
         outcome.result?;
         return Ok(0);
@@ -185,7 +185,7 @@ pub async fn run_rust_game(
         // Demo mission is index 1 (index 0 = Sherwood)
         campaign.current_mission_idx = Some(1);
         let mut callbacks = RustCallbacks::new(application_context.clone());
-        let outcome = run_mission(
+        let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
             campaign,
@@ -195,7 +195,7 @@ pub async fn run_rust_game(
             args,
             0,
             crate::game_session::initial_sim_config(args),
-        )
+        ))
         .await;
         outcome.result?;
         return Ok(0);
@@ -212,7 +212,7 @@ pub async fn run_rust_game(
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
         let mut callbacks = RustCallbacks::new(application_context.clone());
-        let outcome = run_mission(
+        let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
             campaign,
@@ -222,7 +222,7 @@ pub async fn run_rust_game(
             args,
             0,
             crate::game_session::initial_sim_config(args),
-        )
+        ))
         .await;
         outcome.result?;
         return Ok(0);
@@ -243,8 +243,13 @@ pub async fn run_rust_game(
 
     // ── Full game: outer main menu loop ──
     loop {
-        let menu_choice =
-            show_main_menu(window, &campaign, &profiles, &application_context).await?;
+        let menu_choice = Box::pin(show_main_menu(
+            window,
+            &campaign,
+            &profiles,
+            &application_context,
+        ))
+        .await?;
 
         match menu_choice {
             MainMenuChoice::Start => {
@@ -273,7 +278,7 @@ pub async fn run_rust_game(
                         })?;
                     campaign.current_mission_idx = Some(idx);
                     let mut callbacks = RustCallbacks::new(application_context.clone());
-                    let outcome = run_mission(
+                    let outcome = Box::pin(run_mission(
                         window,
                         &mut callbacks,
                         campaign,
@@ -283,7 +288,7 @@ pub async fn run_rust_game(
                         args,
                         0,
                         crate::game_session::initial_sim_config(args),
-                    )
+                    ))
                     .await;
                     campaign = outcome.campaign;
                     outcome.result?;
@@ -292,14 +297,14 @@ pub async fn run_rust_game(
                 }
 
                 // Session always returns to menu (window close causes Quit → QuitToMenu)
-                let outcome = run_session(
+                let outcome = Box::pin(run_session(
                     window,
                     campaign,
                     &profiles,
                     &application_context,
                     args,
                     None,
-                )
+                ))
                 .await;
                 campaign = outcome.campaign;
                 let SessionResult::QuitToMenu = outcome.result?;
@@ -325,7 +330,7 @@ pub async fn run_rust_game(
                     );
                 }
                 tracing::info!("Main menu Load: slot={slot}, mission_id={mission_id}");
-                let outcome = run_session(
+                let outcome = Box::pin(run_session(
                     window,
                     campaign,
                     &profiles,
@@ -336,7 +341,7 @@ pub async fn run_rust_game(
                         mission_id,
                         save: None,
                     }),
-                )
+                ))
                 .await;
                 campaign = outcome.campaign;
                 let SessionResult::QuitToMenu = outcome.result?;
@@ -384,14 +389,14 @@ pub async fn run_rust_game(
                 }
                 mp_args.mp_start_at_epoch_ms = launch.start_at_epoch_ms;
                 mp_args.mp_expected_players = Some(launch.expected_players);
-                let outcome = run_session(
+                let outcome = Box::pin(run_session(
                     window,
                     campaign,
                     &profiles,
                     &application_context,
                     &mp_args,
                     None,
-                )
+                ))
                 .await;
                 campaign = outcome.campaign;
                 let SessionResult::QuitToMenu = outcome.result?;
@@ -420,7 +425,7 @@ pub async fn run_rust_game(
                 // Hackable descriptors carry no SCB StartUp class, so the
                 // script VM must stay off.
                 sim_config.script_enabled = false;
-                let outcome = run_mission(
+                let outcome = Box::pin(run_mission(
                     window,
                     &mut callbacks,
                     campaign,
@@ -430,7 +435,7 @@ pub async fn run_rust_game(
                     args,
                     0,
                     sim_config,
-                )
+                ))
                 .await;
                 campaign = outcome.campaign;
                 outcome.result?;
@@ -518,14 +523,14 @@ pub async fn run_rust_game(
                     );
                     session_args.rollback_check = false;
                 }
-                let outcome = run_session(
+                let outcome = Box::pin(run_session(
                     window,
                     campaign,
                     &profiles,
                     &application_context,
                     &session_args,
                     None,
-                )
+                ))
                 .await;
                 campaign = outcome.campaign;
                 let SessionResult::QuitToMenu = outcome.result?;

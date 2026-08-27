@@ -93,8 +93,8 @@ jobs:
           from pathlib import Path
 
           artifact = Path(sys.argv[1])
-          src_root = Path("datadirs/demo_leicester_ecoste/DATA")
           entries = []
+          src_root = Path("datadirs/demo_leicester_ecoste/DATA")
           for folder in ("Sounds", "Musics"):
               for src in sorted((src_root / folder).rglob("*")):
                   if not src.is_file():
@@ -105,6 +105,17 @@ jobs:
                   shutil.copy2(src, dst)
                   path = rel.as_posix()
                   entries.append({"path": path, "url": path})
+
+          core_root = Path("assets/core-datadir")
+          for src in sorted((core_root / "Data").rglob("*")):
+              if not src.is_file():
+                  continue
+              rel = src.relative_to(core_root)
+              dst = artifact / rel
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              path = rel.as_posix()
+              entries.append({"path": path, "url": path})
           (artifact / "preload-assets.json").write_text(
               json.dumps(entries, indent=2) + "\n",
               encoding="utf-8",

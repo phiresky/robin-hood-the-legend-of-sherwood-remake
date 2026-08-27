@@ -144,9 +144,10 @@ publish the generated `Data/datadir.bin` as
 `Data/missions/` and `Data/rhs/` directories beside it. The browser initially
 fetches only the manifest, then fetches the selected mission's core and shared
 RHS files concurrently.
-Audio assets for the demo are published beside the wasm artifact and listed in
-`/wasm/<short-hash>/preload-assets.json`; the shell preloads those files into
-Rust before `wasm_boot` starts the synchronous game loop.
+Audio and the required Rust UI/font overlay assets are published beside the
+wasm artifact and listed in `/wasm/<short-hash>/preload-assets.json`; the shell
+preloads those files into Rust before `wasm_boot` starts the synchronous game
+loop.
 Replay delivery itself remains handled by the existing browser/RPC path.
 Wasm logging defaults to `info`; add `?wasm-log=debug` (or `trace`,
 `warn`, `error`) to the URL to override it for browser sessions.
