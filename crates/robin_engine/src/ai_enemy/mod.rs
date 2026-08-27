@@ -2920,7 +2920,13 @@ impl EnemyAi {
             .iter()
             .find_map(|(handle, forecast)| (*handle == enemy).then_some(forecast))
             .or_else(|| {
-                (enemy == self.base.primary_target)
+                // Detection dispatch rebuilds the tick for the human carried
+                // by this exact stimulus. A preceding queued Think may have
+                // changed the AI member `primary_target`, or removed the
+                // falling-edge human from the live detectable list, but the
+                // target-specific snapshot still contains the authoritative
+                // ForecastDestinationForIA input for this OUTOFVIEW call.
+                (enemy == tick.primary_target_snapshot_handle)
                     .then_some(tick.primary_target_forecast.as_ref())
                     .flatten()
             })
@@ -8485,5 +8491,49 @@ mod tests {
 
         assert_eq!(ai.list_them, vec![84]);
         assert_eq!(ai.missed_pc, 171);
+    }
+
+    #[test]
+    fn out_of_view_uses_exact_stimulus_target_forecast_after_detectable_removal() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(111);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingObserve;
+        // A preceding queued Think selected another primary target before
+        // this falling-edge OUTOFVIEW was delivered.
+        ai.base.primary_target = 84;
+        ai.list_them = vec![171];
+
+        let forecast_position = test_position(1226.175_4, 315.871_6);
+        let mut lost = soldier_view(forecast_position);
+        lost.kind = EntityKind::Pc;
+        lost.is_pc = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(171, lost);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 171;
+        tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
+            forecast_position,
+            4,
+        ));
+        // The live detectable list has already dropped 171, so there is no
+        // entry in `enemy_detectable_forecasts`.
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventOutOfView, 171),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.base.seek_position, forecast_position);
     }
 }
