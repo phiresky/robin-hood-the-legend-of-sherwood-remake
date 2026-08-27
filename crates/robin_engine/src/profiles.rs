@@ -910,6 +910,26 @@ impl ProfileManager {
         self.soldiers.get(usize::from(id.into()))
     }
 
+    /// Resolve the stable hackable-level identifier derived from a soldier's
+    /// CPF filename (for example `Guard A01` becomes `guard_a01`). Duplicate
+    /// identifiers are rejected rather than silently selecting a variant.
+    pub fn soldier_idx_by_identifier(&self, identifier: &str) -> Result<SoldierProfileIdx, String> {
+        let mut matches = self
+            .soldiers
+            .iter()
+            .enumerate()
+            .filter(|(_, profile)| soldier_profile_identifier(profile) == identifier);
+        let Some((index, _)) = matches.next() else {
+            return Err(format!("unknown soldier profile identifier {identifier:?}"));
+        };
+        if matches.next().is_some() {
+            return Err(format!(
+                "ambiguous soldier profile identifier {identifier:?}; CPF filenames must be unique"
+            ));
+        }
+        Ok(SoldierProfileIdx(index as u32))
+    }
+
     /// Lookup a HtH weapon profile by the character/soldier profile's
     /// hand-to-hand weapon id. The stored id is 1-based; this function
     /// subtracts 1 to index into `self.hth_weapons`.
@@ -968,6 +988,24 @@ impl ProfileManager {
     // ── Index lookup (for serialization) ─────────────────────────
 
     // ── Profile pointer serialization ────────────────────────────
+}
+
+/// Canonical readable identifier used by hackable mission JSON.
+pub fn soldier_profile_identifier(profile: &SoldierProfile) -> String {
+    let mut identifier = String::new();
+    let mut separator = false;
+    for ch in profile.filename.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            if separator && !identifier.is_empty() {
+                identifier.push('_');
+            }
+            identifier.push(ch);
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+    identifier
 }
 
 // ─── Legacy authored profile.cpf loading ─────────────────────────
@@ -1616,6 +1654,31 @@ impl ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hackable_soldier_identifier_is_readable_and_uniquely_resolved() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            filename: "Guard A01".to_owned(),
+            ..Default::default()
+        });
+        assert_eq!(
+            soldier_profile_identifier(&profiles.soldiers[0]),
+            "guard_a01"
+        );
+        assert_eq!(
+            profiles.soldier_idx_by_identifier("guard_a01").unwrap(),
+            SoldierProfileIdx(0)
+        );
+
+        profiles.soldiers.push(profiles.soldiers[0].clone());
+        assert!(
+            profiles
+                .soldier_idx_by_identifier("guard_a01")
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+    }
     #[test]
     fn action_round_trip() {
         assert_eq!(Action::from_u32(0), Action::NoAction);

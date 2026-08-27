@@ -577,10 +577,22 @@ impl EngineInner {
             } else {
                 crate::sprite_script::FrameKind::CharacterBlipped
             };
-            let soldier_profile = profiles.get_soldier(raw.profile_number).ok_or_else(|| {
+            let profile_number = if let Some(identifier) = raw.profile_id.as_deref() {
+                profiles
+                    .soldier_idx_by_identifier(identifier)
+                    .map_err(|reason| EngineError::ProfileSpriteLoadFailed {
+                        kind: "soldier",
+                        profile_id: raw.profile_number,
+                        reason,
+                    })?
+                    .0
+            } else {
+                raw.profile_number
+            };
+            let soldier_profile = profiles.get_soldier(profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
                     kind: "soldier",
-                    profile_id: raw.profile_number,
+                    profile_id: profile_number,
                     reason: "profile is missing from the loaded CPF".to_owned(),
                 }
             })?;
@@ -597,7 +609,7 @@ impl EngineInner {
                 )
                 .map_err(|e| EngineError::ProfileSpriteLoadFailed {
                     kind: "soldier",
-                    profile_id: raw.profile_number,
+                    profile_id: profile_number,
                     reason: e.to_string(),
                 })?;
 
@@ -677,7 +689,7 @@ impl EngineInner {
                     profiles.get_bow(p.shooting_weapon_id).unwrap_or_else(|| {
                         panic!(
                             "soldier profile {} requires missing bow profile {}",
-                            raw.profile_number, p.shooting_weapon_id
+                            profile_number, p.shooting_weapon_id
                         )
                     });
                     true
@@ -700,7 +712,7 @@ impl EngineInner {
                 tracing::warn!(
                     pf_idx = soldier_pathfinder_idx,
                     table_len = self.world.fast_grid.level.move_box_half_diagonals.len(),
-                    profile = raw.profile_number,
+                    profile = profile_number,
                     "BUG: soldier spawn: half-diag table empty → move_box falls back to \
                      (-1,-1,1,1); pathfinder proto loads after spawn_soldier and baked \
                      move_box breaks TestIfPathIsFine / anti-collision"
@@ -728,7 +740,7 @@ impl EngineInner {
                 &mut sprite,
                 raw.action,
                 raw.direction,
-                &format!("soldier profile {}", raw.profile_number),
+                &format!("soldier profile {profile_number}"),
             );
 
             let entity = Entity::Soldier(crate::element::ActorSoldier {
@@ -767,7 +779,7 @@ impl EngineInner {
                     ..Default::default()
                 },
                 soldier: crate::element::SoldierData {
-                    soldier_profile_index: crate::profiles::SoldierProfileIdx(raw.profile_number),
+                    soldier_profile_index: crate::profiles::SoldierProfileIdx(profile_number),
                     cached_max_life_points: cached_max_lp,
                     cached_camp,
                     // Seed the cached rider flag from the profile at spawn,

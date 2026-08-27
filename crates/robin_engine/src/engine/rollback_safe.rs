@@ -5302,6 +5302,7 @@ mod tests {
             layer: 0,
             material: 0,
             profile_number: 0,
+            profile_id: None,
             allegiance: None,
             revealed: false,
             tower_guard: false,

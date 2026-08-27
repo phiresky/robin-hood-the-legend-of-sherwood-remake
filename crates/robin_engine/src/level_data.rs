@@ -812,6 +812,10 @@ pub struct RawSoldier {
     pub layer: u16,
     pub material: u32,
     pub profile_number: u32,
+    /// Readable hackable-level identifier; legacy missions use the numeric
+    /// profile number above.
+    #[serde(default)]
+    pub profile_id: Option<String>,
     /// Optional Rust-port extension. Legacy RHM files leave this unset and
     /// derive allegiance from `SoldierProfile::hostile` as before.
     #[serde(default)]
@@ -1994,10 +1998,17 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct HackableSoldier {
     pub position: (i16, i16),
-    pub profile: u32,
+    pub profile: HackableSoldierProfile,
     pub allegiance: u16,
     #[serde(default)]
     pub direction: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(untagged)]
+pub enum HackableSoldierProfile {
+    Identifier(String),
+    LegacyIndex(u32),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -2176,7 +2187,14 @@ impl LoadedLevel {
                     sector: 0,
                     layer: 0,
                     material: 0,
-                    profile_number: soldier.profile,
+                    profile_number: match &soldier.profile {
+                        HackableSoldierProfile::LegacyIndex(index) => *index,
+                        HackableSoldierProfile::Identifier(_) => 0,
+                    },
+                    profile_id: match soldier.profile {
+                        HackableSoldierProfile::Identifier(identifier) => Some(identifier),
+                        HackableSoldierProfile::LegacyIndex(_) => None,
+                    },
                     allegiance: Some(soldier.allegiance),
                     revealed: reveal_all,
                     tower_guard: false,
@@ -3239,6 +3257,7 @@ fn read_soldiers(
             layer,
             material,
             profile_number,
+            profile_id: None,
             allegiance: None,
             revealed: false,
             tower_guard,
@@ -4713,6 +4732,7 @@ mod tests {
         let cases = [
             ("multi-team-three-way", "MultiTeamThreeWay", 3, 0),
             ("multi-team-ten-way", "MultiTeamTenWay", 10, 0),
+            ("multi-team-four-armies", "MultiTeamFourArmies", 48, 0),
             (
                 "multi-team-all-variants-wheel",
                 "MultiTeamAllVariantsWheel",
@@ -4755,6 +4775,29 @@ mod tests {
         assert!(duel.mission.pcs_to_rescue.iter().all(|pc| pc.autonomous));
         assert_eq!(duel.mission.pcs_to_rescue[0].profile_index, 0);
         assert_eq!(duel.mission.pcs_to_rescue[1].profile_index, 2);
+
+        let armies_path =
+            repo.join("mods/multi-team-four-armies/Data/Levels/MultiTeamFourArmies.level.json");
+        let armies = LoadedLevel::hackable_from_json(&fs::read(armies_path).unwrap()).unwrap();
+        for allegiance in 2..=5 {
+            let faction: Vec<_> = armies
+                .mission
+                .soldiers
+                .iter()
+                .filter(|soldier| soldier.allegiance == Some(allegiance))
+                .collect();
+            assert_eq!(faction.len(), 12, "allegiance {allegiance}");
+            for profile in ["guard_a01", "soldier_a01", "archer01", "officier_b02"] {
+                assert_eq!(
+                    faction
+                        .iter()
+                        .filter(|soldier| soldier.profile_id.as_deref() == Some(profile))
+                        .count(),
+                    3,
+                    "allegiance {allegiance}, profile {profile}"
+                );
+            }
+        }
     }
 
     /// Build a chunk: tag(4) + size(4) + version(4) + payload.

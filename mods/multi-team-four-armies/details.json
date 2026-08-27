@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-four-armies",
+  "title": "Four Armies — 12 Soldiers Each",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Multi-team test arena",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Test"],
+  "description": "Four mutually hostile allegiances field twelve soldiers each, with three soldiers of each of four profiles per faction.",
+  "hackable_mission": "MultiTeamFourArmies"
+}

@@ -13,11 +13,14 @@ A list of which additional features we have added, which ones we might still wan
   opposing camp. Legacy RHM actors without the optional field still derive
   their allegiance from the original hostile/attitude profile flags.
   Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
+  soldier `profile` values may use readable CPF-filename identifiers such as
+  `guard_a01` (legacy numeric indices remain accepted);
   autonomous PCs automatically enter swordfights with their nearest hostile
   autonomous PC and use the full A-I strike selection rather than passive PC
-  smalltalk attacks. Four launchable test arenas live under `mods/multi-team-*`:
+  smalltalk attacks. Five launchable test arenas live under `mods/multi-team-*`:
   three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
-  and autonomous Robin versus Little John. Diplomacy beyond the current
+  autonomous Robin versus Little John, and four armies of twelve soldiers.
+  Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.
 
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
