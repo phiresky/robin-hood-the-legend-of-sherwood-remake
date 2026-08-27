@@ -599,6 +599,9 @@ impl EngineInner {
                     crate::element::Animation::NetBeingTaken => {
                         Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
                     }
+                    crate::element::Animation::NetBeingTakenCrumpled => {
+                        Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
+                    }
                     _ => None,
                 },
                 _ => None,

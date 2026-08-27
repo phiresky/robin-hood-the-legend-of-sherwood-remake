@@ -7312,6 +7312,7 @@ impl EngineInner {
             drop_ale_done,
             deactivate_entities,
             pickups,
+            taking_net_ticks,
             drink_done,
             wasp_sting_remark,
             special_remark,
@@ -7374,6 +7375,7 @@ impl EngineInner {
         self.drain_deactivate_entities(deactivate_entities);
         self.drain_pc_target_activations(pc_target_activations);
         self.drain_waking_up_done(sim, assets, waking_up_done);
+        self.drain_taking_net_ticks(assets, taking_net_ticks);
         self.drain_pickups(sim, assets, pickups);
         self.drain_drink_done(assets, drink_done);
         self.drain_pickpockets(pickpockets);

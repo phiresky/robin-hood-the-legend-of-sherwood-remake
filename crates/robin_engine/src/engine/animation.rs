@@ -1377,6 +1377,15 @@ mod tests {
     }
 
     #[test]
+    fn taking_net_uses_generic_taking_row_when_profile_lacks_dedicated_animation() {
+        let sprite = crate::sprite::Sprite::default();
+        assert_eq!(
+            sprite_anim_for_order(&sprite, OrderType::TakingNet, true),
+            OrderType::Taking
+        );
+    }
+
+    #[test]
     fn active_start_state_side_effect_ignores_non_start_motion() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Crouched);
@@ -2400,6 +2409,10 @@ pub(super) struct ExecuteSideOutcomes {
     /// `taker`'s money grows by the object's value.  Fired on
     /// TAKING DONE.
     pub pickups: Vec<(EntityId, EntityId)>,
+    /// Per-owner-slot tail of `RHANIMATION_TAKING_NET`. `action_done` marks
+    /// the first DONE edge; `order_was_done` keeps the eight-tick pull/removal
+    /// lifecycle running on the animation tail after that edge.
+    pub taking_net_ticks: Vec<TakingNetTick>,
     /// Soldiers that should gain `blood_alcohol += profile.beer` on
     /// DRINKING_ALE TERMINATED.
     pub drink_done: Vec<EntityId>,
@@ -2476,6 +2489,14 @@ pub(super) struct ExecuteSideOutcomes {
     /// stance, which reselects the already-current action and therefore
     /// still stops a selected PC's group at Normal priority.
     pub pc_helping_climb_action: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TakingNetTick {
+    pub taker: EntityId,
+    pub net: EntityId,
+    pub action_done: bool,
+    pub order_was_done: bool,
 }
 
 fn forwards_pc_bow_action_on_start(
@@ -2979,29 +3000,28 @@ pub(super) fn apply_pc_target_interaction_side_effect(
         .push((entity_id, target, activation));
 }
 
-/// Universal `TakingNet` Done handler — fires for any actor (PC or
-/// NPC) playing the net-pickup animation.
-///
-/// When the order's motion completes, the antagonist net is removed
-/// from the engine, the net's effect is unapplied (releasing its
-/// victims), and (PC-only) the picker's Net-action ammo is
-/// incremented.
-///
-/// We push the `(taker, net)` pair into `outcomes.pickups`; the
-/// post-tick handler in `tick.rs` recognises Net antagonists and
-/// runs the actual unapply + remove + ammo bump with `&mut self`.
+/// Stage the exact post-sprite `TakingNet` tail. The original does not remove
+/// the net at DONE: it changes the net's own animation, pulls it toward the
+/// taker's live action point for eight ticks, then removes it on the following
+/// owner slot.
 fn apply_taking_net_side_effect(
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
+    order_was_done: bool,
     outcomes: &mut ExecuteSideOutcomes,
 ) {
-    if matches!(anim_type, OrderType::TakingNet)
-        && matches!(motion, MotionState::Done)
-        && let Some(a) = antagonist
+    if anim_type == OrderType::TakingNet
+        && (motion == MotionState::Done || order_was_done)
+        && let Some(net) = antagonist
     {
-        outcomes.pickups.push((entity_id, a));
+        outcomes.taking_net_ticks.push(TakingNetTick {
+            taker: entity_id,
+            net,
+            action_done: motion == MotionState::Done,
+            order_was_done,
+        });
     }
 }
 
@@ -3433,6 +3453,7 @@ fn apply_pc_taking_side_effect(
 ///    non-animation token re-uses the regular transition sprite anim.
 ///  - Soldier/NPC `TAKING` → `SEARCHING` (the order remains
 ///    `TAKING` so pickup side effects still dispatch there).
+///  - `TAKING_NET` → `TAKING` when the actor profile has no dedicated row.
 ///  - `WAITING_CAPE_ANONYMOUS_ARCHER` → `WAITING_CAPE`.
 ///  - `FALLING_LADDER_WALL` → `FALLING_BACK_UPRIGHT`.  The ladder/wall
 ///    fall is a pure dispatch token with no sprite row of its own; only
@@ -3448,6 +3469,7 @@ pub(crate) fn sprite_anim_for_order(
     use OrderType as OT;
     match effective_anim {
         OT::Taking if !owner_is_pc => OT::Searching,
+        OT::TakingNet if !sprite.has_animation(OT::TakingNet) => OT::Taking,
         OT::LoweringShield if !sprite.has_animation(OT::LoweringShield) => {
             OT::TransitionLoweringSword
         }
@@ -4797,6 +4819,7 @@ impl EngineInner {
             taking_direction_goal,
             pc_target_direction_goal,
             waiting_on_shoulders_direction,
+            taking_net_order_was_done,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -5185,6 +5208,7 @@ impl EngineInner {
                 taking_direction,
                 target_direction,
                 waiting_on_shoulders_direction,
+                order.done,
             )
         };
 
@@ -6422,6 +6446,7 @@ impl EngineInner {
                             motion_state,
                             antagonist,
                             entity_id,
+                            taking_net_order_was_done,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_waking_up_done_side_effect(

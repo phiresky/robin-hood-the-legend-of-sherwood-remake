@@ -1017,6 +1017,7 @@ impl EngineInner {
     /// - `ShootingWithBow`, `ShootingWithBowAnonymous`,
     ///   `ShootingWithBowUp`, and `ShootingWithBowUpAnonymous`:
     ///   `check_position=true`, ABORTED on failure.
+    /// - `TakingNet`: `check_position=true`, ABORTED on failure.
     ///
     /// PC-only arms covered:
     /// - `Taking` / `TakingCrouched`: `check_position=true`,
@@ -1472,7 +1473,8 @@ fn human_init_validity_arm(
         OT::ShootingWithBow
         | OT::ShootingWithBowAnonymous
         | OT::ShootingWithBowUp
-        | OT::ShootingWithBowUpAnonymous => Some((true, ValidityArmTerminal::Aborted)),
+        | OT::ShootingWithBowUpAnonymous
+        | OT::TakingNet => Some((true, ValidityArmTerminal::Aborted)),
         _ if owner_is_pc => pc_init_validity_arm(anim),
         _ => None,
     }

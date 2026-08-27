@@ -953,6 +953,21 @@ impl Sprite {
         total.min(u16::MAX as u32) as u16
     }
 
+    /// Exact `RHSprite::GetTimeForAnim` duration: every authored frame costs
+    /// its wait value plus the tick which advances past that wait.
+    pub fn cxx_time_for_anim(&self, action: OrderType) -> u16 {
+        let Some(row) = self.row_for_action(action) else {
+            return 0;
+        };
+        self.current_scripts()[row as usize]
+            .delays
+            .iter()
+            .fold(0_u32, |sum, delay| {
+                sum.saturating_add(u32::from(*delay) + 1)
+            })
+            .min(u32::from(u16::MAX)) as u16
+    }
+
     /// Exact `RHSprite::ReadyForTakeOff(RHFLIGHTSTYLE_DEFAULT)` duration.
     ///
     /// The Original starts at one tick and adds `GetWaitTime + 1` for
