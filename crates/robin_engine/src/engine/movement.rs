@@ -9148,7 +9148,9 @@ impl EngineInner {
                     );
             if pass_door_transition_completion_has_owner(
                 selected_command,
-                door_pass_anim.is_some() || legacy_serialized_order_chain,
+                door_pass_anim.is_some()
+                    || (legacy_serialized_order_chain
+                        && selected_command == crate::element::Command::PassDoor),
                 order_action,
                 is_pc,
             ) && door_transition_state_effect_due
