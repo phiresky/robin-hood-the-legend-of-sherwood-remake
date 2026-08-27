@@ -4095,47 +4095,6 @@ impl EnemyAi {
             }
         }
 
-        // Handle special events processed during StartThink
-        match stimulus_type {
-            StimulusType::EventLoseConsciousness => {
-                self.base.break_macro();
-                self.base.clear_emoticon();
-                if self.base.current_substate.is_take_money()
-                    || self.base.current_substate.is_fight_for_money()
-                {
-                    self.forget_all_nearby_coins(ctx);
-                }
-                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
-                self.base.outbox.recovery.set_eye_status =
-                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
-                self.set_alert_status(AlertLevel::Green);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 13);
-                return false;
-            }
-            StimulusType::EventWasp => {
-                self.base.break_macro();
-                self.base.set_emoticon(EmoticonType::Thunderstorm);
-                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 14);
-                return false;
-            }
-            StimulusType::EventNet => {
-                self.base.break_macro();
-                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.forget_attentive_mode();
-                self.base.register_log_line(LogLineType::EventRefused, 15);
-                return false;
-            }
-            _ => {}
-        }
-
         // Reset standing around timer
         self.base.standing_around_timer = 0;
 
@@ -4183,6 +4142,50 @@ impl EnemyAi {
                 self.base.register_log_line(LogLineType::EventRefused, 7);
                 return false;
             }
+        }
+
+        // Handle special events processed during StartThink. In Original
+        // these run after the timer, dead, and sleeping-unconscious gates;
+        // notably, a second LoseConsciousness stimulus cannot rewrite the AI
+        // state of an actor whose death transition has already completed.
+        match stimulus_type {
+            StimulusType::EventLoseConsciousness => {
+                self.base.break_macro();
+                self.base.clear_emoticon();
+                if self.base.current_substate.is_take_money()
+                    || self.base.current_substate.is_fight_for_money()
+                {
+                    self.forget_all_nearby_coins(ctx);
+                }
+                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
+                self.base.outbox.recovery.set_eye_status =
+                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
+                self.set_alert_status(AlertLevel::Green);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 13);
+                return false;
+            }
+            StimulusType::EventWasp => {
+                self.base.break_macro();
+                self.base.set_emoticon(EmoticonType::Thunderstorm);
+                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 14);
+                return false;
+            }
+            StimulusType::EventNet => {
+                self.base.break_macro();
+                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.forget_attentive_mode();
+                self.base.register_log_line(LogLineType::EventRefused, 15);
+                return false;
+            }
+            _ => {}
         }
 
         true
@@ -7855,12 +7858,17 @@ mod tests {
     #[test]
     fn start_think_blocks_dead() {
         let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Sleeping;
+        ai.base.current_substate = Substate::SleepingForever;
         let ctx = AiContext {
             self_is_dead: true,
             ..AiContext::default()
         };
-        let stimulus = Stimulus::new(StimulusType::EventView);
+        let stimulus = Stimulus::new(StimulusType::EventLoseConsciousness);
         assert!(!ai.start_think(&stimulus, &ctx, false));
+        assert_eq!(ai.base.current_state, AiState::Sleeping);
+        assert_eq!(ai.base.current_substate, Substate::SleepingForever);
+        assert_eq!(ai.base.outbox.recovery.set_eye_status, None);
     }
 
     #[test]
