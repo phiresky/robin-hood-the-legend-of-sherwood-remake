@@ -1000,6 +1000,7 @@ impl EngineInner {
 
     pub(super) fn drain_taking_net_ticks(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         ticks: Vec<crate::engine::animation::TakingNetTick>,
     ) {
@@ -1130,7 +1131,7 @@ impl EngineInner {
                         .expect("TakingNet net disappeared during deactivation")
                         .element_data_mut()
                         .active = false;
-                    self.unapply_net_effect(tick.net);
+                    self.unapply_net_effect(sim, assets, tick.net);
                     if taker_is_pc {
                         self.increase_ammo_and_enable(
                             assets,
@@ -1236,7 +1237,7 @@ impl EngineInner {
 
             match object_type {
                 Some(_) if is_landed_net => {
-                    self.unapply_net_effect(object);
+                    self.unapply_net_effect(sim, assets, object);
                     if taker_is_pc {
                         self.increase_ammo_and_enable(
                             assets,
@@ -1587,6 +1588,7 @@ mod tests {
 
     #[test]
     fn taking_net_tail_pulls_eight_ticks_then_removes_on_ninth() {
+        let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let taker = engine.add_entity(test_soldier());
         let mut net_element = ElementData {
@@ -1623,7 +1625,7 @@ mod tests {
         };
         let assets = LevelAssets::new();
         for expected_remaining in (0..8).rev() {
-            engine.drain_taking_net_ticks(&assets, vec![tick]);
+            engine.drain_taking_net_ticks(&sim_context, &assets, vec![tick]);
             assert!(engine.get_entity(net).is_some());
             assert_eq!(
                 engine
@@ -1644,7 +1646,7 @@ mod tests {
             8.0
         );
 
-        engine.drain_taking_net_ticks(&assets, vec![tick]);
+        engine.drain_taking_net_ticks(&sim_context, &assets, vec![tick]);
         assert!(
             !engine
                 .get_entity(net)

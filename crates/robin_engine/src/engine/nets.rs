@@ -316,7 +316,12 @@ impl EngineInner {
     ///    remove the victim from every other NPC's `Body` detectable
     ///    list.
     /// 5. Clear the net's `victims` list.
-    pub(crate) fn unapply_net_effect(&mut self, net_id: EntityId) {
+    pub(crate) fn unapply_net_effect(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
         // Snapshot + drain the victim list and the repulsive-point IDs
         // so we can iterate without re-borrowing the net entity.
         let (victims, repulsive_ids): (Vec<EntityId>, Vec<i32>) = match self.get_entity_mut(net_id)
@@ -392,6 +397,12 @@ impl EngineInner {
                 self.dispatch_ai_stimulus(
                     victim_id,
                     crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
+                );
+                // RHElementNet::UnapplyEffect calls Think(EVENT_NET_AWAY)
+                // synchronously, even when the victim's creation slot has
+                // already run this frame.
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                    sim, victim_id, assets, None, None,
                 );
 
                 // Skip the body-detectable cleanup for dead/unconscious
@@ -1743,7 +1754,7 @@ mod tests {
             Posture::StuckUnderNet
         );
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1837,7 +1848,7 @@ mod tests {
         assert_eq!(sprite.display_order_ref, Some(net_id));
         assert!(sprite.behind_display_order_ref);
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
         let sprite = engine.get_entity(victim_id).unwrap().sprite();
         assert_eq!(
             sprite.display_order_ref, None,
@@ -1848,8 +1859,10 @@ mod tests {
 
     #[test]
     fn landing_registers_repulsive_points() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
-        let _assets = assets_with_profiles();
+        let assets = assets_with_profiles();
         let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
@@ -1877,7 +1890,7 @@ mod tests {
             assert!(registered_ids.contains(id));
         }
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
         // After unapply: zero repulsive points left.
         assert!(engine.ai.global.repulsive_points.is_empty());
     }
