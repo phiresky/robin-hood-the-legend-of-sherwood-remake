@@ -313,6 +313,20 @@ fn is_custom_animation_order(order_type: OrderType) -> bool {
     )
 }
 
+fn play_anim_freeze_completed(
+    motion_state: MotionState,
+    command: Option<Command>,
+    selected_order: OrderType,
+) -> bool {
+    // Original launches PLAY_ANIM_FROZEN only from the
+    // RHNONANIMATION_PLAY_CUSTOM_FREEZE Execute arm. The sequence keeps its
+    // PlayAnimFreeze command while prerequisite posture/action transitions
+    // run, and those transitions can terminate too.
+    motion_state == MotionState::Terminated
+        && command == Some(Command::PlayAnimFreeze)
+        && selected_order == OrderType::PlayCustomFreeze
+}
+
 /// Complete the human `STANDING_UP_SWORD` arm after sprite playback.
 ///
 /// Original refreshes the goal from the live principal opponent only while
@@ -6503,9 +6517,7 @@ impl EngineInner {
                                 .non_interruptable_lifts
                                 .push((seq_id, elem_idx));
                         }
-                        if matches!(motion_state, MotionState::Terminated)
-                            && cur_command == Some(Command::PlayAnimFreeze)
-                        {
+                        if play_anim_freeze_completed(motion_state, cur_command, anim_type) {
                             completion_outcomes.play_anim_frozen.push((
                                 entity_id,
                                 cur_command_level.unwrap_or(1),
@@ -6695,6 +6707,25 @@ mod soldier_take_drink_parity_tests {
             "a PlayAnim sequence can retain its command while a prerequisite transition is selected"
         );
         assert!(!is_custom_animation_order(OrderType::WaitingUpright));
+    }
+
+    #[test]
+    fn play_anim_freeze_followup_waits_for_the_custom_wrapper_to_terminate() {
+        assert!(!play_anim_freeze_completed(
+            MotionState::Terminated,
+            Some(Command::PlayAnimFreeze),
+            OrderType::TransitionParryingSwordWaitingSword,
+        ));
+        assert!(play_anim_freeze_completed(
+            MotionState::Terminated,
+            Some(Command::PlayAnimFreeze),
+            OrderType::PlayCustomFreeze,
+        ));
+        assert!(!play_anim_freeze_completed(
+            MotionState::InProgress,
+            Some(Command::PlayAnimFreeze),
+            OrderType::PlayCustomFreeze,
+        ));
     }
 
     #[test]
