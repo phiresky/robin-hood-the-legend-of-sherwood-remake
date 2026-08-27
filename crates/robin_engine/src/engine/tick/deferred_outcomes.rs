@@ -1122,6 +1122,14 @@ impl EngineInner {
                         .get_entity(tick.taker)
                         .expect("TakingNet taker disappeared before removal")
                         .is_pc();
+                    // RemoveElement unlinks the net from Original's active
+                    // element arrays but deliberately leaves its allocation
+                    // alive because orders may still reference it. Preserve
+                    // that stable entity slot and only deactivate it here.
+                    self.get_entity_mut(tick.net)
+                        .expect("TakingNet net disappeared during deactivation")
+                        .element_data_mut()
+                        .active = false;
                     self.unapply_net_effect(tick.net);
                     if taker_is_pc {
                         self.increase_ammo_and_enable(
@@ -1131,14 +1139,6 @@ impl EngineInner {
                             1,
                         );
                     }
-                    // RemoveElement unlinks the net from Original's active
-                    // element arrays but deliberately leaves its allocation
-                    // alive because orders may still reference it. Preserve
-                    // that stable entity slot and only deactivate it here.
-                    self.get_entity_mut(tick.net)
-                        .expect("TakingNet net disappeared during deactivation")
-                        .element_data_mut()
-                        .active = false;
                     let actor = self
                         .get_entity_mut(tick.taker)
                         .and_then(Entity::actor_data_mut)

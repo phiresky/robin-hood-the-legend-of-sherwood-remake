@@ -10,7 +10,7 @@
 //!   stuck-under-nets counter, snap `StuckUnderNet` posture back to
 //!   `Lying`, abort lower-priority sequences, queue a wait, dispatch
 //!   `EventNetAway` (NPCs only), and remove the victim from every
-//!   NPC's `Body` detectable list.
+//!   NPC's `Body` detectable list, including its own.
 //!
 //! - [`EngineInner::tick_nets`]: per-frame driver. Advances the net's
 //!   ballistic trajectory (using the same waypoint loop as
@@ -418,9 +418,6 @@ impl EngineInner {
         let det_idx = DetectableType::Body as usize;
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
-            if friend_id == body_id {
-                continue;
-            }
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
@@ -1460,7 +1457,6 @@ mod tests {
             0,
             false,
         );
-
         engine.apply_net_falling_effect(sim, &assets, net_id);
         engine.apply_net_falling_effect(sim, &assets, net_id);
         engine.apply_net_falling_effect(sim, &assets, net_id);
@@ -1709,6 +1705,17 @@ mod tests {
             0,
             false,
         );
+        engine.add_detectable_for_all_npc(victim_id, crate::element::DetectableType::Body);
+        let body_slot = crate::element::DetectableType::Body as usize;
+        assert!(
+            engine
+                .get_entity(victim_id)
+                .and_then(Entity::npc_data)
+                .expect("test victim NPC")
+                .detectable_lists[body_slot]
+                .iter()
+                .any(|detectable| detectable.element == Some(victim_id))
+        );
 
         // First, fire the apply sweep so the victim is registered.
         // The sweep eagerly increments stuck_under_nets_counter; the
@@ -1746,6 +1753,11 @@ mod tests {
         let v = engine.get_entity(victim_id).unwrap();
         assert_eq!(v.human_data().unwrap().stuck_under_nets_counter, 0);
         assert_eq!(v.element_data().posture, Posture::Lying);
+        assert!(
+            v.npc_data().expect("test victim NPC").detectable_lists[body_slot]
+                .iter()
+                .all(|detectable| detectable.element != Some(victim_id))
+        );
     }
 
     #[test]
