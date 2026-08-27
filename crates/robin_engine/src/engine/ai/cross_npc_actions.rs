@@ -982,7 +982,7 @@ impl EngineInner {
 
         // EventViewStandardProcedure explicitly marks an accepted VIEW after
         // all StartThink and handler guards. Mirror that one-shot onto the
-        // engine-owned NPC record before draining its other synchronous
+        // engine-owned AI actor record before draining its other synchronous
         // effects. Locked, frozen, script-filtered, and handler-rejected VIEWs
         // never set the flag.
         let mark_alerted = self
@@ -1004,13 +1004,13 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+            let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
                 panic!(
-                    "accepted EVENT_VIEW recipient {} lost its NPC data after synchronous Think",
+                    "accepted EVENT_VIEW recipient {} lost its AI actor data after synchronous Think",
                     npc_id.index()
                 )
             });
-            npc.alerted = true;
+            ai_actor.alerted = true;
         }
 
         const MAX_ITERS: u32 = 8;

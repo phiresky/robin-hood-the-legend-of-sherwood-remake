@@ -37,7 +37,8 @@
       "allegiance": 2,
       "direction": 4,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -48,7 +49,8 @@
       "allegiance": 3,
       "direction": 12,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     }
   ]
 }

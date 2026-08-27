@@ -329,6 +329,14 @@ impl Entities {
         self.npcs().map(|(id, _)| id.into())
     }
 
+    /// Actors participating in the shared AI owner scheduler. This is the
+    /// NPC set plus explicitly configured autonomous PCs with an AI runtime.
+    pub fn ai_owner_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.occupied()
+            .filter(|(_, entity)| entity.ai_controller().is_some())
+            .map(|(id, _)| id)
+    }
+
     pub fn npcs_mut(&mut self) -> impl Iterator<Item = (NpcId, &mut Entity)> + '_ {
         self.slots_mut()
             .filter_map(|(idx, slot, generation)| match slot {

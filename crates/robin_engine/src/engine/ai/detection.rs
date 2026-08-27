@@ -120,7 +120,7 @@ fn debug_detectable_list_bucket(
     stage: &str,
     bucket: usize,
     npc_id: EntityId,
-    npc: &crate::element::NpcData,
+    npc: &crate::element::AiActorData,
     frame: u32,
     creation_order: u32,
 ) {
@@ -169,7 +169,7 @@ fn debug_detectable_list_entries(
 fn debug_all_detectable_list_buckets(
     stage: &str,
     npc_id: EntityId,
-    npc: &crate::element::NpcData,
+    npc: &crate::element::AiActorData,
     frame: u32,
     creation_order: u32,
 ) {
@@ -583,7 +583,7 @@ fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> b
 
 /// Original clears the remembered worst type only after every detectable
 /// bucket has contributed its persistent suspect value to the frame maximum.
-fn finalize_detection_summary(npc: &mut crate::element::NpcData) {
+fn finalize_detection_summary(npc: &mut crate::element::AiActorData) {
     if npc.maximal_detection_suspect == 0 {
         npc.worst_detected_type = DetectableType::None;
     }
@@ -595,11 +595,8 @@ impl SoldierSightContext {
         entity: &Entity,
         viewer_building_sector: Option<crate::position_interface::SectorHandle>,
     ) -> Option<Self> {
-        let (npc, camp) = match entity {
-            Entity::Soldier(soldier) => (&soldier.npc, soldier.soldier.cached_camp),
-            Entity::Civilian(civilian) => (&civilian.npc, civilian.civilian.cached_camp),
-            _ => return None,
-        };
+        let npc = entity.ai_actor_data()?;
+        let camp = entity.camp();
         // RefreshDetection's optical gate is narrower than its entry gate:
         // an inactive NPC in a BUILDING sector still scans, while an
         // inactive NPC merely passing a door stops after acoustics.
@@ -611,31 +608,12 @@ impl SoldierSightContext {
             return None;
         }
 
-        let ai = match entity {
-            Entity::Soldier(_) => {
-                &npc.ai_brain
-                    .enemy()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "eligible soldier NPC {} has no EnemyAi brain during detection",
-                            npc_id.index()
-                        )
-                    })
-                    .base
-            }
-            Entity::Civilian(_) => {
-                &npc.ai_brain
-                    .friendly()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "eligible civilian NPC {} has no FriendlyAi brain during detection",
-                            npc_id.index()
-                        )
-                    })
-                    .base
-            }
-            _ => unreachable!("non-NPC passed the NPC viewer kind gate"),
-        };
+        let ai = entity.ai_controller().unwrap_or_else(|| {
+            panic!(
+                "eligible AI owner {} has no controller during detection",
+                npc_id.index()
+            )
+        });
         let current_substate = ai.current_substate;
         let ignore_bodies = matches!(
             current_substate,
@@ -1423,7 +1401,7 @@ impl EngineInner {
             // Every NPC runs the acoustic pass — it lives on the base NPC
             // class. Which PCs it considers is determined exclusively by its
             // authoritative DETECTABLE_ENEMY list below.
-            if !matches!(entity, Entity::Civilian(_) | Entity::Soldier(_)) {
+            if entity.ai_actor_data().is_none() {
                 return;
             }
             if entity.is_dead() || entity.element_data().posture == Posture::Tied {
@@ -1432,7 +1410,7 @@ impl EngineInner {
             if entity.human_data().map(|h| h.unconscious).unwrap_or(false) {
                 return;
             }
-            let Some(npc) = entity.npc_data() else {
+            let Some(npc) = entity.ai_actor_data() else {
                 return;
             };
             (
@@ -1503,7 +1481,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
-            let Some(npc) = entity.npc_data_mut() else {
+            let Some(npc) = entity.ai_actor_data_mut() else {
                 return;
             };
             let enemy_idx = DetectableType::Enemy as usize;
@@ -1542,7 +1520,7 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
-                let Some(npc) = entity.npc_data_mut() else {
+                let Some(npc) = entity.ai_actor_data_mut() else {
                     return;
                 };
                 // RefreshDetection iterates `DETECTABLE_ENEMY` and
@@ -1836,7 +1814,7 @@ impl EngineInner {
         let is_forest_level = self.world.weather.is_forest_level;
         let npc_ids: Vec<_> = match owner {
             Some(npc_id) => vec![npc_id],
-            None => self.world.entities.npc_ids().collect(),
+            None => self.world.entities.ai_owner_ids().collect(),
         };
         let mut local_entity_views = super::PreparedAiEntityViewCache::default();
         let entity_view_cache = prepared_entity_views.unwrap_or(&mut local_entity_views);
@@ -1897,7 +1875,7 @@ impl EngineInner {
                     .world
                     .entities
                     .get_mut(npc_id)
-                    .and_then(Entity::npc_data_mut)
+                    .and_then(Entity::ai_actor_data_mut)
             {
                 npc.maximal_detection_suspect = 0;
                 if let Some(ai) = npc.ai_brain.base_mut() {
@@ -1917,7 +1895,7 @@ impl EngineInner {
                         .world
                         .entities
                         .get(npc_id)
-                        .and_then(Entity::npc_data)
+                        .and_then(Entity::ai_actor_data)
                         .expect("DETMUT owner lost NPC data before RefreshDetection");
                     debug_detectable_mutation_snapshot(
                         "refresh_entry_snapshot",
@@ -1931,7 +1909,11 @@ impl EngineInner {
                 }
             }
             if let Some(creation_order) = detectable_list_debug_creation_order
-                && let Some(npc) = self.world.entities.get(npc_id).and_then(Entity::npc_data)
+                && let Some(npc) = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::ai_actor_data)
             {
                 debug_all_detectable_list_buckets(
                     "optical_entry",
@@ -1949,7 +1931,7 @@ impl EngineInner {
                 .world
                 .entities
                 .get(npc_id)
-                .and_then(Entity::npc_data)
+                .and_then(Entity::ai_actor_data)
                 .expect("RefreshDetection owner lost NPC data before Enemy snapshot")
                 .detectable_lists[DetectableType::Enemy as usize]
                 .iter()
@@ -2036,7 +2018,11 @@ impl EngineInner {
                 &view_radius_cache,
             );
             if let Some(creation_order) = detectable_list_debug_creation_order
-                && let Some(npc) = self.world.entities.get(npc_id).and_then(Entity::npc_data)
+                && let Some(npc) = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::ai_actor_data)
             {
                 debug_all_detectable_list_buckets(
                     "optical_exit",
@@ -2421,7 +2407,7 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
                 panic!(
                     "Enemy optical observer {} has no required NPC state",
                     npc_id.index()
@@ -3000,9 +2986,7 @@ impl EngineInner {
             }
 
             let my_camp = viewer.camp;
-            if viewer.camp.is_hostile_to(Camp::Royalists)
-                && let Some(enemy_ai) = npc.ai_brain.enemy_mut()
-            {
+            if let Some(enemy_ai) = npc.ai_brain.enemy_mut() {
                 // Pre-resolve target metadata when the primary target is a
                 // PC. Original's ReconsiderEnemyApproach reads
                 // Position(mpPrimaryTarget), including its exact RHSector*

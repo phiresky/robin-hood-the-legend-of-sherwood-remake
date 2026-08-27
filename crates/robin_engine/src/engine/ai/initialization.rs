@@ -72,7 +72,7 @@ impl EngineInner {
         self.ai.global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
-        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<EntityId> = self.world.entities.ai_owner_ids().collect();
         let hiking_paths = assets.hiking_paths.clone();
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
@@ -242,6 +242,14 @@ impl EngineInner {
                 return;
             };
             let (is_enemy, is_friendly, self_camp) = match entity {
+                Entity::Pc(pc) => (
+                    pc.pc
+                        .ai
+                        .as_deref()
+                        .is_some_and(|ai| ai.ai_brain.enemy().is_some()),
+                    false,
+                    pc.pc.cached_camp,
+                ),
                 Entity::Soldier(s) => (
                     s.npc.ai_brain.enemy().is_some(),
                     false,
@@ -336,7 +344,7 @@ impl EngineInner {
                 return;
             };
             let elem = entity.element_data();
-            let lp = entity.npc_data().map(|n| n.life_points).unwrap_or(0);
+            let lp = entity.human_life_points();
             (
                 elem.position_map(),
                 elem.direction(),
@@ -351,7 +359,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
-            if let Some(npc) = entity.npc_data_mut() {
+            if let Some(npc) = entity.ai_actor_data_mut() {
                 // `initialize_direction_offset_very_old`: seed from current body dir.
                 npc.direction_old = direction_final;
 
@@ -702,7 +710,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
-            match &mut entity.npc_data_mut().map(|n| &mut n.ai_brain) {
+            match &mut entity.ai_actor_data_mut().map(|n| &mut n.ai_brain) {
                 Some(crate::element::AiBrain::Enemy(e)) => {
                     // Init runs during `InitOneAI` before any detection
                     // or target selection — `primary_target` is 0 and
@@ -769,7 +777,7 @@ impl EngineInner {
             // field.  Equivalent to `close_eyes` (which just calls
             // `set_view_status(EYES_CLOSED)`).
             if let Some(status) = init_fx.set_eye_status
-                && let Some(npc) = entity.npc_data_mut()
+                && let Some(npc) = entity.ai_actor_data_mut()
             {
                 crate::ai_vision::set_view_status(npc, status);
             }
@@ -779,8 +787,11 @@ impl EngineInner {
             // (`init_with_zero_life_points` followed by
             // `set_killed_by_accident(true)`).
             if init_fx.zero_life_points {
-                if let Some(npc) = entity.npc_data_mut() {
-                    npc.life_points = 0;
+                match entity {
+                    Entity::Pc(pc) => pc.pc.life_points = 0,
+                    Entity::Soldier(soldier) => soldier.npc.life_points = 0,
+                    Entity::Civilian(civilian) => civilian.npc.life_points = 0,
+                    _ => panic!("AI init side effect targeted a non-human entity"),
                 }
                 if let Some(human) = entity.human_data_mut() {
                     human.killed_by_accident = true;

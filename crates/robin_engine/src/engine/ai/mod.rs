@@ -691,7 +691,10 @@ mod panic_boundary_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                ai: crate::element::AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             soldier: SoldierData::default(),
@@ -2793,11 +2796,7 @@ pub(super) fn build_ai_context_from_entity(
     let elem = entity.element_data();
     let original_creation_order =
         context_original_creation_order(elem.index_in_elements_list as u32, entity_views);
-    let camp = match entity {
-        Entity::Soldier(s) => s.soldier.cached_camp,
-        Entity::Civilian(c) => c.civilian.cached_camp,
-        _ => crate::element::Camp::default(),
-    };
+    let camp = entity.camp();
     let actor = entity.actor_data();
     // `is_swordfighting` is "opponents list is non-empty"; do not proxy
     // it through action_state.
@@ -2810,10 +2809,10 @@ pub(super) fn build_ai_context_from_entity(
     } else {
         Default::default()
     };
-    let remaining_arrows = match entity {
-        Entity::Soldier(s) => s.npc.number_of_arrows,
-        _ => 0,
-    };
+    let remaining_arrows = entity
+        .ai_actor_data()
+        .map(|ai| ai.number_of_arrows)
+        .unwrap_or(0);
     // `self_is_beggar` / `self_is_child` are civilian-type checks.
     // Non-civilian NPCs always read false (callers cast to civilian
     // first).
@@ -2827,7 +2826,7 @@ pub(super) fn build_ai_context_from_entity(
     // Soldier vs civilian — drives the soldier-only macro opcodes
     // (CMD_CHECK_4, CMD_LOOK_LEFT, CMD_BEND, CMD_PATROL_*) which error
     // on civilians.
-    let self_is_soldier = matches!(entity, Entity::Soldier(_));
+    let self_is_soldier = entity.enemy_ai().is_some();
     // `self_is_rider` is the cached `SoldierData.rider` flag from the
     // soldier profile, set at level load.  Non-soldier NPCs are never
     // riders.
@@ -2836,29 +2835,15 @@ pub(super) fn build_ai_context_from_entity(
     // pride, used by the bored-time picker for longer officer/pride
     // bored intervals.  `ProfileRank::None` for non-soldiers makes the
     // officer check fall through.
-    let (self_rank, self_pride) = match entity {
-        Entity::Soldier(s) => {
-            let rank = s
-                .npc
-                .ai_brain
-                .enemy()
-                .map(|e| e.soldier_profile_rank)
-                .unwrap_or(crate::profiles::ProfileRank::None);
-            let pride = s
-                .npc
-                .ai_brain
-                .enemy()
-                .map(|e| e.soldier_profile_pride)
-                .unwrap_or(0);
-            (rank, pride)
-        }
-        _ => (crate::profiles::ProfileRank::None, 0),
-    };
+    let (self_rank, self_pride) = entity
+        .enemy_ai()
+        .map(|ai| (ai.soldier_profile_rank, ai.soldier_profile_pride))
+        .unwrap_or((crate::profiles::ProfileRank::None, 0));
     // Number of detectables of type Friend — the
     // `return_to_duty_common_stuff` guard uses this to decide whether
     // to clear the stashed detected body.
     let self_detectable_friend_count = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::Friend as usize)
@@ -2869,7 +2854,7 @@ pub(super) fn build_ai_context_from_entity(
     // `return_to_duty` uses this to know whether to record the
     // abandoned checkpoint Charly in the missed-in-action list.
     let self_detectable_missed_friend_count = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::MissedFriend as usize)
@@ -2877,7 +2862,7 @@ pub(super) fn build_ai_context_from_entity(
         .map(|lst| lst.len() as u16)
         .unwrap_or(0);
     let self_seen_enemy_handles = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::Enemy as usize)
@@ -2949,11 +2934,10 @@ pub(super) fn build_ai_context_from_entity(
     // `set_alert_status_with_flags` can apply the view-override from
     // inside shared `AiController` paths.
     let self_forced_attentive = entity
-        .npc_data()
-        .and_then(|npc| npc.ai_brain.enemy())
+        .enemy_ai()
         .is_some_and(|enemy| enemy.forced_attentive);
     let self_view_radius = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.view_radius as f32)
         .unwrap_or(standard_view_polygon_radius as f32);
     let self_eye = entity.compute_eyes_point(None);
@@ -2971,24 +2955,24 @@ pub(super) fn build_ai_context_from_entity(
         .compute_eyes_point(Some(crate::element::Posture::Upright))
         .unwrap_or(elem.position());
     let self_stare_point = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.stare_point)
         .unwrap_or_else(|| {
             crate::coordinates::GroundPoint::from_map_and_z(elem.position_map(), elem.position().z)
         });
     let self_view_direction = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.view_direction)
         .unwrap_or_else(|| {
             let (x, y) = crate::ai_vision::sector_to_forward(elem.direction());
             [x, y]
         });
     let self_real_half_aperture = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.real_half_aperture)
         .unwrap_or(crate::ai_vision::NORMAL_HALF_APERTURE);
     let self_eye_status = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
     // `RHArtificialIntelligence::Position(mpMe)` uses the committed gate

@@ -263,7 +263,13 @@ impl EngineInner {
                 pc.melee_target = None;
             }
             self.enable_pc_actions_temp(assets, 0, entity_id);
-        } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+        }
+        if self
+            .world
+            .entities
+            .get(entity_id)
+            .is_some_and(|entity| entity.enemy_ai().is_some())
+        {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
                 entity_id,
@@ -1456,14 +1462,14 @@ impl EngineInner {
             self.enable_pc_actions_temp(assets, 0, entity_id);
         }
 
-        // When a non-dead soldier voluntarily quits a swordfight,
-        // immediately pump EventQuitSwordfight into its own AI so it
+        // When a non-dead AI owner voluntarily quits a swordfight,
+        // immediately pump EventQuitSwordfight into its own brain so it
         // can re-plan, rather than waiting for the next AI tick.
         if !entity_is_dead
-            && matches!(
-                self.expect_entity(entity_id, "quit_swordfight quitter"),
-                Entity::Soldier(_)
-            )
+            && self
+                .expect_entity(entity_id, "quit_swordfight quitter")
+                .enemy_ai()
+                .is_some()
         {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,

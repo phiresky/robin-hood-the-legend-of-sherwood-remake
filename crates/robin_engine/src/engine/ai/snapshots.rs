@@ -1157,7 +1157,7 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        let npc = entity.npc_data().unwrap_or_else(|| {
+        let npc = entity.ai_actor_data().unwrap_or_else(|| {
             panic!(
                 "creation-ordered NPC {} has no NPC data for detection",
                 npc_id.index()

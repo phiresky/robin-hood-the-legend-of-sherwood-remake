@@ -1008,7 +1008,10 @@ pub(super) fn scripted_soldier(script_class: &str) -> Entity {
         human: HumanData::default(),
         npc: NpcData {
             life_points: 50,
-            ai_brain: AiBrain::Enemy(Box::default()),
+            ai: crate::element::AiActorData {
+                ai_brain: AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
             ..NpcData::default()
         },
         soldier: SoldierData::default(),

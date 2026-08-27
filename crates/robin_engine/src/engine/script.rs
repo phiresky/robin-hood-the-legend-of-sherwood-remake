@@ -3341,10 +3341,12 @@ impl EngineInner {
             self.refresh_selected_default_wait_identity(entity_id, &mut fresh_ctx);
             fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(entity_id);
             fresh_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-            let fresh_enemy_tick = matches!(fresh_entity, Entity::Soldier(_)).then(|| {
+            let fresh_enemy_tick = fresh_entity.enemy_ai().is_some().then(|| {
                 self.build_npc_tick_data_without_forecasts(sim, entity_id, &fresh_scratch, assets)
             });
-            let fresh_friendly_tick = matches!(fresh_entity, Entity::Civilian(_))
+            let fresh_friendly_tick = fresh_entity
+                .friendly_ai()
+                .is_some()
                 .then(|| self.build_friendly_tick_data_without_forecasts(entity_id));
             let ai_global = &mut self.ai.global;
             let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
@@ -3353,24 +3355,12 @@ impl EngineInner {
                     entity_id.index()
                 )
             });
-            match entity {
-                Entity::Soldier(s) => {
-                    let enemy = s.npc.ai_brain.enemy_mut().unwrap();
-                    enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
-                    if completed {
-                        enemy.think_unexpected_event(
-                            sim,
-                            stimulus,
-                            ai_global,
-                            &fresh_ctx,
-                            fresh_enemy_tick
-                                .as_ref()
-                                .expect("AfterScript Enemy tick data"),
-                            Some(&self.world.fast_grid),
-                        );
-                    }
-                    enemy.end_think(
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
+                if completed {
+                    enemy.think_unexpected_event(
                         sim,
+                        stimulus,
                         ai_global,
                         &fresh_ctx,
                         fresh_enemy_tick
@@ -3379,32 +3369,40 @@ impl EngineInner {
                         Some(&self.world.fast_grid),
                     );
                 }
-                Entity::Civilian(c) => {
-                    let friendly = c.npc.ai_brain.friendly_mut().unwrap();
-                    friendly
-                        .base
-                        .outbox
-                        .reentrant
-                        .engine_drains_after_script_go_on = false;
-                    if completed {
-                        friendly.think_unexpected_event(
-                            sim,
-                            stimulus,
-                            ai_global,
-                            &fresh_ctx,
-                            fresh_friendly_tick
-                                .as_ref()
-                                .expect("AfterScript Friendly tick data"),
-                            Some(&self.world.fast_grid),
-                            Some(self.script_domains.interactables.doors.as_slice()),
-                        );
-                    }
-                    friendly.end_think(sim, ai_global, &fresh_ctx);
+                enemy.end_think(
+                    sim,
+                    ai_global,
+                    &fresh_ctx,
+                    fresh_enemy_tick
+                        .as_ref()
+                        .expect("AfterScript Enemy tick data"),
+                    Some(&self.world.fast_grid),
+                );
+            } else if let Some(friendly) = entity.friendly_ai_mut() {
+                friendly
+                    .base
+                    .outbox
+                    .reentrant
+                    .engine_drains_after_script_go_on = false;
+                if completed {
+                    friendly.think_unexpected_event(
+                        sim,
+                        stimulus,
+                        ai_global,
+                        &fresh_ctx,
+                        fresh_friendly_tick
+                            .as_ref()
+                            .expect("AfterScript Friendly tick data"),
+                        Some(&self.world.fast_grid),
+                        Some(self.script_domains.interactables.doors.as_slice()),
+                    );
                 }
-                other => panic!(
+                friendly.end_think(sim, ai_global, &fresh_ctx);
+            } else {
+                panic!(
                     "AfterScript owner has invalid kind {:?}",
-                    other.element_data().kind
-                ),
+                    entity.element_data().kind
+                )
             }
             ctx.absorb_view_radius_cache(&fresh_ctx);
             ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
@@ -4636,18 +4634,18 @@ impl EngineInner {
                     continue;
                 }
                 crate::ai::AiOwnerWork::SetEyeStatus(status) => {
-                    let npc = self
+                    let ai_actor = self
                         .world
                         .entities
                         .get_mut(owner)
-                        .and_then(Entity::npc_data_mut)
+                        .and_then(Entity::ai_actor_data_mut)
                         .unwrap_or_else(|| {
                             panic!(
-                                "eye-status owner {} vanished before settlement",
+                                "eye-status owner {} lost AI actor data before settlement",
                                 owner.index()
                             )
                         });
-                    crate::ai_vision::set_view_status(npc, status);
+                    crate::ai_vision::set_view_status(ai_actor, status);
                     continue;
                 }
                 crate::ai::AiOwnerWork::BeginSoldierGiveReport {
@@ -4805,29 +4803,16 @@ impl EngineInner {
                         work_index
                     )
                 });
-                let owner_kind = match entity {
-                    Entity::Soldier(s)
-                        if matches!(&s.npc.ai_brain, crate::element::AiBrain::Enemy(_)) =>
-                    {
-                        OwnerAiKind::Enemy
-                    }
-                    Entity::Soldier(_) => {
-                        panic!("AI SetState owner {} has a non-Enemy brain", owner.index())
-                    }
-                    Entity::Civilian(c)
-                        if matches!(&c.npc.ai_brain, crate::element::AiBrain::Friendly(_)) =>
-                    {
-                        OwnerAiKind::Friendly
-                    }
-                    Entity::Civilian(_) => panic!(
-                        "AI SetState owner {} has a non-Friendly brain",
-                        owner.index()
-                    ),
-                    other => panic!(
+                let owner_kind = if entity.enemy_ai().is_some() {
+                    OwnerAiKind::Enemy
+                } else if entity.friendly_ai().is_some() {
+                    OwnerAiKind::Friendly
+                } else {
+                    panic!(
                         "AI SetState owner {} drifted to invalid kind {:?}",
                         owner.index(),
-                        other.element_data().kind
-                    ),
+                        entity.element_data().kind
+                    )
                 };
                 let ai = entity
                     .ai_controller_mut()
@@ -5015,9 +5000,9 @@ impl EngineInner {
                         owner.index()
                     )
                 });
-                let npc = entity.npc_data().unwrap_or_else(|| {
+                let ai_actor = entity.ai_actor_data().unwrap_or_else(|| {
                     panic!(
-                        "AI SetState owner {} lost NPC data before observation",
+                        "AI SetState owner {} lost AI actor data before observation",
                         owner.index()
                     )
                 });
@@ -5052,7 +5037,7 @@ impl EngineInner {
                     if let Some(observations) = observations.borrow_mut().as_mut() {
                         observations.push(AiStateCallbackObservation {
                             owner,
-                            eye_status: npc.eye_status,
+                            eye_status: ai_actor.eye_status,
                             timer_is_running,
                             body_references_to_owner,
                         });
@@ -6738,9 +6723,12 @@ mod script_context_tests {
                 actor: crate::element::ActorData::default(),
                 human: crate::element::HumanData::default(),
                 npc: crate::element::NpcData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
-                        crate::ai_enemy::EnemyAi::new(0),
-                    )),
+                    ai: crate::element::AiActorData {
+                        ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                            crate::ai_enemy::EnemyAi::new(0),
+                        )),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 soldier: crate::element::SoldierData::default(),

@@ -15,12 +15,12 @@ A list of which additional features we have added, which ones we might still wan
   Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
   soldier `profile` values may use readable CPF-filename identifiers such as
   `guard_a01` (legacy numeric indices remain accepted);
-  autonomous PCs automatically enter swordfights with their nearest hostile
-  autonomous PC and use the full A-I strike selection rather than passive PC
-  smalltalk attacks. A separately configurable `aggressive_combat` PC flag
-  makes autonomous PCs bypass passive duel-initiative delays and the ordinary
-  initial special-strike hesitation gate, while retaining profile skill
-  restrictions, timing, damage, tiredness, and reactive defence.
+  autonomous PCs with `aggressive_combat: true` run through the normal enemy
+  perception, pursuit, target-reacquisition, and battle-decision lifecycle
+  instead of receiving one-off mission-start pairings. Their required readable
+  `ai_profile` (for example `soldier_b04`) selects the behavior personality;
+  the PC profile still supplies the hero's weapons, skill, endurance, sprites,
+  damage, tiredness, and reactive defence.
   Ten launchable test arenas live under `mods/multi-team-*`:
   three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
   autonomous Robin versus Little John, four armies of twelve soldiers, and a
@@ -347,6 +347,18 @@ A list of which additional features we have added, which ones we might still wan
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.
+### Additive hackable sprite mods
+
+- Overlay mods can append soldier profiles through
+  `Data/Configuration/soldier-profiles.patch.json` without replacing the
+  retail CPF profile table.
+- Hackable RHS manifests explicitly select `rgba` or `legacy_color_keys` PNG
+  semantics. Legacy green transparency and blue cast-shadow masks remain
+  available to ambience-aware rendering instead of being baked into alpha.
+- One overlay mod may expose multiple hackable missions through the
+  `hackable_missions` array, and large character packs may opt into
+  mission-scoped sprite loading.
+
 ### Code Quality
 
 - Finish moving legacy sentinels to typed runtime boundaries. Entity IDs,

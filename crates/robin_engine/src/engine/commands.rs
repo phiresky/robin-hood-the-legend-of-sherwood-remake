@@ -9560,7 +9560,10 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                attached_scroll: None,
+                ai: crate::element::AiActorData {
+                    attached_scroll: None,
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             civilian: Default::default(),

@@ -346,6 +346,20 @@ impl EngineInner {
         fast_variant: bool,
         caller: AttentiveModeCaller,
     ) {
+        // Autonomous PCs share EnemyAi alert state but have no soldier-only
+        // attentive transition rows. For them the visual transition has zero
+        // duration, so commit its semantic result immediately.
+        if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
+            let enemy = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| panic!("attentive PC {entity_id:?} lost EnemyAi"));
+            enemy.attentive = target;
+            enemy.will_be_attentive = target;
+            return;
+        }
         // Keep the diagnostic master/frame gates ahead of every added entity
         // or creation-order read. Normal behavior below retains its original
         // reads and control flow when the diagnostic is disabled.
@@ -1101,9 +1115,11 @@ impl EngineInner {
                 terminal_state,
                 SequenceState::Terminated | SequenceState::Interrupted
             )
-            && let Some(crate::element::Entity::Soldier(soldier)) =
-                self.world.entities.get_mut(owner)
-            && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
+            && let Some(ai) = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(crate::element::Entity::enemy_ai_mut)
         {
             ai.pending_special_strike = false;
         }

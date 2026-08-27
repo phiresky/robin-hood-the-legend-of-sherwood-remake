@@ -1236,7 +1236,10 @@ mod tests {
             },
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain,
+                ai: crate::element::AiActorData {
+                    ai_brain,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             soldier: SoldierData::default(),

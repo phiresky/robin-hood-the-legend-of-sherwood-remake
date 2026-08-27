@@ -320,7 +320,10 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut npc = crate::element::NpcData {
             life_points: 100,
-            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         npc.ai_brain
@@ -368,7 +371,10 @@ mod tests {
     fn selected_player_strike_discards_preexisting_ai_combat_work() {
         let mut npc = crate::element::NpcData {
             life_points: 100,
-            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
@@ -449,7 +455,10 @@ mod tests {
         let path_id = crate::ai::PathId::new(0).unwrap();
         let mut npc = crate::element::NpcData {
             life_points: 100,
-            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let ai = npc.ai_brain.base_mut().expect("test soldier has enemy AI");

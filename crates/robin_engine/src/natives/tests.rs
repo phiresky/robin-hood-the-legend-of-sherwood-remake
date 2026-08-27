@@ -3438,7 +3438,12 @@ fn native_test_soldier() -> Entity {
         actor: crate::element::ActorData::default(),
         human: crate::element::HumanData::default(),
         npc: crate::element::NpcData {
-            ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(0))),
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(
+                    0,
+                ))),
+                ..Default::default()
+            },
             ..Default::default()
         },
         soldier: crate::element::SoldierData::default(),

@@ -37,7 +37,8 @@
       "allegiance": 2,
       "direction": 12,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -48,7 +49,8 @@
       "allegiance": 3,
       "direction": 14,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -59,7 +61,8 @@
       "allegiance": 4,
       "direction": 15,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -70,7 +73,8 @@
       "allegiance": 5,
       "direction": 1,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -81,7 +85,8 @@
       "allegiance": 6,
       "direction": 2,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -92,7 +97,8 @@
       "allegiance": 7,
       "direction": 4,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -103,7 +109,8 @@
       "allegiance": 8,
       "direction": 6,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -114,7 +121,8 @@
       "allegiance": 9,
       "direction": 7,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -125,7 +133,8 @@
       "allegiance": 10,
       "direction": 9,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     },
     {
       "position": [
@@ -136,7 +145,8 @@
       "allegiance": 11,
       "direction": 10,
       "autonomous": true,
-      "aggressive_combat": true
+      "aggressive_combat": true,
+      "ai_profile": "soldier_b04"
     }
   ]
 }

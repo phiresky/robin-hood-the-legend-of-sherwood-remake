@@ -73,7 +73,7 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        let Some(npc) = entity.npc_data() else {
+        let Some(npc) = entity.ai_actor_data() else {
             return;
         };
         let actor = entity.actor_data().unwrap_or_else(|| {
@@ -430,8 +430,8 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
         match self.world.entities.get(npc_id) {
-            Some(Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {}
-            Some(Entity::Soldier(_)) => panic!(
+            Some(entity) if entity.enemy_ai().is_some() => {}
+            Some(entity) if entity.ai_controller().is_some() => panic!(
                 "owner-local tick context owner {} requires Enemy AI",
                 npc_id.index()
             ),
@@ -519,12 +519,13 @@ impl EngineInner {
         let Some(entity) = self.world.entities.get(npc_id) else {
             return AiPerTickData::stub();
         };
-        let Entity::Soldier(soldier) = entity else {
-            // Non-enemy NPC — civilians use FriendlyAi which doesn't
-            // consume combat tick fields.  Return stub.
+        let Some(ai_actor) = entity.ai_actor_data() else {
             return AiPerTickData::stub();
         };
-        let Some(ai) = soldier.npc.ai_brain.base() else {
+        let Some(ai) = ai_actor.ai_brain.base() else {
+            return AiPerTickData::stub();
+        };
+        let Some(enemy_ai) = ai_actor.ai_brain.enemy() else {
             return AiPerTickData::stub();
         };
         let primary_target_handle = target_override
@@ -535,39 +536,37 @@ impl EngineInner {
                 .then(|| self.entity_id_for_index(primary_target_handle))
                 .flatten()
         });
-        let my_camp = soldier.soldier.cached_camp;
+        let my_camp = entity.camp();
         let me_handle = ai.me;
-        let me_pos = soldier.element.position_map();
-        let me_layer = soldier.element.layer();
-        let enemy_ai = soldier.npc.ai_brain.enemy();
-        let couldnt_reachpoint = enemy_ai
-            .map(|enemy| enemy.base.couldnt_reachpoint)
-            .unwrap_or(false);
+        let me_pos = entity.element_data().position_map();
+        let me_layer = entity.element_data().layer();
+        let couldnt_reachpoint = enemy_ai.base.couldnt_reachpoint;
         // A failed lift-entry GoNear is surfaced only after the tick snapshot
         // for its EventCouldntReachPoint has started construction. Original
         // computes GetAvengerOnTheRoofWaitPosition synchronously inside that
         // decision. Preserve the same lookup window from the exact authored
         // 30-frame RunningToLadder timer even though the staged failure latch
         // is not live yet.
-        let pending_lift_completion = enemy_ai.is_some_and(|enemy| {
+        let pending_lift_completion = {
+            let enemy = enemy_ai;
             enemy.base.current_substate == crate::ai::Substate::AttackingRunningToLadder
                 && enemy.base.timer_is_running
                 && enemy.base.substate_at_last_timer_launch
                     == crate::ai::Substate::AttackingRunningToLadder
                 && enemy.base.when_does_timer_ring == self.frame_counter().saturating_add(30)
-        });
+        };
 
         let mut tick = AiPerTickData::stub();
         tick.fix_hard_reaction_times = sim.config().fix_hard_reaction_times;
         tick.owner_live_position = Some(crate::ai::Position {
             x: me_pos.x,
             y: me_pos.y,
-            sector: soldier.element.sector(),
+            sector: entity.element_data().sector(),
             level: me_layer,
         });
         let enemy_idx = DetectableType::Enemy as usize;
         tick.seen_last_frame_enemies =
-            seen_last_frame_detectable_handles(&soldier.npc.detectable_lists[enemy_idx]);
+            seen_last_frame_detectable_handles(&ai_actor.detectable_lists[enemy_idx]);
         tick.primary_target_snapshot_handle = primary_target_handle;
         tick.profile_manager = Some(assets.profile_manager.clone());
         // `SeekArea` scans the live global NPC register at the call site.
@@ -586,7 +585,7 @@ impl EngineInner {
         // list with owner-boundary positions; timer/sequence dispatches still
         // need the live variants populated here.
         if build_forecasts {
-            for detectable in &soldier.npc.detectable_lists[enemy_idx] {
+            for detectable in &ai_actor.detectable_lists[enemy_idx] {
                 let Some(target_id) = detectable.element else {
                     continue;
                 };
@@ -799,7 +798,6 @@ impl EngineInner {
             .collect();
         tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
-            && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
             && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
             && let Some(missed_entity) = self.world.entities.get(missed_id)
@@ -875,8 +873,8 @@ impl EngineInner {
                     frame,
                     me_handle,
                     creation_order,
-                    soldier.npc.ai_state(),
-                    soldier.npc.ai_substate(),
+                    ai_actor.ai_state(),
+                    ai_actor.ai_substate(),
                     tick.reconsider_swordfight_observation_fighters.len(),
                 );
                 for (ordinal, fighter) in tick
@@ -1023,9 +1021,7 @@ impl EngineInner {
             );
             let doors_slice = self.script_domains.interactables.doors.as_slice();
             let mut candidates: Vec<crate::ai::HumanHandle> = Vec::new();
-            if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
-                candidates.extend(enemy_ai.list_them.iter().copied());
-            }
+            candidates.extend(enemy_ai.list_them.iter().copied());
             if primary_target_handle != 0 {
                 candidates.push(primary_target_handle);
             }
@@ -1141,7 +1137,7 @@ impl EngineInner {
             .map(|(&target, &count)| (target, count))
             .collect();
 
-        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
+        {
             let my_company = enemy_ai.company_number;
             let my_pride = enemy_ai.soldier_profile_pride;
             tick.us_battle_points = 100 + my_pride as u32;
@@ -1261,7 +1257,7 @@ impl EngineInner {
         // in-building status), so paths that reach the door's
         // point_out through a sequence of substates still see the
         // cached geometry.  No fallback when no door is stashed.
-        let stashed = soldier.npc.ai_brain.base().and_then(|ai| ai.my_door_index);
+        let stashed = ai.my_door_index;
         if stashed.is_some() {
             assert!(
                 self.scripts.mission.is_some(),
@@ -1513,10 +1509,10 @@ impl EngineInner {
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
 
-        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
+        let Some(owner) = self.world.entities.get(npc_id) else {
             return Vec::new();
         };
-        let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
+        let Some(enemy_ai) = owner.enemy_ai() else {
             return Vec::new();
         };
         let doors = self.script_domains.interactables.doors.as_slice();
@@ -1552,8 +1548,8 @@ impl EngineInner {
         };
         let me_position = fighter_position(npc_id);
         let me_pos_pt = crate::coordinates::MapPoint::new(me_position.x, me_position.y);
-        let me_elevation = soldier.element.position().z;
-        let my_camp = soldier.soldier.cached_camp;
+        let me_elevation = owner.element_data().position().z;
+        let my_camp = owner.camp();
         let me_handle = enemy_ai.base.me;
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
@@ -1784,7 +1780,7 @@ impl EngineInner {
                 position,
                 raw_position,
                 direction: pc.element.direction() as u16,
-                is_friendly: my_camp == Camp::Royalists,
+                is_friendly: pc.pc.cached_camp == my_camp,
                 is_swordfighting: !pc.human.opponents.is_empty(),
                 is_able_to_fight,
                 is_tied: pc.element.posture == Posture::Tied,
@@ -1793,8 +1789,20 @@ impl EngineInner {
                 is_carried,
                 is_pc: true,
                 is_soldier: false,
-                rank: crate::profiles::ProfileRank::None,
-                primary_target: pc.pc.melee_target.map(|id| id.index()).unwrap_or(0),
+                rank: pc
+                    .pc
+                    .ai
+                    .as_deref()
+                    .and_then(|ai| ai.ai_brain.enemy())
+                    .map(|ai| ai.soldier_profile_rank)
+                    .unwrap_or(crate::profiles::ProfileRank::None),
+                primary_target: pc
+                    .pc
+                    .ai
+                    .as_deref()
+                    .and_then(|ai| ai.ai_brain.enemy())
+                    .map(|ai| ai.base.primary_target)
+                    .unwrap_or_else(|| pc.pc.melee_target.map(|id| id.index()).unwrap_or(0)),
                 principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
                 number_of_opponents,
                 opponent_handles,
@@ -1815,9 +1823,19 @@ impl EngineInner {
                 in_sword_action_state: pc.actor.action_state.is_sword(),
                 elevation: pc.element.sprite.position_iface.get_elevation(),
                 seek_position: pc_seek_position,
-                current_substate: 0,
+                current_substate: pc
+                    .pc
+                    .ai
+                    .as_deref()
+                    .map(|ai| ai.ai_substate() as u32)
+                    .unwrap_or(0),
                 archer_behind_me: 0,
-                ai_state: crate::ai::AiState::default(),
+                ai_state: pc
+                    .pc
+                    .ai
+                    .as_deref()
+                    .map(crate::element::AiActorData::ai_state)
+                    .unwrap_or_default(),
                 shield_bearer_before_me: 0,
                 hth_weapon_id: hth_id,
                 action_state: pc.actor.action_state,
@@ -1830,7 +1848,12 @@ impl EngineInner {
         let mut out: Vec<FighterSnapshot> = Vec::with_capacity(1 + self.world.pc_ids.len() + 4);
 
         // Self entry first — no radius filter (the AI is at distance 0).
-        out.push(build_soldier(me_handle, false).unwrap_or_else(|| {
+        let self_snapshot = match npc_id {
+            EntityId::Soldier(_) => build_soldier(me_handle, false),
+            EntityId::Pc(_) => build_pc(me_handle, false),
+            _ => None,
+        };
+        out.push(self_snapshot.unwrap_or_else(|| {
             panic!("enemy AI self {me_handle} is absent from the fighter registry")
         }));
 
@@ -1903,14 +1926,14 @@ impl EngineInner {
     ) -> Vec<crate::ai::ReconsiderSwordfightFriend> {
         use crate::ai::ReconsiderSwordfightFriend;
 
-        let Some(Entity::Soldier(me)) = self.world.entities.get(npc_id) else {
+        let Some(me) = self.world.entities.get(npc_id) else {
             return Vec::new();
         };
-        let Some(me_ai) = me.npc.ai_brain.enemy() else {
+        let Some(me_ai) = me.enemy_ai() else {
             return Vec::new();
         };
-        let me_world = me.element.position();
-        let my_camp = me.soldier.cached_camp;
+        let me_world = me.element_data().position();
+        let my_camp = me.camp();
         let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as u16;
         let mut out = Vec::new();
 
@@ -1921,21 +1944,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let (handle, world, opponents, same_camp) = match entity {
-                Entity::Soldier(friend) => (
-                    id.index(),
-                    friend.element.position(),
-                    &friend.human.opponents,
-                    friend.soldier.cached_camp == my_camp,
-                ),
-                Entity::Pc(friend) => (
-                    id.index(),
-                    friend.element.position(),
-                    &friend.human.opponents,
-                    my_camp == Camp::Royalists,
-                ),
-                _ => continue,
+            let Some(opponents) = entity.human_data().map(|human| &human.opponents) else {
+                continue;
             };
+            let handle = id.index();
+            let world = entity.element_data().position();
+            let same_camp = entity.camp() == my_camp;
             if handle == me_ai.base.me || !same_camp || opponents.is_empty() {
                 continue;
             }

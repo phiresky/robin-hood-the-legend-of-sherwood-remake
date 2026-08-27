@@ -4005,7 +4005,10 @@ mod tests {
             actor: Default::default(),
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: crate::element::AiBrain::Friendly(Box::default()),
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Friendly(Box::default()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             civilian: CivilianData::default(),

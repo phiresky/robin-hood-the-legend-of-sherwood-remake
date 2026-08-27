@@ -560,7 +560,10 @@ fn make_soldier(
         human: HumanData::default(),
         npc: NpcData {
             life_points: 50,
-            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
             ..NpcData::default()
         },
         soldier: SoldierData {
@@ -9855,6 +9858,78 @@ fn deleting_final_opponent_synchronously_quits_soldier_ai() {
         Substate::AttackingQuittingSwordfight,
         "DeleteOpponent must synchronously deliver the final-opponent quit event"
     );
+    assert!(ai.ai_log.iter().any(|entry| {
+        entry.line_type == LogLineType::Event
+            && entry.info == StimulusType::EventQuitSwordfight as u16
+    }));
+}
+
+#[test]
+fn deleting_final_opponent_synchronously_quits_autonomous_pc_ai() {
+    use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+    use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let pc = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 0.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let opponent = engine.add_entity(make_soldier(
+        WorldPoint3D {
+            x: 10.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+
+    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
+        unreachable!()
+    };
+    pc_entity.human.opponents = vec![opponent].into();
+    let mut enemy_ai = crate::ai_enemy::EnemyAi::new(pc.index());
+    enemy_ai.base.current_state = AiState::Attacking;
+    enemy_ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+    enemy_ai.hth_weapon_id = 1;
+    pc_entity.pc.life_points = 100;
+    pc_entity.pc.autonomous = true;
+    pc_entity.pc.aggressive_combat = true;
+    pc_entity.pc.ai = Some(Box::new(crate::element::AiActorData {
+        ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
+        ..Default::default()
+    }));
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .hth_weapon_id = 1;
+
+    let mut profiles = ProfileManager::new();
+    profiles.hth_weapons.push(HtHWeaponProfile::default());
+    profiles.characters.push(CharacterProfile {
+        hth_weapon_id: 1,
+        ..CharacterProfile::default()
+    });
+    profiles.soldiers.push(SoldierProfile {
+        hth_weapon_id: 1,
+        hostile: true,
+        ..SoldierProfile::default()
+    });
+    let assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+
+    assert!(engine.delete_opponent(&sim, &assets, pc, opponent));
+
+    let ai = engine.get_entity(pc).unwrap().ai_controller().unwrap();
+    assert_eq!(ai.current_substate, Substate::AttackingQuittingSwordfight);
     assert!(ai.ai_log.iter().any(|entry| {
         entry.line_type == LogLineType::Event
             && entry.info == StimulusType::EventQuitSwordfight as u16

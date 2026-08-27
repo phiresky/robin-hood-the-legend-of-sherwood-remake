@@ -608,11 +608,11 @@ impl EngineInner {
 
     // ─── AI stimulus dispatch ─────────────────────────────────────────
 
-    /// Queue a stimulus on an NPC's common AI controller.
+    /// Queue a stimulus on an actor's common AI controller.
     ///
     /// Original human concussion paths use `IsNPC()`, covering soldiers and
-    /// civilians alike. Requiring `npc_data` plus a live common controller
-    /// also prevents required AI work from disappearing as a silent no-op.
+    /// civilians alike. Custom battle PCs may explicitly own that same
+    /// controller; ordinary player PCs remain the only intentional no-op.
     pub(crate) fn dispatch_ai_stimulus(
         &mut self,
         entity_id: EntityId,
@@ -625,16 +625,19 @@ impl EngineInner {
                 stimulus.stimulus_type
             )
         });
-        let npc = match entity {
-            Entity::Soldier(soldier) => &mut soldier.npc,
-            Entity::Civilian(civilian) => &mut civilian.npc,
-            // Heterogeneous combat call sites intentionally include PCs;
-            // PCs have no AI Think receiver.
-            _ => return,
-        };
-        let ai = npc.ai_brain.base_mut().unwrap_or_else(|| {
+        if matches!(entity, Entity::Pc(pc) if pc.pc.ai.is_none()) {
+            return;
+        }
+        let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
             panic!(
-                "NPC {} is missing its required AI controller while queueing {:?}",
+                "AI actor {} lost its required AI data while queueing {:?}",
+                entity_id.index(),
+                stimulus.stimulus_type
+            )
+        });
+        let ai = ai_actor.ai_brain.base_mut().unwrap_or_else(|| {
+            panic!(
+                "AI actor {} is missing its required AI controller while queueing {:?}",
                 entity_id.index(),
                 stimulus.stimulus_type
             )
