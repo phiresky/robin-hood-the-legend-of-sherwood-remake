@@ -5,6 +5,8 @@
 
 #[cfg(target_arch = "wasm32")]
 use anyhow::Context as _;
+#[cfg(target_arch = "wasm32")]
+use robin_assets::shipping_datadir as assets_shipping_datadir;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {

@@ -3,7 +3,12 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, sep } from 'node:path';
 
-const LOCAL_BINARIES_ROOT = resolve(fileURLToPath(new URL('../../../../binaries/', import.meta.url)));
+const DEFAULT_LOCAL_BINARIES_ROOT = fileURLToPath(
+    new URL('../../../../binaries/', import.meta.url),
+);
+const LOCAL_BINARIES_ROOT = resolve(
+    process.env.ROBIN_LOCAL_BINARIES_ROOT ?? DEFAULT_LOCAL_BINARIES_ROOT,
+);
 
 function contentType(path: string): string {
     if (path.endsWith('.json')) {

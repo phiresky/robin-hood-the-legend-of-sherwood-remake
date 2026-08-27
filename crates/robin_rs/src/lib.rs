@@ -206,6 +206,10 @@ pub mod key_config;
 pub mod key_config_store;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lua_session;
+#[cfg(target_arch = "wasm32")]
+#[path = "lua_session_wasm.rs"]
 pub mod lua_session;
 pub mod main_entry;
 pub mod main_menu;
