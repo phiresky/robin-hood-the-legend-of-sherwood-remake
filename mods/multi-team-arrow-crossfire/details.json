@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-arrow-crossfire",
+  "title": "Arrow Crossfire",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Battle"],
+  "description": "Four mutually hostile archer companies converge on the same exposed patch of ground, each protected by a small guard screen.",
+  "hackable_mission": "MultiTeamArrowCrossfire"
+}

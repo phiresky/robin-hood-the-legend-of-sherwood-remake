@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-champions-retinues",
+  "title": "Champions and Retinues",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Battle"],
+  "description": "Four autonomous outlaws command compact retinues in a four-way battle, combining active hero combat with faction-matched soldiers.",
+  "hackable_mission": "MultiTeamChampionsRetinues"
+}

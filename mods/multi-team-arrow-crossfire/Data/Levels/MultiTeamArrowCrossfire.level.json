@@ -1,0 +1,47 @@
+{
+  "title": "Arrow Crossfire",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [1470, 1760],
+  "spawn_player": false,
+  "walkable_polygon": [[80, 80], [2428, 80], [2428, 2428], [80, 2428]],
+  "volumes": [],
+  "soldiers": [
+    {"position": [1375, 1450], "profile": "guard_a03", "allegiance": 2, "direction": 4},
+    {"position": [1565, 1450], "profile": "guard_a03", "allegiance": 2, "direction": 4},
+    {"position": [1375, 1390], "profile": "archer03", "allegiance": 2, "direction": 4},
+    {"position": [1440, 1390], "profile": "archer03", "allegiance": 2, "direction": 4},
+    {"position": [1500, 1390], "profile": "archer03", "allegiance": 2, "direction": 4},
+    {"position": [1565, 1390], "profile": "archer03", "allegiance": 2, "direction": 4},
+    {"position": [1405, 1330], "profile": "archer03", "allegiance": 2, "direction": 4},
+    {"position": [1535, 1330], "profile": "archer03", "allegiance": 2, "direction": 4},
+
+    {"position": [1375, 2070], "profile": "guard_a03", "allegiance": 3, "direction": 12},
+    {"position": [1565, 2070], "profile": "guard_a03", "allegiance": 3, "direction": 12},
+    {"position": [1375, 2130], "profile": "archer03", "allegiance": 3, "direction": 12},
+    {"position": [1440, 2130], "profile": "archer03", "allegiance": 3, "direction": 12},
+    {"position": [1500, 2130], "profile": "archer03", "allegiance": 3, "direction": 12},
+    {"position": [1565, 2130], "profile": "archer03", "allegiance": 3, "direction": 12},
+    {"position": [1405, 2190], "profile": "archer03", "allegiance": 3, "direction": 12},
+    {"position": [1535, 2190], "profile": "archer03", "allegiance": 3, "direction": 12},
+
+    {"position": [1160, 1680], "profile": "guard_a03", "allegiance": 4, "direction": 0},
+    {"position": [1160, 1840], "profile": "guard_a03", "allegiance": 4, "direction": 0},
+    {"position": [1100, 1660], "profile": "archer03", "allegiance": 4, "direction": 0},
+    {"position": [1100, 1725], "profile": "archer03", "allegiance": 4, "direction": 0},
+    {"position": [1100, 1790], "profile": "archer03", "allegiance": 4, "direction": 0},
+    {"position": [1100, 1855], "profile": "archer03", "allegiance": 4, "direction": 0},
+    {"position": [1040, 1700], "profile": "archer03", "allegiance": 4, "direction": 0},
+    {"position": [1040, 1820], "profile": "archer03", "allegiance": 4, "direction": 0},
+
+    {"position": [1780, 1680], "profile": "guard_a03", "allegiance": 5, "direction": 8},
+    {"position": [1780, 1840], "profile": "guard_a03", "allegiance": 5, "direction": 8},
+    {"position": [1840, 1660], "profile": "archer03", "allegiance": 5, "direction": 8},
+    {"position": [1840, 1725], "profile": "archer03", "allegiance": 5, "direction": 8},
+    {"position": [1840, 1790], "profile": "archer03", "allegiance": 5, "direction": 8},
+    {"position": [1840, 1855], "profile": "archer03", "allegiance": 5, "direction": 8},
+    {"position": [1900, 1700], "profile": "archer03", "allegiance": 5, "direction": 8},
+    {"position": [1900, 1820], "profile": "archer03", "allegiance": 5, "direction": 8}
+  ],
+  "pcs": []
+}

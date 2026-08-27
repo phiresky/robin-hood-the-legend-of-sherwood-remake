@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-twenty-robins",
+  "title": "Twenty Robins vs Black Knights",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Battle"],
+  "description": "Twenty autonomous Robins meet twenty advanced Black Knights in two compact, evenly matched formations on open ground.",
+  "hackable_mission": "MultiTeamTwentyRobins"
+}
