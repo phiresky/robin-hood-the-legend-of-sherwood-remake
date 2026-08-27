@@ -1719,7 +1719,9 @@ impl AiController {
     /// drain runs `DeleteDetectable(body, BODY)` (every newly-merged
     /// body, regardless of `UPDATE_BODIES`) and
     /// `AddDetectable(charly, MISSED_FRIEND)` (when a new charly handle
-    /// is adopted under `UPDATE_CHARLY`).
+    /// is adopted under `UPDATE_CHARLY`). The shipped Original appends that
+    /// entry even when the detectable list already contains Charly: its
+    /// uniqueness check is an assertion and is absent in release builds.
     ///
     /// Flag bits:
     /// * `0x01` — `UPDATE_BODIES`: copy `seen_bodies` from `other`.
@@ -1822,7 +1824,7 @@ impl AiController {
             && self.my_reconnaissance_report.charly == 0
         {
             self.my_reconnaissance_report.charly = other.charly;
-            self.outbox.actor.add_detectables.push((
+            self.outbox.actor.append_detectables.push((
                 EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
                 DetectableType::MissedFriend,
             ));
@@ -6047,6 +6049,34 @@ mod tests {
                 EntityId::Soldier(SoldierId(11)),
                 DetectableType::MissedFriend,
             )]
+        );
+    }
+
+    #[test]
+    fn consider_report_charly_preserves_release_build_detectable_append() {
+        use crate::element::{DetectableType, EntityId};
+        use crate::entity_id::SoldierId;
+
+        let mut ai = AiController::new(17);
+        let report = ReconnaissanceReport {
+            charly: 91,
+            ..Default::default()
+        };
+
+        ai.consider_report_merged(
+            &report,
+            crate::ai_enemy::ReportUpdateFlags::UPDATE_CHARLY.bits(),
+            &crate::ai_entity_view::AiEntityViewMap::new(),
+        );
+
+        assert!(ai.outbox.actor.add_detectables.is_empty());
+        assert_eq!(
+            ai.outbox.actor.append_detectables,
+            vec![(
+                EntityId::Soldier(SoldierId(91)),
+                DetectableType::MissedFriend,
+            )],
+            "Original release AddDetectable must append even if live storage already has Charly"
         );
     }
 
