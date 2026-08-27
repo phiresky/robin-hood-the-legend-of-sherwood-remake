@@ -50,8 +50,22 @@ fn with_swordfight_preparation_scope<R>(
     let already_preparing = SWORDFIGHT_PREPARATION_STACK
         .with(|stack| stack.borrow().iter().any(|active| *active == pair));
     if already_preparing {
+        tracing::trace!(
+            target: "parity_swordfight_scope",
+            ?actor,
+            ?opponent,
+            event = "prepare_hit",
+            "swordfight preparation scope"
+        );
         return None;
     }
+    tracing::trace!(
+        target: "parity_swordfight_scope",
+        ?actor,
+        ?opponent,
+        event = "prepare_enter",
+        "swordfight preparation scope"
+    );
     SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow_mut().push(pair));
     let _guard = SwordfightPreparationGuard { pair };
     Some(body())
@@ -68,8 +82,20 @@ pub(in crate::engine) fn with_deferred_swordfight_preparation<R>(
     let already_active = SWORDFIGHT_PREPARATION_STACK
         .with(|stack| stack.borrow().iter().any(|active| *active == pair));
     if already_active {
+        tracing::trace!(
+            target: "parity_swordfight_scope",
+            ?pair,
+            event = "deferred_already_active",
+            "swordfight preparation scope"
+        );
         return body();
     }
+    tracing::trace!(
+        target: "parity_swordfight_scope",
+        ?pair,
+        event = "deferred_restore",
+        "swordfight preparation scope"
+    );
     SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow_mut().push(pair));
     let _guard = SwordfightPreparationGuard { pair };
     body()

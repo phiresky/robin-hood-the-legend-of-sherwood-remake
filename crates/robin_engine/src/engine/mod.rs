@@ -1831,6 +1831,13 @@ impl EngineInner {
         }
         let seq_id = self.orders.sequence_manager.launch_element(elem);
         if let Some(pair) = swordfight_preparation {
+            tracing::trace!(
+                target: "parity_swordfight_scope",
+                ?seq_id,
+                ?pair,
+                source = "launch_element",
+                "attaching deferred swordfight preparation"
+            );
             self.orders.sequence_manager.attach_swordfight_preparation(
                 crate::sequence::SequenceElementRef::new(seq_id, 0),
                 pair,
@@ -2583,6 +2590,14 @@ impl EngineInner {
         let sequence_id = self.orders.sequence_manager.launch_sequence(seq);
         if let Some(pair) = swordfight_preparation {
             for element_index in inherited_enter_indices {
+                tracing::trace!(
+                    target: "parity_swordfight_scope",
+                    ?sequence_id,
+                    element_index,
+                    ?pair,
+                    source = "launch_sequence",
+                    "attaching deferred swordfight preparation"
+                );
                 self.orders.sequence_manager.attach_swordfight_preparation(
                     crate::sequence::SequenceElementRef::new(sequence_id, element_index),
                     pair,

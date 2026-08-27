@@ -3984,13 +3984,30 @@ impl SequenceManager {
                 .is_none(),
             "deferred EnterSwordfight already has a preparation token"
         );
+        tracing::trace!(
+            target: "parity_swordfight_scope",
+            ?element,
+            ?pair,
+            outstanding = self.deferred_swordfight_preparations.len(),
+            event = "token_attach",
+            "deferred swordfight preparation token"
+        );
     }
 
     pub(crate) fn take_swordfight_preparation(
         &mut self,
         element: SequenceElementRef,
     ) -> Option<(EntityId, EntityId)> {
-        self.deferred_swordfight_preparations.remove(&element)
+        let token = self.deferred_swordfight_preparations.remove(&element);
+        tracing::trace!(
+            target: "parity_swordfight_scope",
+            ?element,
+            hit = token.is_some(),
+            outstanding = self.deferred_swordfight_preparations.len(),
+            event = "token_take",
+            "deferred swordfight preparation token"
+        );
+        token
     }
 
     /// Interrupt one freshly launched actor Wait before its synchronous
