@@ -1,28 +1,28 @@
 {
   "title": "Autonomous Robin vs Little John",
-  "map_filename": "Leicester",
+  "map_filename": "OpenBattlefield",
   "reveal_all": true,
   "spawn": [
-    2000,
-    2000
+    1500,
+    1700
   ],
   "spawn_player": false,
   "walkable_polygon": [
     [
-      200,
-      200
+      80,
+      80
     ],
     [
-      3050,
-      200
+      2428,
+      80
     ],
     [
-      3050,
-      1900
+      2428,
+      2428
     ],
     [
-      200,
-      1900
+      80,
+      2428
     ]
   ],
   "volumes": [],
@@ -35,8 +35,9 @@
       ],
       "profile": 0,
       "allegiance": 2,
-      "direction": 0,
-      "autonomous": true, "aggressive_combat": true
+      "direction": 4,
+      "autonomous": true,
+      "aggressive_combat": true
     },
     {
       "position": [
@@ -45,8 +46,9 @@
       ],
       "profile": 2,
       "allegiance": 3,
-      "direction": 8,
-      "autonomous": true, "aggressive_combat": true
+      "direction": 12,
+      "autonomous": true,
+      "aggressive_combat": true
     }
   ]
 }

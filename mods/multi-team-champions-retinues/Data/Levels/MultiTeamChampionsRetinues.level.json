@@ -2,35 +2,220 @@
   "title": "Champions and Retinues",
   "map_filename": "OpenBattlefield",
   "reveal_all": true,
-  "spawn": [1470, 1760],
+  "spawn": [
+    1470,
+    1760
+  ],
   "spawn_player": false,
-  "walkable_polygon": [[80, 80], [2428, 80], [2428, 2428], [80, 2428]],
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
   "volumes": [],
   "soldiers": [
-    {"position": [1380, 1430], "profile": "guard_a03", "allegiance": 2, "direction": 4},
-    {"position": [1440, 1430], "profile": "soldier_a03", "allegiance": 2, "direction": 4},
-    {"position": [1500, 1430], "profile": "archer03", "allegiance": 2, "direction": 4},
-    {"position": [1560, 1430], "profile": "officier_b03", "allegiance": 2, "direction": 4},
-
-    {"position": [1380, 2090], "profile": "guard_a03", "allegiance": 3, "direction": 12},
-    {"position": [1440, 2090], "profile": "soldier_a03", "allegiance": 3, "direction": 12},
-    {"position": [1500, 2090], "profile": "archer03", "allegiance": 3, "direction": 12},
-    {"position": [1560, 2090], "profile": "officier_b03", "allegiance": 3, "direction": 12},
-
-    {"position": [1110, 1640], "profile": "guard_a03", "allegiance": 4, "direction": 0},
-    {"position": [1110, 1720], "profile": "soldier_a03", "allegiance": 4, "direction": 0},
-    {"position": [1110, 1800], "profile": "archer03", "allegiance": 4, "direction": 0},
-    {"position": [1110, 1880], "profile": "officier_b03", "allegiance": 4, "direction": 0},
-
-    {"position": [1830, 1640], "profile": "guard_a03", "allegiance": 5, "direction": 8},
-    {"position": [1830, 1720], "profile": "soldier_a03", "allegiance": 5, "direction": 8},
-    {"position": [1830, 1800], "profile": "archer03", "allegiance": 5, "direction": 8},
-    {"position": [1830, 1880], "profile": "officier_b03", "allegiance": 5, "direction": 8}
+    {
+      "position": [
+        1380,
+        1430
+      ],
+      "profile": "guard_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1440,
+        1430
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1500,
+        1430
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1560,
+        1430
+      ],
+      "profile": "officier_b03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1380,
+        2090
+      ],
+      "profile": "guard_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1440,
+        2090
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1500,
+        2090
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1560,
+        2090
+      ],
+      "profile": "officier_b03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1110,
+        1640
+      ],
+      "profile": "guard_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1110,
+        1720
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1110,
+        1800
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1110,
+        1880
+      ],
+      "profile": "officier_b03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1830,
+        1640
+      ],
+      "profile": "guard_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1830,
+        1720
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1830,
+        1800
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1830,
+        1880
+      ],
+      "profile": "officier_b03",
+      "allegiance": 5,
+      "direction": 12
+    }
   ],
   "pcs": [
-    {"position": [1470, 1490], "profile": 0, "allegiance": 2, "direction": 4, "autonomous": true, "aggressive_combat": true},
-    {"position": [1470, 2030], "profile": 2, "allegiance": 3, "direction": 12, "autonomous": true, "aggressive_combat": true},
-    {"position": [1170, 1760], "profile": 3, "allegiance": 4, "direction": 0, "autonomous": true, "aggressive_combat": true},
-    {"position": [1770, 1760], "profile": 4, "allegiance": 5, "direction": 8, "autonomous": true, "aggressive_combat": true}
+    {
+      "position": [
+        1470,
+        1490
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 8,
+      "autonomous": true,
+      "aggressive_combat": true
+    },
+    {
+      "position": [
+        1470,
+        2030
+      ],
+      "profile": 2,
+      "allegiance": 3,
+      "direction": 0,
+      "autonomous": true,
+      "aggressive_combat": true
+    },
+    {
+      "position": [
+        1170,
+        1760
+      ],
+      "profile": 3,
+      "allegiance": 4,
+      "direction": 4,
+      "autonomous": true,
+      "aggressive_combat": true
+    },
+    {
+      "position": [
+        1770,
+        1760
+      ],
+      "profile": 4,
+      "allegiance": 5,
+      "direction": 12,
+      "autonomous": true,
+      "aggressive_combat": true
+    }
   ]
 }

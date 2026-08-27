@@ -1,28 +1,28 @@
 {
   "title": "Three-way Allegiance Arena",
-  "map_filename": "Nottingham",
+  "map_filename": "OpenBattlefield",
   "reveal_all": true,
   "spawn": [
-    300,
-    300
+    1152,
+    1760
   ],
   "spawn_player": false,
   "walkable_polygon": [
     [
-      200,
-      200
+      80,
+      80
     ],
     [
-      2250,
-      200
+      2428,
+      80
     ],
     [
-      2250,
-      3450
+      2428,
+      2428
     ],
     [
-      200,
-      3450
+      80,
+      2428
     ]
   ],
   "volumes": [],
@@ -34,7 +34,7 @@
       ],
       "profile": 1,
       "allegiance": 2,
-      "direction": 8
+      "direction": 12
     },
     {
       "position": [
@@ -43,7 +43,7 @@
       ],
       "profile": 7,
       "allegiance": 3,
-      "direction": 13
+      "direction": 1
     },
     {
       "position": [
@@ -52,7 +52,7 @@
       ],
       "profile": 13,
       "allegiance": 4,
-      "direction": 3
+      "direction": 7
     }
   ],
   "pcs": []

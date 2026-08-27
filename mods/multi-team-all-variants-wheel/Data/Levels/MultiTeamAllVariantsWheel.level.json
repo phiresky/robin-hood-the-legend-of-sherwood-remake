@@ -1,28 +1,28 @@
 {
-  "title": "All Variants Allegiance Wheel",
-  "map_filename": "Nottingham",
+  "title": "All Soldier Variants Allegiance Wheel",
+  "map_filename": "OpenBattlefield",
   "reveal_all": true,
   "spawn": [
-    180,
-    3300
+    1152,
+    1700
   ],
   "spawn_player": false,
   "walkable_polygon": [
     [
-      50,
-      50
+      80,
+      80
     ],
     [
-      2250,
-      50
+      2428,
+      80
     ],
     [
-      2250,
-      3450
+      2428,
+      2428
     ],
     [
-      50,
-      3450
+      80,
+      2428
     ]
   ],
   "volumes": [],
@@ -30,717 +30,615 @@
     {
       "position": [
         1552,
-        2600
+        1700
       ],
       "profile": 0,
       "allegiance": 2,
-      "direction": 8
+      "direction": 12
     },
     {
       "position": [
         1550,
-        2637
+        1737
       ],
       "profile": 1,
       "allegiance": 3,
-      "direction": 8
+      "direction": 12
     },
     {
       "position": [
         1545,
-        2674
+        1774
       ],
       "profile": 2,
       "allegiance": 4,
-      "direction": 8
+      "direction": 12
     },
     {
       "position": [
         1537,
-        2710
+        1810
       ],
       "profile": 3,
       "allegiance": 5,
-      "direction": 9
+      "direction": 13
     },
     {
       "position": [
         1525,
-        2745
+        1845
       ],
       "profile": 4,
       "allegiance": 6,
-      "direction": 9
+      "direction": 13
     },
     {
       "position": [
         1510,
-        2778
+        1878
       ],
       "profile": 5,
       "allegiance": 7,
-      "direction": 9
+      "direction": 13
     },
     {
       "position": [
         1492,
-        2811
+        1911
       ],
       "profile": 6,
       "allegiance": 8,
-      "direction": 9
+      "direction": 13
     },
     {
       "position": [
         1471,
-        2841
+        1941
       ],
       "profile": 7,
       "allegiance": 9,
-      "direction": 10
+      "direction": 14
     },
     {
       "position": [
         1448,
-        2870
+        1970
       ],
       "profile": 8,
       "allegiance": 10,
-      "direction": 10
+      "direction": 14
     },
     {
       "position": [
         1422,
-        2896
+        1996
       ],
       "profile": 9,
       "allegiance": 11,
-      "direction": 10
+      "direction": 14
     },
     {
       "position": [
         1393,
-        2919
+        2019
       ],
       "profile": 10,
       "allegiance": 12,
-      "direction": 10
+      "direction": 14
     },
     {
       "position": [
         1363,
-        2940
+        2040
       ],
       "profile": 11,
       "allegiance": 13,
-      "direction": 11
+      "direction": 15
     },
     {
       "position": [
         1330,
-        2958
+        2058
       ],
       "profile": 12,
       "allegiance": 14,
-      "direction": 11
+      "direction": 15
     },
     {
       "position": [
         1297,
-        2973
+        2073
       ],
       "profile": 13,
       "allegiance": 15,
-      "direction": 11
+      "direction": 15
     },
     {
       "position": [
         1262,
-        2985
+        2085
       ],
       "profile": 14,
       "allegiance": 16,
-      "direction": 11
+      "direction": 15
     },
     {
       "position": [
         1226,
-        2993
+        2093
       ],
       "profile": 15,
       "allegiance": 17,
-      "direction": 12
+      "direction": 0
     },
     {
       "position": [
         1189,
-        2998
+        2098
       ],
       "profile": 16,
       "allegiance": 18,
-      "direction": 12
+      "direction": 0
     },
     {
       "position": [
         1152,
-        3000
+        2100
       ],
       "profile": 17,
       "allegiance": 19,
-      "direction": 12
+      "direction": 0
     },
     {
       "position": [
         1115,
-        2998
+        2098
       ],
       "profile": 18,
       "allegiance": 20,
-      "direction": 12
+      "direction": 0
     },
     {
       "position": [
         1078,
-        2993
+        2093
       ],
       "profile": 19,
       "allegiance": 21,
-      "direction": 12
+      "direction": 0
     },
     {
       "position": [
         1042,
-        2985
+        2085
       ],
       "profile": 20,
       "allegiance": 22,
-      "direction": 13
+      "direction": 1
     },
     {
       "position": [
         1007,
-        2973
+        2073
       ],
       "profile": 21,
       "allegiance": 23,
-      "direction": 13
+      "direction": 1
     },
     {
       "position": [
         974,
-        2958
+        2058
       ],
       "profile": 22,
       "allegiance": 24,
-      "direction": 13
+      "direction": 1
     },
     {
       "position": [
         941,
-        2940
+        2040
       ],
       "profile": 23,
       "allegiance": 25,
-      "direction": 13
+      "direction": 1
     },
     {
       "position": [
         911,
-        2919
+        2019
       ],
       "profile": 24,
       "allegiance": 26,
-      "direction": 14
+      "direction": 2
     },
     {
       "position": [
         882,
-        2896
+        1996
       ],
       "profile": 25,
       "allegiance": 27,
-      "direction": 14
+      "direction": 2
     },
     {
       "position": [
         856,
-        2870
+        1970
       ],
       "profile": 26,
       "allegiance": 28,
-      "direction": 14
+      "direction": 2
     },
     {
       "position": [
         833,
-        2841
+        1941
       ],
       "profile": 27,
       "allegiance": 29,
-      "direction": 14
+      "direction": 2
     },
     {
       "position": [
         812,
-        2811
+        1911
       ],
       "profile": 28,
       "allegiance": 30,
-      "direction": 15
+      "direction": 3
     },
     {
       "position": [
         794,
-        2778
+        1878
       ],
       "profile": 29,
       "allegiance": 31,
-      "direction": 15
+      "direction": 3
     },
     {
       "position": [
         779,
-        2745
+        1845
       ],
       "profile": 30,
       "allegiance": 32,
-      "direction": 15
+      "direction": 3
     },
     {
       "position": [
         767,
-        2710
+        1810
       ],
       "profile": 31,
       "allegiance": 33,
-      "direction": 15
+      "direction": 3
     },
     {
       "position": [
         759,
-        2674
+        1774
       ],
       "profile": 32,
       "allegiance": 34,
-      "direction": 0
+      "direction": 4
     },
     {
       "position": [
         754,
-        2637
+        1737
       ],
       "profile": 33,
       "allegiance": 35,
-      "direction": 0
+      "direction": 4
     },
     {
       "position": [
         752,
-        2600
+        1700
       ],
       "profile": 34,
       "allegiance": 36,
-      "direction": 0
+      "direction": 4
     },
     {
       "position": [
         754,
-        2563
+        1663
       ],
       "profile": 35,
       "allegiance": 37,
-      "direction": 0
+      "direction": 4
     },
     {
       "position": [
         759,
-        2526
+        1626
       ],
       "profile": 36,
       "allegiance": 38,
-      "direction": 0
+      "direction": 4
     },
     {
       "position": [
         767,
-        2490
+        1590
       ],
       "profile": 37,
       "allegiance": 39,
-      "direction": 1
+      "direction": 5
     },
     {
       "position": [
         779,
-        2455
+        1555
       ],
       "profile": 38,
       "allegiance": 40,
-      "direction": 1
+      "direction": 5
     },
     {
       "position": [
         794,
-        2422
+        1522
       ],
       "profile": 39,
       "allegiance": 41,
-      "direction": 1
+      "direction": 5
     },
     {
       "position": [
         812,
-        2389
+        1489
       ],
       "profile": 40,
       "allegiance": 42,
-      "direction": 1
+      "direction": 5
     },
     {
       "position": [
         833,
-        2359
+        1459
       ],
       "profile": 41,
       "allegiance": 43,
-      "direction": 2
+      "direction": 6
     },
     {
       "position": [
         856,
-        2330
+        1430
       ],
       "profile": 42,
       "allegiance": 44,
-      "direction": 2
+      "direction": 6
     },
     {
       "position": [
         882,
-        2304
+        1404
       ],
       "profile": 43,
       "allegiance": 45,
-      "direction": 2
+      "direction": 6
     },
     {
       "position": [
         911,
-        2281
+        1381
       ],
       "profile": 44,
       "allegiance": 46,
-      "direction": 2
+      "direction": 6
     },
     {
       "position": [
         941,
-        2260
+        1360
       ],
       "profile": 45,
       "allegiance": 47,
-      "direction": 3
+      "direction": 7
     },
     {
       "position": [
         974,
-        2242
+        1342
       ],
       "profile": 46,
       "allegiance": 48,
-      "direction": 3
+      "direction": 7
     },
     {
       "position": [
         1007,
-        2227
+        1327
       ],
       "profile": 47,
       "allegiance": 49,
-      "direction": 3
+      "direction": 7
     },
     {
       "position": [
         1042,
-        2215
+        1315
       ],
       "profile": 48,
       "allegiance": 50,
-      "direction": 3
+      "direction": 7
     },
     {
       "position": [
         1078,
-        2207
+        1307
       ],
       "profile": 49,
       "allegiance": 51,
-      "direction": 4
+      "direction": 8
     },
     {
       "position": [
         1115,
-        2202
+        1302
       ],
       "profile": 50,
       "allegiance": 52,
-      "direction": 4
+      "direction": 8
     },
     {
       "position": [
         1152,
-        2200
+        1300
       ],
       "profile": 51,
       "allegiance": 53,
-      "direction": 4
+      "direction": 8
     },
     {
       "position": [
         1189,
-        2202
+        1302
       ],
       "profile": 52,
       "allegiance": 54,
-      "direction": 4
+      "direction": 8
     },
     {
       "position": [
         1226,
-        2207
+        1307
       ],
       "profile": 53,
       "allegiance": 55,
-      "direction": 4
+      "direction": 8
     },
     {
       "position": [
         1262,
-        2215
+        1315
       ],
       "profile": 54,
       "allegiance": 56,
-      "direction": 5
+      "direction": 9
     },
     {
       "position": [
         1297,
-        2227
+        1327
       ],
       "profile": 55,
       "allegiance": 57,
-      "direction": 5
+      "direction": 9
     },
     {
       "position": [
         1330,
-        2242
+        1342
       ],
       "profile": 56,
       "allegiance": 58,
-      "direction": 5
+      "direction": 9
     },
     {
       "position": [
         1363,
-        2260
+        1360
       ],
       "profile": 57,
       "allegiance": 59,
-      "direction": 5
+      "direction": 9
     },
     {
       "position": [
         1393,
-        2281
+        1381
       ],
       "profile": 58,
       "allegiance": 60,
-      "direction": 6
+      "direction": 10
     },
     {
       "position": [
         1422,
-        2304
+        1404
       ],
       "profile": 59,
       "allegiance": 61,
-      "direction": 6
+      "direction": 10
     },
     {
       "position": [
         1448,
-        2330
+        1430
       ],
       "profile": 60,
       "allegiance": 62,
-      "direction": 6
+      "direction": 10
     },
     {
       "position": [
         1471,
-        2359
+        1459
       ],
       "profile": 61,
       "allegiance": 63,
-      "direction": 6
+      "direction": 10
     },
     {
       "position": [
         1492,
-        2389
+        1489
       ],
       "profile": 62,
       "allegiance": 64,
-      "direction": 7
+      "direction": 11
     },
     {
       "position": [
         1510,
-        2422
+        1522
       ],
       "profile": 63,
       "allegiance": 65,
-      "direction": 7
+      "direction": 11
     },
     {
       "position": [
         1525,
-        2455
+        1555
       ],
       "profile": 64,
       "allegiance": 66,
-      "direction": 7
+      "direction": 11
     },
     {
       "position": [
         1537,
-        2490
+        1590
       ],
       "profile": 65,
       "allegiance": 67,
-      "direction": 7
+      "direction": 11
     },
     {
       "position": [
         1545,
-        2526
+        1626
       ],
       "profile": 66,
       "allegiance": 68,
-      "direction": 8
+      "direction": 12
     },
     {
       "position": [
         1550,
-        2563
+        1663
       ],
       "profile": 67,
       "allegiance": 69,
-      "direction": 8
+      "direction": 12
     }
   ],
-  "pcs": [
-    {
-      "position": [
-        180,
-        3300
-      ],
-      "profile": 0,
-      "allegiance": 70,
-      "direction": 8,
-      "autonomous": false,
-      "playable": true
-    },
-    {
-      "position": [
-        1232,
-        2600
-      ],
-      "profile": 1,
-      "allegiance": 71,
-      "direction": 10,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1214,
-        2652
-      ],
-      "profile": 2,
-      "allegiance": 72,
-      "direction": 11,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1166,
-        2679
-      ],
-      "profile": 3,
-      "allegiance": 73,
-      "direction": 13,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1112,
-        2670
-      ],
-      "profile": 4,
-      "allegiance": 74,
-      "direction": 14,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1077,
-        2600
-      ],
-      "profile": 5,
-      "allegiance": 75,
-      "direction": 0,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1077,
-        2572
-      ],
-      "profile": 6,
-      "allegiance": 76,
-      "direction": 2,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1112,
-        2530
-      ],
-      "profile": 7,
-      "allegiance": 77,
-      "direction": 3,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1166,
-        2521
-      ],
-      "profile": 8,
-      "allegiance": 78,
-      "direction": 5,
-      "autonomous": true
-    },
-    {
-      "position": [
-        1214,
-        2548
-      ],
-      "profile": 9,
-      "allegiance": 79,
-      "direction": 6,
-      "autonomous": true
-    }
-  ]
+  "pcs": []
 }

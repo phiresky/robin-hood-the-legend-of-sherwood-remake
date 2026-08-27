@@ -4762,7 +4762,7 @@ mod tests {
                 "multi-team-all-variants-wheel",
                 "MultiTeamAllVariantsWheel",
                 68,
-                10,
+                0,
             ),
             (
                 "multi-team-robin-vs-little-john",
@@ -4841,10 +4841,28 @@ mod tests {
         }));
         assert!(robins.mission.pcs_to_rescue.iter().all(|pc| {
             pc.allegiance == Some(2)
-                && pc.profile_index == 0
+                && matches!(pc.profile_index, 0 | 1)
                 && pc.autonomous
                 && pc.aggressive_combat
         }));
+        assert_eq!(
+            robins
+                .mission
+                .pcs_to_rescue
+                .iter()
+                .filter(|pc| pc.profile_index == 0)
+                .count(),
+            10
+        );
+        assert_eq!(
+            robins
+                .mission
+                .pcs_to_rescue
+                .iter()
+                .filter(|pc| pc.profile_index == 1)
+                .count(),
+            10
+        );
 
         let armies_path =
             repo.join("mods/multi-team-four-armies/Data/Levels/MultiTeamFourArmies.level.json");
