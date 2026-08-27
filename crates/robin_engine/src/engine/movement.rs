@@ -11816,50 +11816,20 @@ impl EngineInner {
                     .then_some(tail_index)
             });
 
-        // ProcessPathRequests first materializes movement orders from the raw
-        // path, beginning at `uwFirstPathIndex`, and only then invokes the
-        // soldier's PostProcessPath override. Remove an unrequested raw source
-        // before drunken post-processing so it cannot consume RNG as a
-        // zero-length movement segment.
+        // ProcessPathRequests materializes movement orders beginning at
+        // `uwFirstPathIndex`, so an unrequested raw source never becomes an
+        // order seen by either actor or soldier PostProcessPath.
         let raw_waypoint_count =
             prepare_path_waypoints_for_postprocess(&mut waypoints, use_first_point);
 
-        // Drunken-soldier path deviation.  Only applies to upright
-        // walking/running animations and not to PassDoor commands.
+        // Drunken-soldier path deviation applies later, after actor
+        // PostProcessPath has inserted its transition orders. The Original
+        // soldier override skips those transitions and inserts midpoint
+        // copies only before upright walking/running orders.
         let is_movement_anim = matches!(
             move_action,
             OrderType::WalkingUpright | OrderType::RunningUpright
         );
-        if is_movement_anim && !is_pass_door {
-            let blood_alcohol = self
-                .world
-                .entities
-                .get(owner)
-                .and_then(|e| e.npc_data())
-                .and_then(|n| n.ai_brain.base())
-                .map(|b| b.blood_alcohol)
-                .unwrap_or(0);
-            if blood_alcohol > 0 {
-                let (half_diag, move_box) = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .map(|e| e.position_iface())
-                    .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
-                    .unwrap_or_default();
-                waypoints = crate::engine::tick::apply_drunken_path_deviation(
-                    sim,
-                    waypoints,
-                    source,
-                    blood_alcohol,
-                    move_action == OrderType::RunningUpright,
-                    entity_layer,
-                    &move_box,
-                    half_diag,
-                    &self.world.fast_grid,
-                );
-            }
-        }
 
         tracing::trace!(
             actor = ?owner,
@@ -11964,6 +11934,48 @@ impl EngineInner {
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
         self.post_process_path(seq_id, elem_idx);
+
+        if is_movement_anim && !is_pass_door {
+            let (blood_alcohol, half_diagonal, move_box) = self
+                .world
+                .entities
+                .get(owner)
+                .and_then(|entity| {
+                    let blood_alcohol = entity
+                        .npc_data()
+                        .and_then(|npc| npc.ai_brain.base())?
+                        .blood_alcohol;
+                    let position = entity.position_iface();
+                    Some((
+                        blood_alcohol,
+                        position.get_half_diagonal(),
+                        *position.get_move_box(),
+                    ))
+                })
+                .unwrap_or_default();
+            if blood_alcohol > 0 {
+                let grid = self.world.fast_grid.clone();
+                let next_order_id = &mut self.orders.next_order_id;
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                {
+                    crate::engine::tick::apply_drunken_order_deviation(
+                        sim,
+                        element,
+                        source,
+                        blood_alcohol,
+                        move_action == OrderType::RunningUpright,
+                        entity_layer,
+                        &move_box,
+                        half_diagonal,
+                        &grid,
+                        next_order_id,
+                    );
+                }
+            }
+        }
 
         // Install the derived Rust movement latch, but do not change the
         // actor's action state here. Original Translate/PostProcessPath only

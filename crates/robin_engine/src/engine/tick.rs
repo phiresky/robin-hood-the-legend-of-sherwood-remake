@@ -7406,11 +7406,107 @@ pub(super) fn apply_drunken_path_deviation(
     waypoints
 }
 
+/// Original soldier post-processing runs after actor path post-processing has
+/// already inserted startup/end transitions. Walk only the remaining upright
+/// movement orders and insert deviated copies immediately before them, leaving
+/// transition geometry untouched.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn apply_drunken_order_deviation(
+    sim: &crate::sim_rng::SimulationContext,
+    element: &mut crate::sequence::SequenceElement,
+    origin: crate::coordinates::MapPoint,
+    blood_alcohol: u8,
+    is_running: bool,
+    layer: u16,
+    move_box: &crate::coordinates::MoveBox,
+    half_diagonal: crate::coordinates::MoveBoxHalfDiagonal,
+    grid: &crate::fast_find_grid::FastFindGrid,
+    next_order_id: &mut u32,
+) {
+    const DRUNKEN_DEVIATION_FACTOR: f32 = 0.03;
+
+    let clamped_ba = blood_alcohol.max(30) as f32;
+    let (factor, increment) = if is_running {
+        (0.003 * clamped_ba, 60usize)
+    } else {
+        (0.01 * clamped_ba, 30usize)
+    };
+    let passes = usize::from(blood_alcohol).div_ceil(increment);
+
+    insert_drunken_orders_with(element, origin, passes, next_order_id, |first, second| {
+        let straight = crate::coordinates::MapVec::new(second.x - first.x, second.y - first.y);
+        let max_norm = straight.x.abs().max(straight.y.abs());
+        let midpoint = crate::coordinates::MapPoint::new(
+            first.x + 0.5 * straight.x,
+            first.y + 0.5 * straight.y,
+        );
+        for _try in 0..3 {
+            let dir_sector =
+                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                    as i16;
+            let magnitude =
+                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                    as f32;
+            let [dx, dy] = drunken_deviation_direction(dir_sector);
+            let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
+            let candidate =
+                crate::coordinates::MapPoint::new(midpoint.x + dx * scale, midpoint.y + dy * scale);
+            if grid.is_straight_movement_authorized(first, candidate, layer, move_box)
+                && grid.is_reachable_thick(candidate, second, layer, half_diagonal)
+            {
+                return Some(candidate);
+            }
+        }
+        None
+    });
+}
+
+fn insert_drunken_orders_with(
+    element: &mut crate::sequence::SequenceElement,
+    origin: crate::coordinates::MapPoint,
+    passes: usize,
+    next_order_id: &mut u32,
+    mut candidate_for_segment: impl FnMut(
+        crate::coordinates::MapPoint,
+        crate::coordinates::MapPoint,
+    ) -> Option<crate::coordinates::MapPoint>,
+) {
+    for _ in 0..passes {
+        let mut first = origin;
+        let mut order_index = 0usize;
+        while order_index < element.orders.len() {
+            let order = &element.orders[order_index];
+            if !matches!(
+                order.order_type,
+                crate::order::OrderType::WalkingUpright | crate::order::OrderType::RunningUpright
+            ) {
+                order_index += 1;
+                continue;
+            }
+
+            let second = crate::coordinates::MapPoint::new(order.target_x, order.target_y);
+            if let Some(candidate) = candidate_for_segment(first, second) {
+                // C++ constructs `new RHOrder(*pOrder)`: all movement
+                // metadata is copied, while the inserted order receives a
+                // fresh identity and its midpoint destination.
+                let mut inserted = order.clone();
+                inserted.reseed_id(crate::order::alloc_order_id(next_order_id));
+                inserted.target_x = candidate.x;
+                inserted.target_y = candidate.y;
+                element.insert_order(order_index, inserted);
+                order_index += 1;
+            }
+            first = second;
+            order_index += 1;
+        }
+    }
+}
+
 // ─── Titbit update query ─────────────────────────────────────────
 
 #[cfg(test)]
 mod drunken_path_deviation_tests {
-    use super::drunken_deviation_direction;
+    use super::{drunken_deviation_direction, insert_drunken_orders_with};
 
     #[test]
     fn deviation_direction_uses_original_isometric_aspect_ratio() {
@@ -7421,6 +7517,62 @@ mod drunken_path_deviation_tests {
         assert_eq!(x, raw_x);
         assert_eq!(y, raw_y * crate::position_interface::ASPECT_RATIO);
         assert_ne!(y, raw_y, "the bare compass vector overextends map-space Y");
+    }
+
+    #[test]
+    fn drunken_midpoint_follows_startup_transition_without_reheading_it() {
+        let mut element = crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::MoveOk,
+            None,
+            crate::order::OrderType::WalkingUpright,
+        );
+        element.push_order(crate::order::Order::new(
+            crate::order::OrderType::TransitionWaitingUprightWalkingUpright,
+            0.0,
+            -4.0,
+            std::num::NonZeroU32::new(10).unwrap(),
+        ));
+        element.push_order(crate::order::Order::new(
+            crate::order::OrderType::WalkingUpright,
+            0.0,
+            -40.0,
+            std::num::NonZeroU32::new(11).unwrap(),
+        ));
+        let mut next_order_id = 20;
+
+        insert_drunken_orders_with(
+            &mut element,
+            crate::coordinates::MapPoint::ZERO,
+            1,
+            &mut next_order_id,
+            |first, second| {
+                Some(crate::coordinates::MapPoint::new(
+                    (first.x + second.x) * 0.5 + 3.0,
+                    (first.y + second.y) * 0.5,
+                ))
+            },
+        );
+
+        assert_eq!(element.orders.len(), 3);
+        assert_eq!(
+            element.orders[0].order_type,
+            crate::order::OrderType::TransitionWaitingUprightWalkingUpright
+        );
+        assert_eq!(
+            (element.orders[0].target_x, element.orders[0].target_y),
+            (0.0, -4.0),
+            "actor transition geometry was fixed before soldier drunken post-processing"
+        );
+        assert_eq!(
+            (element.orders[1].target_x, element.orders[1].target_y),
+            (3.0, -20.0)
+        );
+        assert_eq!(
+            (element.orders[2].target_x, element.orders[2].target_y),
+            (0.0, -40.0)
+        );
+        assert_ne!(element.orders[1].order_id, element.orders[2].order_id);
     }
 }
 
