@@ -7280,6 +7280,11 @@ impl EngineInner {
             "movement_execute_entry",
         );
         let is_pc = entity.is_pc();
+        let is_drunken_soldier = entity.is_soldier()
+            && entity
+                .npc_data()
+                .and_then(|npc| npc.ai_brain.base())
+                .is_some_and(|base| base.blood_alcohol > 0);
         let human_is_carried = entity
             .human_data()
             .is_some_and(|human| human.carrier.is_some());
@@ -8252,7 +8257,9 @@ impl EngineInner {
             // branch before the ordinary Turn/PerformMotion block. Do
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
-            if !sword_arm_without_face_turn {
+            if !sword_arm_without_face_turn
+                && should_apply_plain_movement_turn(is_drunken_soldier, active_move_flags)
+            {
                 super::animation::direction_provenance_snapshot(
                     &sprite.position_iface,
                     entity_id,
@@ -12318,9 +12325,16 @@ fn should_apply_drunken_turn(selected_uses_seek: bool) -> bool {
     !selected_uses_seek
 }
 
+fn should_apply_plain_movement_turn(
+    is_drunken_soldier: bool,
+    flags: crate::sequence::MoveFlags,
+) -> bool {
+    !is_drunken_soldier || flags.contains(crate::sequence::MoveFlags::SEEK)
+}
+
 #[cfg(test)]
 mod drunken_turn_timing_tests {
-    use super::{should_apply_drunken_turn, turn_drunken};
+    use super::{should_apply_drunken_turn, should_apply_plain_movement_turn, turn_drunken};
     use crate::position_interface::{Direction, PositionInterface};
 
     #[test]
@@ -12346,6 +12360,32 @@ mod drunken_turn_timing_tests {
     fn seek_movement_does_not_add_a_drunken_turn_before_perform_seek() {
         assert!(!should_apply_drunken_turn(true));
         assert!(should_apply_drunken_turn(false));
+    }
+
+    #[test]
+    fn drunken_and_seek_turn_branches_match_original_execute_matrix() {
+        for (name, drunk, seek, expect_drunken, expect_plain) in [
+            ("drunk ordinary", true, false, true, false),
+            ("drunk seek", true, true, false, true),
+            ("sober ordinary", false, false, false, true),
+            ("sober seek", false, true, false, true),
+        ] {
+            assert_eq!(
+                drunk && should_apply_drunken_turn(seek),
+                expect_drunken,
+                "{name}: TurnDrunken branch"
+            );
+            let flags = if seek {
+                crate::sequence::MoveFlags::SEEK
+            } else {
+                crate::sequence::MoveFlags::empty()
+            };
+            assert_eq!(
+                should_apply_plain_movement_turn(drunk, flags),
+                expect_plain,
+                "{name}: plain Turn branch"
+            );
+        }
     }
 }
 
