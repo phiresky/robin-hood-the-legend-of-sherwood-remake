@@ -1,0 +1,11 @@
+{
+  "slug": "multi-team-four-grades",
+  "title": "Four Armies — Four Soldier Grades",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": ["Hackable", "Test"],
+  "description": "Four mutually hostile armies field the same four soldier types, but each army uses its own increasingly powerful soldier grade from 01 through 04.",
+  "hackable_mission": "MultiTeamFourGrades"
+}

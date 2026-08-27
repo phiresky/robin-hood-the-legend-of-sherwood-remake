@@ -4733,6 +4733,7 @@ mod tests {
             ("multi-team-three-way", "MultiTeamThreeWay", 3, 0),
             ("multi-team-ten-way", "MultiTeamTenWay", 10, 0),
             ("multi-team-four-armies", "MultiTeamFourArmies", 48, 0),
+            ("multi-team-four-grades", "MultiTeamFourGrades", 48, 0),
             (
                 "multi-team-all-variants-wheel",
                 "MultiTeamAllVariantsWheel",
@@ -4796,16 +4797,53 @@ mod tests {
                 .filter(|soldier| soldier.allegiance == Some(allegiance))
                 .collect();
             assert_eq!(faction.len(), 12, "allegiance {allegiance}");
-            let profiles = if [2, 4].contains(&allegiance) {
-                ["guard_a04", "soldier_a04", "archer04", "officier_b04"]
-            } else {
-                ["guard_a01", "soldier_a01", "archer01", "officier_b02"]
-            };
-            for profile in profiles {
+            for profile_prefix in ["guard_a", "soldier_a", "archer", "officier_b"] {
                 assert_eq!(
                     faction
                         .iter()
-                        .filter(|soldier| soldier.profile_id.as_deref() == Some(profile))
+                        .filter(|soldier| {
+                            soldier
+                                .profile_id
+                                .as_deref()
+                                .is_some_and(|profile| profile.starts_with(profile_prefix))
+                        })
+                        .count(),
+                    3,
+                    "allegiance {allegiance}, profile family {profile_prefix}"
+                );
+            }
+        }
+
+        let grades_path =
+            repo.join("mods/multi-team-four-grades/Data/Levels/MultiTeamFourGrades.level.json");
+        let grades = LoadedLevel::hackable_from_json(&fs::read(grades_path).unwrap()).unwrap();
+        assert_eq!(grades.mission.header.map_filename, "OpenBattlefield");
+        for asset in ["OpenBattlefield.map.png", "OpenBattlefield.min.png"] {
+            assert!(
+                repo.join("mods/multi-team-four-grades/Data/Levels/Day")
+                    .join(asset)
+                    .is_file(),
+                "missing generated battlefield asset {asset}"
+            );
+        }
+        for (allegiance, grade) in [(2, "01"), (3, "02"), (4, "03"), (5, "04")] {
+            let faction: Vec<_> = grades
+                .mission
+                .soldiers
+                .iter()
+                .filter(|soldier| soldier.allegiance == Some(allegiance))
+                .collect();
+            assert_eq!(faction.len(), 12, "allegiance {allegiance}");
+            for profile in [
+                format!("guard_a{grade}"),
+                format!("soldier_a{grade}"),
+                format!("archer{grade}"),
+                format!("officier_b{grade}"),
+            ] {
+                assert_eq!(
+                    faction
+                        .iter()
+                        .filter(|soldier| soldier.profile_id.as_deref() == Some(profile.as_str()))
                         .count(),
                     3,
                     "allegiance {allegiance}, profile {profile}"

@@ -17,9 +17,10 @@ A list of which additional features we have added, which ones we might still wan
   `guard_a01` (legacy numeric indices remain accepted);
   autonomous PCs automatically enter swordfights with their nearest hostile
   autonomous PC and use the full A-I strike selection rather than passive PC
-  smalltalk attacks. Five launchable test arenas live under `mods/multi-team-*`:
+  smalltalk attacks. Six launchable test arenas live under `mods/multi-team-*`:
   three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
-  autonomous Robin versus Little John, and four armies of twelve soldiers.
+  autonomous Robin versus Little John, four armies of twelve soldiers, and a
+  four-army matchup where each faction uses a distinct soldier grade.
   Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.
 
