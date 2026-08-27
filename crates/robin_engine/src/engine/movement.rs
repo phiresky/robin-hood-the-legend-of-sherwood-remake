@@ -6261,7 +6261,7 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some(order) = self
+            let Some(_order) = self
                 .orders
                 .sequence_manager
                 .get_element(selected.seq_id, selected.elem_idx)
@@ -6270,42 +6270,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            let goal = MapPoint::new(order.target_x, order.target_y);
-            let pos = soldier.element.position_map();
-            let dx = goal.x - pos.x;
-            let dy = goal.y - pos.y;
-            if dx * dx + dy * dy < 0.01 {
-                continue;
-            }
-            let goal_sector = vector_to_sector_0_to_15(dx, dy);
-            // Gate the facing-from-movement-vector goal update on
-            // the order's compute_direction flag.  When the order
-            // pushes a fixed facing (compute_direction = false), keep
-            // the goal direction the caller set and only run the slow
-            // turn — `TurnDrunken` reads the direction goal but never
-            // writes it.
-            let order_compute_direction = order.compute_direction;
-            {
-                let pi = &mut soldier.element.sprite.position_iface;
-                let current_dir = pi.get_direction();
-                let goal_for_turn = if order_compute_direction {
-                    pi.set_direction(crate::position_interface::Direction::from_raw(
-                        goal_sector as i32,
-                    ));
-                    goal_sector as u16
-                } else {
-                    u16::from(pi.get_direction_goal())
-                };
-                let very_slow = crate::engine::soldier_helpers::turn_drunken_is_very_slow(
-                    u16::from(current_dir),
-                    goal_for_turn,
-                );
-                if very_slow {
-                    pi.turn_very_slow();
-                } else {
-                    pi.turn_slow(2);
-                }
-            }
+            turn_drunken(&mut soldier.element.sprite.position_iface);
         }
 
         // Pre-pass: per-entity current-sector lift translation, for
@@ -12316,6 +12281,45 @@ impl EngineInner {
                         && element.state == crate::sequence::SequenceState::Terminated
                 })
             })
+    }
+}
+
+/// `RHElementActorSoldier::Execute` calls `TurnDrunken` before
+/// `RHSprite::PerformMotion`. On a fresh order this therefore observes the
+/// retained direction goal from the previous motion; PerformMotion installs
+/// the new order's goal afterwards through `ComputeIncrementAll`.
+fn turn_drunken(pi: &mut crate::position_interface::PositionInterface) {
+    let current = u16::from(pi.get_direction());
+    let goal = u16::from(pi.get_direction_goal());
+    if crate::engine::soldier_helpers::turn_drunken_is_very_slow(current, goal) {
+        pi.turn_very_slow();
+    } else {
+        pi.turn_slow(2);
+    }
+}
+
+#[cfg(test)]
+mod drunken_turn_timing_tests {
+    use super::turn_drunken;
+    use crate::position_interface::{Direction, PositionInterface};
+
+    #[test]
+    fn fresh_order_turn_uses_retained_goal_before_motion_initialization() {
+        let mut position = PositionInterface::new();
+        position.set_direction_instantly(Direction::from_raw(8));
+
+        // The next movement order points north (sector 0), but Original does
+        // not install that direction goal until after this Execute prologue.
+        turn_drunken(&mut position);
+        assert_eq!(position.get_direction(), Direction::from_raw(8));
+        assert_eq!(position.get_direction_goal(), Direction::from_raw(8));
+
+        // Mirror the later PerformMotion/ComputeIncrementAll goal update: the
+        // sprite keeps the old facing for this frame while future drunken
+        // turns now see the new target.
+        position.set_direction(Direction::from_raw(0));
+        assert_eq!(position.get_direction(), Direction::from_raw(8));
+        assert_eq!(position.get_direction_goal(), Direction::from_raw(0));
     }
 }
 
