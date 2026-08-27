@@ -3001,6 +3001,11 @@ struct PostponeTailSummary {
     cross_only: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StopNoopSummary {
+    tail: SequenceElementRef,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -3060,6 +3065,16 @@ pub struct SequenceManager {
     #[state_hash(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
+
+    /// Selected Stop graphs already proven to produce no terminal
+    /// transitions for one stop priority. This is repaired by an exact Stop
+    /// traversal, so unrelated same-owner work cannot force every later call
+    /// to repeat that traversal.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    #[state_hash(skip)]
+    stop_noop_cache:
+        BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), StopNoopSummary>>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
@@ -3397,6 +3412,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_stop_summaries: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
+            stop_noop_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3422,6 +3438,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_stop_summaries: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
+            stop_noop_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3445,6 +3462,7 @@ impl SequenceManager {
         self.actor_live.clear();
         self.actor_stop_summaries.clear();
         self.postpone_tail_cache.clear();
+        self.stop_noop_cache.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
         self.actor_translating = None;
@@ -5389,7 +5407,22 @@ impl SequenceManager {
     }
 
     fn invalidate_postpone_tail_cache_for(&mut self, owner: EntityId) {
-        self.postpone_tail_cache.remove(&owner);
+        let append_entries = self
+            .postpone_tail_cache
+            .remove(&owner)
+            .map_or(0, |entries| entries.len());
+        let stop_entries = self
+            .stop_noop_cache
+            .remove(&owner)
+            .map_or(0, |entries| entries.len());
+        tracing::trace!(
+            target: "parity_stop_cache",
+            ?owner,
+            append_entries,
+            stop_entries,
+            reason = "topology_or_priority",
+            "invalidate owner chain caches"
+        );
     }
 
     /// Return the first blocker at which priority arbitration is not the pure
@@ -5537,6 +5570,24 @@ impl SequenceManager {
             && self
                 .get_element(waiter.0, waiter.1)
                 .is_some_and(|element| element.postponed_element_index.is_none());
+        let root_ref = SequenceElementRef::new(root.0, root.1);
+        let preserved_stop_priorities = self
+            .stop_noop_cache
+            .get(&owner)
+            .into_iter()
+            .flat_map(|entries| entries.iter())
+            .filter_map(|((cached_root, stop_priority), summary)| {
+                if *cached_root != root_ref {
+                    return None;
+                }
+                assert_eq!(
+                    summary.tail,
+                    SequenceElementRef::new(blocker.0, blocker.1),
+                    "cached no-op Stop tail disagrees with append tail"
+                );
+                (waiter_cross_only && waiter_priority < *stop_priority).then_some(*stop_priority)
+            })
+            .collect::<Vec<_>>();
         self.invalidate_postpone_tail_cache_for(owner);
         let blocker_element = self
             .get_element_mut(blocker.0, blocker.1)
@@ -5554,6 +5605,14 @@ impl SequenceManager {
                     hops: prior_hops + 1,
                     weakest_priority: prior_summary.weakest_priority.max(waiter_priority),
                     cross_only: prior_summary.cross_only && waiter_cross_only,
+                },
+            );
+        }
+        for stop_priority in preserved_stop_priorities {
+            self.stop_noop_cache.entry(owner).or_default().insert(
+                (root_ref, stop_priority),
+                StopNoopSummary {
+                    tail: SequenceElementRef::new(waiter.0, waiter.1),
                 },
             );
         }
@@ -5591,6 +5650,76 @@ impl SequenceManager {
             "selected Stop cache was not invalidated before its tail changed"
         );
         summary.cross_only && summary.weakest_priority < stop_priority
+    }
+
+    fn selected_stop_is_cached_noop(
+        &self,
+        root: (SequenceId, usize),
+        stop_priority: SequencePriority,
+    ) -> bool {
+        let Some(owner) = self
+            .get_element(root.0, root.1)
+            .and_then(|element| element.owner)
+        else {
+            return false;
+        };
+        let Some(summary) = self.stop_noop_cache.get(&owner).and_then(|entries| {
+            entries.get(&(SequenceElementRef::new(root.0, root.1), stop_priority))
+        }) else {
+            return false;
+        };
+        let tail = self
+            .get_element(summary.tail.sequence_id, summary.tail.element_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "cached no-op Stop references missing tail {:?}/{}",
+                    summary.tail.sequence_id, summary.tail.element_index
+                )
+            });
+        assert!(
+            tail.cross_postponed.is_none(),
+            "cached no-op Stop was not invalidated before its tail changed"
+        );
+        true
+    }
+
+    fn repair_selected_stop_noop(
+        &mut self,
+        owner: EntityId,
+        root: (SequenceId, usize),
+        stop_priority: SequencePriority,
+    ) {
+        let mut tail = root;
+        let mut visited = HashSet::new();
+        loop {
+            assert!(
+                visited.insert(tail),
+                "cross-postponed cycle while caching no-op Stop at {:?}/{}",
+                tail.0,
+                tail.1
+            );
+            let element = self.get_element(tail.0, tail.1).unwrap_or_else(|| {
+                panic!(
+                    "no-op Stop graph references missing {:?}/{}",
+                    tail.0, tail.1
+                )
+            });
+            assert_eq!(
+                element.owner,
+                Some(owner),
+                "no-op Stop graph crosses owners"
+            );
+            let Some(next) = element.cross_postponed else {
+                break;
+            };
+            tail = next;
+        }
+        self.stop_noop_cache.entry(owner).or_default().insert(
+            (SequenceElementRef::new(root.0, root.1), stop_priority),
+            StopNoopSummary {
+                tail: SequenceElementRef::new(tail.0, tail.1),
+            },
+        );
     }
 
     pub(crate) fn set_cross_postponed_link(
@@ -6065,6 +6194,7 @@ impl SequenceManager {
             .retain(|seq_id, seq| retained_sequences.contains(seq_id) || !seq.is_to_be_deleted());
         if self.sequences.len() != sequence_count_before {
             self.postpone_tail_cache.clear();
+            self.stop_noop_cache.clear();
         }
 
         let sequences = &self.sequences;
@@ -6207,8 +6337,11 @@ impl SequenceManager {
         });
         let selected_chain_is_all_stronger =
             root.is_some_and(|root| self.selected_cross_chain_all_stronger(root, stop_priority));
+        let selected_stop_cached_noop =
+            root.is_some_and(|root| self.selected_stop_is_cached_noop(root, stop_priority));
         if root_is_live
-            && (selected_chain_is_all_stronger
+            && (selected_stop_cached_noop
+                || selected_chain_is_all_stronger
                 || self.actor_stop_summary(owner).is_some_and(|summary| {
                     summary.cross_only && summary.weakest_priority < stop_priority
                 }))
@@ -6218,6 +6351,8 @@ impl SequenceManager {
                 ?owner,
                 ?stop_priority,
                 ?root,
+                selected_stop_cached_noop,
+                selected_chain_is_all_stronger,
                 "manager stop_owner all live work too strong"
             );
             return;
@@ -6253,6 +6388,8 @@ impl SequenceManager {
         }
         let mut visited = HashSet::new();
         let mut touched_sequences = HashSet::new();
+        let mut effect_count = 0usize;
+        let mut terminal_transition_count = 0usize;
         while let Some((seq_id, elem_idx)) = targets.pop_front() {
             if !visited.insert((seq_id, elem_idx)) {
                 continue;
@@ -6295,6 +6432,18 @@ impl SequenceManager {
                 "manager after stop_element"
             );
             for (effect_index, effects) in effects_vec.into_iter().enumerate() {
+                effect_count += 1;
+                terminal_transition_count +=
+                    usize::from(effects.actor_live_transition.is_some_and(
+                        |(_, _, _, new_state)| {
+                            matches!(
+                                new_state,
+                                SequenceState::Terminated
+                                    | SequenceState::Interrupted
+                                    | SequenceState::Impossible
+                            )
+                        },
+                    ));
                 tracing::trace!(
                     target: "parity_stop",
                     ?owner,
@@ -6313,6 +6462,23 @@ impl SequenceManager {
                     "manager after process_effects"
                 );
             }
+        }
+
+        tracing::trace!(
+            target: "parity_stop_cache",
+            ?owner,
+            ?root,
+            ?stop_priority,
+            effect_count,
+            terminal_transition_count,
+            touched_sequence_count = touched_sequences.len(),
+            "completed selected Stop traversal"
+        );
+        if terminal_transition_count == 0 {
+            if let Some(root) = root {
+                self.repair_selected_stop_noop(owner, root, stop_priority);
+            }
+            return;
         }
 
         // Original clears postponed pointers while this recursive Stop graph

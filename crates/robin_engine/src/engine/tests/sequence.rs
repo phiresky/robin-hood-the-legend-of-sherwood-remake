@@ -1794,6 +1794,33 @@ fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
         "selected Stop must not touch unrelated weak owner work"
     );
 
+    // An unrelated same-owner topology rewrite invalidates the owner-scoped
+    // append aggregate. One exact traversal repairs the selected no-op proof;
+    // all later calls must remain O(1) even though the unrelated weak/internal
+    // sequence keeps the actor-global ceiling ineligible.
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((unrelated, 0), Some((unrelated, 1)));
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((unrelated, 0), None);
+    engine.orders.sequence_manager.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    for _ in 0..8192 {
+        engine.orders.sequence_manager.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
     // A weak element appended to the selected chain invalidates the strong
     // aggregate and must be reached by the exact Original Stop traversal.
     let mut weak = SequenceElement::new(1, Command::Turn, Some(owner));
