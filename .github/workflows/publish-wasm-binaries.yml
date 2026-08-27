@@ -60,19 +60,21 @@ jobs:
           artifact="${publish_root}/${short}"
           mkdir -p "${artifact}"
 
-          input_wasm="${RUNNER_TEMP}/robin.pre-bindgen.opt.wasm"
-          wasm-opt \
-            -Oz \
-            --strip-debug \
-            --strip-dwarf \
-            -o "${input_wasm}" \
-            target/wasm32-unknown-unknown/wasm-release/robin.wasm
-
           wasm-bindgen \
             --target web \
             --out-dir "${artifact}" \
             --out-name robin \
-            "${input_wasm}"
+            target/wasm32-unknown-unknown/wasm-release/robin.wasm
+
+          optimized_wasm="${RUNNER_TEMP}/robin_bg.opt.wasm"
+          wasm-opt \
+            -Oz \
+            --strip-debug \
+            --strip-dwarf \
+            -o "${optimized_wasm}" \
+            "${artifact}/robin_bg.wasm"
+          mv "${optimized_wasm}" "${artifact}/robin_bg.wasm"
+          wasm-strip "${artifact}/robin_bg.wasm"
 
           smoke_wasm_artifact() {
             node --input-type=module -e '

@@ -10,6 +10,7 @@
 //!   - PNG          (png crate → oxipng post-process)
 //!   - Lossless JXL (cjxl -d 0 -e 9)
 //!   - Lossless AVIF (avifenc --lossless)
+//!   - Lossless WebP (ImageMagick/libwebp, whole-character atlas)
 //!   - QOI          (qoi crate)
 //!   - RGB565 + zstd L22 (keeps native 16-bit, no channel expansion)
 //!   - RGBA8  + zstd L22
@@ -587,7 +588,7 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
     println!();
     println!("## Whole-character (bank RLE/VQ vs format tweaks, all frames)");
     println!(
-        "{:<14} {:>6} {:>9} {:>9} {:>11} {:>12} {:>11} {:>12} {:>7}",
+        "{:<14} {:>6} {:>9} {:>9} {:>11} {:>12} {:>11} {:>12} {:>11} {:>10} {:>7}",
         "character",
         "unique",
         "orig-rle",
@@ -596,6 +597,8 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         "rgba-Q90",
         "rgb-LL",
         "rgb-Q90",
+        "rgba-WebP",
+        "rgb-WebP",
         "best/o",
     );
 
@@ -762,6 +765,8 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         let rgba_q90_jxl = tmp.path().join(format!("{}.rgba.q90.jxl", sanitize(name)));
         let rgb_ll_jxl = tmp.path().join(format!("{}.rgb.ll.jxl", sanitize(name)));
         let rgb_q90_jxl = tmp.path().join(format!("{}.rgb.q90.jxl", sanitize(name)));
+        let rgba_webp = tmp.path().join(format!("{}.rgba.webp", sanitize(name)));
+        let rgb_webp = tmp.path().join(format!("{}.rgb.webp", sanitize(name)));
         write_png_rgba(&rgba_png, atlas_w, atlas_h, &atlas_rgba)?;
         write_png_rgb(&rgb_png, atlas_w, atlas_h, &atlas_rgb)?;
         eprintln!(
@@ -775,8 +780,16 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         let rgba_q90 = run_cjxl_lossy(&rgba_png, &rgba_q90_jxl, 90, 7).unwrap_or(0);
         let rgb_ll = run_cjxl(&rgb_png, &rgb_ll_jxl, true, 7).unwrap_or(0);
         let rgb_q90 = run_cjxl_lossy(&rgb_png, &rgb_q90_jxl, 90, 7).unwrap_or(0);
+        let rgba_webp = run_webp_lossless(&rgba_png, &rgba_webp).unwrap_or(0);
+        let rgb_webp = run_webp_lossless(&rgb_png, &rgb_webp).unwrap_or(0);
 
-        let best = z22_orig.min(rgba_ll).min(rgba_q90).min(rgb_ll).min(rgb_q90);
+        let best = z22_orig
+            .min(rgba_ll)
+            .min(rgba_q90)
+            .min(rgb_ll)
+            .min(rgb_q90)
+            .min(rgba_webp)
+            .min(rgb_webp);
         let best_vs_orig = if orig_packed > 0 {
             format!("{:.2}×", best as f64 / orig_packed as f64)
         } else {
@@ -784,7 +797,7 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         };
 
         println!(
-            "{:<14} {:>6} {:>9} {:>9} {:>11} {:>12} {:>11} {:>12} {:>7}",
+            "{:<14} {:>6} {:>9} {:>9} {:>11} {:>12} {:>11} {:>12} {:>11} {:>10} {:>7}",
             truncate(name, 14),
             ids_bank.len(),
             human(orig_packed),
@@ -793,6 +806,8 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
             human(rgba_q90),
             human(rgb_ll),
             human(rgb_q90),
+            human(rgba_webp),
+            human(rgb_webp),
             best_vs_orig,
         );
     }
@@ -1496,6 +1511,28 @@ fn run_cjxl_lossy(png: &Path, out: &Path, quality: u8, effort: u8) -> Result<u64
         .context("spawn cjxl (lossy)")?;
     if !status.success() {
         bail!("cjxl (lossy) failed");
+    }
+    Ok(fs::metadata(out)?.len())
+}
+
+fn run_webp_lossless(png: &Path, out: &Path) -> Result<u64> {
+    let status = Command::new("magick")
+        .arg(png)
+        .args([
+            "-define",
+            "webp:lossless=true",
+            "-define",
+            "webp:method=6",
+            "-define",
+            "webp:exact=true",
+        ])
+        .arg(out)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .context("spawn magick (lossless WebP)")?;
+    if !status.success() {
+        bail!("magick lossless WebP failed");
     }
     Ok(fs::metadata(out)?.len())
 }

@@ -876,7 +876,7 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::animation_rhs_paths;
+    use super::{animation_rhs_paths, animation_rhs_rel_existing};
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -885,6 +885,28 @@ mod tests {
         assert!(paths.contains(&"Animations/Day/chariot02.rhs".to_owned()));
         assert!(paths.contains(&"Animations/chariot02.rhs".to_owned()));
         assert!(paths.iter().all(|path| !path.starts_with("Characters/")));
+    }
+
+    #[test]
+    fn shipping_animation_ambiance_uses_original_bit_values() {
+        let exists = |path: &str| Some(path.into());
+
+        assert_eq!(
+            animation_rhs_rel_existing(1, "river", &exists),
+            "Animations/Day/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(2, "river", &exists),
+            "Animations/Fog/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(4, "river", &exists),
+            "Animations/Night/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(8, "river", &exists),
+            "Animations/Day/river.rhs"
+        );
     }
 }
 
@@ -1353,11 +1375,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             build.map_names.insert(mission.header.map_filename.clone());
         }
         for &idx in &mp.required_character_indices {
-            if let Some((rel, profile)) =
-                existing_character_rhs_for_index(&cpf, idx as usize, &in_path)
-            {
-                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
-            }
+            add_required_character_rhs_profiles_for_index(
+                required_rhs_profiles,
+                &cpf,
+                idx as usize,
+                &in_path,
+            );
         }
         for p in &mission.mission_patches {
             add_required_animation_rhs_profile(
@@ -1403,11 +1426,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
         }
         for pc in &mission.pcs_to_rescue {
-            if let Some((rel, profile)) =
-                existing_character_rhs_for_index(&cpf, pc.profile_index as usize, &in_path)
-            {
-                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
-            }
+            add_required_character_rhs_profiles_for_index(
+                required_rhs_profiles,
+                &cpf,
+                pc.profile_index as usize,
+                &in_path,
+            );
         }
         for bonus in &mission.bonuses {
             if let Some((file, profile)) = bonus_type_to_sprite_asset_for_shipping(bonus.bonus_type)
@@ -1551,21 +1575,39 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
 
     // Terrain/loading art stays with the small mission core. Maps remain JXL
     // according to the chosen converter option.
+    // Several missions reuse the same city/map. Transcoding one source map
+    // repeatedly is especially expensive with cjxl and cannot change its
+    // bytes, so retain the encoded result while assembling mission payloads.
+    let mut encoded_level_assets = std::collections::BTreeMap::<String, Vec<u8>>::new();
     for build in mission_builds.values_mut() {
         for map in &build.map_names {
             for sub in ["Day", "Night", "Fog"] {
                 for ext in [".map", ".min"] {
                     let rel = format!("Levels/{sub}/{map}{ext}");
                     let Some(path) = in_path(&rel) else { continue };
-                    let bytes = match (ext, opts.map_format) {
-                        (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&path, None)?,
-                        (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&path, Some(90))?,
-                        (".map", MapFormat::JxlQ85) => transcode_sixteen_to_jxl(&path, Some(85))?,
-                        (".map", MapFormat::JxlQ80) => transcode_sixteen_to_jxl(&path, Some(80))?,
-                        (".map", MapFormat::Raw) | (".min", _) => {
-                            transcode_sixteen_drop_bzip(&path)?
-                        }
-                        _ => fs::read(&path)?,
+                    let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
+                        bytes.clone()
+                    } else {
+                        let bytes = match (ext, opts.map_format) {
+                            (".map", MapFormat::JxlLossless) => {
+                                transcode_sixteen_to_jxl(&path, None)?
+                            }
+                            (".map", MapFormat::JxlQ90) => {
+                                transcode_sixteen_to_jxl(&path, Some(90))?
+                            }
+                            (".map", MapFormat::JxlQ85) => {
+                                transcode_sixteen_to_jxl(&path, Some(85))?
+                            }
+                            (".map", MapFormat::JxlQ80) => {
+                                transcode_sixteen_to_jxl(&path, Some(80))?
+                            }
+                            (".map", MapFormat::Raw) | (".min", _) => {
+                                transcode_sixteen_drop_bzip(&path)?
+                            }
+                            _ => fs::read(&path)?,
+                        };
+                        encoded_level_assets.insert(rel.clone(), bytes.clone());
+                        bytes
                     };
                     build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
                 }
@@ -1574,10 +1616,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         for ambiance in [1, 2, 4] {
             let rel = format!("Levels/{ambiance:02}/{}.pak", build.proto_filename);
             if let Some(path) = in_path(&rel) {
-                build
-                    .payload
-                    .raw
-                    .insert(rel.to_ascii_lowercase(), transcode_pak_drop_bzip(&path)?);
+                let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
+                    bytes.clone()
+                } else {
+                    let bytes = transcode_pak_drop_bzip(&path)?;
+                    encoded_level_assets.insert(rel.clone(), bytes.clone());
+                    bytes
+                };
+                build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
             }
         }
     }
@@ -2111,14 +2157,12 @@ fn animation_rhs_rel_existing(
     file: &str,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) -> String {
+    // Mission headers store the original AMBIANCE_* bit values, not a
+    // zero-based enum. Keep this identical to engine::Ambiance::from_raw()
+    // followed by to_sprite_ambiance(): attack/custom ambiances use Day RHS.
     let dir = match ambiance {
-        1 => "Fog",
-        2 => "Night",
-        3 => "Attack",
-        16 => "Custom1",
-        32 => "Custom2",
-        64 => "Custom3",
-        128 => "Custom4",
+        2 => "Fog",
+        4 => "Night",
         _ => "Day",
     };
     let primary = format!("Animations/{dir}/{file}.rhs");
@@ -2138,35 +2182,34 @@ fn animation_rhs_rel_existing(
     primary
 }
 
-fn existing_character_rhs_for_index(
+fn add_required_character_rhs_profiles_for_index(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
     index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
-) -> Option<(String, String)> {
-    let profile = profiles.characters.get(index)?;
-    let rel = format!("Characters/{}.rhs", profile.filename);
-    if in_path(&rel).is_some() {
-        return Some((rel, profile.profile_name.clone()));
-    }
-    existing_character_rhs_for_profile_name(profiles, &profile.profile_name, in_path)
-        .or_else(|| Some((rel, profile.profile_name.clone())))
-}
-
-fn existing_character_rhs_for_profile_name(
-    profiles: &ProfileManager,
-    profile_name: &str,
-    in_path: &impl Fn(&str) -> Option<PathBuf>,
-) -> Option<(String, String)> {
-    profiles
+) {
+    let Some(profile) = profiles.characters.get(index) else {
+        return;
+    };
+    let mut found = false;
+    for variant in profiles
         .characters
         .iter()
-        .filter(|profile| profile.profile_name == profile_name)
-        .find_map(|profile| {
-            let rel = format!("Characters/{}.rhs", profile.filename);
-            in_path(&rel)
-                .is_some()
-                .then(|| (rel, profile.profile_name.clone()))
-        })
+        .filter(|variant| variant.profile_name == profile.profile_name)
+    {
+        let rel = format!("Characters/{}.rhs", variant.filename);
+        if in_path(&rel).is_some() {
+            add_required_rhs_rel(required, rel, &variant.profile_name);
+            found = true;
+        }
+    }
+    if !found {
+        add_required_rhs_rel(
+            required,
+            format!("Characters/{}.rhs", profile.filename),
+            &profile.profile_name,
+        );
+    }
 }
 
 fn add_required_pc_profiles_for_pcs(
@@ -2257,6 +2300,8 @@ fn add_common_object_rhs_profiles(
         ("ACCESSORIES_Net", "ACCESSOIRES Filet"),
         ("ACCESSORIES_Coin", "ACCESSOIRES Piece d'or"),
         ("ACCESSORIES_WaspSting", "Guepe"),
+        ("BONUS_Arrows", "BONUS Fleches"),
+        ("BONUS_Stones", "BONUS Cailloux"),
         ("BONUS_Nets", "BONUS Filets"),
         ("BONUS_WaspsNest", "BONUS Guepes"),
         ("BONUS_Apples", "BONUS Pommes"),
@@ -2266,6 +2311,8 @@ fn add_common_object_rhs_profiles(
         ("BONUS_MoneyBag", "BONUS Bourses d'argent"),
         ("BONUS_GoldBagsRansom", "BONUS Sac d'or rancon"),
         ("BONUS_Shield", "Shield"),
+        ("BONUS_Parchment", "BONUS Parchemin"),
+        ("BONUS_FourLeavedClover", "BONUS Trefle"),
         ("RELIC_Ampulla", "Huile"),
         ("RELIC_Spoon", "Cuillere"),
         ("RELIC_Crown", "Couronne"),

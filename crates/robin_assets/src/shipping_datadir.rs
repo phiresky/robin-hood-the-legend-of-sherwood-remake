@@ -292,13 +292,26 @@ impl ShippingDatadir {
         let payload = self
             .loaded_mission(mission)
             .ok_or_else(|| anyhow!("shipping mission {mission} has not been loaded"))?;
+        let raw = Arc::new(payload.raw.clone());
+        let raw_files = raw.len();
+        let rhs_files = payload.rhs_files.len();
         robin_util::asset_fs::global()
-            .mount_bundle_first(Arc::new(payload.raw.clone()))
+            .mount_bundle_first(raw.clone())
             .context("mount shipping mission assets")?;
+        if let Some(first_path) = raw.keys().next()
+            && !robin_util::asset_fs::global()
+                .try_exists(first_path)
+                .with_context(|| format!("probe mounted shipping asset {first_path}"))?
+        {
+            return Err(anyhow!(
+                "shipping mission {mission} mounted {raw_files} raw assets, but {first_path} is not visible"
+            ));
+        }
         *self
             .active_mission
             .write()
             .expect("shipping active mission lock poisoned") = Some(mission.to_owned());
+        tracing::info!(mission, raw_files, rhs_files, "activated shipping mission");
         Ok(())
     }
 

@@ -3140,8 +3140,9 @@ impl EngineInner {
             String,
             Option<String>,
         )> = campaign
-            .characters
+            .gang_indices
             .iter()
+            .filter_map(|&index| campaign.characters.get(index))
             .filter_map(|desc| {
                 let cpi = desc.character_profile_idx?;
                 let profile = assets.profile_manager.get_character(cpi)?;

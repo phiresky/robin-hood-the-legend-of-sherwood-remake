@@ -54,11 +54,20 @@ pub async fn ensure_loaded(shipping: Option<&Arc<ShippingDatadir>>, mission: &st
     datadir
         .install_mission_parts(mission, parts)
         .with_context(|| format!("install shipping mission {mission}"))?;
+    let payload = datadir
+        .loaded_mission(mission)
+        .ok_or_else(|| anyhow!("shipping mission {mission} disappeared after installation"))?;
+    for rhs_path in payload.rhs_files.keys() {
+        let path = format!("Data/{rhs_path}");
+        robin_engine::sbfile::SbFile::open(&path, robin_engine::sbfile::SB_FILE_READ)
+            .map_err(|error| anyhow!("mounted shipping RHS {path} is unreadable: {error}"))?;
+    }
     tracing::info!(
         mission,
         files = files.len(),
         fetched_files = missing.len(),
         bytes = fetched_bytes,
+        rhs_files = payload.rhs_files.len(),
         "shipping mission payload loaded"
     );
     Ok(())
