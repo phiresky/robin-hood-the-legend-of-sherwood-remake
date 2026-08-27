@@ -3076,16 +3076,6 @@ pub struct SequenceManager {
     stop_noop_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), StopNoopSummary>>,
 
-    /// Non-serialized continuation tokens for `EnterSwordfight` elements
-    /// registered by a synchronous `PrepareToEnterSwordFight` callback.
-    /// Rust defers ordinary manager work past the released AI borrow; this
-    /// token restores Original's still-live preparation scope only while that
-    /// exact deferred element dispatches.
-    #[serde(skip)]
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    deferred_swordfight_preparations: BTreeMap<SequenceElementRef, (EntityId, EntityId)>,
-
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
     ///
@@ -3423,7 +3413,6 @@ impl SequenceManager {
             actor_stop_summaries: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
             stop_noop_cache: BTreeMap::new(),
-            deferred_swordfight_preparations: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3450,7 +3439,6 @@ impl SequenceManager {
             actor_stop_summaries: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
             stop_noop_cache: BTreeMap::new(),
-            deferred_swordfight_preparations: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3475,7 +3463,6 @@ impl SequenceManager {
         self.actor_stop_summaries.clear();
         self.postpone_tail_cache.clear();
         self.stop_noop_cache.clear();
-        self.deferred_swordfight_preparations.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
         self.actor_translating = None;
@@ -3966,48 +3953,6 @@ impl SequenceManager {
         let mut seq = Sequence::new();
         seq.append_element(element);
         self.launch_sequence(seq)
-    }
-
-    pub(crate) fn attach_swordfight_preparation(
-        &mut self,
-        element: SequenceElementRef,
-        pair: (EntityId, EntityId),
-    ) {
-        assert!(
-            self.get_element(element.sequence_id, element.element_index)
-                .is_some_and(|candidate| candidate.command == Command::EnterSwordfight),
-            "swordfight preparation token requires a live EnterSwordfight element"
-        );
-        assert!(
-            self.deferred_swordfight_preparations
-                .insert(element, pair)
-                .is_none(),
-            "deferred EnterSwordfight already has a preparation token"
-        );
-        tracing::trace!(
-            target: "parity_swordfight_scope",
-            ?element,
-            ?pair,
-            outstanding = self.deferred_swordfight_preparations.len(),
-            event = "token_attach",
-            "deferred swordfight preparation token"
-        );
-    }
-
-    pub(crate) fn take_swordfight_preparation(
-        &mut self,
-        element: SequenceElementRef,
-    ) -> Option<(EntityId, EntityId)> {
-        let token = self.deferred_swordfight_preparations.remove(&element);
-        tracing::trace!(
-            target: "parity_swordfight_scope",
-            ?element,
-            hit = token.is_some(),
-            outstanding = self.deferred_swordfight_preparations.len(),
-            event = "token_take",
-            "deferred swordfight preparation token"
-        );
-        token
     }
 
     /// Interrupt one freshly launched actor Wait before its synchronous
@@ -5966,9 +5911,6 @@ impl SequenceManager {
                 (true, false) => self.remove_actor_live_ref(owner, elem_ref),
                 _ => {}
             }
-            if Self::is_actor_live_state(old_state) && !Self::is_actor_live_state(new_state) {
-                self.deferred_swordfight_preparations.remove(&elem_ref);
-            }
             if clear_cross_links
                 && matches!(
                     new_state,
@@ -6264,8 +6206,6 @@ impl SequenceManager {
             refs.retain(|r| sequences.contains_key(&r.sequence_id));
             !refs.is_empty()
         });
-        self.deferred_swordfight_preparations
-            .retain(|element, _| sequences.contains_key(&element.sequence_id));
     }
 
     // ─── Cancellation helpers ───────────────────────────────────

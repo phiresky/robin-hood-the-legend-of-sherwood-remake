@@ -6,41 +6,6 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
-pub(super) fn debug_swordfight_native_yield(
-    stage: &'static str,
-    operation: &crate::interp::NativeOperation,
-) {
-    if std::env::var_os("PARITY_DEBUG_SWORDFIGHT_YIELD").is_none() {
-        return;
-    }
-    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 128 {
-        return;
-    }
-    let active = crate::engine::melee::active_swordfight_preparation();
-    eprintln!("PARITY_SWORDFIGHT_YIELD stage={stage} active={active:?} operation={operation:?}");
-}
-
-pub(super) fn debug_swordfight_sequence_operation(
-    stage: &'static str,
-    operation: &crate::interp::SynchronousSequenceOperation,
-) {
-    if std::env::var_os("PARITY_DEBUG_SWORDFIGHT_YIELD").is_none() {
-        return;
-    }
-    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 128 {
-        return;
-    }
-    let active = crate::engine::melee::active_swordfight_preparation();
-    eprintln!(
-        "PARITY_SWORDFIGHT_YIELD stage={stage} active={active:?} action={:?} continuation_len={} continuation={:?}",
-        operation.action,
-        operation.continuation.len(),
-        operation.continuation,
-    );
-}
-
 #[derive(Clone, Copy)]
 struct ThinkStimulusDebugFilter {
     frame: u32,
@@ -346,7 +311,6 @@ impl EngineInner {
                 crate::interp::StopReason::ReturnedValue(value) => return Ok(value),
                 crate::interp::StopReason::Returned => return Ok(0),
                 crate::interp::StopReason::Yield(request) => {
-                    debug_swordfight_native_yield("vm_yield", &request.operation);
                     let operation_result = match request.operation {
                         crate::interp::NativeOperation::ScriptCall(call) => {
                             let nested_frame = match call.script_this {
@@ -7309,7 +7273,6 @@ impl EngineInner {
             match outcome {
                 crate::interp::NativeCallOutcome::Return(value) => Ok(value),
                 crate::interp::NativeCallOutcome::Yield(request) => {
-                    debug_swordfight_native_yield("external_native_yield", &request.operation);
                     let operation_result = match request.operation {
                         crate::interp::NativeOperation::ScriptCall(call) => {
                             let frame = match call.script_this {

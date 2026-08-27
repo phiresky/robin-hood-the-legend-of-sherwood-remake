@@ -1810,8 +1810,6 @@ impl EngineInner {
         &mut self,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        let swordfight_preparation =
-            crate::engine::melee::deferred_swordfight_preparation_for_enter(&elem);
         let attentive_owner = elem.owner.filter(|_| {
             matches!(
                 elem.command,
@@ -1829,19 +1827,6 @@ impl EngineInner {
             );
         }
         let seq_id = self.orders.sequence_manager.launch_element(elem);
-        if let Some(pair) = swordfight_preparation {
-            tracing::trace!(
-                target: "parity_swordfight_scope",
-                ?seq_id,
-                ?pair,
-                source = "launch_element",
-                "attaching deferred swordfight preparation"
-            );
-            self.orders.sequence_manager.attach_swordfight_preparation(
-                crate::sequence::SequenceElementRef::new(seq_id, 0),
-                pair,
-            );
-        }
         if let Some(owner) = attentive_owner {
             self.trace_attentive_owner_handoff(
                 "launch_after",
@@ -2572,31 +2557,7 @@ impl EngineInner {
         &mut self,
         seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        let inherited_enter_indices = seq
-            .elements
-            .iter()
-            .enumerate()
-            .filter_map(|(index, element)| {
-                crate::engine::melee::deferred_swordfight_preparation_for_enter(element)
-                    .map(|pair| (index, pair))
-            })
-            .collect::<Vec<_>>();
-        let sequence_id = self.orders.sequence_manager.launch_sequence(seq);
-        for (element_index, pair) in inherited_enter_indices {
-            tracing::trace!(
-                target: "parity_swordfight_scope",
-                ?sequence_id,
-                element_index,
-                ?pair,
-                source = "launch_sequence",
-                "attaching deferred swordfight preparation"
-            );
-            self.orders.sequence_manager.attach_swordfight_preparation(
-                crate::sequence::SequenceElementRef::new(sequence_id, element_index),
-                pair,
-            );
-        }
-        sequence_id
+        self.orders.sequence_manager.launch_sequence(seq)
     }
 
     /// Find the actor's currently-executing sequence element.  An

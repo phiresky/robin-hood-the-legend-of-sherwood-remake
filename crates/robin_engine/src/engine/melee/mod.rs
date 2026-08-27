@@ -2624,9 +2624,6 @@ mod evaluate;
 mod speech;
 mod strikes;
 mod swordfight;
-pub(crate) use swordfight::{
-    active_swordfight_preparation, deferred_swordfight_preparation_for_enter,
-};
 
 #[cfg(test)]
 mod tests;
