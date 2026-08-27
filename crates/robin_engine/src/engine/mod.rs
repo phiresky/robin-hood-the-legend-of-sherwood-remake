@@ -2566,7 +2566,30 @@ impl EngineInner {
         &mut self,
         seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        self.orders.sequence_manager.launch_sequence(seq)
+        let swordfight_preparation = crate::engine::melee::active_swordfight_preparation();
+        let inherited_enter_indices = swordfight_preparation
+            .is_some()
+            .then(|| {
+                seq.elements
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, element)| {
+                        (element.command == crate::element::Command::EnterSwordfight)
+                            .then_some(index)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let sequence_id = self.orders.sequence_manager.launch_sequence(seq);
+        if let Some(pair) = swordfight_preparation {
+            for element_index in inherited_enter_indices {
+                self.orders.sequence_manager.attach_swordfight_preparation(
+                    crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                    pair,
+                );
+            }
+        }
+        sequence_id
     }
 
     /// Find the actor's currently-executing sequence element.  An
