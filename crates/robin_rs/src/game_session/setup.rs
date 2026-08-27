@@ -1567,14 +1567,36 @@ pub(super) fn setup_input_and_camera(
     // process without a local seat.  Today every `--server` is
     // also a player — keeping that path intact below.
     setup_local_seat_and_multiplayer_snapshot(engine, host, assets, args);
-    if let Some(&pc_id) = engine.pc_ids().first()
-        && let Some(entity) = engine.get_entity(pc_id)
-    {
-        let pos = entity.element_data().position_map();
-        host.viewport.center_on_point(pos);
+    let camera_focus = engine
+        .pc_ids()
+        .first()
+        .and_then(|&pc_id| engine.get_entity(pc_id))
+        .map(|entity| entity.element_data().position_map())
+        .or_else(|| {
+            spectator_actor_centroid(engine.active_entity_positions().filter_map(
+                |(id, position)| {
+                    engine
+                        .get_entity(id)
+                        .is_some_and(|entity| entity.human_data().is_some())
+                        .then_some(position)
+                },
+            ))
+        });
+    if let Some(position) = camera_focus {
+        host.viewport.center_on_point(position);
     }
 
     (threaded_input, input_translator)
+}
+
+fn spectator_actor_centroid(
+    positions: impl Iterator<Item = engine_coordinates::MapPoint>,
+) -> Option<engine_coordinates::MapPoint> {
+    let (sum_x, sum_y, count) = positions.fold((0.0, 0.0, 0_u32), |acc, position| {
+        (acc.0 + position.x, acc.1 + position.y, acc.2 + 1)
+    });
+    (count != 0)
+        .then(|| engine_coordinates::MapPoint::new(sum_x / count as f32, sum_y / count as f32))
 }
 
 /// Initialize the Kira audio backend and switch the host sound
@@ -1624,6 +1646,20 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    #[test]
+    fn spectator_camera_focus_is_actor_centroid() {
+        let focus = spectator_actor_centroid(
+            [
+                engine_coordinates::MapPoint::new(100.0, 200.0),
+                engine_coordinates::MapPoint::new(300.0, 400.0),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(focus, engine_coordinates::MapPoint::new(200.0, 300.0));
+        assert!(spectator_actor_centroid(std::iter::empty()).is_none());
+    }
 
     #[test]
     fn loading_tail_phase_targets_are_monotonic() {
