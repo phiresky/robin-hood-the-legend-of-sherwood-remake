@@ -5654,6 +5654,9 @@ impl SequenceManager {
             && self
                 .get_element(waiter.0, waiter.1)
                 .is_some_and(|element| element.postponed_element_index.is_none());
+        let waiter_has_no_cross_successor = self
+            .get_element(waiter.0, waiter.1)
+            .is_some_and(|element| element.cross_postponed.is_none());
         let root_ref = SequenceElementRef::new(root.0, root.1);
         let preserved_stop_priorities = self
             .stop_noop_cache
@@ -5669,7 +5672,10 @@ impl SequenceManager {
                     SequenceElementRef::new(blocker.0, blocker.1),
                     "cached no-op Stop tail disagrees with append tail"
                 );
-                (waiter_cross_only && waiter_priority < *stop_priority).then_some(*stop_priority)
+                (waiter_cross_only
+                    && waiter_has_no_cross_successor
+                    && waiter_priority < *stop_priority)
+                    .then_some(*stop_priority)
             })
             .collect::<Vec<_>>();
         self.invalidate_postpone_tail_cache_for(owner);
@@ -5681,7 +5687,13 @@ impl SequenceManager {
             "postpone append point already has a successor"
         );
         blocker_element.cross_postponed = Some(waiter);
-        if decide_priorities(waiter_priority, waiter_priority) == PriorityDecision::Postpone {
+        // A waiter may already own a postponed successor chain (for example
+        // after TakeOverPostponed). In that case it is not the new tail, so
+        // caching it as one would leave a stale summary immediately after
+        // this append. Let the next lookup walk the complete chain instead.
+        if waiter_has_no_cross_successor
+            && decide_priorities(waiter_priority, waiter_priority) == PriorityDecision::Postpone
+        {
             self.postpone_tail_cache.entry(owner).or_default().insert(
                 (SequenceElementRef::new(root.0, root.1), waiter_priority),
                 PostponeTailSummary {

@@ -1899,6 +1899,43 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
 }
 
 #[test]
+fn postpone_tail_cache_does_not_cache_waiter_with_existing_successor() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let launch = |engine: &mut EngineInner| {
+        let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::PostponeEverythingButInjuries;
+        engine.orders.sequence_manager.launch_element(element)
+    };
+
+    let root = launch(&mut engine);
+    let waiter = launch(&mut engine);
+    let existing_successor = launch(&mut engine);
+    engine
+        .orders
+        .sequence_manager
+        .set_cross_postponed_link((waiter, 0), Some((existing_successor, 0)));
+
+    engine.engine_postpone(root, 0, waiter, 0);
+
+    let next_waiter = launch(&mut engine);
+    engine.engine_postpone(root, 0, next_waiter, 0);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(existing_successor, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((next_waiter, 0))
+    );
+}
+
+#[test]
 fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
