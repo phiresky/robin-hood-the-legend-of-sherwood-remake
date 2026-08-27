@@ -98,8 +98,11 @@ stop_lane() {
     local lane=$1 session
     session=$(session_name "$lane")
     if TMUX_TMPDIR="$tmux_tmpdir" tmux has-session -t "$session" 2>/dev/null; then
-        TMUX_TMPDIR="$tmux_tmpdir" tmux kill-session -t "$session"
-        printf '%s drained lane=%s session=%s\n' "$(timestamp)" "$lane" "$session"
+        # A finite worker may finish after has-session and before kill-session.
+        # That disappearance is the desired state, not a controller failure.
+        if TMUX_TMPDIR="$tmux_tmpdir" tmux kill-session -t "$session" 2>/dev/null; then
+            printf '%s drained lane=%s session=%s\n' "$(timestamp)" "$lane" "$session"
+        fi
     fi
 }
 
