@@ -1085,13 +1085,12 @@ pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<Potential
         // begin inactive but must already occur in every applicable Enemy
         // detectable list so activation does not alter list identity/order.
         match entity {
-            Entity::Pc(_) => {
+            Entity::Pc(pc) => {
                 out.push(PotentialDetectable {
                     id: id.into(),
                     is_pc: true,
                     is_soldier: false,
-                    // All PCs are Royalists.
-                    camp: Camp::Royalists,
+                    camp: pc.pc.cached_camp,
                 });
             }
             Entity::Soldier(s) => {
@@ -1134,6 +1133,7 @@ pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<Potential
 /// - Lacklandist soldier: detects Royalist soldiers + PCs.
 /// - Royalist civilian: detects PCs.
 /// - Lacklandist civilian (hostile civ): detects PCs.
+/// - Custom soldier: detects PCs and soldiers of every other allegiance.
 pub(super) fn build_detectable_enemies_for(
     self_camp: Camp,
     self_is_civilian: bool,
@@ -1353,7 +1353,7 @@ mod parity_tests {
     #[test]
     fn potential_detectables_include_inactive_authored_pcs() {
         let mut engine = EngineInner::new();
-        let add_pc = |engine: &mut EngineInner, active| {
+        let add_pc = |engine: &mut EngineInner, active, camp| {
             engine.add_entity(Entity::Pc(crate::element::ActorPc {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ActorPc,
@@ -1362,18 +1362,24 @@ mod parity_tests {
                 },
                 actor: Default::default(),
                 human: Default::default(),
-                pc: Default::default(),
+                pc: crate::element::PcData {
+                    cached_camp: camp,
+                    ..Default::default()
+                },
             }))
         };
-        let inactive = add_pc(&mut engine, false);
-        let active = add_pc(&mut engine, true);
+        let inactive = add_pc(&mut engine, false, Camp::Custom(7));
+        let active = add_pc(&mut engine, true, Camp::Custom(8));
 
-        let ids = build_potential_detectables(&engine)
+        let candidates = build_potential_detectables(&engine)
             .into_iter()
-            .map(|candidate| candidate.id)
+            .map(|candidate| (candidate.id, candidate.camp))
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec![inactive, active]);
+        assert_eq!(
+            candidates,
+            vec![(inactive, Camp::Custom(7)), (active, Camp::Custom(8))]
+        );
     }
 
     #[test]
@@ -2457,6 +2463,37 @@ mod parity_tests {
                 .map(|detectable| detectable.element.unwrap().index())
                 .collect::<Vec<_>>(),
             vec![7, 3]
+        );
+    }
+
+    #[test]
+    fn custom_retinue_detects_hostile_champions_but_not_its_own() {
+        let self_id = EntityId::Soldier(crate::entity_id::SoldierId(5));
+        let allied_champion = EntityId::Pc(crate::entity_id::PcId(1));
+        let hostile_champion = EntityId::Pc(crate::entity_id::PcId(2));
+        let snapshot = vec![
+            PotentialDetectable {
+                id: allied_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(2),
+            },
+            PotentialDetectable {
+                id: hostile_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(3),
+            },
+        ];
+
+        let detectables = build_detectable_enemies_for(Camp::Custom(2), false, self_id, &snapshot);
+
+        assert_eq!(
+            detectables
+                .iter()
+                .map(|detectable| detectable.element)
+                .collect::<Vec<_>>(),
+            vec![Some(hostile_champion)]
         );
     }
 }

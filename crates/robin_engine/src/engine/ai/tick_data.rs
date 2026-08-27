@@ -1718,9 +1718,9 @@ impl EngineInner {
             })
         };
 
-        // Build a PC snapshot for `handle`. PCs belong to the Royalist camp,
-        // so they are enemies for Lackland soldiers and friends for friendly
-        // forest soldiers.
+        // Build a PC snapshot for `handle`. Campaign PCs normally belong to
+        // the Royalist camp; custom-mission PCs retain their authored
+        // allegiance so each retinue recognizes its champion as a friend.
         let build_pc = |handle: u32, require_able: bool| -> Option<FighterSnapshot> {
             let pc = self.world.entities.get_pc(PcId(handle))?;
             let is_dead = pc.pc.life_points <= 0;
