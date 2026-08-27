@@ -1209,8 +1209,10 @@ impl NativeContext<'_, '_> {
                 0
             }
             HasAnyActionSelected => {
-                // Checks whether the PC is selected and has a
-                // non-NoAction action selected.
+                // Original RHScript.cpp checks the selected PC and the
+                // process-global RHMessenger::muwAction.  A PC's remembered
+                // `current_action` is deliberately independent (for example,
+                // SELECT_ACTION_SIMPLE can clear only the messenger action).
                 let actor = stack.pop_i32();
                 if !self.actor_exists(actor) {
                     tracing::error!("Script Error: HasAnyActionSelected for invalid actor {actor}");
@@ -1225,10 +1227,11 @@ impl NativeContext<'_, '_> {
                 if !self.selected_pc_handles().contains(&actor) {
                     return 0;
                 }
-                // Check if any action is selected (non-NoAction)
-                if entity
-                    .pc_data()
-                    .is_some_and(|pc| pc.current_action != Action::NoAction)
+                if *self
+                    .selected_action
+                    .as_deref()
+                    .expect("HasAnyActionSelected requires the live messenger action")
+                    != Action::NoAction
                 {
                     1
                 } else {

@@ -275,6 +275,7 @@ struct BoundScriptEffects {
     script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
     selected_pcs: Vec<EntityId>,
+    selected_action: crate::profiles::Action,
     sequence_manager: crate::sequence::SequenceManager,
     sound_sources: crate::sound_source::SoundSourceManager,
     weather: crate::engine::WeatherState,
@@ -297,6 +298,7 @@ impl BoundScriptEffects {
             script_domains: crate::engine::ScriptDomains::default(),
             bindings: AttachedScriptBindings::default(),
             selected_pcs: Vec::new(),
+            selected_action: crate::profiles::Action::NoAction,
             sequence_manager: crate::sequence::SequenceManager::new(),
             sound_sources: crate::sound_source::SoundSourceManager::new(),
             weather: crate::engine::WeatherState::default(),
@@ -372,6 +374,7 @@ impl HostFunctions for BoundScriptEffects {
             &self.weather,
             &self.frame,
         )
+        .with_selected_action(&mut self.selected_action)
         .with_short_briefings(&mut self.short_briefings)
         .with_standard_view_radius(&mut self.standard_view_radius)
         .with_campaign(&mut self.campaign, &mut self.mission_stat);
@@ -2989,6 +2992,48 @@ fn current_action_returns_nonanimation_end_without_an_installed_order() {
             TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
         ),
         crate::order::OrderType::NonanimationEnd as i32
+    );
+}
+
+#[test]
+fn any_action_selected_reads_the_messenger_action_not_the_pcs_remembered_action() {
+    let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
+    let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
+    let mut host = BoundScriptEffects::new();
+    host.entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    host.selected_pcs.push(pc_id);
+
+    // RHMessenger::muwAction is the authoritative value in RHScript.cpp.
+    // The PC field can legitimately lag it in either direction.
+    host.selected_action = crate::profiles::Action::Net;
+    host.entities
+        .get_mut(pc_id)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .current_action = crate::profiles::Action::NoAction;
+    let mut action = NativeStack::default();
+    action.push_i32(pc_handle);
+    assert_eq!(
+        host.call(NativeFn::HasAnyActionSelected as u32, &mut action)
+            .expect_return("HasAnyActionSelected is synchronous"),
+        1
+    );
+
+    host.selected_action = crate::profiles::Action::NoAction;
+    host.entities
+        .get_mut(pc_id)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .current_action = crate::profiles::Action::Bow;
+    let mut action = NativeStack::default();
+    action.push_i32(pc_handle);
+    assert_eq!(
+        host.call(NativeFn::HasAnyActionSelected as u32, &mut action)
+            .expect_return("HasAnyActionSelected is synchronous"),
+        0
     );
 }
 
