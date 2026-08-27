@@ -804,6 +804,45 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
 }
 
 #[test]
+fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    // Replays retain a large amount of historical sequence state until the
+    // Friday cleanup pass. Keep enough unrelated sequences here to catch a
+    // regression that scans the whole manager for every stopped chain node.
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+    }
+
+    let mut chain = Vec::with_capacity(4096);
+    for _ in 0..4096 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        if let Some(&previous) = chain.last() {
+            mgr.get_element_mut(previous, 0).unwrap().cross_postponed = Some((sequence, 0));
+        }
+        chain.push(sequence);
+    }
+
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((chain[0], 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+
+    for sequence in chain {
+        let element = mgr.get_element(sequence, 0).unwrap();
+        assert_eq!(element.state, SequenceState::Interrupted);
+        assert_eq!(element.cross_postponed, None);
+    }
+}
+
+#[test]
 fn stop_owner_walks_nested_cross_postponed_graph() {
     let mut mgr = SequenceManager::new();
     let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));

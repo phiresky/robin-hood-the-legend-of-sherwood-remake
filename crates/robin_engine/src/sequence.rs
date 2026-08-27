@@ -5245,8 +5245,32 @@ impl SequenceManager {
     fn process_effects(
         &mut self,
         seq_id: SequenceId,
+        effects: StateChangeEffects,
+        terminal_site: &'static str,
+    ) {
+        self.process_effects_with_cross_cleanup(seq_id, effects, terminal_site, true);
+    }
+
+    /// Process a state transition while leaving inbound cross-postponed links
+    /// for a caller-owned batch cleanup. `RHSequenceElement::Stop` can walk a
+    /// chain containing thousands of separately allocated sequences; scanning
+    /// the complete manager after every node makes that linear graph
+    /// quadratic in the number of retained sequences.
+    fn process_effects_deferring_cross_cleanup(
+        &mut self,
+        seq_id: SequenceId,
+        effects: StateChangeEffects,
+        terminal_site: &'static str,
+    ) {
+        self.process_effects_with_cross_cleanup(seq_id, effects, terminal_site, false);
+    }
+
+    fn process_effects_with_cross_cleanup(
+        &mut self,
+        seq_id: SequenceId,
         mut effects: StateChangeEffects,
         terminal_site: &'static str,
+        clear_cross_links: bool,
     ) {
         // RHSequenceElementMovement's override interrupts its exact linked
         // Seek before delegating to the base element's Interrupted handling.
@@ -5294,10 +5318,11 @@ impl SequenceManager {
                     card.cancel_path_request_owner = Some(cancel_owner);
                 }
             }
-            self.process_effects(
+            self.process_effects_with_cross_cleanup(
                 linked.sequence_id,
                 linked_effects,
                 "linked_movement_seek_interrupt",
+                clear_cross_links,
             );
         }
 
@@ -5349,10 +5374,14 @@ impl SequenceManager {
                 (true, false) => self.remove_actor_live_ref(owner, elem_ref),
                 _ => {}
             }
-            if matches!(
-                new_state,
-                SequenceState::Terminated | SequenceState::Interrupted | SequenceState::Impossible
-            ) {
+            if clear_cross_links
+                && matches!(
+                    new_state,
+                    SequenceState::Terminated
+                        | SequenceState::Interrupted
+                        | SequenceState::Impossible
+                )
+            {
                 self.clear_cross_postponed_links_to((seq_id, elem_idx));
             }
         }
@@ -5409,13 +5438,26 @@ impl SequenceManager {
             return;
         }
 
-        self.process_effects_after_condolation(seq_id, effects);
+        self.process_effects_after_condolation_with_cross_cleanup(
+            seq_id,
+            effects,
+            clear_cross_links,
+        );
     }
 
     fn process_effects_after_condolation(
         &mut self,
         seq_id: SequenceId,
         effects: StateChangeEffects,
+    ) {
+        self.process_effects_after_condolation_with_cross_cleanup(seq_id, effects, true);
+    }
+
+    fn process_effects_after_condolation_with_cross_cleanup(
+        &mut self,
+        seq_id: SequenceId,
+        effects: StateChangeEffects,
+        clear_cross_links: bool,
     ) {
         let install_cross_postponed_after_card = effects.install_cross_postponed_after_card;
         // Process cascading state changes
@@ -5430,7 +5472,12 @@ impl SequenceManager {
                 seq.set_element_state(cascade_elem_idx, cascade_state, cascade_flags)
             };
             // Recursively process sub-effects
-            self.process_effects(seq_id, sub_effects, "terminal_state_cascade");
+            self.process_effects_with_cross_cleanup(
+                seq_id,
+                sub_effects,
+                "terminal_state_cascade",
+                clear_cross_links,
+            );
         }
 
         // Signal ready (element finished) — advance to next level
@@ -5755,7 +5802,6 @@ impl SequenceManager {
                 "manager stop_owner no current target"
             );
         }
-        let mut stopped = Vec::new();
         let mut visited = HashSet::new();
         while let Some((seq_id, elem_idx)) = targets.pop_front() {
             if !visited.insert((seq_id, elem_idx)) {
@@ -5806,7 +5852,7 @@ impl SequenceManager {
                     effect_index,
                     "manager before process_effects"
                 );
-                self.process_effects(seq_id, effects, "stop_owner");
+                self.process_effects_deferring_cross_cleanup(seq_id, effects, "stop_owner");
                 tracing::trace!(
                     target: "parity_stop",
                     ?owner,
@@ -5816,41 +5862,14 @@ impl SequenceManager {
                     "manager after process_effects"
                 );
             }
-            if self
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.state == SequenceState::Interrupted)
-            {
-                stopped.push((seq_id, elem_idx));
-            }
         }
 
-        // A directly targeted cross-postponed element is not necessarily
-        // reached through its blocker's `Sequence::stop_element` recursion.
-        // Remove the now-dead links just as the original Stop method nulls its
-        // postponed pointer after recursively interrupting it.
-        if !stopped.is_empty() {
-            tracing::trace!(
-                target: "parity_stop",
-                ?owner,
-                ?stopped,
-                "manager before clear stopped links"
-            );
-            for (seq_id, seq) in &mut self.sequences {
-                for elem in &mut seq.elements {
-                    if let Some(postponed_idx) = elem.postponed_element_index
-                        && stopped.contains(&(*seq_id, postponed_idx))
-                    {
-                        elem.postponed_element_index = None;
-                    }
-                    if let Some(cross) = elem.cross_postponed
-                        && stopped.contains(&cross)
-                    {
-                        elem.cross_postponed = None;
-                    }
-                }
-            }
-            tracing::trace!(target: "parity_stop", ?owner, "manager after clear stopped links");
-        }
+        // Original clears postponed pointers while the recursive Stop graph
+        // unwinds. Rust stores cross-sequence links in the manager, so clear
+        // every terminal target in one linear pass after the equivalent graph
+        // walk. Doing this inside each `process_effects` call is O(chain × all
+        // retained sequences) and stalls long replay-generated chains.
+        self.clear_terminal_cross_postponed_links();
     }
 
     /// Drop blocker links whose postponed target was stopped either directly
@@ -5983,7 +6002,11 @@ impl SequenceManager {
                 }
             }
             for effects in effects_vec {
-                self.process_effects(seq_id, effects, "stop_pending_elements");
+                self.process_effects_deferring_cross_cleanup(
+                    seq_id,
+                    effects,
+                    "stop_pending_elements",
+                );
             }
         }
 
