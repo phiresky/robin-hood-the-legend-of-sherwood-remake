@@ -3025,6 +3025,17 @@ impl EngineInner {
                     .sequence_manager
                     .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
                 self.stop_owner_active_mechanics(owner);
+                // Original assigns `mpSequenceElement = pNewSequenceElement`
+                // before interrupting the outgoing element. The outgoing
+                // SetState cascade can synchronously register/postpone nested
+                // work before its deferred condolence card is drained; that
+                // work must already see the incoming element as selected.
+                // The outer sequence-phase callback scope below covers the
+                // deferred card itself, while this inner scope closes the gap
+                // during the state transition which produces that card.
+                self.orders
+                    .sequence_manager
+                    .begin_instruct_callback(owner, new_seq, new_idx);
                 self.orders
                     .sequence_manager
                     .element_interrupted_after_replacement_selected(
@@ -3032,7 +3043,9 @@ impl EngineInner {
                         cur_idx,
                         crate::sequence::CascadeFlags::NEXT_LEVEL,
                     );
-                true
+                self.orders
+                    .sequence_manager
+                    .end_instruct_callback(owner, new_seq, new_idx)
             }
         }
     }

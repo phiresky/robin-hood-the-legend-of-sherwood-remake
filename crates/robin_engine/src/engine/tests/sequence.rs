@@ -3882,15 +3882,15 @@ fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
 }
 
 #[test]
-fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
+fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
 
-    let mut outgoing = SequenceElement::new(1, Command::SwordstrikeSmalltalkLeft, Some(owner));
-    outgoing.priority = SequencePriority::Wait;
+    let mut outgoing = SequenceElement::new(1, Command::ReceiveHitDamage, Some(owner));
+    outgoing.priority = SequencePriority::Injury;
     // Interrupt arbitration requires the in-progress element to carry its
     // current order, mirroring the assertion in the original manager.
     outgoing.orders.push_back(crate::order::Order::test_new(
@@ -3903,12 +3903,27 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
         .orders
         .sequence_manager
         .element_in_progress(outgoing_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, outgoing_sequence, 0);
 
-    let mut incoming = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
-    incoming.priority = SequencePriority::Injury;
+    let mut incoming = SequenceElement::new(1, Command::ReceiveDamage, Some(owner));
+    incoming.priority = SequencePriority::Lethal;
     let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
     assert!(engine.arbitrate_instruct(incoming_sequence, 0));
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, outgoing_sequence, 0),
+        "the reentrant lethal instruction must permanently supersede the outgoing injury callback"
+    );
 
+    // The sequence phase keeps the accepted incoming instruction selected
+    // while draining the outgoing injury's deferred condolence. Any Wait
+    // launched by that callback must queue behind the lethal instruction,
+    // not behind the now-interrupted injury.
     engine
         .orders
         .sequence_manager
@@ -3919,24 +3934,33 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
             .sequence_manager
             .current_element_for_actor(owner),
         Some((incoming_sequence, 0)),
-        "the outgoing SetState callback must observe incoming injury as selected"
+        "the outgoing SetState callback must observe incoming lethal damage as selected"
     );
 
-    let mut nested = SequenceElement::new(1, Command::Turn, Some(owner));
-    nested.priority = SequencePriority::Normal;
+    let mut nested = SequenceElement::new(1, Command::Wait, Some(owner));
+    nested.priority = SequencePriority::Wait;
     let nested_sequence = engine.orders.sequence_manager.launch_element(nested);
     assert!(
         !engine.arbitrate_instruct(nested_sequence, 0),
-        "recursive normal work must arbitrate against the selected injury"
+        "the injury callback's Wait must postpone behind selected lethal damage"
     );
-    assert_ne!(
+    assert_eq!(
         engine
             .orders
             .sequence_manager
             .get_element(nested_sequence, 0)
             .unwrap()
             .state,
-        SequenceState::InProgress
+        SequenceState::Postponed
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((nested_sequence, 0))
     );
 
     assert!(
