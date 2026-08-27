@@ -2982,6 +2982,15 @@ impl crate::bitcode_adapters::NativeBitcode for OrderedSequences {
 
 crate::bitcode_adapters::impl_native_bitcode!(OrderedSequences);
 
+#[derive(Debug, Clone, Copy)]
+struct ActorStopSummary {
+    weakest_priority: SequencePriority,
+    /// No live element owned by the actor has a same-sequence next or
+    /// postponed successor. Cross-sequence successors are owner-checked by
+    /// `stop_owner_current_from_root`.
+    cross_only: bool,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -3013,6 +3022,22 @@ pub struct SequenceManager {
     /// `sequences` and serialized with the manager so snapshots remain
     /// self-contained.
     actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
+
+    /// Weakest priority among each actor's live elements.
+    ///
+    /// This is a derived acceleration index for `Actor::Stop`. Original walks
+    /// the selected element's postponed chain even when every element is too
+    /// strong for the requested stop. Large swordfight crowds can append one
+    /// strong postponed element between successive `Stop(PREFERENCE)` calls,
+    /// making that pointer walk triangular. If this index proves that *all*
+    /// of an actor's live work is stronger than the stop, the selected graph
+    /// is necessarily effect-free and can be left untouched.
+    ///
+    /// Snapshots omit the index; it is rebuilt lazily from `actor_live`.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    #[state_hash(skip)]
+    actor_stop_summaries: BTreeMap<EntityId, ActorStopSummary>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
@@ -3236,22 +3261,119 @@ impl SequenceManager {
     }
 
     fn insert_actor_live_ref(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
+        let (priority, cross_only) = self
+            .get_sequence(elem_ref.sequence_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "cannot index missing live sequence {:?}",
+                    elem_ref.sequence_id
+                )
+            })
+            .elements
+            .get(elem_ref.element_index)
+            .map(|element| {
+                (
+                    element.priority,
+                    self.get_sequence(elem_ref.sequence_id)
+                        .and_then(|sequence| {
+                            sequence.following_element_index(elem_ref.element_index)
+                        })
+                        .is_none()
+                        && element.postponed_element_index.is_none(),
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "cannot index missing live element {:?}/{}",
+                    elem_ref.sequence_id, elem_ref.element_index
+                )
+            });
+        let already_live = self.actor_live.contains_key(&owner);
         self.actor_live.entry(owner).or_default().insert(elem_ref);
+        if !already_live {
+            self.actor_stop_summaries.insert(
+                owner,
+                ActorStopSummary {
+                    weakest_priority: priority,
+                    cross_only,
+                },
+            );
+        } else if let Some(summary) = self.actor_stop_summaries.get_mut(&owner) {
+            summary.weakest_priority = summary.weakest_priority.max(priority);
+            summary.cross_only &= cross_only;
+        }
     }
 
     fn remove_actor_live_ref(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
+        let removed_priority = self
+            .get_element(elem_ref.sequence_id, elem_ref.element_index)
+            .map(|element| element.priority);
         if let Some(set) = self.actor_live.get_mut(&owner) {
             set.remove(&elem_ref);
             if set.is_empty() {
                 self.actor_live.remove(&owner);
             }
         }
+        // Recomputing here can turn a linear stop cascade into quadratic
+        // work. Invalidate only when the removed element may have supplied
+        // the ceiling; the next Stop query rebuilds it once if needed.
+        if removed_priority.is_some_and(|priority| {
+            self.actor_stop_summaries
+                .get(&owner)
+                .is_some_and(|summary| summary.weakest_priority == priority)
+        }) {
+            self.actor_stop_summaries.remove(&owner);
+        }
+    }
+
+    fn actor_stop_summary(&mut self, owner: EntityId) -> Option<ActorStopSummary> {
+        if let Some(summary) = self.actor_stop_summaries.get(&owner) {
+            return Some(*summary);
+        }
+        let summary = self.actor_live.get(&owner).and_then(|refs| {
+            refs.iter().try_fold(
+                ActorStopSummary {
+                    weakest_priority: SequencePriority::NonInterruptable,
+                    cross_only: true,
+                },
+                |mut summary, element_ref| {
+                    let sequence =
+                        self.get_sequence(element_ref.sequence_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "actor_live contains stale sequence ref {:?}",
+                                    element_ref.sequence_id
+                                )
+                            });
+                    let element = sequence
+                        .elements
+                        .get(element_ref.element_index)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "actor_live contains stale element ref {:?}/{}",
+                                element_ref.sequence_id, element_ref.element_index
+                            )
+                        });
+                    summary.weakest_priority = summary.weakest_priority.max(element.priority);
+                    summary.cross_only &= sequence
+                        .following_element_index(element_ref.element_index)
+                        .is_none()
+                        && element.postponed_element_index.is_none();
+                    Some(summary)
+                },
+            )
+        });
+        if let Some(summary) = summary {
+            self.actor_stop_summaries.insert(owner, summary);
+        }
+        summary
     }
 
     pub fn new() -> Self {
         Self {
             sequences: IndexMap::new().into(),
             actor_live: BTreeMap::new(),
+            actor_stop_summaries: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3275,6 +3397,7 @@ impl SequenceManager {
                 .collect::<IndexMap<_, _>>()
                 .into(),
             actor_live: BTreeMap::new(),
+            actor_stop_summaries: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3296,6 +3419,7 @@ impl SequenceManager {
     /// cleanup path.
     pub fn rebuild_indices(&mut self) {
         self.actor_live.clear();
+        self.actor_stop_summaries.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
         self.actor_translating = None;
@@ -3307,6 +3431,18 @@ impl SequenceManager {
                 let elem_ref = SequenceElementRef::new(*seq_id, elem_idx);
                 if Self::is_actor_live_state(elem.state) {
                     self.actor_live.entry(owner).or_default().insert(elem_ref);
+                    let cross_only = seq.following_element_index(elem_idx).is_none()
+                        && elem.postponed_element_index.is_none();
+                    self.actor_stop_summaries
+                        .entry(owner)
+                        .and_modify(|summary| {
+                            summary.weakest_priority = summary.weakest_priority.max(elem.priority);
+                            summary.cross_only &= cross_only;
+                        })
+                        .or_insert(ActorStopSummary {
+                            weakest_priority: elem.priority,
+                            cross_only,
+                        });
                 }
                 if elem.state == SequenceState::InProgress {
                     self.actor_in_progress
@@ -5023,7 +5159,26 @@ impl SequenceManager {
         if let Some(seq) = self.sequences.get_mut(&seq_id)
             && let Some(elem) = seq.elements.get_mut(elem_idx)
         {
+            let old_priority = elem.priority;
+            let owner = elem.owner;
+            let is_live = Self::is_actor_live_state(elem.state);
             elem.priority = priority;
+            if is_live
+                && old_priority != priority
+                && let Some(owner) = owner
+            {
+                if priority > old_priority {
+                    if let Some(summary) = self.actor_stop_summaries.get_mut(&owner) {
+                        summary.weakest_priority = summary.weakest_priority.max(priority);
+                    }
+                } else if self
+                    .actor_stop_summaries
+                    .get(&owner)
+                    .is_some_and(|summary| summary.weakest_priority == old_priority)
+                {
+                    self.actor_stop_summaries.remove(&owner);
+                }
+            }
         }
     }
 
@@ -5778,6 +5933,37 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
+        // `RHSequenceElement::Stop` always follows the postponed pointer,
+        // even when the current node is too strong. That is observable if a
+        // weaker descendant exists, but it is a pure no-op when every live
+        // element owned by this actor is stronger than `stop_priority`.
+        // Checking the actor-wide ceiling is deliberately conservative: it
+        // can decline this fast path because of unrelated weak work, but can
+        // never hide a stoppable node in the selected graph. Terminal nodes
+        // are removed from postponed links at their state-transition cleanup.
+        let root_is_live = root.is_some_and(|(seq_id, elem_idx)| {
+            self.get_element(seq_id, elem_idx).is_some_and(|element| {
+                element.owner == Some(owner)
+                    && Self::is_actor_live_state(element.state)
+                    && !(element.command == Command::Wait
+                        && element.priority == SequencePriority::Wait)
+            })
+        });
+        if root_is_live
+            && self.actor_stop_summary(owner).is_some_and(|summary| {
+                summary.cross_only && summary.weakest_priority < stop_priority
+            })
+        {
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?stop_priority,
+                ?root,
+                "manager stop_owner all live work too strong"
+            );
+            return;
+        }
+
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
         // observably different after loading: stale non-selected branches can

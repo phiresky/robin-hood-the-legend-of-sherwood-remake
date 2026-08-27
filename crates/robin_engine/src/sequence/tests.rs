@@ -844,6 +844,94 @@ fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
 }
 
 #[test]
+fn repeated_preference_stops_skip_growing_strong_postponed_prefix() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+
+    let mut root_element = make_simple_element(1, Command::QuitSwordfight, Some(owner));
+    root_element.priority = SequencePriority::PostponeEverythingButInjuries;
+    let root = mgr.launch_element(root_element);
+    mgr.element_in_progress(root, 0);
+
+    // EnterSwordfight can add one equal-priority postponed element between
+    // successive PrepareToEnterSwordFight Stop(PREFERENCE) calls. Original's
+    // pointer walk is effect-free for this graph; rescanning the full prefix
+    // after every append makes the Rust representation triangular.
+    let mut tail = root;
+    let mut chain = Vec::with_capacity(8192);
+    for _ in 0..8192 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::PostponeEverythingButInjuries;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((sequence, 0));
+        tail = sequence;
+        chain.push(sequence);
+
+        mgr.stop_owner_current_from_root(
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    assert_eq!(
+        mgr.get_element(root, 0).unwrap().state,
+        SequenceState::InProgress
+    );
+    assert!(chain.iter().all(|sequence| {
+        mgr.get_element(*sequence, 0).unwrap().state == SequenceState::Postponed
+    }));
+
+    // The ceiling is only an admission shortcut. A newly linked weak tail
+    // must disable it and remain observable to the exact Original traversal.
+    let mut weak = make_simple_element(1, Command::Turn, Some(owner));
+    weak.priority = SequencePriority::Normal;
+    let weak = mgr.launch_element(weak);
+    mgr.postpone_element(weak, 0);
+    mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((weak, 0));
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+    assert_eq!(
+        mgr.get_element(weak, 0).unwrap().state,
+        SequenceState::Interrupted
+    );
+}
+
+#[test]
+fn strong_owner_summary_does_not_hide_weak_same_sequence_successor() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let successor_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let mut sequence = Sequence::new();
+    let mut root = make_simple_element(1, Command::QuitSwordfight, Some(owner));
+    root.priority = SequencePriority::PostponeEverythingButInjuries;
+    sequence.append_element(root);
+    let mut successor = make_simple_element(2, Command::Turn, Some(successor_owner));
+    successor.priority = SequencePriority::Normal;
+    sequence.append_element(successor);
+    let sequence = mgr.launch_sequence(sequence);
+
+    mgr.stop_owner_current_from_root(
+        owner,
+        Some((sequence, 0)),
+        SequencePriority::Preference,
+        &|element| element.priority,
+    );
+
+    assert_eq!(
+        mgr.get_element(sequence, 1).unwrap().state,
+        SequenceState::Interrupted,
+        "actor-wide priority shortcut must preserve Original's same-sequence recursion"
+    );
+}
+
+#[test]
 fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
     let mut mgr = SequenceManager::new();
     let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
