@@ -712,16 +712,14 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
-        let terminal_seek_handoffs: Vec<_> = self
+        let terminal_movement_handoffs: Vec<_> = self
             .world
             .entities
             .actors()
             .filter_map(|(actor_id, entity)| {
                 let owner = EntityId::from(actor_id);
                 let actor = entity.actor_data()?;
-                (actor.seek_target.is_some()
-                    && actor.post_seek_sequence.is_some()
-                    && actor.installed_order.is_none()
+                (actor.installed_order.is_none()
                     && matches!(
                         entity.element_data().sprite.last_action,
                         OrderType::TransitionRunningUprightWaitingUpright
@@ -3256,23 +3254,27 @@ impl EngineInner {
             actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
         }
 
-        for owner in terminal_seek_handoffs {
+        for owner in terminal_movement_handoffs {
             if accepted_instruct_owners.contains(&owner)
-                && self.live_pending_seek_freezing_order(owner)
-                && self.live_seek_has_completed_parallel_element(owner)
+                && self.live_pending_freezing_order(owner)
+                && (self.live_move_has_completed_parallel_element(owner)
+                    || self.recent_terminal_move_has_completed_sibling(owner))
             {
                 // The entity loop has already returned TERMINATED for this
-                // seek, while its Ready/callback tail registers a replacement
-                // for this manager Hourglass. Original Actor::Hourglass uses
-                // live mpSequenceElement in its terminal DoNextOrder arm
+                // movement, while its Ready/callback tail registers a
+                // replacement for this manager Hourglass. This covers both
+                // post-seek interactions and a Stop-rewritten walk whose
+                // completed parallel sibling releases a postponed group Move.
+                // Original Actor::Hourglass uses live mpSequenceElement in its
+                // terminal DoNextOrder arm
                 // (`original-code/RHelementactor.cpp:1033-1073,1197-1202`),
                 // so the replacement's sole Freezing order is consumed even
                 // though its path request remains queued until the next path
                 // phase. This seam exists only when the manager also closed a
-                // same-level immediate sibling on that stack; an ordinary
-                // postponed Move with only later command levels remains
-                // selected for the actor's next frame.
-                self.advance_live_order_after_reentrant_seek(owner);
+                // sibling on the replacement or the just-completed outgoing
+                // sequence; an ordinary postponed Move with no such terminal
+                // continuation remains selected for the actor's next frame.
+                self.advance_live_order_after_terminal_handoff(owner);
             }
         }
 

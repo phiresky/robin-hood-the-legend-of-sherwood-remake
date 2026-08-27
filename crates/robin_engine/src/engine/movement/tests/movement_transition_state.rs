@@ -1127,7 +1127,7 @@ mod suite {
     }
 
     #[test]
-    fn terminal_reentrant_seek_advances_live_move_waiting_order() {
+    fn terminal_movement_handoff_advances_live_move_waiting_order_without_seek_metadata() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -1140,15 +1140,6 @@ mod suite {
             human: HumanData::default(),
             pc: PcData::default(),
         }));
-        {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
-            actor.seek_target = Some(owner);
-            actor.post_seek_sequence = Some(Sequence::new().into_post_seek());
-        }
         let mut outgoing = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -1217,9 +1208,9 @@ mod suite {
             .pending_path_requests
             .enqueue(PendingPathRequest::test_request(owner, sequence, 0));
 
-        assert!(engine.live_pending_seek_freezing_order(owner));
+        assert!(engine.live_pending_freezing_order(owner));
         assert!(
-            !engine.live_seek_has_completed_parallel_element(owner),
+            !engine.live_move_has_completed_parallel_element(owner),
             "a completed later-level element must not consume an ordinary postponed Move"
         );
         engine
@@ -1228,15 +1219,15 @@ mod suite {
             .get_element_mut(sequence, 1)
             .unwrap()
             .command_level = 1;
-        assert!(engine.live_seek_has_completed_parallel_element(owner));
-        engine.advance_live_order_after_reentrant_seek(owner);
+        assert!(engine.live_move_has_completed_parallel_element(owner));
+        engine.advance_live_order_after_terminal_handoff(owner);
         engine.orders.sequence_manager.set_translating_element(None);
 
         let element = engine
             .orders
             .sequence_manager
             .get_element(sequence, 0)
-            .expect("terminated post-seek replacement remains inspectable");
+            .expect("terminated movement replacement remains inspectable");
         assert!(element.orders.is_empty());
         assert_eq!(element.state, SequenceState::Terminated);
         assert!(
@@ -1269,6 +1260,62 @@ mod suite {
             1,
             "the captured outgoing order remains stale; Hourglass advances the live replacement"
         );
+    }
+
+    #[test]
+    fn terminal_group_move_handoff_finds_completed_outgoing_sibling() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Crouched,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let mut outgoing = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingCrouched,
+        );
+        outgoing.state = SequenceState::Terminated;
+        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+        let mut completed_sibling =
+            SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
+        completed_sibling.state = SequenceState::Terminated;
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence_mut(outgoing_sequence)
+            .unwrap()
+            .elements
+            .push(completed_sibling);
+
+        let mut replacement = SequenceElement::new_movement(
+            1,
+            Command::MoveWaiting,
+            Some(owner),
+            OrderType::WalkingCrouched,
+        );
+        replacement.state = SequenceState::InProgress;
+        replacement
+            .orders
+            .push_back(Order::test_new(OrderType::Freezing, 867.70776, 2471.1958));
+        let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
+        engine
+            .orders
+            .sequence_manager
+            .set_translating_element(Some((
+                owner,
+                crate::sequence::SequenceElementRef::new(replacement_sequence, 0),
+            )));
+
+        assert!(engine.recent_terminal_move_has_completed_sibling(owner));
     }
 
     #[test]

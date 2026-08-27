@@ -6883,7 +6883,7 @@ impl EngineInner {
         // selections, so reproduce this re-entrant live-pointer seam
         // explicitly for post-seek launches only.
         for entity_id in post_seek_reentrant_order_advances {
-            self.advance_live_order_after_reentrant_seek(entity_id);
+            self.advance_live_order_after_terminal_handoff(entity_id);
         }
 
         // Drain collected waypoint pops against each actor's Move
@@ -12045,7 +12045,7 @@ impl EngineInner {
         self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
     }
 
-    pub(in crate::engine) fn advance_live_order_after_reentrant_seek(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn advance_live_order_after_terminal_handoff(&mut self, owner: EntityId) {
         if let Some((seq_id, elem_idx)) = self
             .orders
             .sequence_manager
@@ -12094,13 +12094,7 @@ impl EngineInner {
         }
     }
 
-    pub(in crate::engine) fn live_pending_seek_freezing_order(&self, owner: EntityId) -> bool {
-        let Some(actor) = self.world.entities.get(owner).and_then(Entity::actor_data) else {
-            return false;
-        };
-        if actor.seek_target.is_none() || actor.post_seek_sequence.is_none() {
-            return false;
-        }
+    pub(in crate::engine) fn live_pending_freezing_order(&self, owner: EntityId) -> bool {
         self.orders
             .sequence_manager
             .current_element_for_actor(owner)
@@ -12116,7 +12110,7 @@ impl EngineInner {
             })
     }
 
-    pub(in crate::engine) fn live_seek_has_completed_parallel_element(
+    pub(in crate::engine) fn live_move_has_completed_parallel_element(
         &self,
         owner: EntityId,
     ) -> bool {
@@ -12139,6 +12133,40 @@ impl EngineInner {
                 )
             })
             .unwrap_or(false)
+    }
+
+    pub(in crate::engine) fn recent_terminal_move_has_completed_sibling(
+        &self,
+        owner: EntityId,
+    ) -> bool {
+        // A Stop-rewritten Move can finish a multi-level arrival sequence
+        // immediately before its postponed replacement is instructed. The
+        // latest completed movement sequence mirrors the entry-latched
+        // `pSequenceElement`; a terminated non-movement sibling proves that
+        // Ready ran a continuation on that same terminal stack.
+        let live_sequence = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .map(|(sequence_id, _)| sequence_id);
+        self.orders
+            .sequence_manager
+            .sequences_iter()
+            .filter(|sequence| Some(sequence.id) != live_sequence)
+            .filter(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    element.owner == Some(owner)
+                        && element.data.is_movement()
+                        && element.state == crate::sequence::SequenceState::Terminated
+                })
+            })
+            .max_by_key(|sequence| sequence.id)
+            .is_some_and(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    !element.data.is_movement()
+                        && element.state == crate::sequence::SequenceState::Terminated
+                })
+            })
     }
 }
 
