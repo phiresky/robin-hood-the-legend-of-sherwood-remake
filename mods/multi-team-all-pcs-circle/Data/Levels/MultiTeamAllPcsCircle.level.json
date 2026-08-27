@@ -30,7 +30,7 @@
   "pcs": [
     {
       "position": [
-        1682,
+        1590,
         1700
       ],
       "profile": 0,
@@ -41,8 +41,8 @@
     },
     {
       "position": [
-        1647,
-        1807
+        1573,
+        1744
       ],
       "profile": 1,
       "allegiance": 3,
@@ -52,8 +52,8 @@
     },
     {
       "position": [
-        1556,
-        1873
+        1528,
+        1771
       ],
       "profile": 2,
       "allegiance": 4,
@@ -63,8 +63,8 @@
     },
     {
       "position": [
-        1444,
-        1873
+        1472,
+        1771
       ],
       "profile": 3,
       "allegiance": 5,
@@ -74,8 +74,8 @@
     },
     {
       "position": [
-        1353,
-        1807
+        1427,
+        1744
       ],
       "profile": 4,
       "allegiance": 6,
@@ -85,7 +85,7 @@
     },
     {
       "position": [
-        1318,
+        1410,
         1700
       ],
       "profile": 5,
@@ -96,8 +96,8 @@
     },
     {
       "position": [
-        1353,
-        1593
+        1427,
+        1656
       ],
       "profile": 6,
       "allegiance": 8,
@@ -107,8 +107,8 @@
     },
     {
       "position": [
-        1444,
-        1527
+        1472,
+        1629
       ],
       "profile": 7,
       "allegiance": 9,
@@ -118,8 +118,8 @@
     },
     {
       "position": [
-        1556,
-        1527
+        1528,
+        1629
       ],
       "profile": 8,
       "allegiance": 10,
@@ -129,8 +129,8 @@
     },
     {
       "position": [
-        1647,
-        1593
+        1573,
+        1656
       ],
       "profile": 9,
       "allegiance": 11,

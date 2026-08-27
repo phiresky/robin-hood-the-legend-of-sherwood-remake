@@ -812,7 +812,15 @@ impl EngineInner {
             return;
         }
 
-        let (self_pos, self_sector, self_uber, tiredness, is_pc, num_opponents) = {
+        let (
+            self_pos,
+            self_sector,
+            self_uber,
+            tiredness,
+            is_pc,
+            num_opponents,
+            aggressive_autonomous_pc,
+        ) = {
             let entity = self.get_entity(entity_id).unwrap_or_else(|| {
                 panic!("EvaluateSwordfight owner {entity_id:?} vanished before snapshot")
             });
@@ -839,6 +847,7 @@ impl EngineInner {
                 human.tiredness,
                 entity.is_pc(),
                 human.opponents.len(),
+                matches!(entity, Entity::Pc(pc) if pc.pc.autonomous && pc.pc.aggressive_combat),
             )
         };
         let (principal_pos, principal_sector, principal_uber) = {
@@ -974,7 +983,14 @@ impl EngineInner {
         let mutual = principal_human.opponents.first().copied() == Some(entity_id);
 
         let mut nonmutual_gate_roll = None;
-        if mutual {
+        // Original's initiative exchange deliberately paces passive PC duels:
+        // only one mutual principal opponent acts, while a non-mutual opponent
+        // gets merely a 10% chance to continue. That is desirable for normal
+        // missions, but makes opt-in autonomous battle-arena PCs spend most of
+        // their time in WaitingSword before strike selection is even reached.
+        if aggressive_autonomous_pc {
+            // Continue directly to range and full A-I strike selection.
+        } else if mutual {
             let (has_initiative, received, relative_ability) = self
                 .get_entity(entity_id)
                 .and_then(Entity::human_data)
@@ -1088,7 +1104,7 @@ impl EngineInner {
             let creation_order = self.world.original_creation_order(entity_id);
             if reactive_sword_debug_creation_order_matches(creation_order) {
                 eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}]",
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={} aggressive_autonomous_pc={}]",
                     frame,
                     creation_order,
                     entity_id.index(),
@@ -1098,6 +1114,7 @@ impl EngineInner {
                     near,
                     is_pc,
                     selected_pc,
+                    aggressive_autonomous_pc,
                 );
             }
         }

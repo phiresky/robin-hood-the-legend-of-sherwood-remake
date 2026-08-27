@@ -18,8 +18,9 @@ A list of which additional features we have added, which ones we might still wan
   autonomous PCs automatically enter swordfights with their nearest hostile
   autonomous PC and use the full A-I strike selection rather than passive PC
   smalltalk attacks. A separately configurable `aggressive_combat` PC flag
-  skips the ordinary initial special-strike hesitation gate, while retaining
-  profile skill restrictions, timing, damage, tiredness, and reactive defence.
+  makes autonomous PCs bypass passive duel-initiative delays and the ordinary
+  initial special-strike hesitation gate, while retaining profile skill
+  restrictions, timing, damage, tiredness, and reactive defence.
   Ten launchable test arenas live under `mods/multi-team-*`:
   three-way, ten-way, every soldier/PC profile in unique-allegiance circles,
   autonomous Robin versus Little John, four armies of twelve soldiers, and a
