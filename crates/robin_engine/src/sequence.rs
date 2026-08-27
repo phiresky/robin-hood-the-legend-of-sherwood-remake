@@ -5807,6 +5807,7 @@ impl SequenceManager {
             );
         }
         let mut visited = HashSet::new();
+        let mut touched_sequences = HashSet::new();
         while let Some((seq_id, elem_idx)) = targets.pop_front() {
             if !visited.insert((seq_id, elem_idx)) {
                 continue;
@@ -5817,6 +5818,7 @@ impl SequenceManager {
                     panic!("Stop postponed graph references missing {seq_id:?}/{elem_idx}")
                 })
                 .owner;
+            touched_sequences.insert(seq_id);
             assert_eq!(
                 target_owner,
                 Some(owner),
@@ -5868,12 +5870,12 @@ impl SequenceManager {
             }
         }
 
-        // Original clears postponed pointers while the recursive Stop graph
-        // unwinds. Rust stores cross-sequence links in the manager, so clear
-        // every terminal target in one linear pass after the equivalent graph
-        // walk. Doing this inside each `process_effects` call is O(chain × all
-        // retained sequences) and stalls long replay-generated chains.
-        self.clear_terminal_cross_postponed_links();
+        // Original clears postponed pointers while this recursive Stop graph
+        // unwinds. Restrict Rust's split-storage cleanup to the sequences the
+        // graph actually visited: EnterSwordfight can invoke Stop thousands of
+        // times in one frame, so even one retained-manager scan per invocation
+        // is quadratic in replay history.
+        self.clear_terminal_cross_postponed_links_in(&touched_sequences);
     }
 
     /// Drop blocker links whose postponed target was stopped either directly

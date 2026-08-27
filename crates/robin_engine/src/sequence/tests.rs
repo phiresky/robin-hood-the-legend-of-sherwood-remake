@@ -844,6 +844,43 @@ fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
 }
 
 #[test]
+fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
+    let mut mgr = SequenceManager::new();
+    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+    for _ in 0..4096 {
+        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+    }
+    let _ = mgr.hourglass();
+
+    let mut roots = Vec::with_capacity(2048);
+    for _ in 0..2048 {
+        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        element.priority = SequencePriority::Normal;
+        let sequence = mgr.launch_element(element);
+        mgr.postpone_element(sequence, 0);
+        roots.push(sequence);
+    }
+
+    for &sequence in &roots {
+        mgr.stop_owner_current_from_root(
+            owner,
+            Some((sequence, 0)),
+            SequencePriority::Preference,
+            &|element| element.priority,
+        );
+    }
+
+    for sequence in roots {
+        assert_eq!(
+            mgr.get_element(sequence, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
+}
+
+#[test]
 fn stop_pending_matching_batches_terminal_link_cleanup() {
     let mut mgr = SequenceManager::new();
     let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
