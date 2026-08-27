@@ -1226,6 +1226,13 @@ impl EngineInner {
                 mouse_map,
                 target,
             } => {
+                // The Original emits an orientation record only while
+                // RHMessenger::muwAction is this action.  That global UI
+                // state is not otherwise present in every trace frame, so
+                // the authoritative replay command must reconstruct it
+                // before the pre-Hourglass mission script can query
+                // HasAnyActionSelected.
+                self.players.seats[seat].selected_action = *action;
                 self.perform_resolved_orientation(assets, *pc_id, *action, *mouse_map, *target);
             }
 
@@ -8614,6 +8621,46 @@ mod tests {
             .get_slot_titbit(0)
             .expect("running Strangle records a replacement titbit");
         assert!(engine.feedback.titbit_manager.is_running_for_qa(titbit_id));
+    }
+
+    #[test]
+    fn resolved_orientation_restores_the_implicit_messenger_action() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, _) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        assert_eq!(engine.get_selected_action(), Action::NoAction);
+        let previous_pc_action = engine
+            .get_entity(pc_id)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .current_action;
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::PerformResolvedOrientation {
+                pc_id,
+                action: Action::Net,
+                mouse_map: crate::coordinates::MapPoint::new(200.0, 200.0),
+                target: crate::coordinates::WorldPoint3D::new(200.0, 200.0, 0.0),
+            },
+        );
+
+        assert_eq!(engine.get_selected_action(), Action::Net);
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .current_action,
+            previous_pc_action,
+            "the orientation attests RHMessenger state, not a PC action mutation"
+        );
     }
 
     #[test]
