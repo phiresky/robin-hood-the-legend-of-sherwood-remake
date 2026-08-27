@@ -1897,6 +1897,10 @@ pub struct LoadedProtoLevel {
 )]
 pub struct LoadedMission {
     pub format: LevelFormat,
+    /// Rust-authored geometry-only missions need a vacant slot zero because
+    /// their AI handles use zero as the null sentinel.
+    #[serde(default)]
+    pub reserve_null_ai_handle: bool,
     pub header: MissionHeader,
     /// Exact source order for chunks which append to legacy grid arrays.
     #[serde(default)]
@@ -2060,6 +2064,7 @@ impl LoadedLevel {
         }
 
         let mut level = Self::empty_for_test();
+        level.mission.reserve_null_ai_handle = true;
         level.proto.grid_chunk_order = vec![ProtoGridChunk::Sight, ProtoGridChunk::Motion];
         let motion_obstacles = descriptor
             .volumes
@@ -2249,6 +2254,7 @@ impl LoadedLevel {
             },
             mission: LoadedMission {
                 format: LevelFormat::Fullgame,
+                reserve_null_ai_handle: false,
                 header: MissionHeader {
                     control_crc: 0,
                     ambiance: 0, // Day
@@ -2987,6 +2993,7 @@ pub fn load_mission(
 
     Ok(LoadedMission {
         format,
+        reserve_null_ai_handle: false,
         header,
         grid_chunk_order,
         element_chunk_order,
@@ -4691,6 +4698,7 @@ mod tests {
             }"#,
         )
         .expect("multi-team hackable descriptor");
+        assert!(level.mission.reserve_null_ai_handle);
         assert!(level.mission.beam_mes.is_empty());
         assert_eq!(level.mission.soldiers.len(), 2);
         assert_eq!(level.mission.soldiers[0].allegiance, Some(2));

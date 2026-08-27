@@ -3211,6 +3211,9 @@ impl EngineInner {
 
         self.load_motion_stage(assets, staging, &mut loaded, bg_pixel_dims)?;
         self.spawn_proto_entities_stage(assets, &loaded);
+        if loaded.mission.reserve_null_ai_handle {
+            self.reserve_null_ai_handle_slot_if_empty();
+        }
         progress(1.0);
 
         // The original engine creates object masters before loading mission
@@ -3278,6 +3281,16 @@ impl EngineInner {
         self.start_autonomous_pc_fights(sim, assets);
 
         Ok(())
+    }
+
+    /// AI stores entity-table indices in legacy nullable handles, where zero
+    /// means no actor. Original levels normally publish a proto entity before
+    /// mission humans, but geometry-only hackable maps may publish none. Keep
+    /// slot zero vacant in that case so the first NPC cannot alias null.
+    pub(crate) fn reserve_null_ai_handle_slot_if_empty(&mut self) {
+        if self.world.entities.is_empty() {
+            self.world.entities.push(None);
+        }
     }
 
     /// Seed custom-mission autonomous PCs into combat. Once linked, the

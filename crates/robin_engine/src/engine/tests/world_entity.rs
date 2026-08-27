@@ -36,6 +36,28 @@ fn add_entity_assigns_original_script_element_index() {
 }
 
 #[test]
+fn geometry_only_level_reserves_zero_ai_handle_before_first_actor() {
+    let mut engine = EngineInner::new();
+    engine.reserve_null_ai_handle_slot_if_empty();
+
+    assert_eq!(engine.world.entities.len(), 1);
+    assert!(engine.world.entities.get_legacy_slot(0).is_none());
+
+    let soldier = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Custom(2)));
+    assert_eq!(soldier.index(), 1, "the first AI actor must not alias null");
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .and_then(Entity::enemy_ai)
+            .expect("test soldier has enemy AI")
+            .base
+            .me,
+        1,
+        "published AI self handle follows the reserved entity slot"
+    );
+}
+
+#[test]
 fn owner_boundary_positions_follow_original_creation_order_not_entity_slots() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::entities::{BoundaryPosition, EntitySlots};
