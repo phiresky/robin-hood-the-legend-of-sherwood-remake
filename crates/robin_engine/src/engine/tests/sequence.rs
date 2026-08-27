@@ -1720,53 +1720,105 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 }
 
 #[test]
-fn postponing_walks_long_equal_priority_chain_without_recursing() {
+fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
-    let mut chain = Vec::with_capacity(4096);
+    let mut root = SequenceElement::new(1, Command::QuitSwordfight, Some(owner));
+    root.priority = SequencePriority::PostponeEverythingButInjuries;
+    let root = engine.orders.sequence_manager.launch_element(root);
+    let mut tail = root;
 
-    for _ in 0..4096 {
-        let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
-        element.priority = SequencePriority::PostponeEverythingButInjuries;
-        let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine.orders.sequence_manager.postpone_element(sequence, 0);
-        if let Some(&previous) = chain.last() {
+    for _ in 0..8192 {
+        let mut waiter = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        waiter.priority = SequencePriority::PostponeEverythingButInjuries;
+        let waiter = engine.orders.sequence_manager.launch_element(waiter);
+        engine.engine_postpone(root, 0, waiter, 0);
+        assert_eq!(
             engine
                 .orders
                 .sequence_manager
-                .get_element_mut(previous, 0)
+                .get_element(tail, 0)
                 .unwrap()
-                .cross_postponed = Some((sequence, 0));
-        }
-        chain.push(sequence);
+                .cross_postponed,
+            Some((waiter, 0)),
+        );
+        tail = waiter;
     }
-
-    let mut waiter = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
-    waiter.priority = SequencePriority::PostponeEverythingButInjuries;
-    let waiter_sequence = engine.orders.sequence_manager.launch_element(waiter);
-
-    engine.engine_postpone(chain[0], 0, waiter_sequence, 0);
 
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .get_element(*chain.last().unwrap(), 0)
+            .get_element(tail, 0)
             .unwrap()
             .cross_postponed,
-        Some((waiter_sequence, 0)),
+        None,
     );
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .get_element(waiter_sequence, 0)
+            .get_element(tail, 0)
             .unwrap()
             .state,
         SequenceState::Postponed,
+    );
+}
+
+#[test]
+fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let launch = |engine: &mut EngineInner, priority| {
+        let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
+        element.priority = priority;
+        engine.orders.sequence_manager.launch_element(element)
+    };
+
+    let root = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    let old_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    engine.engine_postpone(root, 0, old_tail, 0);
+
+    // Injury displaces the cached equal-priority tail, producing
+    // root -> injury -> old_tail through the PostponeCurrent branch.
+    let injury = launch(&mut engine, SequencePriority::Injury);
+    engine.engine_postpone(root, 0, injury, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(root, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((injury, 0))
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((old_tail, 0))
+    );
+
+    let new_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
+    engine.engine_postpone(root, 0, new_tail, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(old_tail, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((new_tail, 0)),
+        "append after PostponeCurrent must follow the rewritten topology"
     );
 }
 
@@ -1789,16 +1841,9 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     let mut existing = SequenceElement::new(1, Command::StopParrySword, Some(owner));
     existing.priority = SequencePriority::Preference;
     let existing_sequence = engine.orders.sequence_manager.launch_element(existing);
-    engine
-        .orders
-        .sequence_manager
-        .postpone_element(existing_sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(blocker_sequence, 0)
-        .unwrap()
-        .cross_postponed = Some((existing_sequence, 0));
+    // Install through the ordinary append path so the tail cache is warm
+    // before InterruptCurrent detaches this successor.
+    engine.engine_postpone(blocker_sequence, 0, existing_sequence, 0);
 
     let mut waiter = SequenceElement::new(1, Command::WaitTimer, Some(owner));
     waiter.priority = SequencePriority::Normal;

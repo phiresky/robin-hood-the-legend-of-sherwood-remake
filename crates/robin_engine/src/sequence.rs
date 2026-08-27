@@ -3039,6 +3039,20 @@ pub struct SequenceManager {
     #[state_hash(skip)]
     actor_stop_summaries: BTreeMap<EntityId, ActorStopSummary>,
 
+    /// Per-owner tails of cross-sequence postponed chains for a prospective
+    /// waiter's priority. Equal-priority swordfight instructions repeatedly
+    /// append to the same chain; caching the proven `Postpone` prefix turns
+    /// that operation from a triangular root walk into amortized O(1).
+    /// Every cross-link topology rewrite explicitly invalidates the affected
+    /// owner before installing a replacement entry.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    #[state_hash(skip)]
+    postpone_tail_cache: BTreeMap<
+        EntityId,
+        BTreeMap<(SequenceElementRef, SequencePriority), (SequenceElementRef, usize)>,
+    >,
+
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
     ///
@@ -3374,6 +3388,7 @@ impl SequenceManager {
             sequences: IndexMap::new().into(),
             actor_live: BTreeMap::new(),
             actor_stop_summaries: BTreeMap::new(),
+            postpone_tail_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3398,6 +3413,7 @@ impl SequenceManager {
                 .into(),
             actor_live: BTreeMap::new(),
             actor_stop_summaries: BTreeMap::new(),
+            postpone_tail_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
@@ -3420,6 +3436,7 @@ impl SequenceManager {
     pub fn rebuild_indices(&mut self) {
         self.actor_live.clear();
         self.actor_stop_summaries.clear();
+        self.postpone_tail_cache.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
         self.actor_translating = None;
@@ -5167,6 +5184,7 @@ impl SequenceManager {
                 && old_priority != priority
                 && let Some(owner) = owner
             {
+                self.invalidate_postpone_tail_cache_for(owner);
                 if priority > old_priority {
                     if let Some(summary) = self.actor_stop_summaries.get_mut(&owner) {
                         summary.weakest_priority = summary.weakest_priority.max(priority);
@@ -5362,6 +5380,153 @@ impl SequenceManager {
         true
     }
 
+    fn invalidate_postpone_tail_cache_for(&mut self, owner: EntityId) {
+        self.postpone_tail_cache.remove(&owner);
+    }
+
+    /// Return the first blocker at which priority arbitration is not the pure
+    /// `Postpone` tail-call arm. If every existing successor chooses
+    /// `Postpone`, this is the chain tail and the result is cached.
+    pub(crate) fn postpone_append_point(
+        &mut self,
+        root: (SequenceId, usize),
+        waiter_priority: SequencePriority,
+    ) -> ((SequenceId, usize), usize, bool) {
+        let root_ref = SequenceElementRef::new(root.0, root.1);
+        let owner = self
+            .get_element(root.0, root.1)
+            .and_then(|element| element.owner)
+            .unwrap_or_else(|| {
+                panic!(
+                    "postpone chain root {:?}/{} is missing or ownerless",
+                    root.0, root.1
+                )
+            });
+        if let Some(&(tail, hops)) = self
+            .postpone_tail_cache
+            .get(&owner)
+            .and_then(|cache| cache.get(&(root_ref, waiter_priority)))
+        {
+            let tail_element = self
+                .get_element(tail.sequence_id, tail.element_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "stale postpone-tail cache references missing {:?}/{}",
+                        tail.sequence_id, tail.element_index
+                    )
+                });
+            assert_eq!(
+                tail_element.owner,
+                Some(owner),
+                "postpone-tail cache crosses owners"
+            );
+            assert!(
+                tail_element.cross_postponed.is_none(),
+                "postpone-tail cache was not invalidated before {:?}/{} changed",
+                tail.sequence_id,
+                tail.element_index
+            );
+            return ((tail.sequence_id, tail.element_index), hops, true);
+        }
+
+        let mut current = root;
+        let mut hops = 0;
+        let mut visited = HashSet::new();
+        loop {
+            assert!(
+                visited.insert(current),
+                "cross-postponed cycle while locating append point at {:?}/{}",
+                current.0,
+                current.1
+            );
+            let element = self.get_element(current.0, current.1).unwrap_or_else(|| {
+                panic!(
+                    "cross-postponed chain references missing {:?}/{}",
+                    current.0, current.1
+                )
+            });
+            assert_eq!(
+                element.owner,
+                Some(owner),
+                "cross-postponed chain crosses owners at {:?}/{}",
+                current.0,
+                current.1
+            );
+            let Some(next) = element.cross_postponed else {
+                self.postpone_tail_cache.entry(owner).or_default().insert(
+                    (root_ref, waiter_priority),
+                    (SequenceElementRef::new(current.0, current.1), hops),
+                );
+                return (current, hops, true);
+            };
+            let existing_priority = self
+                .get_element(next.0, next.1)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "cross-postponed chain references missing {:?}/{}",
+                        next.0, next.1
+                    )
+                })
+                .priority;
+            if decide_priorities(existing_priority, waiter_priority) != PriorityDecision::Postpone {
+                return (current, hops, false);
+            }
+            current = next;
+            hops += 1;
+        }
+    }
+
+    /// Install an append discovered by [`Self::postpone_append_point`] and
+    /// advance that exact root/priority cache entry to the new tail.
+    pub(crate) fn install_cached_postpone_append(
+        &mut self,
+        root: (SequenceId, usize),
+        waiter_priority: SequencePriority,
+        blocker: (SequenceId, usize),
+        waiter: (SequenceId, usize),
+        prior_hops: usize,
+    ) {
+        let owner = self
+            .get_element(blocker.0, blocker.1)
+            .and_then(|element| element.owner)
+            .expect("postpone append blocker is missing or ownerless");
+        let waiter_owner = self
+            .get_element(waiter.0, waiter.1)
+            .and_then(|element| element.owner)
+            .expect("postpone append waiter is missing or ownerless");
+        assert_eq!(owner, waiter_owner, "postpone append crosses owners");
+        self.invalidate_postpone_tail_cache_for(owner);
+        let blocker_element = self
+            .get_element_mut(blocker.0, blocker.1)
+            .expect("postpone append blocker disappeared");
+        assert!(
+            blocker_element.cross_postponed.is_none(),
+            "postpone append point already has a successor"
+        );
+        blocker_element.cross_postponed = Some(waiter);
+        if decide_priorities(waiter_priority, waiter_priority) == PriorityDecision::Postpone {
+            self.postpone_tail_cache.entry(owner).or_default().insert(
+                (SequenceElementRef::new(root.0, root.1), waiter_priority),
+                (SequenceElementRef::new(waiter.0, waiter.1), prior_hops + 1),
+            );
+        }
+    }
+
+    pub(crate) fn set_cross_postponed_link(
+        &mut self,
+        blocker: (SequenceId, usize),
+        successor: Option<(SequenceId, usize)>,
+    ) {
+        let owner = self
+            .get_element(blocker.0, blocker.1)
+            .and_then(|element| element.owner)
+            .expect("cross-postponed blocker is missing or ownerless");
+        self.invalidate_postpone_tail_cache_for(owner);
+        self.get_element_mut(blocker.0, blocker.1)
+            .expect("cross-postponed blocker disappeared")
+            .cross_postponed = successor;
+    }
+
     /// Transfer a cross-sequence postponed successor from `src` onto
     /// `dst`, walking `dst`'s existing postponed chain to the tail if
     /// it already has one.
@@ -5392,12 +5557,8 @@ impl SequenceManager {
             }
         }
         // Install src's successor at the tail.
-        if let Some(tail) = self.get_element_mut(cur.0, cur.1) {
-            tail.cross_postponed = Some(src_next);
-        }
-        if let Some(src) = self.get_element_mut(src_seq, src_idx) {
-            src.cross_postponed = None;
-        }
+        self.set_cross_postponed_link(cur, Some(src_next));
+        self.set_cross_postponed_link((src_seq, src_idx), None);
     }
 
     /// Process effects from a state change.
@@ -5431,6 +5592,13 @@ impl SequenceManager {
         terminal_site: &'static str,
         clear_cross_links: bool,
     ) {
+        if effects.resume_cross_postponed.is_some()
+            && let Some((_, owner, _, _)) = effects.actor_live_transition
+        {
+            // `Sequence::set_element_state` already took this source's
+            // cross-postponed pointer before returning its effects.
+            self.invalidate_postpone_tail_cache_for(owner);
+        }
         // RHSequenceElementMovement's override interrupts its exact linked
         // Seek before delegating to the base element's Interrupted handling.
         // Process the cross-sequence target before bookkeeping or queuing the
@@ -5712,7 +5880,7 @@ impl SequenceManager {
                 "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} is not postponed"
             );
             let blocker = self
-                .get_element_mut(blocker_seq, blocker_idx)
+                .get_element(blocker_seq, blocker_idx)
                 .unwrap_or_else(|| {
                     panic!(
                         "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} disappeared"
@@ -5722,7 +5890,10 @@ impl SequenceManager {
                 blocker.cross_postponed.is_none(),
                 "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} acquired another waiter"
             );
-            blocker.cross_postponed = Some((waiter_seq, waiter_idx));
+            self.set_cross_postponed_link(
+                (blocker_seq, blocker_idx),
+                Some((waiter_seq, waiter_idx)),
+            );
         }
     }
 
@@ -5808,8 +5979,12 @@ impl SequenceManager {
         // down without a terminal state change. `elements_to_go`
         // entries for removed ids are dropped lazily by `hourglass`'s
         // existence check.
+        let sequence_count_before = self.sequences.len();
         self.sequences
             .retain(|seq_id, seq| retained_sequences.contains(seq_id) || !seq.is_to_be_deleted());
+        if self.sequences.len() != sequence_count_before {
+            self.postpone_tail_cache.clear();
+        }
 
         let sequences = &self.sequences;
         self.actor_live.retain(|_, refs| {
@@ -6090,15 +6265,22 @@ impl SequenceManager {
                     )
                 })
                 .collect();
+        let mut changed_owners = BTreeSet::new();
         for sequence in self.sequences.values_mut() {
             for element in &mut sequence.elements {
                 if element
                     .cross_postponed
                     .is_some_and(|target| dead_targets.contains(&target))
                 {
+                    if let Some(owner) = element.owner {
+                        changed_owners.insert(owner);
+                    }
                     element.cross_postponed = None;
                 }
             }
+        }
+        for owner in changed_owners {
+            self.invalidate_postpone_tail_cache_for(owner);
         }
     }
 
@@ -6135,19 +6317,24 @@ impl SequenceManager {
             .collect::<Vec<_>>();
 
         for (sequence_id, element_index) in dead_sources {
-            self.get_element_mut(sequence_id, element_index)
-                .expect("visited cross-postponed source disappeared")
-                .cross_postponed = None;
+            self.set_cross_postponed_link((sequence_id, element_index), None);
         }
     }
 
     fn clear_cross_postponed_links_to(&mut self, target: (SequenceId, usize)) {
+        let mut changed_owners = BTreeSet::new();
         for sequence in self.sequences.values_mut() {
             for element in &mut sequence.elements {
                 if element.cross_postponed == Some(target) {
+                    if let Some(owner) = element.owner {
+                        changed_owners.insert(owner);
+                    }
                     element.cross_postponed = None;
                 }
             }
+        }
+        for owner in changed_owners {
+            self.invalidate_postpone_tail_cache_for(owner);
         }
     }
 

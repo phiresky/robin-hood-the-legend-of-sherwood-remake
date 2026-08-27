@@ -3139,6 +3139,20 @@ impl EngineInner {
         let mut blocker_seq = blocker_seq;
         let mut blocker_idx = blocker_idx;
         let mut depth = depth;
+        let append_root = (blocker_seq, blocker_idx);
+        let waiter_priority = self
+            .orders
+            .sequence_manager
+            .get_element(waiter_seq, waiter_idx)
+            .map(|element| element.priority)
+            .unwrap_or_else(|| panic!("postpone waiter {waiter_seq:?}/{waiter_idx} is missing"));
+        let (append_point, skipped_hops, cacheable_append) = self
+            .orders
+            .sequence_manager
+            .postpone_append_point(append_root, waiter_priority);
+        blocker_seq = append_point.0;
+        blocker_idx = append_point.1;
+        depth += skipped_hops;
 
         // A single actor can legitimately retain thousands of equal-priority
         // postponed elements. Original walks that chain recursively, but a
@@ -3290,13 +3304,9 @@ impl EngineInner {
                         // through) and install existing behind waiter.
                         // First detach existing from blocker's slot so we
                         // don't leave a dangling link while recursing.
-                        if let Some(b) = self
-                            .orders
+                        self.orders
                             .sequence_manager
-                            .get_element_mut(blocker_seq, blocker_idx)
-                        {
-                            b.cross_postponed = None;
-                        }
+                            .set_cross_postponed_link((blocker_seq, blocker_idx), None);
                         self.engine_postpone_with_debug_depth(
                             waiter_seq,
                             waiter_idx,
@@ -3317,13 +3327,9 @@ impl EngineInner {
                             existing_seq,
                             existing_idx,
                         );
-                        if let Some(b) = self
-                            .orders
+                        self.orders
                             .sequence_manager
-                            .get_element_mut(blocker_seq, blocker_idx)
-                        {
-                            b.cross_postponed = None;
-                        }
+                            .set_cross_postponed_link((blocker_seq, blocker_idx), None);
                         self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
                         self.orders.sequence_manager.element_interrupted(
                             existing_seq,
@@ -3384,12 +3390,19 @@ impl EngineInner {
                 return;
             }
 
-            if let Some(b) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(blocker_seq, blocker_idx)
-            {
-                b.cross_postponed = Some((waiter_seq, waiter_idx));
+            if cacheable_append {
+                self.orders.sequence_manager.install_cached_postpone_append(
+                    append_root,
+                    waiter_priority,
+                    (blocker_seq, blocker_idx),
+                    (waiter_seq, waiter_idx),
+                    skipped_hops,
+                );
+            } else {
+                self.orders.sequence_manager.set_cross_postponed_link(
+                    (blocker_seq, blocker_idx),
+                    Some((waiter_seq, waiter_idx)),
+                );
             }
             self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
             tracing::trace!(
