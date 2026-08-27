@@ -486,6 +486,11 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         };
         pc.actor.execution_frozen = execution_frozen;
         pc.pc.fried_psykokwack = fried;
+        if frozen_all {
+            // A non-zero phase makes an accidental Listening sprite tick
+            // observable even on this fixture's one-frame animation.
+            pc.element.sprite.frame_count = 7;
+        }
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         gated.perform_hourglass(&mut display, &assets, &mut dev);
@@ -499,6 +504,18 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             expected,
             "{case} owner gate"
         );
+        if frozen_all {
+            assert_eq!(
+                gated
+                    .get_entity(listener)
+                    .unwrap()
+                    .element_data()
+                    .sprite
+                    .frame_count,
+                7,
+                "FrozenAll must preserve the Listening sprite phase"
+            );
+        }
     }
 
     for invocation in 1..25 {

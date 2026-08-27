@@ -980,6 +980,10 @@ impl EngineInner {
     ) -> bool {
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
+        // FrozenAll is volatile script state and Original samples it inside
+        // RHSprite::PerformAction.  The Listen countdown still runs through
+        // its Execute arm while frozen, but its visual operand must not move.
+        let sprite_frozen = self.actors_frozen();
         // ── Listen ability frame tick. ──────────────────────
         // Each frame a PC is in `ListenPhase::CountingDown`:
         //
@@ -1037,14 +1041,16 @@ impl EngineInner {
                     .active_ability
                     .order_id
                     .expect("Listening phase has a current order");
-                let _ignored_motion = pc.element.sprite.perform_action(
-                    sim,
-                    Some(order_id),
-                    crate::order::OrderType::Listening,
-                    direction,
-                    crate::sprite::FrameProgression::Default,
-                    false,
-                );
+                if !sprite_frozen {
+                    let _ignored_motion = pc.element.sprite.perform_action(
+                        sim,
+                        Some(order_id),
+                        crate::order::OrderType::Listening,
+                        direction,
+                        crate::sprite::FrameProgression::Default,
+                        false,
+                    );
+                }
                 // RHElementActorPC::Execute deliberately discards
                 // PerformAction's START/DONE result for LISTENING and returns
                 // RHMOTION_IN_PROGRESS on every nonterminal countdown tick.
