@@ -7326,6 +7326,13 @@ impl EngineInner {
 /// `RHElementActorSoldier::PostProcessPath` in
 /// `original-code/RHelementactorsoldier.cpp:1688-1771` uses two draws for
 /// each of up to three candidate deviations per segment.
+#[inline]
+fn drunken_deviation_direction(direction: i16) -> [f32; 2] {
+    // SBGeoVector2D::SetSector0to15(direction, ASPECT_RATIO) compresses the
+    // table direction's Y component back into isometric map space.
+    crate::position_interface::sector_to_vector_iso(direction)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
     sim: &crate::sim_rng::SimulationContext,
@@ -7373,7 +7380,7 @@ pub(super) fn apply_drunken_path_deviation(
                 let magnitude =
                     crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
                         as f32;
-                let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
+                let [dx, dy] = drunken_deviation_direction(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
                 let candidate = crate::coordinates::MapPoint::new(
                     midpoint.x + dx * scale,
@@ -7400,6 +7407,22 @@ pub(super) fn apply_drunken_path_deviation(
 }
 
 // ─── Titbit update query ─────────────────────────────────────────
+
+#[cfg(test)]
+mod drunken_path_deviation_tests {
+    use super::drunken_deviation_direction;
+
+    #[test]
+    fn deviation_direction_uses_original_isometric_aspect_ratio() {
+        let direction = 2;
+        let (raw_x, raw_y) = crate::element_kinds::direction_vector_16(direction);
+        let [x, y] = drunken_deviation_direction(direction);
+
+        assert_eq!(x, raw_x);
+        assert_eq!(y, raw_y * crate::position_interface::ASPECT_RATIO);
+        assert_ne!(y, raw_y, "the bare compass vector overextends map-space Y");
+    }
+}
 
 /// Real implementation of [`crate::titbit::TitbitUpdateQuery`] that
 /// queries live entity state.  Replaces the old `StubQuery` that kept
