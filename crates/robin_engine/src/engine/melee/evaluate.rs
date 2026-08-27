@@ -1276,11 +1276,13 @@ impl EngineInner {
             .entities
             .humans()
             .filter_map(|(eid, e)| {
-                if eid == pc_id {
-                    return None;
-                }
                 let elem = e.element_data();
-                if !elem.active {
+                if !should_collect_strike_estimation_human(
+                    eid.into(),
+                    pc_id,
+                    Some(target_id),
+                    elem.active,
+                ) {
                     return None;
                 }
                 let eligible_for_regular_strikes = is_possible_sword_strike_victim(
@@ -1304,6 +1306,7 @@ impl EngineInner {
                     .map(|a| a.action_state == ActionState::MovingSword)
                     .unwrap_or(false);
                 Some(crate::combat::NearbyVictim {
+                    is_active: elem.active,
                     eligible_for_regular_strikes,
                     dx: vdx,
                     dy_stretched: vdy,
@@ -2001,11 +2004,13 @@ impl EngineInner {
                 .entities
                 .humans()
                 .filter_map(|(eid, e)| {
-                    if eid == victim_id {
-                        return None;
-                    }
                     let elem = e.element_data();
-                    if !elem.active {
+                    if !should_collect_strike_estimation_human(
+                        eid.into(),
+                        victim_id,
+                        principal_opponent,
+                        elem.active,
+                    ) {
                         return None;
                     }
                     let eligible_for_regular_strikes = is_possible_sword_strike_victim(
@@ -2030,6 +2035,7 @@ impl EngineInner {
                         .map(|a| a.action_state == ActionState::MovingSword)
                         .unwrap_or(false);
                     Some(crate::combat::NearbyVictim {
+                        is_active: elem.active,
                         eligible_for_regular_strikes,
                         dx: vdx,
                         dy_stretched: vdy,
@@ -2376,7 +2382,12 @@ impl EngineInner {
             .entities
             .humans()
             .filter_map(|(eid, e)| {
-                if eid == victim_id || !e.is_active() {
+                if !should_collect_strike_estimation_human(
+                    eid.into(),
+                    victim_id,
+                    principal_opponent,
+                    e.is_active(),
+                ) {
                     return None;
                 }
                 let elem = e.element_data();
@@ -2411,22 +2422,23 @@ impl EngineInner {
                     .map(|a| a.action_state == ActionState::MovingSword)
                     .unwrap_or(false);
                 let nearby = crate::combat::NearbyVictim {
-                        eligible_for_regular_strikes,
-                        dx: vdx,
-                        dy_stretched: vdy,
-                        distance: dist,
-                        direction_sector: sector,
-                        camp: match e {
-                            Entity::Pc(_) => crate::element::Camp::Royalists,
-                            Entity::Soldier(s) => s.soldier.cached_camp,
-                            Entity::Civilian(c) => c.civilian.cached_camp,
-                            _ => crate::element::Camp::Error,
-                        },
-                        facing_direction: elem.direction(),
-                        elevation: elem.position().z,
-                        life_points: lp,
-                        defender_profile: def_prof,
-                        is_primary_target: principal_opponent.is_some_and(|p| eid == p),
+                    is_active: elem.active,
+                    eligible_for_regular_strikes,
+                    dx: vdx,
+                    dy_stretched: vdy,
+                    distance: dist,
+                    direction_sector: sector,
+                    camp: match e {
+                        Entity::Pc(_) => crate::element::Camp::Royalists,
+                        Entity::Soldier(s) => s.soldier.cached_camp,
+                        Entity::Civilian(c) => c.civilian.cached_camp,
+                        _ => crate::element::Camp::Error,
+                    },
+                    facing_direction: elem.direction(),
+                    elevation: elem.position().z,
+                    life_points: lp,
+                    defender_profile: def_prof,
+                    is_primary_target: principal_opponent.is_some_and(|p| eid == p),
                     is_walking_with_sword,
                 };
                 if let (Some(debug), Some(index)) = (debug, nearby_debug_index.as_mut()) {
@@ -3151,6 +3163,7 @@ mod tests {
             is_npc: false,
         };
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 0.0,
             dy_stretched: -20.0,
@@ -3264,6 +3277,7 @@ mod tests {
             ..Default::default()
         };
         let victim = NearbyVictim {
+            is_active: true,
             eligible_for_regular_strikes: true,
             dx: 0.0,
             dy_stretched: -20.0,

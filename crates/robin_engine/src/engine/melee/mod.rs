@@ -55,6 +55,20 @@ mod animations;
 pub(in crate::engine) use animations::select_hit_fall_animation;
 use animations::{PushDamageAnimations, select_combat_animations, select_push_damage_animations};
 
+/// Whether a human must be represented in the shared strike-estimation
+/// context. Original's straight collector considers the principal opponent
+/// without calling `IsPossibleSwordStrikeVictim`, even while that opponent is
+/// temporarily inactive (for example, while traversing a door). Other
+/// inactive humans must stay absent from every collector.
+fn should_collect_strike_estimation_human(
+    candidate: EntityId,
+    attacker: EntityId,
+    principal_opponent: Option<EntityId>,
+    active: bool,
+) -> bool {
+    candidate != attacker && (active || principal_opponent == Some(candidate))
+}
+
 fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE").is_none() {
         return false;

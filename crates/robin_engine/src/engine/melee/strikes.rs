@@ -3089,11 +3089,13 @@ impl EngineInner {
                 .entities
                 .humans()
                 .filter_map(|(eid, e)| {
-                    if eid == attack.soldier_id {
-                        return None;
-                    }
                     let elem = e.element_data();
-                    if !elem.active {
+                    if !should_collect_strike_estimation_human(
+                        eid.into(),
+                        attack.soldier_id,
+                        Some(attack.target_id),
+                        elem.active,
+                    ) {
                         return None;
                     }
                     let eligible_for_regular_strikes = is_possible_sword_strike_victim(
@@ -3120,6 +3122,7 @@ impl EngineInner {
                         .map(|a| a.action_state == ActionState::MovingSword)
                         .unwrap_or(false);
                     Some(crate::combat::NearbyVictim {
+                        is_active: elem.active,
                         eligible_for_regular_strikes,
                         dx: vdx,
                         dy_stretched: vdy,

@@ -34,6 +34,38 @@ fn strike_collector_angles_and_push_width_keep_original_conversions() {
 }
 
 #[test]
+fn strike_estimation_collects_inactive_principal_only() {
+    let attacker = EntityId::Pc(crate::element::PcId(1));
+    let principal = EntityId::Soldier(crate::element::SoldierId(2));
+    let bystander = EntityId::Soldier(crate::element::SoldierId(3));
+
+    assert!(should_collect_strike_estimation_human(
+        principal,
+        attacker,
+        Some(principal),
+        false,
+    ));
+    assert!(!should_collect_strike_estimation_human(
+        bystander,
+        attacker,
+        Some(principal),
+        false,
+    ));
+    assert!(should_collect_strike_estimation_human(
+        bystander,
+        attacker,
+        Some(principal),
+        true,
+    ));
+    assert!(!should_collect_strike_estimation_human(
+        attacker,
+        attacker,
+        Some(attacker),
+        true,
+    ));
+}
+
+#[test]
 fn push_warning_and_done_effect_keep_distinct_elevation_and_max_norm_gates() {
     assert!(push_strike_elevation_allows(
         PushStrikePositionSpace::Map,
