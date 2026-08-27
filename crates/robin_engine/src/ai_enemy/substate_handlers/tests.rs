@@ -1844,13 +1844,21 @@ fn identified_npc_beggar_shows_face_then_identifies_himself() {
     );
     ai.base.outbox = crate::ai::AiOutbox::default();
     ai.beggar_to_examine = 70;
-    ai.beggar_is_npc = true;
+    // A save can resume directly in IdentifyingBeggar1 without ever
+    // populating this transient compatibility cache.
+    ai.beggar_is_npc = false;
+    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+    views.insert(70, civilian_view(70, Position::default()));
+    let ctx = AiContext {
+        entity_views: crate::ai_entity_view::shared_entity_views(views),
+        ..AiContext::default()
+    };
 
     ai.think_expected_event(
         &sim,
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &AiContext::default(),
+        &ctx,
         &AiPerTickData::stub(),
         None,
     );
@@ -1875,6 +1883,44 @@ fn identified_npc_beggar_shows_face_then_identifies_himself() {
         ai.base.current_substate,
         Substate::SeekingSeekpointIdentifyingBeggar2
     );
+}
+
+#[test]
+fn identified_disguised_pc_uses_live_type_despite_stale_npc_cache() {
+    use crate::element::Posture;
+
+    let sim = crate::sim_rng::test_context();
+    let mut ai = EnemyAi::new(1);
+    ai.set_state(
+        AiState::Seeking,
+        Substate::SeekingSeekpointIdentifyingBeggar1,
+    );
+    ai.base.outbox = crate::ai::AiOutbox::default();
+    ai.beggar_to_examine = 70;
+    ai.beggar_is_npc = true;
+    ai.is_archer_unit = true;
+    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+    views.insert(70, pc_view(Posture::SimulatingBeggar));
+    let ctx = AiContext {
+        entity_views: crate::ai_entity_view::shared_entity_views(views),
+        remaining_arrows: 1,
+        ..AiContext::default()
+    };
+
+    ai.think_expected_event(
+        &sim,
+        &Stimulus::new(StimulusType::EventTimer),
+        &mut AiGlobalState::default(),
+        &ctx,
+        &AiPerTickData::stub(),
+        None,
+    );
+
+    assert_eq!(ai.base.current_state, AiState::Attacking);
+    assert_eq!(ai.base.current_substate, Substate::AttackingBowShooting);
+    assert_eq!(ai.base.primary_target, 70);
+    assert_eq!(ai.list_them, vec![70]);
+    assert_eq!(ai.base.outbox.actor.shoot_target, Some(70));
 }
 
 #[test]

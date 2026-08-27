@@ -2566,7 +2566,21 @@ impl EnemyAi {
                     crate::element::Command::EquipBow,
                     owner,
                 ));
-                let timer = if self.beggar_is_npc { 50 } else { 100 };
+                // Original calls `mpBeggarToExamine->IsNPC()` here instead
+                // of retaining a discriminator on the soldier AI.  Resolve
+                // the live target as well: this substate can be restored
+                // directly from a save, in which case our compatibility
+                // cache has never been populated.
+                let beggar_is_npc = ctx
+                    .entity_view(self.beggar_to_examine)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "beggar {} disappeared before identification timer setup",
+                            self.beggar_to_examine
+                        )
+                    })
+                    .is_civilian();
+                let timer = if beggar_is_npc { 50 } else { 100 };
                 self.base.launch_timer(timer, ctx.frame);
             } else {
                 sequence.append_element(SequenceElement::new(
@@ -2590,7 +2604,21 @@ impl EnemyAi {
         // First inspection phase: timer fires after the
         // menace/equip-bow animation completes.
         if stimulus_type == StimulusType::EventTimer {
-            if self.beggar_is_npc {
+            // `RHartificialmalignity.cpp` queries
+            // `mpBeggarToExamine->IsNPC()` at the instant this timer fires.
+            // Do not use `beggar_is_npc`: it is only a compatibility cache
+            // populated while choosing the next seek point, and therefore is
+            // false when a save resumes in this identification substate.
+            let beggar_is_npc = ctx
+                .entity_view(self.beggar_to_examine)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "beggar {} disappeared during identification",
+                        self.beggar_to_examine
+                    )
+                })
+                .is_civilian();
+            if beggar_is_npc {
                 // Real beggar: NPC shows face and identifies
                 // themselves. Transition to phase 2 (wait,
                 // then resume seeking).
