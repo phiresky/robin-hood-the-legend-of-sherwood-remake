@@ -6266,7 +6266,7 @@ impl EngineInner {
                 .base()
                 .map(|b| b.blood_alcohol > 0)
                 .unwrap_or(false);
-            if !is_drunk || !should_apply_drunken_turn(selected_uses_seek) {
+            if !is_drunk {
                 continue;
             }
             // Compute the movement goal vector.  Skip entities without
@@ -6277,7 +6277,7 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some(_order) = self
+            let Some(order) = self
                 .orders
                 .sequence_manager
                 .get_element(selected.seq_id, selected.elem_idx)
@@ -6286,6 +6286,9 @@ impl EngineInner {
             else {
                 continue;
             };
+            if !should_apply_drunken_turn(selected_uses_seek, order.order_type) {
+                continue;
+            }
             turn_drunken(&mut soldier.element.sprite.position_iface);
         }
 
@@ -8258,7 +8261,11 @@ impl EngineInner {
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
             if !sword_arm_without_face_turn
-                && should_apply_plain_movement_turn(is_drunken_soldier, active_move_flags)
+                && should_apply_plain_movement_turn(
+                    is_drunken_soldier,
+                    active_move_flags,
+                    order_action,
+                )
             {
                 super::animation::direction_provenance_snapshot(
                     &sprite.position_iface,
@@ -12321,15 +12328,21 @@ fn turn_drunken(pi: &mut crate::position_interface::PositionInterface) {
     }
 }
 
-fn should_apply_drunken_turn(selected_uses_seek: bool) -> bool {
-    !selected_uses_seek
+fn should_apply_drunken_turn(
+    selected_uses_seek: bool,
+    order_action: crate::order::OrderType,
+) -> bool {
+    !selected_uses_seek && order_action == crate::order::OrderType::WalkingUpright
 }
 
 fn should_apply_plain_movement_turn(
     is_drunken_soldier: bool,
     flags: crate::sequence::MoveFlags,
+    order_action: crate::order::OrderType,
 ) -> bool {
-    !is_drunken_soldier || flags.contains(crate::sequence::MoveFlags::SEEK)
+    !is_drunken_soldier
+        || flags.contains(crate::sequence::MoveFlags::SEEK)
+        || order_action != crate::order::OrderType::WalkingUpright
 }
 
 #[cfg(test)]
@@ -12358,20 +12371,62 @@ mod drunken_turn_timing_tests {
 
     #[test]
     fn seek_movement_does_not_add_a_drunken_turn_before_perform_seek() {
-        assert!(!should_apply_drunken_turn(true));
-        assert!(should_apply_drunken_turn(false));
+        assert!(!should_apply_drunken_turn(
+            true,
+            crate::order::OrderType::WalkingUpright
+        ));
+        assert!(should_apply_drunken_turn(
+            false,
+            crate::order::OrderType::WalkingUpright
+        ));
     }
 
     #[test]
     fn drunken_and_seek_turn_branches_match_original_execute_matrix() {
-        for (name, drunk, seek, expect_drunken, expect_plain) in [
-            ("drunk ordinary", true, false, true, false),
-            ("drunk seek", true, true, false, true),
-            ("sober ordinary", false, false, false, true),
-            ("sober seek", false, true, false, true),
+        for (name, drunk, seek, action, expect_drunken, expect_plain) in [
+            (
+                "drunk ordinary walk",
+                true,
+                false,
+                crate::order::OrderType::WalkingUpright,
+                true,
+                false,
+            ),
+            (
+                "drunk seek walk",
+                true,
+                true,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "drunk startup transition",
+                true,
+                false,
+                crate::order::OrderType::TransitionWaitingUprightWalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "sober ordinary walk",
+                false,
+                false,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
+            (
+                "sober seek walk",
+                false,
+                true,
+                crate::order::OrderType::WalkingUpright,
+                false,
+                true,
+            ),
         ] {
             assert_eq!(
-                drunk && should_apply_drunken_turn(seek),
+                drunk && should_apply_drunken_turn(seek, action),
                 expect_drunken,
                 "{name}: TurnDrunken branch"
             );
@@ -12381,7 +12436,7 @@ mod drunken_turn_timing_tests {
                 crate::sequence::MoveFlags::empty()
             };
             assert_eq!(
-                should_apply_plain_movement_turn(drunk, flags),
+                should_apply_plain_movement_turn(drunk, flags, action),
                 expect_plain,
                 "{name}: plain Turn branch"
             );
