@@ -372,6 +372,12 @@ pub enum AiOwnerWork {
     /// `NearbyCiviliansPanic()` callback's 360-degree detector. Appended to
     /// preserve every existing serialized enum discriminant.
     NearbyCiviliansPanic180,
+    /// Finish `DECISION_FIGHT` only after `ReconsiderEnemyApproach` has
+    /// observed its synchronous `GoNear` result. A failed approach changes
+    /// the local decision to `DECISION_OBSERVE` before BattleDecisions logs
+    /// or returns. Appended to preserve every existing serialized enum
+    /// discriminant.
+    ResumeBattleFightAfterReconsider,
 }
 
 #[derive(

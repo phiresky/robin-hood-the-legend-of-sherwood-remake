@@ -2253,7 +2253,13 @@ impl AiController {
     /// Keep the current Think frame alive until a queued movement/turn
     /// intent has received its engine-owned synchronous completion verdict.
     pub(crate) fn defer_end_think_for_engine_completion(&mut self) -> bool {
-        let typed_continuation = self.outbox.reentrant.brawl_hitting_completion_pending;
+        // Several synchronous helpers have to release the AI borrow while the
+        // engine constructs a route, then resume the caller tail from
+        // `owner_work`.  That tail is still inside the enclosing Original
+        // Think even though it temporarily owns the movement order itself.
+        // Keep EndThink open until the typed continuation has consumed the
+        // first verdict and any fallback movement it authors has settled.
+        let typed_continuation = self.has_typed_completion_pending();
         if !self.completion_latch_inside_think
             || (self.outbox.actor.orders.is_empty() && !typed_continuation)
         {
@@ -2264,6 +2270,23 @@ impl AiController {
             self.engine_deferred_end_think_frames.saturating_add(1);
         self.engine_completion_verdict_resolved = false;
         true
+    }
+
+    pub(crate) fn has_typed_completion_pending(&self) -> bool {
+        self.outbox.reentrant.reconsider_approach_completion_pending
+            || self.outbox.reentrant.battle_observe_completion_pending
+            || self.outbox.reentrant.look_for_help_completion_pending
+            || self.outbox.reentrant.alert_soldier_completion_pending
+            || self.outbox.reentrant.dead_body_alert_completion_pending
+            || self
+                .outbox
+                .reentrant
+                .tower_guard_alert_officer_completion_pending
+            || self
+                .outbox
+                .reentrant
+                .civilian_report_alert_officer_completion_pending
+            || self.outbox.reentrant.brawl_hitting_completion_pending
     }
 
     /// Publish that the engine has consumed the order whose synchronous

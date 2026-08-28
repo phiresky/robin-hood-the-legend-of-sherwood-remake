@@ -547,6 +547,54 @@ fn set_state_halt_prefix_retains_detached_goto_until_engine_rejection() {
 }
 
 #[test]
+fn typed_route_continuation_keeps_end_think_open_for_its_fallback_move() {
+    use crate::ai::{StimulusType, Substate};
+    use crate::element::AiBrain;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(owner)
+        .expect("typed-continuation test soldier exists")
+    else {
+        unreachable!()
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+
+    let ai = soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("typed-continuation test soldier has AI");
+    ai.current_substate = Substate::SeekingBodyLookingDeadBody;
+    ai.think_recursion_depth = 1;
+    ai.completion_latch_inside_think = true;
+    // DeadBodyAlert moved its first GoNear into an ActorEffects owner-work
+    // prefix. The following typed tail will consume that verdict and may
+    // author a fallback SeekArea GoTo before the same EndThink returns.
+    ai.outbox.reentrant.dead_body_alert_completion_pending = true;
+    assert!(ai.end_think_completion_events());
+    assert_eq!(ai.think_recursion_depth, 1);
+    assert_eq!(ai.engine_deferred_end_think_frames, 1);
+
+    // Model the typed tail consuming its first failure, then its fallback
+    // movement failing synchronously. That second verdict still belongs to
+    // the original open Think and must recurse into the seek handler.
+    ai.outbox.reentrant.dead_body_alert_completion_pending = false;
+    ai.couldnt_reachpoint = true;
+    engine.surface_synchronous_completion_events_for_owner(owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("typed-continuation test soldier retains AI");
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventCouldntReachPoint]
+    );
+}
+
+#[test]
 fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
     use crate::ai::{
         AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,

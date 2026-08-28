@@ -1258,6 +1258,16 @@ impl EnemyAi {
             ctx,
             tick,
         );
+        // This fallback is the statement immediately following
+        // AlertOfficer's synchronous GoNear inside the original enclosing
+        // Think. Rust resumes it from owner work after releasing the AI
+        // borrow, so `think_recursion_depth` alone no longer records that
+        // ownership. Any movement selected by SeekArea must still deliver a
+        // synchronous route failure to that open logical Think, allowing
+        // SeekNextPoint to try the following candidate in the same frame.
+        if !self.base.outbox.actor.orders.is_empty() {
+            self.base.completion_latch_inside_think = true;
+        }
     }
     // -----------------------------------------------------------------------
     // Body examination

@@ -1476,6 +1476,25 @@ impl EnemyAi {
                     if target != 0 {
                         self.base.primary_target = target;
                         self.attack_enemy(target, Some(&mut *global), ctx, tick, grid);
+                        if self
+                            .base
+                            .outbox
+                            .reentrant
+                            .reconsider_approach_completion_pending
+                        {
+                            // AttackEnemy calls ReconsiderEnemyApproach.
+                            // Original constructs that GoNear synchronously,
+                            // so this couldn't-reach test runs only after its
+                            // typed route continuation. Keep the enclosing
+                            // decision loop on the same owner FIFO instead of
+                            // prematurely accepting/logging DECISION_FIGHT.
+                            self.base
+                                .outbox
+                                .reentrant
+                                .owner_work
+                                .push(crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider);
+                            return false;
+                        }
                         if self.base.couldnt_reachpoint {
                             self.base.couldnt_reachpoint = false;
                             decision = Decision::Observe;
@@ -2392,6 +2411,58 @@ impl EnemyAi {
             break; // Decision executed successfully
         }
         true
+    }
+
+    /// Resume the `DECISION_FIGHT` tail after its nested
+    /// `ReconsiderEnemyApproach` route has settled.
+    pub(crate) fn resume_battle_fight_after_reconsider(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.base.couldnt_reachpoint {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, Decision::Fight as u16);
+            return;
+        }
+
+        // RHArtificialMalignity::BattleDecisions clears the failed fight
+        // approach and loops directly into DECISION_OBSERVE. Rebuild the
+        // local multiplicities from the live scratch counters retained by
+        // this owner boundary; Observe's target selection reads them.
+        self.base.couldnt_reachpoint = false;
+        let mut target_multiplicity = self
+            .list_them
+            .iter()
+            .copied()
+            .map(|target| {
+                (
+                    target,
+                    global
+                        .primary_target_multiplicity_scratch
+                        .get(&target)
+                        .copied()
+                        .unwrap_or(0),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let completed_inline = self.execute_battle_decision(
+            sim,
+            Decision::Observe,
+            self.base.current_substate,
+            0,
+            &mut target_multiplicity,
+            global,
+            ctx,
+            tick,
+            None,
+        );
+        if completed_inline {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, Decision::Observe as u16);
+        }
     }
 
     /// Execute the two Original CASSOS Panic overloads after primary-target
@@ -5992,6 +6063,60 @@ mod tests {
         // `battle_observe_route_settles_before_source_ordered_tail` exercises
         // the engine drain that consumes this continuation and performs the
         // following SetState callback at Original's synchronous boundary.
+    }
+
+    #[test]
+    fn failed_fight_approach_resumes_inline_observe_decision() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 198;
+        ai.base.couldnt_reachpoint = true;
+        ai.list_them = vec![198];
+
+        let target_position = Position {
+            x: 500.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(198, pc_view_at(target_position));
+        views.insert(91, pc_view_at(Position::default()));
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.resume_battle_fight_after_reconsider(
+            &sim,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(!ai.base.couldnt_reachpoint);
+        assert_eq!(ai.base.primary_target, 198);
+        let [
+            crate::ai::AiOwnerWork::ActorEffects(route),
+            crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                target,
+                target_position: queued_target_position,
+            },
+        ] = ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!(
+                "failed Fight must continue through Observe on the same owner boundary: {:?}",
+                ai.base.outbox.reentrant.owner_work
+            );
+        };
+        assert_eq!(*target, 198);
+        assert_eq!(*queued_target_position, target_position);
+        assert_eq!(route.orders.len(), 1);
+        assert_eq!(
+            route.orders[0].order_type,
+            crate::order::OrderType::WalkingUpright
+        );
+        assert!(ai.base.outbox.reentrant.battle_observe_completion_pending);
     }
 
     fn proud_decision_speech(
