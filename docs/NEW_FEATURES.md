@@ -119,6 +119,10 @@ A list of which additional features we have added, which ones we might still wan
   overriding beam-me, rescue-PC, and tied-prisoner visuals. A per-mission
   `.text.patch.json` can override popup, short-briefing, and dialogue strings
   while retaining the base mission's descriptor pictures and timing.
+  Mod-added character profiles keep their visible name and NPC exclamation
+  bank separate from the internal RHS profile key, so promoted villains retain
+  their own voices. NPC sprite sets used as PCs also fall back to compatible
+  authored attack rows for target interactions they do not natively animate.
   Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
   and type-aware line, box, staggered, and flank formations. Selecting soldiers

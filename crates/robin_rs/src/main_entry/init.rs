@@ -551,6 +551,7 @@ struct CharacterProfileAddition {
     filename: String,
     profile_name: String,
     display_name: String,
+    exclamation_profile: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -647,6 +648,40 @@ fn apply_soldier_profile_patch(
                 addition.filename
             ));
         }
+        let mut exclamation_matches = profiles
+            .soldiers
+            .iter()
+            .map(|profile| (&profile.filename, profile.exclamation_id))
+            .chain(
+                profiles
+                    .civilians
+                    .iter()
+                    .map(|profile| (&profile.filename, profile.exclamation_id)),
+            )
+            .filter(|(filename, _)| filename.as_str() == addition.exclamation_profile);
+        let exclamation_id = exclamation_matches
+            .next()
+            .map(|(_, id)| id)
+            .ok_or_else(|| {
+                format!(
+                    "character exclamation profile {:?} does not exist",
+                    addition.exclamation_profile
+                )
+            })?;
+        if let Some((_, conflicting_id)) = exclamation_matches.find(|(_, id)| *id != exclamation_id)
+        {
+            return Err(format!(
+                "character exclamation profile {:?} has conflicting voice banks {exclamation_id} and {conflicting_id}",
+                addition.exclamation_profile,
+            ));
+        }
+        if exclamation_id == 0 {
+            return Err(format!(
+                "character exclamation profile {:?} has no voice bank",
+                addition.exclamation_profile
+            ));
+        }
+
         let mut templates = profiles
             .characters
             .iter()
@@ -665,6 +700,7 @@ fn apply_soldier_profile_patch(
         profile.filename = addition.filename;
         profile.profile_name = addition.profile_name;
         profile.display_name = addition.display_name;
+        profile.exclamation_id = exclamation_id;
         profile.alternative_profile_name.clear();
         profile.valid_alternative_profile = false;
         profiles.characters.push(profile);
@@ -933,12 +969,23 @@ mod tests {
             profile_name: "Robin des Bois".to_owned(),
             ..Default::default()
         });
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Guisbourne".to_owned(),
+            exclamation_id: 0x4747_0016,
+            ..Default::default()
+        });
+        profiles.civilians.push(engine_profiles::CivilianProfile {
+            filename: "Guisbourne".to_owned(),
+            exclamation_id: 0x4747_0016,
+            ..Default::default()
+        });
         let patch = SoldierProfilePatch {
             characters: vec![CharacterProfileAddition {
                 template: "RobinHood".to_owned(),
                 filename: "Guisbourne".to_owned(),
                 profile_name: "Guisbourne".to_owned(),
                 display_name: "Guy of Guisbourne".to_owned(),
+                exclamation_profile: "Guisbourne".to_owned(),
             }],
             soldiers: Vec::new(),
         };
@@ -951,6 +998,7 @@ mod tests {
         assert_eq!(profiles.characters[1].filename, "Guisbourne");
         assert_eq!(profiles.characters[1].profile_name, "Guisbourne");
         assert_eq!(profiles.characters[1].display_name, "Guy of Guisbourne");
+        assert_eq!(profiles.characters[1].exclamation_id, 0x4747_0016);
     }
 
     #[test]

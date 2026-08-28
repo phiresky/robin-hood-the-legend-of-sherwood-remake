@@ -1836,6 +1836,32 @@ fn determine_use_command(
 ) -> Option<Command> {
     let entity = engine.get_entity(target_id)?;
 
+    // Targets are not humans: their Element::is_dead default is true. Resolve
+    // their authored action filter before the corpse-search fallback below,
+    // exactly like RHElementTarget::GetCommand in the original. Otherwise
+    // every target click is incorrectly dispatched as SearchCmd.
+    if let Entity::Target(target) = entity {
+        let pc_has_search = engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            engine_profiles::Action::Search,
+        );
+        let pc_has_lever = engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            engine_profiles::Action::Lever,
+        );
+        let pc_is_vip = engine
+            .get_entity(pc_id)
+            .is_some_and(|pc| engine.is_entity_vip(assets, pc));
+        return engine_api::target_interaction::target_use_command(
+            target.target.action_filter,
+            pc_has_search,
+            pc_has_lever,
+            pc_is_vip,
+        );
+    }
+
     // Object-class targets (Net, Bonus, Scroll, landed Projectile).
     // The engine-side `object_pickup_command` is the authoritative
     // implementation; this just calls straight through.
@@ -1981,8 +2007,8 @@ mod tests {
     use super::*;
     use robin_engine::campaign::Campaign;
     use robin_engine::element::{
-        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, HumanData,
-        NpcData, ObjectData, PcData, SoldierData,
+        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementTarget,
+        FxData, HumanData, NpcData, ObjectData, PcData, SoldierData, TargetData, TargetFilter,
     };
 
     /// `PlayerCommand` intentionally has no `PartialEq` (it carries f32
@@ -2974,6 +3000,29 @@ mod tests {
         let ghost = EntityId::Soldier(robin_engine::entity_id::SoldierId(99));
 
         assert_eq!(determine_use_command(&engine, &assets, pc, ghost), None);
+    }
+
+    #[test]
+    fn use_command_on_target_resolves_its_action_filter_before_dead_fallback() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let target = engine.test_add_entity(Entity::Target(ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                active: true,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+            target: TargetData {
+                action_filter: TargetFilter::CUT,
+                ..Default::default()
+            },
+        }));
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc, target),
+            Some(Command::HitTarget)
+        );
     }
 
     #[test]

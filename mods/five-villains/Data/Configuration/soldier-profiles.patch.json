@@ -4,31 +4,36 @@
       "template": "RobinHood",
       "filename": "Guisbourne",
       "profile_name": "Guisbourne",
-      "display_name": "Guy of Guisbourne"
+      "display_name": "Guy of Guisbourne",
+      "exclamation_profile": "Guisbourne"
     },
     {
       "template": "WillScarlet",
       "filename": "Longchamp",
       "profile_name": "Longchamp",
-      "display_name": "Longchamp"
+      "display_name": "Longchamp",
+      "exclamation_profile": "Longchamp"
     },
     {
       "template": "RobinHood",
       "filename": "PrinceJohn",
       "profile_name": "Prince Jean",
-      "display_name": "Prince John"
+      "display_name": "Prince John",
+      "exclamation_profile": "PrinceJohn"
     },
     {
       "template": "Friar Tuck",
       "filename": "Scatlock",
       "profile_name": "Scatlock",
-      "display_name": "Scathlock"
+      "display_name": "Scathlock",
+      "exclamation_profile": "Scatlock"
     },
     {
       "template": "Stuteley",
       "filename": "sherif",
       "profile_name": "Sherif",
-      "display_name": "Sheriff"
+      "display_name": "Sheriff",
+      "exclamation_profile": "sherif"
     }
   ]
 }

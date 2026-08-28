@@ -3428,6 +3428,9 @@ fn apply_pc_taking_side_effect(
 ///    lacks the shield variant.
 ///  - NPC `BEGGAR_SHOWING_FACE` falls back to `ROLLING` when the sprite
 ///    lacks the showing-face animation.
+///  - PC target interactions fall back to compatible authored attacks when
+///    an NPC sprite promoted to a playable character lacks the PC-only target
+///    rows. The logical order stays unchanged so target activation still fires.
 ///  - `TRANSITION_WAITING_SWORD_PARRYING_SWORD_LOW`
 ///    → `TRANSITION_WAITING_SWORD_PARRYING_SWORD` — the `_LOW`
 ///    non-animation token re-uses the regular transition sprite anim.
@@ -3448,6 +3451,18 @@ pub(crate) fn sprite_anim_for_order(
     use OrderType as OT;
     match effective_anim {
         OT::Taking if !owner_is_pc => OT::Searching,
+        OT::HittingTarget if owner_is_pc && !sprite.has_animation(OT::HittingTarget) => {
+            // TODO(mod-pc-animation-aliases): make these aliases authorable per
+            // character profile when the mod format grows animation overrides.
+            if sprite.has_animation(OT::StrikingDownSword) {
+                OT::StrikingDownSword
+            } else {
+                OT::Hitting
+            }
+        }
+        OT::HandlingTarget if owner_is_pc && !sprite.has_animation(OT::HandlingTarget) => {
+            OT::Hitting
+        }
         OT::LoweringShield if !sprite.has_animation(OT::LoweringShield) => {
             OT::TransitionLoweringSword
         }
@@ -6827,6 +6842,26 @@ mod soldier_take_drink_parity_tests {
         assert_eq!(
             sprite_anim_for_order(&sprite, OrderType::Taking, true),
             OrderType::Taking
+        );
+    }
+
+    #[test]
+    fn promoted_npc_pc_uses_authored_fallbacks_for_target_interactions() {
+        use crate::sprite_script::UNMAPPED;
+
+        let mut sprite = crate::sprite::Sprite::default();
+        let mut conversion = vec![UNMAPPED; OrderType::HittingTarget as usize + 1];
+        conversion[OrderType::Hitting as usize] = 0;
+        conversion[OrderType::StrikingDownSword as usize] = 16;
+        sprite.conversion = std::sync::Arc::new(conversion);
+
+        assert_eq!(
+            sprite_anim_for_order(&sprite, OrderType::HittingTarget, true),
+            OrderType::StrikingDownSword
+        );
+        assert_eq!(
+            sprite_anim_for_order(&sprite, OrderType::HandlingTarget, true),
+            OrderType::Hitting
         );
     }
 
