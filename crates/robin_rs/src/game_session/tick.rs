@@ -200,6 +200,7 @@ pub(super) fn drain_steps(
     active_modal: &mut Option<ActiveModal>,
     mut terminal_debriefing: Option<&mut super::terminal_debriefing::TerminalDebriefingState>,
     mission_ui_block_reason: Option<&str>,
+    mut resolve_local_ui: impl FnMut(&crate::http_server::StepModalPolicy) -> Result<(), String>,
 ) {
     let steps = crate::http_server::take_pending_steps();
     if steps.is_empty() {
@@ -218,6 +219,12 @@ pub(super) fn drain_steps(
             }
             crate::http_server::StepKind::SetPaused { .. } => None,
         };
+        if let Some(policy) = modal_policy.as_ref()
+            && let Err(error) = resolve_local_ui(policy)
+        {
+            step.respond_err(error);
+            continue;
+        }
         if modal_policy.is_some()
             && let Some(reason) = mission_ui_block_reason
         {

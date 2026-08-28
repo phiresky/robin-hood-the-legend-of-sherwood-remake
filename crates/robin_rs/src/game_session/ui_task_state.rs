@@ -169,6 +169,24 @@ impl ActiveUiTask {
     }
 }
 
+impl UiTaskKind {
+    /// Require the per-request opt-in before HTTP stepping cancels a local
+    /// pause-side task. These tasks are presentation state rather than
+    /// authoritative [`robin_engine::player_command::ModalKind`] values, so a
+    /// typed gameplay-modal dismissal cannot stand in for `auto_dismiss`.
+    pub(super) fn require_http_auto_dismiss(
+        self,
+        policy: &crate::http_server::StepModalPolicy,
+    ) -> Result<(), String> {
+        if policy.auto_dismiss {
+            return Ok(());
+        }
+        Err(format!(
+            "blocked by local UI task {self:?}; retry with auto_dismiss=true or dismiss it in the game"
+        ))
+    }
+}
+
 pub(super) struct QuickLoadTaskState {
     dialog: YesNoModalState,
     slot: usize,
@@ -1568,5 +1586,40 @@ mod tests {
         assert_eq!(custom.get_key_by_index(0), Some(replacement));
         assert_eq!(custom.key_type, 1);
         assert!(!dirty);
+    }
+
+    #[test]
+    fn strict_http_steps_preserve_every_pause_side_task_kind() {
+        let strict = crate::http_server::StepModalPolicy {
+            auto_dismiss: false,
+            dismissals: Vec::new(),
+        };
+        for kind in [
+            UiTaskKind::Options,
+            UiTaskKind::SaveLoad,
+            UiTaskKind::QuitConfirmation,
+            UiTaskKind::QuickLoadConfirmation,
+        ] {
+            let error = kind
+                .require_http_auto_dismiss(&strict)
+                .expect_err("strict HTTP stepping must not cancel local UI state");
+            assert!(error.contains("blocked by local UI task"));
+            assert!(error.contains(&format!("{kind:?}")));
+        }
+    }
+
+    #[test]
+    fn default_http_policy_auto_dismisses_every_pause_side_task_kind() {
+        let default_policy = crate::http_server::StepModalPolicy::default();
+        assert!(default_policy.auto_dismiss);
+        for kind in [
+            UiTaskKind::Options,
+            UiTaskKind::SaveLoad,
+            UiTaskKind::QuitConfirmation,
+            UiTaskKind::QuickLoadConfirmation,
+        ] {
+            kind.require_http_auto_dismiss(&default_policy)
+                .expect("default automation policy must dismiss local UI state");
+        }
     }
 }

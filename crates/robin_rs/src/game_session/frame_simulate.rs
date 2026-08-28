@@ -482,31 +482,6 @@ impl InteractiveFrameSimulation {
             step_back_pressed,
         } = flags;
 
-        // HTTP stepping is automation-first and defaults to dismissing local
-        // UI. Resolve conservatively: never accept a save/load/quit/settings
-        // mutation, and leave pause-owned tasks on the pause surface.
-        if crate::http_server::has_pending_steps()
-            && let Some(mut task) = ui.active_ui_task.take()
-        {
-            let kind = task.kind();
-            let outcome = task.auto_dismiss();
-            task.cleanup();
-            debug_assert!(matches!(
-                outcome,
-                UiTaskOutcome::ReturnToPause | UiTaskOutcome::QuickLoadCancelled
-            ));
-            if let Some(menu) = ui.pause_menu.as_mut() {
-                menu.reset_after_side_menu();
-                menu.seed_mouse_from_window(
-                    window,
-                    presentation.renderer.screen_width() as i32,
-                    presentation.renderer.screen_height() as i32,
-                );
-            }
-            input.reset_after_modal();
-            tracing::debug!(?kind, "HTTP step: auto-dismissed cooperative UI task");
-        }
-
         let tick_exit_code = Self::advance_timeline(
             runtime,
             host,
@@ -529,6 +504,9 @@ impl InteractiveFrameSimulation {
             dev,
             manual_pause,
             ui,
+            window,
+            presentation,
+            input,
             tick_exit_code.is_some(),
             step_forward_pressed,
             step_back_pressed,
@@ -1231,6 +1209,9 @@ impl InteractiveFrameSimulation {
         dev: &mut robin_engine::engine::DevState,
         manual_pause: &mut bool,
         ui: &mut super::interactive::MissionUi,
+        window: &crate::window::GameWindow,
+        presentation: &mut super::interactive::MissionPresentation,
+        input: &mut super::interactive::MissionInput,
         terminal_exit_pending: bool,
         step_forward_pressed: bool,
         step_back_pressed: bool,
@@ -1254,6 +1235,8 @@ impl InteractiveFrameSimulation {
         } else {
             None
         };
+        let active_ui_task = &mut ui.active_ui_task;
+        let pause_menu = &mut ui.pause_menu;
         drain_steps(
             manager,
             host,
@@ -1265,6 +1248,33 @@ impl InteractiveFrameSimulation {
             &mut ui.active_modal,
             ui.terminal_debriefing.as_mut(),
             mission_ui_block_reason,
+            |policy| {
+                let Some(kind) = active_ui_task.as_ref().map(ActiveUiTask::kind) else {
+                    return Ok(());
+                };
+                kind.require_http_auto_dismiss(policy)?;
+
+                let mut task = active_ui_task
+                    .take()
+                    .expect("validated cooperative UI task disappeared before dismissal");
+                let outcome = task.auto_dismiss();
+                task.cleanup();
+                debug_assert!(matches!(
+                    outcome,
+                    UiTaskOutcome::ReturnToPause | UiTaskOutcome::QuickLoadCancelled
+                ));
+                if let Some(menu) = pause_menu.as_mut() {
+                    menu.reset_after_side_menu();
+                    menu.seed_mouse_from_window(
+                        window,
+                        presentation.renderer.screen_width() as i32,
+                        presentation.renderer.screen_height() as i32,
+                    );
+                }
+                input.reset_after_modal();
+                tracing::debug!(?kind, "HTTP step: auto-dismissed cooperative UI task");
+                Ok(())
+            },
         );
 
         // Publish replay-playback status for the script-RPC `state`
