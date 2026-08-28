@@ -468,6 +468,14 @@ pub struct VisibilityQuery<'a> {
     pub target_action_state: ActionState,
     /// Is the target a PC?  Drives the golden-eye check.
     pub target_is_pc: bool,
+    /// Whether this observer/target pair is eligible for reusable-cloak
+    /// deception (a hostile observer looking at a player-donned cloak).
+    pub cloak_deception_applies: bool,
+    /// Whether this observer still has the wearer in active AI memory.
+    pub cloak_remembers_target: bool,
+    /// Authored detector override. No shipped profile currently supplies one;
+    /// this explicit seam avoids inventing animal/class exceptions.
+    pub cloak_authored_detector: bool,
 
     /// Sight obstacle list plus FastFindGrid for the LOS check.
     pub sight_obstacles: crate::sight_obstacle::ObstacleList<'a>,
@@ -511,6 +519,21 @@ pub fn compute_visibility_with_effective_radius(
     // PC disguises.
     match q.target_posture {
         Posture::Spy | Posture::Tree | Posture::AnonymousArcher => return 0.0,
+        Posture::Cloaked
+            if q.cloak_deception_applies
+                && crate::cloak::deceives_observer(crate::cloak::CloakObservation {
+                    hostile: true,
+                    remembers_target: q.cloak_remembers_target,
+                    authored_detector: q.cloak_authored_detector,
+                    distance_squared: {
+                        let dx = q.target_los.x - q.viewer_los.x;
+                        let dy = q.target_los.y - q.viewer_los.y;
+                        dx * dx + dy * dy
+                    },
+                }) =>
+        {
+            return 0.0;
+        }
         _ => {}
     }
 
@@ -2185,6 +2208,9 @@ mod tests {
             target_posture: Posture::Upright,
             target_action_state: ActionState::Waiting,
             target_is_pc: true,
+            cloak_deception_applies: false,
+            cloak_remembers_target: false,
+            cloak_authored_detector: false,
             sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(obstacles),
             fast_grid: fast_grid_for_obstacles(obstacles),
             layer: 0,
@@ -2361,6 +2387,27 @@ mod tests {
         let mut q = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), grid);
         q.target_posture = Posture::Spy;
         assert_eq!(compute_visibility(&q), 0.0);
+    }
+
+    #[test]
+    fn reusable_cloak_deceives_only_unaware_distant_hostiles() {
+        let mut q = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), empty_grid());
+        q.target_posture = Posture::Cloaked;
+        q.cloak_deception_applies = true;
+        assert_eq!(compute_visibility(&q), 0.0);
+
+        q.cloak_remembers_target = true;
+        assert!(compute_visibility(&q) > 0.0);
+
+        q.cloak_remembers_target = false;
+        q.target_los = pt(20.0, 0.0);
+        q.target_world = WorldPoint3D::new(20.0, 0.0, 30.0);
+        assert_eq!(compute_visibility(&q), 1.0);
+
+        q.target_los = pt(100.0, 0.0);
+        q.target_world = WorldPoint3D::new(100.0, 0.0, 30.0);
+        q.cloak_deception_applies = false;
+        assert!(compute_visibility(&q) > 0.0);
     }
 
     #[test]

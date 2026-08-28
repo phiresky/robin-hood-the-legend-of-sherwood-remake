@@ -713,6 +713,10 @@ impl EngineInner {
                     self.stop_recording_macro();
                     return;
                 }
+                if *command == Command::EnterCloak {
+                    self.try_enter_reusable_cloak(assets, *actor);
+                    return;
+                }
                 let elem = SequenceElement::new(1, *command, Some(*actor));
                 // The corresponding Original input handlers use
                 // LaunchSequenceElement. Registration is immediate, but the
@@ -1426,6 +1430,9 @@ impl EngineInner {
             }
             SetFixHardReactionTimes { enabled } => {
                 self.control.sim_config.fix_hard_reaction_times = *enabled;
+            }
+            SetReusableCloaks { enabled } => {
+                self.set_reusable_cloaks_enabled(*enabled);
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -2868,6 +2875,7 @@ impl EngineInner {
                                 self.launch_sequence(sequence);
                             }
                             crate::element::Posture::Spy
+                            | crate::element::Posture::Cloaked
                             | crate::element::Posture::AnonymousArcher => {
                                 let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc));
                                 let mut sequence = Sequence::new();
@@ -5384,7 +5392,9 @@ impl EngineInner {
                     sequence.append_element(elem);
                     self.launch_sequence(sequence);
                 }
-                crate::element::Posture::Spy | crate::element::Posture::AnonymousArcher => {
+                crate::element::Posture::Spy
+                | crate::element::Posture::Cloaked
+                | crate::element::Posture::AnonymousArcher => {
                     let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc_id));
                     let mut sequence = Sequence::new();
                     sequence.append_element(elem);

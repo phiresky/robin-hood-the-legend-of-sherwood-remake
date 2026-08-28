@@ -29,6 +29,14 @@ pub struct GameplayConfig {
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default)]
     pub control_allied_soldiers: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
 }
 
 impl Default for GameplayConfig {
@@ -36,6 +44,7 @@ impl Default for GameplayConfig {
         Self {
             fix_hard_reaction_times: true,
             control_allied_soldiers: false,
+            reusable_cloaks: true,
         }
     }
 }
@@ -54,5 +63,11 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_allied_soldiers);
+        assert!(!config.reusable_cloaks);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }

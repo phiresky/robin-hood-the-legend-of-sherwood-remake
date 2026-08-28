@@ -32,6 +32,10 @@ pub struct SimConfig {
     // extension existed and therefore preserves the original game's bug.
     #[serde(default)]
     pub fix_hard_reaction_times: bool,
+    /// Enable the deterministic reusable-cloak extension for this session.
+    /// Missing state predates the extension and retains Original behavior.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -52,6 +56,7 @@ impl SimConfig {
         Self {
             difficulty,
             fix_hard_reaction_times: true,
+            reusable_cloaks: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -197,9 +202,14 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("fix_hard_reaction_times");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("reusable_cloaks");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
+        assert!(!config.reusable_cloaks);
     }
 }

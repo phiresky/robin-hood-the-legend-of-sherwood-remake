@@ -207,8 +207,20 @@ pub fn leave_helping_climb_orders(posture: Posture, has_carried: bool) -> &'stat
 /// Unconditional transition when posture is Spy or AnonymousArcher
 /// and action state is Waiting or Moving.
 pub fn can_leave_spy(posture: Posture, action_state: ActionState) -> bool {
-    (posture == Posture::Spy || posture == Posture::AnonymousArcher)
-        && matches!(action_state, ActionState::Waiting | ActionState::Moving)
+    matches!(
+        posture,
+        Posture::Spy | Posture::Cloaked | Posture::AnonymousArcher
+    ) && matches!(action_state, ActionState::Waiting | ActionState::Moving)
+}
+
+/// Reusable cloak entry uses the shipped cape-exit strip in reverse.
+pub fn enter_cloak() -> StealthTransition {
+    StealthTransition {
+        animation: OrderType::TransitionWaitingCapeWaitingUpright,
+        result_posture: Posture::Cloaked,
+        result_action_state: ActionState::Waiting,
+        stop_first: false,
+    }
 }
 
 /// Transition animation for leaving spy (cape) posture.
@@ -286,7 +298,7 @@ pub fn leave_leisure() -> StealthTransition {
 /// transitions.
 pub fn leave_disguise(posture: Posture) -> Option<StealthTransition> {
     match posture {
-        Posture::Spy | Posture::AnonymousArcher => Some(leave_spy()),
+        Posture::Spy | Posture::Cloaked | Posture::AnonymousArcher => Some(leave_spy()),
         Posture::Tree => Some(leave_tree()),
         Posture::SimulatingBeggar => Some(leave_beggar()),
         Posture::LeaningOut => Some(leave_leaning_out()),
@@ -306,6 +318,7 @@ pub fn stealth_transition(command: Command) -> Option<StealthTransition> {
         Command::LeaveBeggar => Some(leave_beggar()),
         Command::EnterHelpingClimb => Some(enter_helping_climb()),
         Command::LeaveHelpingClimb => Some(leave_helping_climb()),
+        Command::EnterCloak => Some(enter_cloak()),
         Command::LeaveSpy => Some(leave_spy()),
         Command::LeaveTree => Some(leave_tree()),
         _ => None,
@@ -408,6 +421,7 @@ pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         // Upright-group (riders get +60).
         Posture::Upright
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::Leisure
         | Posture::Siesta
         | Posture::CarryingCorpse
@@ -457,6 +471,7 @@ pub fn detection_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         // Upright-group (riders get +60).
         Posture::Upright
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::Leisure
         | Posture::Siesta
         | Posture::CarryingCorpse

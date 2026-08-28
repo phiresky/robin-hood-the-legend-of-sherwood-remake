@@ -903,6 +903,13 @@ impl NativeContext<'_, '_> {
                     target_posture: tgt_posture,
                     target_action_state: tgt_action_state,
                     target_is_pc: tgt_is_pc,
+                    cloak_deception_applies: tgt_posture == Posture::Cloaked
+                        && npc_entity.camp().is_hostile_to(target_entity.camp()),
+                    cloak_remembers_target: npc_entity.enemy_ai().is_some_and(|enemy| {
+                        enemy.base.primary_target == target_h || enemy.list_them.contains(&target_h)
+                    }),
+                    // TODO(cloak-authoring): connect to an authored detector flag.
+                    cloak_authored_detector: false,
                     sight_obstacles: sight_obstacle_list,
                     fast_grid: &self.fast_grid,
                     layer: npc_layer,

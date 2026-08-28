@@ -67,6 +67,7 @@ const KEY_NAMES: &[&str] = &[
     "ShowViewCone",
     "QuickSave1",
     "QuickLoad1",
+    "ToggleCloak",
     "Dummy",
 ];
 
@@ -199,6 +200,7 @@ impl KeyConfig {
             Some(AltLeft),        // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(KeyV),           // ToggleCloak
         ];
 
         let mut cfg = Self::default();
@@ -239,6 +241,7 @@ impl KeyConfig {
             Some(AltRight),       // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(KeyV),           // ToggleCloak
         ];
 
         let mut cfg = Self::default();
@@ -392,6 +395,7 @@ mod tests {
                 Some(AltLeft),
                 Some(F1),
                 Some(F5),
+                Some(KeyV),
             ]
         );
 
@@ -428,6 +432,7 @@ mod tests {
                 Some(AltRight),
                 Some(F1),
                 Some(F5),
+                Some(KeyV),
             ]
         );
     }

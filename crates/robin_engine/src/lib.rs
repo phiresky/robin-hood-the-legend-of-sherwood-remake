@@ -24,6 +24,7 @@ pub mod bow_shot;
 pub mod campaign;
 pub mod change;
 pub mod character_kind;
+pub mod cloak;
 pub mod combat;
 pub mod console;
 pub mod coordinates;

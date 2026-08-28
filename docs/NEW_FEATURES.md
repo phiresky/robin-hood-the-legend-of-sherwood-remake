@@ -342,7 +342,13 @@ A list of which additional features we have added, which ones we might still wan
 - trading: if you over produce an item, maybe you can sell it for money?
 - unbind - after you have tied up an enemy you should be able to untie them
 - throw something skill that makes a noise somewhere else so guards run there
-- cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
+- Cloaking (implemented, optional): selected heroes whose sprite profile has
+  the shipped cape rows can put the cloak back on with a rebindable key. The
+  reversed original transition leads to a dedicated stationary Cloaked state;
+  unaware distant hostiles are deceived, while remembered targets, ordinary
+  line-of-sight after a reveal, and close scrutiny see through it. Acting or
+  taking damage reveals the hero. Fresh profiles enable this; migrated
+  profiles preserve original one-way cape behavior until enabled in Gameplay.
 - timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be

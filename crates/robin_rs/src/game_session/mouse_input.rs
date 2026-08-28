@@ -1520,6 +1520,7 @@ pub(super) async fn handle_pause_menu_events(
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
+                        let profile_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1587,6 +1588,12 @@ pub(super) async fn handle_pause_menu_events(
                         {
                             let cmd = PlayerCommand::SetFixHardReactionTimes {
                                 enabled: gameplay_config.fix_hard_reaction_times,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.reusable_cloaks != profile_reusable_cloaks {
+                            let cmd = PlayerCommand::SetReusableCloaks {
+                                enabled: gameplay_config.reusable_cloaks,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

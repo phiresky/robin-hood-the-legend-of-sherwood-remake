@@ -216,6 +216,23 @@ fn dispatch_gameplay_action(
             );
             game.stature_focus.latch_stand_up(pre_command_stature);
         }
+        GameAction::ToggleCloak => {
+            // Resolve selection into per-actor commands before recording.
+            // This keeps multiplayer/replay semantics independent of later
+            // selection changes and makes mixed cloaked/upright groups safe.
+            for command in manager
+                .engine
+                .cloak_toggle_commands_for_seat(host.transport.local_seat)
+            {
+                dispatch_local_command(
+                    host,
+                    &mut manager.engine,
+                    &mut frame.commands,
+                    assets,
+                    &command,
+                );
+            }
+        }
         GameAction::KeyControl => {
             dispatch_local_command(
                 host,
