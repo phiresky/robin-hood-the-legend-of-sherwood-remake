@@ -683,6 +683,19 @@ impl LoadingScreenRenderer {
         self.refresh();
     }
 
+    /// Set status and exact progress for a phase with a known item count.
+    /// Unlike estimate-driven phases, asynchronous shipping downloads know
+    /// precisely how many components have completed.
+    pub fn set_counted_status(&mut self, text: impl Into<String>, progress: f32) {
+        let text = text.into();
+        let level = progress.clamp(0.0, 1.0) * self.state.max_level;
+        self.phase_ceiling = self.phase_ceiling.max(level);
+        self.state.update_level(level);
+        tracing::info!(progress = self.state.progress(), "[loading] {text}");
+        self.state.set_status_text(Some(text));
+        self.refresh();
+    }
+
     /// Drain pending window events (especially WM resizes) and snap the window
     /// to a supported 4:3 resolution.  Must be called periodically during
     /// long-running mission loads, otherwise resize events pile up in the

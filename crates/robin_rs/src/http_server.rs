@@ -748,9 +748,9 @@ pub fn drain_pre_engine() {
     }
 }
 
-/// Parse a `rhrec-…` / JSONL replay payload and stash it in
-/// the pending slot.  Shared between the engine-dispatch path and
-/// the wait-mode pre-engine drain.
+/// Parse a replay payload and stash it in the pending slot. Browser builds
+/// accept only compact `rhrec-…` payloads; native developer tooling also
+/// accepts the legacy JSONL stream.
 fn decode_load_replay(data: &str, paused: bool) -> Reply {
     let trimmed = data.trim_start();
     let replay = if trimmed.starts_with(crate::replay_format::COMPACT_PREFIX) {
@@ -764,8 +764,14 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
         }
         replay
     } else {
-        engine_replay::ReplayData::from_reader(std::io::Cursor::new(trimmed.as_bytes()))
-            .map_err(|e| format!("parse replay: {e}"))?
+        #[cfg(target_arch = "wasm32")]
+        return Err("browser replay RPC accepts only compact `rhrec-…` data".into());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            engine_replay::ReplayData::from_reader(std::io::Cursor::new(trimmed.as_bytes()))
+                .map_err(|e| format!("parse replay: {e}"))?
+        }
     };
     let frame_count = replay.frame_count();
     let seed = replay.header.rng_seed;

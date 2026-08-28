@@ -186,8 +186,7 @@ fn load_bundled_shipping_datadir(
 
     let datadir = robin_assets::shipping_datadir::ShippingDatadir::from_compressed_bytes(&bytes)
         .context("decode APK asset Data/datadir.bin")?;
-    let datadir = std::sync::Arc::new(datadir);
-    robin_assets::shipping_datadir::install_global(datadir.clone())
+    let datadir = robin_assets::shipping_datadir::install_global(std::sync::Arc::new(datadir))
         .context("install Android shipping datadir")?;
     tracing::info!("Loaded bundled Android shipping datadir from APK assets");
     Ok(datadir)

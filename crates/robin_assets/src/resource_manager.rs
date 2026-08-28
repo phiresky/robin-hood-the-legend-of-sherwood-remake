@@ -287,6 +287,11 @@ pub struct ResourceManager {
     references: HashMap<ResourceId, u32>,
     /// On-disk locations for recovery after dismiss.
     file_entries: HashMap<ResourceId, ResourceFileEntry>,
+    /// Parsed shipping resources deliberately omit their legacy archive. They
+    /// must never silently attempt to recover dismissed entries from a raw
+    /// `.res` file that was not shipped.
+    #[serde(default)]
+    recovery_disabled: bool,
 }
 
 impl ResourceManager {
@@ -299,6 +304,7 @@ impl ResourceManager {
             waves: HashMap::new(),
             references: HashMap::new(),
             file_entries: HashMap::new(),
+            recovery_disabled: false,
         }
     }
 
@@ -475,6 +481,11 @@ impl ResourceManager {
     /// Re-load a resource from disk.  Called automatically by getters when the
     /// resource has been dismissed.
     fn recover_resource(&mut self, id: ResourceId) -> Result<()> {
+        if self.recovery_disabled {
+            bail!(
+                "resource {id}: recovery is disabled for parsed shipping resources; keep the resource resident"
+            );
+        }
         let entry = self
             .file_entries
             .get(&id)
@@ -903,6 +914,15 @@ impl ResourceManager {
             .extend(src.references.iter().map(|(k, v)| (*k, *v)));
         self.file_entries
             .extend(src.file_entries.iter().map(|(k, v)| (*k, v.clone())));
+        self.recovery_disabled |= src.recovery_disabled;
+    }
+
+    /// Finalize an eagerly parsed resource manager for shipping without its
+    /// source `.res` archive. Runtime resource payloads stay resident, and an
+    /// accidental future dismiss/recover path fails with an explicit error.
+    pub fn disable_recovery_for_shipping(&mut self) {
+        self.file_entries.clear();
+        self.recovery_disabled = true;
     }
 
     /// Dump all resources as a JSON value.

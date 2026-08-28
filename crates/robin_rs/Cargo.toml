@@ -52,21 +52,7 @@ zip.workspace = true
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
 gilrs = "0.11"
 
-# GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
-# browsers that don't yet expose WebGPU (most non-Chrome desktops as
-# of 2026).  Adds a few KiB to native; harmless to keep on.
-# `static-dxc` links DXC into the exe so the DX12 backend can compile
-# shader-model-6 features (our binding_array needs SM5.1+, which the FXC
-# fallback cannot do); only affects Windows targets.
-wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 pollster = "1.0"
-
-# Audio
-kira = { version = "0.12", optional = true }
-# Spatial-audio coords for kira (kira's spatial API takes mint::Vector3 /
-# Quaternion; glam types convert via mint compat). We talk to it directly
-# in mint to avoid pulling glam in as a direct dep.
-mint = { version = "0.5", optional = true }
 
 # Async plumbing for the ApplicationHandler ↔ game-loop bridge.
 # The whole game loop is `async fn`; on native it runs on a dedicated
@@ -81,8 +67,20 @@ web-time.workspace = true
 # Native-only runtime integrations (Lua, filesystem/process services, and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Keep wgpu's native defaults/backends. `static-dxc` lets the DX12 backend
+# compile shader-model-6 features, while `webgl` preserves the existing native
+# feature graph for tooling that also targets a browser from a host build.
+wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 robin_lua.workspace = true
 mlua.workspace = true
+rayon = "1"
+ogg = "0.9.2"
+# Keep Kira's complete native decoder/backend feature set. Native installs can
+# point at user-supplied data directories, so restricting their accepted audio
+# formats would be an unnecessary compatibility regression.
+kira = { version = "0.12", optional = true }
+# Spatial-audio coordinates for Kira. Web Audio uses StereoPannerNode.
+mint = { version = "0.5", optional = true }
 fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
@@ -130,20 +128,34 @@ jni = "0.22.4"
 # Wasm-only: wasm-bindgen + web-sys glue, plus a JS-backed timer for
 # async pacing inside the game loop.  Single-threaded — no `wasm-bindgen-rayon`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser runtime explicitly requests the WebGL backend and all in-tree
+# shaders are WGSL. Avoid wgpu's defaults here: they also enable WebGPU and
+# native backend features that cannot be selected by this runtime.
+wgpu = { version = "30", default-features = false, features = ["std", "webgl", "wgsl"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
     "Window",
     "Document",
     "Element",
+    "GainNode",
     "HtmlElement",
     "HtmlCanvasElement",
     "Location",
     "Performance",
     "Response",
     "Storage",
+    "StereoPannerNode",
     "Url",
     "UrlSearchParams",
 ] }

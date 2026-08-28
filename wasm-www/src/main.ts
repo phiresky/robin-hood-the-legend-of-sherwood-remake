@@ -21,7 +21,9 @@ type BuildManifest = {
 };
 
 type RobinWasmModule = {
-    readonly default: (init?: { module_or_path?: string | URL | Request }) => Promise<unknown>;
+    readonly default: (init?: {
+        module_or_path?: string | URL | Request | ArrayBuffer;
+    }) => Promise<unknown>;
     readonly wasm_boot: (datadir: Uint8Array, dataBaseUrl: string) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
@@ -44,6 +46,7 @@ const BINARIES_BASE =
 const WASM_BUILDS_BASE = `${BINARIES_BASE}/wasm`;
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const COMPACT_REPLAY_RE = /^rhrec-([0-9a-f]{7,40})-/i;
+const PRELOAD_FETCH_CONCURRENCY = 12;
 
 const logEl = document.querySelector<HTMLDivElement>('#log');
 if (logEl === null) {
@@ -186,12 +189,11 @@ async function main(): Promise<void> {
     logOk(`[selected ${build.source} build ${build.short}]`);
 
     logOk('[loading wasm module]');
-    const wasm = await import(/* @vite-ignore */ `${buildBase}/robin.js`) as RobinWasmModule;
-    await wasm.default({ module_or_path: `${buildBase}/robin_bg.wasm` });
+    const wasm = await loadWasmModule(buildBase, build.short !== 'local', build.source === 'latest');
 
     logOk('[wasm module ready, fetching datadir]');
 
-    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v4-q80.rhdata.zst`;
+    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst`;
     const resp = await fetch(dataUrl, {
         cache: build.source === 'latest' ? 'no-cache' : 'force-cache',
     });
@@ -220,6 +222,68 @@ async function main(): Promise<void> {
     }
 }
 
+async function loadWasmModule(
+    buildBase: string,
+    preferPrecompressed: boolean,
+    noCache: boolean,
+): Promise<RobinWasmModule> {
+    const jsUrl = `${buildBase}/robin.js`;
+    const wasmUrl = `${buildBase}/robin_bg.wasm`;
+    const cache: RequestCache = noCache ? 'no-cache' : 'force-cache';
+
+    // GitHub Pages serves checked-in `.gz` files as opaque gzip downloads,
+    // without a Content-Encoding header. Decompress those in the browser so
+    // the large wasm module does not cross the network uncompressed. Local
+    // development keeps the ordinary URL/import path and its useful source
+    // identity instead of paying for two failed `.gz` probes on every boot.
+    const jsBytes = preferPrecompressed
+        ? await fetchPrecompressed(`${jsUrl}.gz`, cache)
+        : undefined;
+    let wasm: RobinWasmModule;
+    if (jsBytes === undefined) {
+        wasm = await import(/* @vite-ignore */ jsUrl) as RobinWasmModule;
+    } else {
+        const moduleUrl = URL.createObjectURL(new Blob([jsBytes], { type: 'text/javascript' }));
+        try {
+            wasm = await import(/* @vite-ignore */ moduleUrl) as RobinWasmModule;
+        } finally {
+            URL.revokeObjectURL(moduleUrl);
+        }
+    }
+
+    const wasmBytes = preferPrecompressed
+        ? await fetchPrecompressed(`${wasmUrl}.gz`, cache)
+        : undefined;
+    await wasm.default({ module_or_path: wasmBytes ?? wasmUrl });
+    return wasm;
+}
+
+async function fetchPrecompressed(
+    url: string,
+    cache: RequestCache,
+): Promise<ArrayBuffer | undefined> {
+    if (typeof DecompressionStream === 'undefined') {
+        return undefined;
+    }
+    const resp = await fetch(url, { cache });
+    if (resp.status === 404) {
+        return undefined;
+    }
+    if (!resp.ok) {
+        throw new Error(`fetch ${url}: HTTP ${resp.status}`);
+    }
+    if (resp.body === null) {
+        throw new Error(`fetch ${url}: response has no body`);
+    }
+    // A conventional host may recognize the suffix and attach
+    // Content-Encoding itself. Fetch has already decoded such a response.
+    if (resp.headers.get('Content-Encoding')?.toLowerCase().includes('gzip') === true) {
+        return await resp.arrayBuffer();
+    }
+    const decompressed = resp.body.pipeThrough(new DecompressionStream('gzip'));
+    return await new Response(decompressed).arrayBuffer();
+}
+
 function installRpcClient(wasm: RobinWasmModule): RobinRpc {
     if (wasm.rh_rpc === undefined) {
         throw new Error('wasm module does not export rh_rpc');
@@ -244,6 +308,7 @@ async function preloadAssets(
     if (wasm.wasm_preload_asset === undefined) {
         return;
     }
+    const preloadAsset = wasm.wasm_preload_asset;
     const manifestUrl = `${buildBase}/preload-assets.json`;
     const manifestResp = await fetch(manifestUrl, {
         cache: noCache ? 'no-cache' : 'force-cache',
@@ -258,25 +323,67 @@ async function preloadAssets(
     if (!Array.isArray(raw)) {
         throw new Error(`${manifestUrl} must be a JSON array`);
     }
-    for (const entry of raw as PreloadEntry[]) {
+    const entries = (raw as PreloadEntry[]).map((entry, index) => {
         const path = typeof entry === 'string' ? entry : String(entry.path ?? '');
         const url = typeof entry === 'string' ? `${buildBase}/${entry}` : String(entry.url ?? path);
         if (path.length === 0 || url.length === 0) {
-            throw new Error(`${manifestUrl} contains an invalid preload entry`);
+            throw new Error(`${manifestUrl} contains an invalid preload entry at index ${index}`);
         }
         const assetUrl = new URL(
             url,
             buildBase.endsWith('/') ? buildBase : `${buildBase}/`,
         ).toString();
-        const assetResp = await fetch(assetUrl, {
-            cache: noCache ? 'no-cache' : 'force-cache',
-        });
-        if (!assetResp.ok) {
-            throw new Error(`fetch ${assetUrl}: HTTP ${assetResp.status}`);
+        return { path, assetUrl };
+    });
+
+    // Fetch and install in the same bounded worker. Keeping every completed
+    // ArrayBuffer until all requests finish doubles the preload peak: JS owns
+    // all downloads while wasm_preload_asset copies them into Rust.
+    await forEachConcurrent(
+        entries,
+        PRELOAD_FETCH_CONCURRENCY,
+        async ({ path, assetUrl }) => {
+            const assetResp = await fetch(assetUrl, {
+                cache: noCache ? 'no-cache' : 'force-cache',
+            });
+            if (!assetResp.ok) {
+                throw new Error(`fetch ${assetUrl}: HTTP ${assetResp.status}`);
+            }
+            const bytes = new Uint8Array(await assetResp.arrayBuffer());
+            preloadAsset(path, bytes);
+            logOk(`[preloaded ${path}: ${bytes.byteLength} bytes]`);
+        },
+    );
+}
+
+async function forEachConcurrent<T>(
+    items: readonly T[],
+    concurrency: number,
+    action: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+        throw new Error(`preload concurrency must be a positive integer, got ${concurrency}`);
+    }
+    const errors = new Array<Error | undefined>(items.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+        for (;;) {
+            const index = next++;
+            if (index >= items.length) {
+                return;
+            }
+            try {
+                await action(items[index] as T, index);
+            } catch (error) {
+                errors[index] = error instanceof Error ? error : new Error(String(error));
+            }
         }
-        const bytes = new Uint8Array(await assetResp.arrayBuffer());
-        wasm.wasm_preload_asset(path, bytes);
-        logOk(`[preloaded ${path}: ${bytes.byteLength} bytes]`);
+    };
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    const firstError = errors.find((error): error is Error => error !== undefined);
+    if (firstError !== undefined) {
+        throw firstError;
     }
 }
 

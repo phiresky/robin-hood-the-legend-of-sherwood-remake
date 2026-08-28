@@ -1,4 +1,4 @@
-//! Audio backend built on Kira.
+//! Native Kira and browser-native Web Audio backends.
 //!
 //! Implements [`AudioBackend`](crate::sound::AudioBackend) on top of
 //! [`kira`]. SFX go through a pool of `StaticSoundData` handles played
@@ -13,7 +13,7 @@ use robin_engine::sound_cache::SampleLoader;
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use kira::{
     AudioManager, AudioManagerSettings, DefaultBackend, Tween,
     listener::ListenerHandle,
@@ -23,35 +23,15 @@ use kira::{
     },
     track::{SpatialTrackBuilder, SpatialTrackHandle},
 };
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use std::collections::HashMap;
-#[cfg(all(feature = "audio", target_arch = "wasm32"))]
-use std::io::Cursor;
-
-#[cfg(all(feature = "audio", target_arch = "wasm32"))]
-thread_local! {
-    /// CPAL closes its Web Audio context synchronously from `Stream::drop`,
-    /// even though `AudioContext::resume()` is asynchronous. Firefox rejects
-    /// that close when a menu click is still completing the resume, leaving
-    /// the following mission without a usable audio stream. Keep idle Kira
-    /// managers process-local and reuse them across menu/mission ownership
-    /// boundaries instead.
-    // TODO: Remove this pool once CPAL sequences Web Audio resume/close.
-    static IDLE_AUDIO_MANAGERS: std::cell::RefCell<Vec<AudioManager>> = const {
-        std::cell::RefCell::new(Vec::new())
-    };
-}
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 type MusicHandle = StreamingSoundHandle<FromFileError>;
-#[cfg(all(feature = "audio", target_arch = "wasm32"))]
-type MusicHandle = StaticSoundHandle;
 
 /// Kira-backed audio backend.
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 pub struct KiraAudioBackend {
-    // `Option` lets the wasm Drop implementation transfer the manager into
-    // the process-local reuse pool before CPAL drops its stream.
     manager: Option<AudioManager>,
     sound_dir: PathBuf,
     /// Cached `StaticSoundData` (decoded audio) keyed by file path.
@@ -80,13 +60,10 @@ pub struct KiraAudioBackend {
     spatial_tracks: Vec<Option<SpatialTrackHandle>>,
 }
 
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 impl KiraAudioBackend {
     /// Construct a new audio backend.
     pub fn new(sound_dir: impl Into<PathBuf>, num_channels: u32) -> Result<Self, String> {
-        #[cfg(target_arch = "wasm32")]
-        let reused = IDLE_AUDIO_MANAGERS.with(|managers| managers.borrow_mut().pop());
-        #[cfg(not(target_arch = "wasm32"))]
         let reused: Option<AudioManager> = None;
 
         let reused_manager = reused.is_some();
@@ -283,20 +260,14 @@ fn load_static_sound(path: &Path) -> Result<StaticSoundData, FromFileError> {
     StaticSoundData::from_file(path)
 }
 
-#[cfg(all(feature = "audio", target_arch = "wasm32"))]
-fn load_static_sound(path: &Path) -> Result<StaticSoundData, FromFileError> {
-    let bytes = robin_util::asset_fs::read(path).map_err(std::io::Error::other)?;
-    StaticSoundData::from_cursor(Cursor::new(bytes))
-}
-
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 fn is_handle_done(h: &StaticSoundHandle) -> bool {
     matches!(h.state(), kira::sound::PlaybackState::Stopped)
 }
 
 /// 0.0–1.0 linear amplitude → decibels (kira's native volume unit).
 /// Below ~ -60 dB we clamp to silence to avoid `-inf` from log10(0).
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 fn amplitude_to_decibels(amp: f32) -> kira::Decibels {
     if amp <= 0.0 {
         kira::Decibels::SILENCE
@@ -305,7 +276,7 @@ fn amplitude_to_decibels(amp: f32) -> kira::Decibels {
     }
 }
 
-#[cfg(feature = "audio")]
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 impl AudioBackend for KiraAudioBackend {
     fn play_sound(&mut self, file_name: &str, looping: bool) -> Option<i32> {
         let data = self.load_sample(file_name)?;
@@ -392,7 +363,6 @@ impl AudioBackend for KiraAudioBackend {
 
     fn play_music(&mut self, path: &str, looping: bool) -> bool {
         let full_path = KiraAudioBackend::resolve_music_path(path);
-        #[cfg(not(target_arch = "wasm32"))]
         let data = match StreamingSoundData::from_file(&full_path) {
             Ok(data) => data,
             Err(e) => {
@@ -401,14 +371,6 @@ impl AudioBackend for KiraAudioBackend {
                     full_path.display(),
                     e
                 );
-                return false;
-            }
-        };
-        #[cfg(target_arch = "wasm32")]
-        let data = match load_static_sound(&full_path) {
-            Ok(data) => data,
-            Err(e) => {
-                tracing::warn!("kira: load static music '{}': {}", full_path.display(), e);
                 return false;
             }
         };
@@ -578,21 +540,15 @@ impl AudioBackend for KiraAudioBackend {
     }
 }
 
-#[cfg(all(feature = "audio", target_arch = "wasm32"))]
-impl Drop for KiraAudioBackend {
-    fn drop(&mut self) {
-        let manager = self
-            .manager
-            .take()
-            .expect("Kira backend dropped without its AudioManager");
-        IDLE_AUDIO_MANAGERS.with(|managers| managers.borrow_mut().push(manager));
-    }
-}
-
 // ─── Stub backend (audio feature disabled) ──────────────────────────
 //
 // Wasm/no-audio builds get the same type with a no-op impl so callers
 // don't need per-cfg plumbing.
+
+#[cfg(all(feature = "audio", target_arch = "wasm32"))]
+pub use crate::web_audio_backend::{
+    KiraAudioBackend, clear_mission, preload_boot, replace_mission,
+};
 
 #[cfg(not(feature = "audio"))]
 pub struct KiraAudioBackend;
@@ -684,7 +640,10 @@ pub fn wav_duration_ms(data: &[u8]) -> Option<u32> {
         }
     }
 
-    (data_size * 1000).checked_div(byte_rate)
+    let duration_ms = u64::from(data_size)
+        .checked_mul(1000)?
+        .checked_div(u64::from(byte_rate))?;
+    u32::try_from(duration_ms).ok()
 }
 
 pub fn ogg_duration_ms(data: &[u8]) -> Option<u32> {
@@ -743,19 +702,41 @@ pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
         } else {
             vec![path, base_dir.join("Exclamations").join(&normalised)]
         };
-        let data = candidates.into_iter().find_map(|candidate| {
-            robin_util::asset_fs::read(&candidate).ok().or_else(|| {
-                let resolved =
-                    robin_engine::sbfile::resolve_case_insensitive(&candidate).or_else(|| {
-                        candidate
-                            .to_str()
-                            .and_then(robin_engine::sbfile::resolve_data_path)
-                    })?;
-                robin_util::asset_fs::read(resolved).ok()
+        #[cfg(target_arch = "wasm32")]
+        if let Some((size, duration_ms)) =
+            robin_assets::shipping_datadir::global().and_then(|shipping| {
+                candidates
+                    .iter()
+                    .find_map(|path| shipping.active_audio_metadata(path))
             })
+        {
+            // Web Audio already owns the decoded buffer. SoundCache needs only
+            // authoritative bookkeeping, not another encoded-byte copy.
+            return Some((Vec::new(), size, duration_ms));
+        }
+        let candidates = candidates.into_iter().flat_map(|candidate| {
+            let opus = candidate.with_extension("opus");
+            [candidate, opus]
+        });
+        let (data, source_path) = candidates.into_iter().find_map(|candidate| {
+            if let Ok(data) = robin_util::asset_fs::read(&candidate) {
+                return Some((data, candidate));
+            }
+            let resolved =
+                robin_engine::sbfile::resolve_case_insensitive(&candidate).or_else(|| {
+                    candidate
+                        .to_str()
+                        .and_then(robin_engine::sbfile::resolve_data_path)
+                })?;
+            robin_util::asset_fs::read(&resolved)
+                .ok()
+                .map(|data| (data, resolved))
         })?;
         let size = data.len() as u32;
-        let duration_ms = wav_duration_ms(&data).unwrap_or(0);
+        let duration_ms = robin_assets::shipping_datadir::global()
+            .and_then(|shipping| shipping.active_audio_duration_ms(&source_path))
+            .or_else(|| wav_duration_ms(&data))
+            .unwrap_or(0);
         Some((data, size, duration_ms))
     })
 }
@@ -764,7 +745,7 @@ pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "audio")]
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     #[test]
     fn music_path_falls_back_from_wav_to_ogg() {
         let temp = tempfile::tempdir().unwrap();
@@ -810,5 +791,26 @@ mod tests {
     fn wav_duration_invalid() {
         assert_eq!(wav_duration_ms(b"not a wav"), None);
         assert_eq!(wav_duration_ms(&[]), None);
+    }
+
+    #[test]
+    fn wav_duration_handles_samples_larger_than_u32_milliseconds_product() {
+        let byte_rate = 88_200u32;
+        let data_size = 10_000_000u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_size).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&44_100u32.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+
+        assert_eq!(wav_duration_ms(&wav), Some(113_378));
     }
 }

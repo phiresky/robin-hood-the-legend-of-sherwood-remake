@@ -215,8 +215,7 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
     let mut dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
     dd.set_remote_base_url(data_base_url);
-    let dd = std::sync::Arc::new(dd);
-    assets_shipping_datadir::install_global(dd.clone()).map_err(|e| {
+    let dd = assets_shipping_datadir::install_global(std::sync::Arc::new(dd)).map_err(|e| {
         wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
     })?;
     robin_rs::http_server::start_global(0)
@@ -244,6 +243,8 @@ pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "audio")]
+    preload_shipping_boot_audio(&shipping).await?;
     let args = robin_rs::main_entry::parse_cli();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
@@ -274,4 +275,25 @@ async fn wasm_main(
     .map(|_| ())
     .map_err(anyhow::Error::msg)
     .context("Window/event-loop init failed")
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "audio"))]
+async fn preload_shipping_boot_audio(
+    shipping: &assets_shipping_datadir::ShippingDatadir,
+) -> anyhow::Result<()> {
+    let paths = shipping
+        .audio_durations_ms
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for path in paths {
+        let bytes = shipping
+            .raw_asset(&path)
+            .ok_or_else(|| anyhow::anyhow!("boot audio {path} disappeared before decode"))?;
+        robin_rs::audio_backend::preload_boot(&path, bytes)
+            .await
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("decode required boot audio {path}"))?;
+    }
+    Ok(())
 }

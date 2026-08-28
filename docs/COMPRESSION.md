@@ -83,17 +83,23 @@ saved by interface jxl after sprite trim                        2,435,771 B
 saved vs v2 q80                                                 7,229,849 B
 ```
 
-The production converter path for the artifact named `v4-q80.rhdata.zst` is:
+The canonical browser converter path for the artifact named
+`v6-web-opus-q80.rhdata.zst` is the checked-in wrapper:
 
+```sh
+scripts/build_web_shipping_datadir.sh \
+  datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 ```
-convert_datadir --format shipping \
-  --map-format jxl-q80 \
-  --zstd-window-log 30
-```
+
+The wrapper invokes `convert_datadir --format shipping --map-format jxl-q80
+--audio-format opus --zstd-window-log 30` explicitly. This matters because the
+converter's native-oriented defaults retain raw maps and source audio.
 
 Only map quality is lossy. Interface pictures are left in the raw RGB565
 shipping representation so transparent/keyed UI art remains exact. The
-generated v4 artifact is 35 213 242 B.
+Opus is web-only; native and Android artifacts retain the default
+`--audio-format source`. Historical size figures below describe their named
+schema and remain as measurement provenance.
 
 ### Demo mission sprite trim
 
@@ -350,20 +356,23 @@ Extrapolating the `.bks` ratio to 565 MiB: ~141 MiB total for the full bank zstd
 
 ## Mission-selective shipping layout
 
-Shipping format v4 applies the trimming recommendation without breaking the
+Shipping format v5 applies the trimming recommendation without breaking the
 compression properties measured above. The converter now emits a file tree:
 
 ```
 Data/datadir.bin
-Data/missions/<mission>-<content-hash>.rhmission.zst
-Data/rhs/<rhs>-<content-hash>.rhmission.zst
+Data/missions/<mission>-w<window>-<content-hash>.rhmission.zst
+Data/rhs/<rhs>-w<window>-<content-hash>.rhmission.zst
+Data/audio/<group>-w<window>-<content-hash>.rhmission.zst
 ```
 
 `datadir.bin` is the boot manifest: profiles, shared UI/text resources, level
 descriptors, the sprite-bank dictionary/index shape, and a mission dependency
 graph. Each mission file contains its parsed level and script, terrain/minimap,
-and loading resources. Each RHS file contains that character/accessory's RHS
-metadata, raw compatibility copy, and only its reachable sprite-bank slots.
+and loading resources. Each RHS file contains that character/accessory's
+parsed RHS metadata and only its reachable sprite-bank slots. There is
+intentionally no raw RHS compatibility copy: runtime sprite lookup consumes
+the parsed form directly.
 
 RHS payloads are intentionally **not** split into one file per sprite. The
 measurements in this document show that hundreds of small related sprites gain
@@ -371,9 +380,9 @@ substantially from cross-sprite zstd matching, and a file per sprite would also
 pay format and HTTP overhead for every frame. One zstd stream per RHS keeps
 those within-character matches while allowing heroes, accessories, and common
 effects to be shared by several mission dependency lists. Browser requests for
-a mission's missing files run concurrently, and decoded files stay cached for
-later missions. The content hash in each filename makes those cached files safe
-to reuse across shipping-manifest updates.
+a mission's files run concurrently. Decoded parts are move-merged into only the
+active mission and then released; ordinary HTTP caching avoids retransferring
+content-addressed files when a later mission reuses them.
 
 A raw-map Leicester conversion (`--map-format raw --zstd-window-log 30`) gave
 this preliminary layout measurement:
@@ -420,10 +429,10 @@ The data path has larger opportunities than another compiler flag:
   3.9 MiB). In particular, `Interface/DEFAULT.RES` exists both as a roughly
   21.6 MiB raw archive and as parsed `ResourceManager` data. Zstd can match the
   duplicate bytes on the wire, but wasm retains both representations.
-- The first full-game mission (`H01_Lin_VL`) fetches **56 files / 32,024,402
-  B**: one mission core plus 55 RHS chunks. First-mission shipping transfer is
-  therefore **41,470,893 B** including the boot manifest, before HTTP cache
-  reuse. The installed payload exposes 61 raw files and 55 parsed RHS entries.
+- The earlier first-full-game-mission measurement (`H01_Lin_VL`, about 32 MB)
+  predates authoritative audio dependencies and therefore is not a valid
+  network-total measurement. It covered the mission/RHS shape but omitted the
+  sounds that the synchronous runtime can play.
 - The publish workflow eagerly fetches **527** demo audio files before boot,
   one request after another. They total **9,162,515 B** (8,029,994 B if each is
   gzip-9 encoded). This is independent of the shipping datadir and is currently
@@ -518,6 +527,101 @@ The large bitcode bodies are not dead compatibility code: compact replay and
 snapshot decoding needs them. Reducing those requires a narrower wire DTO or a
 different snapshot boundary, not merely hiding derives behind cfg attributes.
 
+## Schema-v5 implementation follow-up (2026-08-28)
+
+The memory recommendations above are now reflected in schema v5:
+
+- Per-RHS sprite storage is a sorted sparse list of `(u32, ShippingSprite)`
+  entries plus the global bank length. The dense runtime index is allocated
+  once for the active mission, rather than once per decoded RHS chunk. Packed
+  sprite buffers are `Arc<Vec<u16>>`, so the decoded shipping payload and
+  `FrameHolder` share them instead of retaining a second pixel-data copy.
+- RHS chunks ship parsed metadata only. A normalized parsed-RHS registry feeds
+  `SpriteScriptor`; loose native datadirs retain the legacy `SbFile` parser.
+- Split files are decoded and move-merged directly into one active mission.
+  Decoded part caches and previously visited merged missions are not retained.
+- Mission raw files become cheap-clone shared asset buffers. `SbFile` cursors
+  share those buffers, and the VFS has one replaceable active-mission slot, so
+  opening files or visiting another mission no longer deep-clones or stacks
+  raw mounts.
+- Boot raw copies of parsed `DEFAULT.RES`, `Level.res`, Exclamations
+  `actors.res`, and `profile.cpf` are omitted. Unused `Text/actors.res` and
+  launcher-only `slideshow_in.pak` are omitted entirely. Parsed shipping
+  resource managers explicitly disable legacy archive recovery, so a future
+  accidental recovery attempt returns a clear error instead of depending on a
+  raw archive that is no longer shipped.
+- Character RHS dependencies are indexed by CPF profile in the boot manifest.
+  The mission boundary unions authored dependencies with the selected team and
+  every currently eligible gang reinforcement; action-capability mappings add
+  only the projectile and pickup masters those characters can create. A load
+  from a decoded save uses an explicit conservative object-master closure until
+  exact saved entity types are threaded to this boundary.
+- Browser audio is no longer one 527-file boot preload. Menu audio remains at
+  boot; mission refs add a shared FX chunk, shared exclamation metadata,
+  content-addressed per-actor localized voice chunks for possible participants,
+  and the mission profile's exact green/yellow/red music. The boot manifest
+  records authored speaker IDs and CPF-profile-to-speaker mappings; runtime
+  publishes the precise mission/team/reinforcement speaker closure and keys the
+  process sound cache by that closure. Missing selected metadata or samples are
+  conversion/runtime errors rather than silent omissions. Music packaging
+  preserves the source datadir's WAV or Ogg representation, matching the audio
+  backend's existing fallback. The JS boot preloader fetches its small manifest
+  with bounded concurrency.
+- Wasm Kira keeps PCM/WAV and Ogg/Vorbis but omits unused MP3/FLAC decoders;
+  native builds retain the complete default decoder set. In the measured build
+  the final schema-v5 artifact is 13,065,723 B and 4,888,828 B with gzip-9,
+  compared with the earlier 13,199,749 B / 4,965,145 B build. Concurrent
+  source edits make that size delta
+  directional rather than a controlled feature-only A/B; the feature graph and
+  release build were verified directly.
+- Dependency fetches are bounded to eight concurrent files and each decoded
+  part is move-merged immediately. This prevents mission startup from retaining
+  all compressed responses and all decoded part shells alongside the final
+  merged payload. JS boot preloads use the same fetch/install/release pattern.
+- `--resume` filenames include the requested zstd window and existing chunks
+  are decoded and compared with the exact native-bitcode payload before reuse.
+  Compression uses at most four workers and writes each completed chunk from
+  its worker, avoiding a result vector containing the entire compressed RHS
+  corpus.
+
+The final raw-map full-game validation measured `H01_Lin_VL` as follows. This
+is deliberately a conservative source-fidelity build; production q80 JXL
+reduces the map-heavy mission core but does not change the audio totals.
+
+```
+boot manifest                 9,269,836 B
+mission core                 18,363,666 B
+55 parsed RHS chunks         27,093,269 B
+shared effects               38,793,824 B
+13 voice chunks              36,409,729 B
+mission music                 1,821,174 B
+exclamation metadata              1,473 B
+mission boundary total      122,483,135 B (72 files)
+boot + first mission        131,752,971 B
+```
+
+The difference from the historical ~30 MB figure is overwhelmingly audio:
+75.2 MB of effects and voices are now included authoritatively rather than
+being omitted from the accounting. Vorbis/Opus conversion remains the largest
+available wire-size follow-up; it requires a controlled quality/determinism
+benchmark and duration-decoder support before replacing the source WAV files.
+
+An exact zstd window benchmark over the previous 223-file full-game RHS corpus
+found adaptive windows effectively wire-size neutral: 196,338,366 B with every
+frame advertising `windowLog=30`, versus 196,348,002 B when each frame pledges
+its source size and uses `ceil(log2(size))` (+0.0049%). The H01 closure was
+slightly smaller (32,035,889 B to 32,030,733 B). The maximum RHS decoder window
+falls from 1 GiB to 16.1 MiB (9.70 MiB within H01), so schema-v5 compression
+now pledges input length and caps each frame adaptively.
+
+A shared trained zstd dictionary was measured and rejected. A 112,640 B COVER
+dictionary increased the full RHS corpus by 3.62% including the dictionary and
+increased H01 by 3.37%; a 16 KiB fastCover dictionary was worse. Even an oracle
+that used the large dictionary only for the 90 individually improving files
+saved 21,871 B gross, less than the dictionary itself. No dictionary support or
+format complexity should be added unless a materially different payload layout
+is benchmarked.
+
 ### Sprite format candidates
 
 The earlier measurements remain decisive: the original RLE/VQ bytes plus zstd
@@ -556,6 +660,71 @@ Primary references for the candidates: the
 [Khronos WebGL S3TC extension](https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_s3tc/),
 [WebGPU feature guarantees](https://gpuweb.github.io/gpuweb/#adapter-capability-guarantees),
 and the [zstd dictionary API](https://facebook.github.io/zstd/zstd_manual.html#Chapter5).
+
+## Schema-v6 web audio (2026-08-28)
+
+Browser shipping now uses `convert_datadir --audio-format opus`. FFmpeg's
+libopus encoder runs offline with 20 ms VBR frames and complexity 10: localized
+exclamations and dialogue use 24 kbit/s `voip`, ordinary effects use 48 kbit/s
+`audio`, and music uses 64 kbit/s `audio`. Native and Android conversion keeps
+the default `source` representation; this is intentionally a web-only codec
+change.
+
+FFmpeg randomizes Ogg stream serials, so the converter parses its output and
+remuxes the Opus packets with a fixed serial and canonical `OpusTags`. This is
+required for reproducible content hashes and useful `--resume` behavior. Menu
+audio is part of the shipping boot manifest rather than the wasm executable;
+mission effects, actor voices, dialogue, and music remain independently loaded
+dependencies. Dialogue WAVE-table references are resolved per `.red` mission
+descriptor, fixing the earlier omission of later-mission
+`Data/Text/Dialogues/*.ogg` files. H01 has no descriptor dialogue and is
+unchanged by that particular correction.
+
+Wasm no longer includes Kira, CPAL, or a Rust audio decoder. It calls Web
+Audio's `decodeAudioData` at the asynchronous boot and mission boundaries and
+keeps decoded PCM exclusively in browser-owned `AudioBuffer`s. Encoded Opus
+stays once in the mounted VFS bundle; the engine sound cache retains an empty
+loaded sentinel plus encoded size and duration instead of cloning the bytes.
+Decode concurrency is bounded to eight and appears as its own loading-screen
+component. Legacy `.wav`/`.ogg` names resolve the corresponding `.opus` key.
+
+Each boot/mission payload records the exact source duration before transcoding.
+Gameplay timing therefore does not depend on Opus pre-skip, resampling, end
+trimming, or browser rounding. This changes the top-level shipping schema to
+v6 (`RHDDNAT6`) and mission chunks to v3 (`RHMISN03`); older generated data
+must be rebuilt. The two Ogg/Theora cinematics still contain their original
+Vorbis tracks because changing them is a separate video-remux pipeline task.
+
+The completed raw-map full-game conversion measures `H01_Lin_VL` as follows.
+This is directly comparable to the schema-v5 raw-map numbers above; production
+JXL changes the map-heavy mission core but not these audio totals.
+
+```
+boot manifest                 9,653,475 B
+mission core                 18,363,808 B
+55 parsed RHS chunks         27,093,080 B
+shared effects                6,644,383 B
+13 voice chunks               2,928,975 B
+mission music                 1,573,054 B
+exclamation metadata              1,454 B
+mission boundary total       56,604,754 B (72 files)
+boot + first mission         66,258,229 B
+```
+
+The mission boundary is 65,878,381 B smaller than schema v5 (-53.8%). The
+parsed mission/RHS data is effectively unchanged; nearly all of the reduction
+is the authoritative audio changing from 77,026,200 B to 11,147,866 B. The
+boot manifest grows by 383,639 B because it now owns the transcoded menu audio
+that the publish workflow previously shipped as a separate eager preload.
+
+With the same shell accounting as the schema-v5 browser measurement, the
+optimized raw-map cold load through the first mission is **79,926,218 B**:
+12,746,082 B wasm, 164,302 B wasm-bindgen JS, 486,683 B core overlay, 3,067 B
+preload manifest, 267,855 B shell, and the 66,258,229 B boot/mission data above.
+That is 66,401,671 B smaller than the previous 146,327,889 B total (-45.4%).
+HTTP content encoding can further reduce the wasm/JS/shell portion; the
+already-zstd-compressed data and Opus streams should not be counted on for a
+similar secondary reduction.
 
 ## Reproducing
 

@@ -138,19 +138,15 @@ impl MainMenuAudio {
         }
         sound.apply_volumes(&sound_cfg);
 
-        let menu_bank_path = robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(
-            "Data/Sounds/Menu/menu.fxg",
-        ))
-        .unwrap_or_else(|| std::path::PathBuf::from("Data/Sounds/Menu/menu.fxg"));
-        match std::fs::read(&menu_bank_path) {
+        let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
+        match robin_engine::sbfile::SbFile::read_all(menu_bank_path) {
             Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => sound.sound_cache.initialize_menu_cache(&entries),
                 Err(e) => tracing::warn!("Main menu: menu bank parse failed: {e}"),
             },
-            Err(e) => tracing::warn!(
-                "Main menu: menu bank unreadable at {}: {e}",
-                menu_bank_path.display()
-            ),
+            Err(e) => {
+                tracing::warn!("Main menu: menu bank unreadable at {menu_bank_path}: error {e}")
+            }
         }
 
         Some(Self {

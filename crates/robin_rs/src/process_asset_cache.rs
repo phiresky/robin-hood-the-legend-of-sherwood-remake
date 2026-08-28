@@ -24,13 +24,14 @@ use robin_engine::sound_cache::FxBankElement;
 
 pub struct ProcessAssetCache {
     shipping_mission: Option<String>,
+    shipping_exclamation_ids: Vec<u32>,
     /// Pristine sprite bank (mmap-backed spans). Missions clone it and
     /// then append their runtime overlay sprites; the clone is cheap
     /// because bank sprites carry spans, not pixel data.
     pub sprite_bank: Option<FrameHolder>,
     pub fx_bank: Option<Vec<FxBankElement>>,
     pub menu_bank: Option<Vec<(u32, String)>>,
-    /// One entry per exclamation profile file: resolved
+    /// One entry per active-mission exclamation profile file: resolved
     /// `(action_id, wav paths)` lists ready for
     /// `SoundCache::initialize_exclamations_for_profile`.
     pub exclamations: Vec<Vec<(u32, Vec<String>)>>,
@@ -90,7 +91,12 @@ pub fn get_or_build(
     match std::mem::replace(&mut *state, State::Idle) {
         State::Ready(cache) => {
             let active = shipping.and_then(|datadir| datadir.active_mission_name());
-            if cache.shipping_mission != active {
+            let active_exclamations = shipping
+                .map(|datadir| datadir.active_exclamation_ids())
+                .unwrap_or_default();
+            if cache.shipping_mission != active
+                || cache.shipping_exclamation_ids != active_exclamations
+            {
                 drop(state);
                 let cache = Arc::new(build(shipping, profiles));
                 *STATE.lock().unwrap() = State::Ready(cache.clone());
@@ -109,7 +115,12 @@ pub fn get_or_build(
                 Arc::new(build(shipping, profiles))
             });
             let active = shipping.and_then(|datadir| datadir.active_mission_name());
-            if cache.shipping_mission != active {
+            let active_exclamations = shipping
+                .map(|datadir| datadir.active_exclamation_ids())
+                .unwrap_or_default();
+            if cache.shipping_mission != active
+                || cache.shipping_exclamation_ids != active_exclamations
+            {
                 cache = Arc::new(build(shipping, profiles));
             }
             *STATE.lock().unwrap() = State::Ready(cache.clone());
@@ -173,6 +184,9 @@ fn build(
 
     ProcessAssetCache {
         shipping_mission: shipping.and_then(|datadir| datadir.active_mission_name()),
+        shipping_exclamation_ids: shipping
+            .map(|datadir| datadir.active_exclamation_ids())
+            .unwrap_or_default(),
         sprite_bank,
         fx_bank,
         menu_bank,
@@ -181,17 +195,21 @@ fn build(
 }
 
 /// Load actors.res for variant-index → WAV-filename resolution, then
-/// parse each profile's .dat file into resolved speech entry lists.
+/// parse each active profile's .dat file into resolved speech entry lists.
+/// Split shipping datadirs publish an exact mission/team closure; loose
+/// datadirs preserve the original eager all-profile behavior.
 fn build_exclamations(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     profiles: &ProfileManager,
 ) -> Vec<Vec<(u32, Vec<String>)>> {
     let mut excl_res = ResourceManager::new();
-    if excl_res
-        .attach_or_from_shipping("Data/Sounds/Exclamations/actors.res", shipping)
-        .is_err()
+    if let Err(error) =
+        excl_res.attach_or_from_shipping("Data/Sounds/Exclamations/actors.res", shipping)
     {
-        tracing::warn!("Failed to load actors.res — exclamation cache not initialized");
+        if shipping.is_some() {
+            panic!("shipping mission is missing authoritative actors.res: {error}");
+        }
+        tracing::warn!("Failed to load actors.res — exclamation cache not initialized: {error}");
         return Vec::new();
     }
 
@@ -209,14 +227,20 @@ fn build_exclamations(
             files_needed.insert(excl_id, format!("actor{name}.dat"));
         }
     };
-    for ch in &profiles.characters {
-        add(ch.exclamation_id);
-    }
-    for s in &profiles.soldiers {
-        add(s.exclamation_id);
-    }
-    for c in &profiles.civilians {
-        add(c.exclamation_id);
+    if let Some(datadir) = shipping {
+        for excl_id in datadir.active_exclamation_ids() {
+            add(excl_id);
+        }
+    } else {
+        for ch in &profiles.characters {
+            add(ch.exclamation_id);
+        }
+        for s in &profiles.soldiers {
+            add(s.exclamation_id);
+        }
+        for c in &profiles.civilians {
+            add(c.exclamation_id);
+        }
     }
 
     let mut result = Vec::new();
@@ -226,20 +250,31 @@ fn build_exclamations(
         let data = match SbFile::read_all(&dat_path) {
             Ok(d) => d,
             Err(e) => {
+                if shipping.is_some() {
+                    panic!(
+                        "shipping mission selected exclamation profile {excl_id:#010x}, but {dat_path} is unavailable: {e}"
+                    );
+                }
                 tracing::warn!("Failed to read exclamation file '{dat_path}': error {e}");
                 continue;
             }
         };
 
         let prefix_id = excl_id & 0xFFFF_0000;
-        let (table_id, exclamations) =
-            match robin_engine::sound_cache::parse_exclamation_file(&data, prefix_id) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Failed to parse exclamation file '{dat_filename}': {e}");
-                    continue;
+        let (table_id, exclamations) = match robin_engine::sound_cache::parse_exclamation_file(
+            &data, prefix_id,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                if shipping.is_some() {
+                    panic!(
+                        "shipping exclamation profile {excl_id:#010x} has invalid metadata in {dat_filename}: {e}"
+                    );
                 }
-            };
+                tracing::warn!("Failed to parse exclamation file '{dat_filename}': {e}");
+                continue;
+            }
+        };
 
         // Resolve variant indices to WAV file paths via resource manager
         let resolved: Vec<(u32, Vec<String>)> = exclamations
@@ -247,11 +282,17 @@ fn build_exclamations(
             .map(|(action_id, variant_indices)| {
                 let paths: Vec<String> = variant_indices
                     .into_iter()
-                    .filter_map(|vi| {
-                        excl_res
-                            .get_sample(table_id as i32, vi as usize)
-                            .ok()
-                            .map(|s| s.to_string())
+                    .filter_map(|vi| match excl_res.get_sample(table_id as i32, vi as usize) {
+                        Ok(sample) => Some(sample.to_string()),
+                        Err(error) if shipping.is_some() => panic!(
+                            "shipping exclamation profile {excl_id:#010x} cannot resolve table {table_id} variant {vi}: {error}"
+                        ),
+                        Err(error) => {
+                            tracing::warn!(
+                                "Failed to resolve exclamation profile {excl_id:#010x}, table {table_id}, variant {vi}: {error}"
+                            );
+                            None
+                        }
                     })
                     .collect();
                 (action_id, paths)
