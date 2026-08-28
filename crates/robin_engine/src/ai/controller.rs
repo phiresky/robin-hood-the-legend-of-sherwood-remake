@@ -382,7 +382,7 @@ pub struct AiController {
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub antagonist: Option<AiEntityHandle>,
-    pub last_stimulus_actor: Option<HumanHandle>,
+    pub last_stimulus_actor: Option<AiEntityHandle>,
 
     // -- Timers --
     pub timer_is_running: bool,
@@ -576,7 +576,7 @@ pub struct AiController {
     /// Last primary target reconciled into the entity-side focus state.
     /// This gates automatic focus synchronization across explicit outbox
     /// focus/unfocus effects.
-    pub last_synced_focus_target: Option<HumanHandle>,
+    pub last_synced_focus_target: Option<AiEntityHandle>,
 
     // -- Static entity context (set once at init/load) --
     /// Initial position (guard post / spawn point), set at level load.
@@ -1705,17 +1705,17 @@ impl AiController {
         // `sorrow_level` as side effects — route through
         // `set_checkpoint_charly` so the detectable queue + sorrow
         // reset stay consistent.
-        self.set_checkpoint_charly(0);
+        self.set_checkpoint_charly(None);
     }
 
     /// Overwrites the stashed checkpoint actor and applies the
     /// detectable/sorrow bookkeeping every call:
     ///
     /// * Unconditionally enqueue `DeleteAllDetectables(MissedFriend)`.
-    /// * When `target` is non-zero, enqueue an
+    /// * When `target` is present, enqueue an
     ///   `AddDetectable(target, MissedFriend)` so the target shows up
     ///   in the "missed friend" list.
-    /// * When `target` is zero, zero `sorrow_level` and enqueue a
+    /// * When `target` is absent, zero `sorrow_level` and enqueue a
     ///   second delete (belt-and-braces).
     ///
     /// Detectable effects are drained after the synchronous AI call returns.
@@ -1723,7 +1723,7 @@ impl AiController {
     /// Original executes each clear/add pair immediately, so consecutive calls
     /// have last-call-wins semantics (`A -> null` leaves none, `A -> B` leaves
     /// only B).
-    pub fn set_checkpoint_charly(&mut self, target: NpcHandle) {
+    pub fn set_checkpoint_charly(&mut self, target: Option<AiEntityHandle>) {
         use crate::element::DetectableType;
         self.outbox
             .actor
@@ -1733,10 +1733,10 @@ impl AiController {
             .actor
             .delete_detectables
             .push(DetectableType::MissedFriend);
-        self.checkpoint_charly = Some(AiEntityHandle::new(target));
-        if target != 0 {
+        self.checkpoint_charly = target;
+        if let Some(target) = target {
             self.outbox.actor.add_detectables.push((
-                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target.get())),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -3183,7 +3183,7 @@ impl AiController {
                 friend_id,
                 number_of_all
             );
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3198,7 +3198,7 @@ impl AiController {
                     ctx.position.y,
                     friend_id
                 );
-                self.set_checkpoint_charly(0);
+                self.set_checkpoint_charly(None);
                 self.current_substate = Substate::DefaultInMacro;
                 self.execute_next_macro_command(sim, ctx);
                 return;
@@ -3223,14 +3223,14 @@ impl AiController {
                     friend_id,
                     target
                 );
-                self.set_checkpoint_charly(0);
+                self.set_checkpoint_charly(None);
                 self.current_substate = Substate::DefaultInMacro;
                 self.execute_next_macro_command(sim, ctx);
                 return;
             }
         };
         // Store + warn if not self.
-        self.set_checkpoint_charly(target);
+        self.set_checkpoint_charly(Some(AiEntityHandle::new(target)));
         if target == self.me {
             tracing::warn!(
                 "NPC {}: CheckFor at ({:.0}, {:.0}) applied on yourself? Funny idea...",
@@ -3243,7 +3243,7 @@ impl AiController {
         // (b1) friend already on the missed list → skip the check,
         // resume the macro.
         if self.missed_in_action.contains(&target) {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3254,7 +3254,7 @@ impl AiController {
             && ctx.frame.wrapping_sub(self.frame_when_enemy_detected)
                 < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME
         {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3275,7 +3275,7 @@ impl AiController {
             let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
             self.synchronize_charly = Some(AiEntityHandle::new(target));
             self.synchronize_index = synchronize_index;
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             debug_assert!(
                 self.macro_in_progress,
                 "InitializeFriendCheck pure-sync branch requires a macro to be in progress"
@@ -3448,7 +3448,7 @@ impl AiController {
             Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
         );
         if in_charly_look {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
         }
         // Actor calls preceding StopAll are synchronous in Original.  Close
         // that prefix before queuing Halt so a same-handler `GoTo();
@@ -6129,13 +6129,13 @@ mod tests {
         use crate::entity_id::SoldierId;
 
         let mut cleared = AiController::new(17);
-        cleared.set_checkpoint_charly(10);
-        cleared.set_checkpoint_charly(0);
+        cleared.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
+        cleared.set_checkpoint_charly(None);
         assert!(cleared.outbox.actor.add_detectables.is_empty());
 
         let mut replaced = AiController::new(17);
-        replaced.set_checkpoint_charly(10);
-        replaced.set_checkpoint_charly(11);
+        replaced.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
+        replaced.set_checkpoint_charly(Some(AiEntityHandle::new(11)));
         assert_eq!(
             replaced.outbox.actor.add_detectables,
             vec![(

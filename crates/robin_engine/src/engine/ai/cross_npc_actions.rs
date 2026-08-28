@@ -387,17 +387,21 @@ impl EngineInner {
     // - SendStimulus (e.g. CALL_COORDINATE to archers)
     // - SetLeft/RightCombatNeighbour for phalanx linking
 
-    fn apply_update_left_combat_neighbour(&mut self, target: u32, old_left: u32, new_left: u32) {
-        if old_left != 0 {
-            self.required_cross_npc_enemy_mut(old_left, "unlink-old-left-neighbour")
+    fn apply_update_left_combat_neighbour(
+        &mut self,
+        target: u32,
+        old_left: Option<crate::ai::AiEntityHandle>,
+        new_left: Option<crate::ai::AiEntityHandle>,
+    ) {
+        if let Some(old_left) = old_left {
+            self.required_cross_npc_enemy_mut(old_left.get(), "unlink-old-left-neighbour")
                 .right_combat_neighbour = None;
         }
         self.required_cross_npc_enemy_mut(target, "update-left-combat-neighbour")
-            .left_combat_neighbour =
-            (new_left != 0).then(|| crate::ai::AiEntityHandle::new(new_left));
-        if new_left != 0 {
+            .left_combat_neighbour = new_left;
+        if let Some(new_left) = new_left {
             let new_lefts_old_right = self
-                .required_cross_npc_enemy_mut(new_left, "inspect-new-left-neighbour")
+                .required_cross_npc_enemy_mut(new_left.get(), "inspect-new-left-neighbour")
                 .right_combat_neighbour;
             if let Some(new_lefts_old_right) = new_lefts_old_right {
                 self.required_cross_npc_enemy_mut(
@@ -406,22 +410,26 @@ impl EngineInner {
                 )
                 .left_combat_neighbour = None;
             }
-            self.required_cross_npc_enemy_mut(new_left, "link-new-left-neighbour")
+            self.required_cross_npc_enemy_mut(new_left.get(), "link-new-left-neighbour")
                 .right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(target));
         }
     }
 
-    fn apply_update_right_combat_neighbour(&mut self, target: u32, old_right: u32, new_right: u32) {
-        if old_right != 0 {
-            self.required_cross_npc_enemy_mut(old_right, "unlink-old-right-neighbour")
+    fn apply_update_right_combat_neighbour(
+        &mut self,
+        target: u32,
+        old_right: Option<crate::ai::AiEntityHandle>,
+        new_right: Option<crate::ai::AiEntityHandle>,
+    ) {
+        if let Some(old_right) = old_right {
+            self.required_cross_npc_enemy_mut(old_right.get(), "unlink-old-right-neighbour")
                 .left_combat_neighbour = None;
         }
         self.required_cross_npc_enemy_mut(target, "update-right-combat-neighbour")
-            .right_combat_neighbour =
-            (new_right != 0).then(|| crate::ai::AiEntityHandle::new(new_right));
-        if new_right != 0 {
+            .right_combat_neighbour = new_right;
+        if let Some(new_right) = new_right {
             let new_rights_old_left = self
-                .required_cross_npc_enemy_mut(new_right, "inspect-new-right-neighbour")
+                .required_cross_npc_enemy_mut(new_right.get(), "inspect-new-right-neighbour")
                 .left_combat_neighbour;
             if let Some(new_rights_old_left) = new_rights_old_left {
                 self.required_cross_npc_enemy_mut(
@@ -430,7 +438,7 @@ impl EngineInner {
                 )
                 .right_combat_neighbour = None;
             }
-            self.required_cross_npc_enemy_mut(new_right, "link-new-right-neighbour")
+            self.required_cross_npc_enemy_mut(new_right.get(), "link-new-right-neighbour")
                 .left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(target));
         }
     }
@@ -753,20 +761,17 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
                     self.required_cross_npc_enemy_mut(target, "set-left-combat-neighbour")
-                        .left_combat_neighbour =
-                        (neighbour != 0).then(|| crate::ai::AiEntityHandle::new(neighbour));
+                        .left_combat_neighbour = neighbour;
                 }
 
                 crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
                     self.required_cross_npc_enemy_mut(target, "set-right-combat-neighbour")
-                        .right_combat_neighbour =
-                        (neighbour != 0).then(|| crate::ai::AiEntityHandle::new(neighbour));
+                        .right_combat_neighbour = neighbour;
                 }
 
                 crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
                     self.required_cross_npc_enemy_mut(target, "set-archer-behind")
-                        .archer_behind_me =
-                        (archer != 0).then(|| crate::ai::AiEntityHandle::new(archer));
+                        .archer_behind_me = archer;
                 }
 
                 crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
@@ -774,8 +779,7 @@ impl EngineInner {
                     shield_bearer,
                 } => {
                     self.required_cross_npc_enemy_mut(target, "set-shield-bearer")
-                        .shield_bearer_before_me =
-                        (shield_bearer != 0).then(|| crate::ai::AiEntityHandle::new(shield_bearer));
+                        .shield_bearer_before_me = shield_bearer;
                 }
 
                 // Full reciprocal update.  Four steps:
@@ -1480,24 +1484,21 @@ impl EngineInner {
                             target,
                             "synchronous left-neighbour setter",
                         )
-                        .left_combat_neighbour =
-                            (neighbour != 0).then(|| crate::ai::AiEntityHandle::new(neighbour));
+                        .left_combat_neighbour = neighbour;
                     }
                     crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
                         self.required_cross_npc_enemy_mut(
                             target,
                             "synchronous right-neighbour setter",
                         )
-                        .right_combat_neighbour =
-                            (neighbour != 0).then(|| crate::ai::AiEntityHandle::new(neighbour));
+                        .right_combat_neighbour = neighbour;
                     }
                     crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
                         self.required_cross_npc_enemy_mut(
                             target,
                             "synchronous archer-behind setter",
                         )
-                        .archer_behind_me =
-                            (archer != 0).then(|| crate::ai::AiEntityHandle::new(archer));
+                        .archer_behind_me = archer;
                     }
                     crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
                         target,
@@ -1507,8 +1508,7 @@ impl EngineInner {
                             target,
                             "synchronous shield-bearer setter",
                         )
-                        .shield_bearer_before_me =
-                            .then(|| crate::ai::AiEntityHandle::new(shield_bearer));
+                        .shield_bearer_before_me = shield_bearer;
                     }
                     crate::ai::CrossNpcAction::SetPrimaryTarget {
                         target,

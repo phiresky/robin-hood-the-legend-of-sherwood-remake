@@ -1517,27 +1517,47 @@ pub enum CrossNpcAction {
     /// (reciprocal cleanup).
     SetLeftCombatNeighbour {
         target: NpcHandle,
-        neighbour: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
     },
     /// Set the target NPC's right combat neighbour link (one-way).
     SetRightCombatNeighbour {
         target: NpcHandle,
-        neighbour: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
     },
     /// One-way counterpart of Original `SetArcherBehindMe`, used while
     /// applying the reciprocal half of `UpdateShieldBearerBeforeMe`.
     SetArcherBehindMe {
         target: NpcHandle,
-        archer: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        archer: Option<AiEntityHandle>,
     },
     /// One-way counterpart of Original `SetShieldBearerBeforeMe`, used while
     /// applying the reciprocal half of `UpdateArcherBehindMe`.
     SetShieldBearerBeforeMe {
         target: NpcHandle,
-        shield_bearer: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        shield_bearer: Option<AiEntityHandle>,
     },
     /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
-    ///   1. Clear `old_left`'s right pointer (if non-zero).
+    ///   1. Clear `old_left`'s right pointer (if present).
     ///   2. Store `new_left` on `target`'s left pointer.
     ///   3. Pre-clean `new_left`'s existing right (and that-right's left).
     ///   4. Wire `new_left`'s right pointer back to `target`.
@@ -1546,14 +1566,34 @@ pub enum CrossNpcAction {
     /// `target`'s current state being unmodified.
     UpdateLeftCombatNeighbour {
         target: NpcHandle,
-        old_left: HumanHandle,
-        new_left: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_left: Option<AiEntityHandle>,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_left: Option<AiEntityHandle>,
     },
     /// Mirror of [`Self::UpdateLeftCombatNeighbour`] for the right side.
     UpdateRightCombatNeighbour {
         target: NpcHandle,
-        old_right: HumanHandle,
-        new_right: HumanHandle,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_right: Option<AiEntityHandle>,
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_right: Option<AiEntityHandle>,
     },
     /// Propagate primary target to a phalanx member during
     /// `ReconsiderPhalanx`'s phalanx-member walk.
@@ -2235,7 +2275,7 @@ pub struct StolenObject {
     bitcode::Decode,
 )]
 pub struct CombatInfo {
-    pub actor_npc: NpcHandle,
+    pub actor_npc: AiEntityHandle,
     pub enemy_position: Position,
 }
 
@@ -2257,7 +2297,55 @@ pub struct DoorCombatInfo {
     pub direction: u16,
     /// Original `SendBeforeDoorToFight` explicitly permits a null adversary.
     /// Slot zero is a live human, so only `None` represents that null pointer.
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub adversary: Option<AiEntityHandle>,
+}
+
+#[cfg(test)]
+mod nullable_stimulus_reference_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_door_adversary_zero_decodes_as_null() {
+        let mut value = serde_json::to_value(DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: None,
+        })
+        .unwrap();
+        value["adversary"] = serde_json::json!(0);
+        let info: DoorCombatInfo = serde_json::from_value(value).unwrap();
+        assert_eq!(info.adversary, None);
+    }
+
+    #[test]
+    fn door_adversary_slot_zero_round_trips_as_live() {
+        let info = DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: Some(AiEntityHandle::new(0)),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""adversary":{"entity":0}"#));
+        let restored: DoorCombatInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.adversary, Some(AiEntityHandle::new(0)));
+    }
+
+    #[test]
+    fn stimulus_owner_slot_zero_round_trips_as_live() {
+        let mut stimulus = Stimulus::new(StimulusType::NoEvent);
+        stimulus.owner = Some(AiEntityHandle::new(0));
+        let json = serde_json::to_string(&stimulus).unwrap();
+        assert!(json.contains(r#""owner":{"entity":0}"#));
+        let restored: Stimulus = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
+    }
 }
 
 /// The payload of a [`Stimulus`].
@@ -2278,7 +2366,7 @@ pub enum StimulusInfo {
     None,
     Noise(Noise),
     Position(Position),
-    Human(HumanHandle),
+    Human(AiEntityHandle),
     Hint(Hint),
     Object(ObjectHandle),
     Stolen(StolenObject),

@@ -846,7 +846,7 @@ impl Engine {
 					"detected_body": resolve_optional_ai_handle(ai.detected_body),
 					"interesting_object": resolve_optional_ai_handle(ai.interesting_object),
 					"antagonist": resolve_optional_ai_handle(ai.antagonist),
-					"last_stimulus_actor": ai.last_stimulus_actor.map_or(Value::Null, resolve_ai_handle),
+					"last_stimulus_actor": resolve_optional_ai_handle(ai.last_stimulus_actor),
 				},
 				"timers": {
 					"running": ai.timer_is_running, "ring": ai.when_does_timer_ring,

@@ -654,7 +654,7 @@ struct ConvertedLocalAiCommon {
     detected_body: Option<AiEntityHandle>,
     interesting_object: Option<AiEntityHandle>,
     antagonist: Option<AiEntityHandle>,
-    last_stimulus_actor: Option<u32>,
+    last_stimulus_actor: Option<AiEntityHandle>,
     macro_in_progress: bool,
     number_of_remaining_macro_bytes: u16,
     timer_is_running: bool,
@@ -1490,7 +1490,7 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     // bookkeeping; leaving its marker at the constructor default would make
     // the first post-load RefreshView synthesize a Focus(primary_target) and
     // overwrite a saved LookForward/Stare state that Original preserves.
-    ai.last_synced_focus_target = ai.primary_target.map(AiEntityHandle::get);
+    ai.last_synced_focus_target = ai.primary_target;
     ai.initial_position = ai_initial_position;
     ai.initial_view_direction = ai_initial_view_direction;
 }
@@ -2047,7 +2047,7 @@ fn convert_local_ai_common(
             creation_order,
             "local_ai.antagonist",
         )?,
-        last_stimulus_actor: ai_optional_handle(
+        last_stimulus_actor: optional_ai_handle(
             entities.resolve_ai_element(saved.last_stimulus_actor)?,
             ReferenceKind::Human,
             creation_order,
@@ -3603,15 +3603,6 @@ fn optional_ai_handle(
             .map(EntityId::index)
             .map(AiEntityHandle::new),
     )
-}
-
-fn ai_optional_handle(
-    entity_id: Option<EntityId>,
-    expected: ReferenceKind,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<Option<u32>, LegacyElementAdoptError> {
-    Ok(checked_reference(entity_id, expected, creation_order, field)?.map(EntityId::index))
 }
 
 fn element_handle(

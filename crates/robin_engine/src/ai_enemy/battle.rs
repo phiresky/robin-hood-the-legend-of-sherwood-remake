@@ -2945,9 +2945,7 @@ impl EnemyAi {
                 // handed-off target is always the pre-swap working target.
                 self.base.outbox.actor.friend_primary_target_swaps.push((
                     cand.friend_id,
-                    working_target
-                        .expect("friend swap requires current primary target")
-                        .get(),
+                    working_target.expect("friend swap requires current primary target"),
                 ));
                 working_target = cand.friend_primary_target;
                 working_target_pos = cand.friend_primary_target_position;
@@ -4129,8 +4127,7 @@ impl EnemyAi {
         self.base.outbox.actor.stop_target = Some(
             self.base
                 .primary_target
-                .expect("swordfight entry target presence was checked")
-                .get(),
+                .expect("swordfight entry target presence was checked"),
         );
 
         // No SetDirection here. Direction is set by the engine-side

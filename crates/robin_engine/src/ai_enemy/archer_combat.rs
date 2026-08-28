@@ -74,7 +74,7 @@ impl EnemyAi {
 
         // Set pending flag — the engine drains this after think() and
         // calls EngineInner::shoot_bow_at to launch the sequence element.
-        self.base.outbox.actor.shoot_target = Some(enemy);
+        self.base.outbox.actor.shoot_target = Some(AiEntityHandle::new(enemy));
     }
 
     /// ProposeShotTarget.
@@ -453,7 +453,9 @@ mod tests {
         // interpolated feet are still just outside it. Original scans
         // Point(pEnemy), i.e. AI Position(), in ProposeShotTarget.
         let owner = 127;
-        let target = 172;
+        // Entity arena slot zero is live (normally Robin) and must not be
+        // mistaken for ProposeShotTarget's no-candidate result.
+        let target = 0;
         let committed = Position {
             x: 399.0,
             ..Position::default()

@@ -1524,12 +1524,12 @@ impl EnemyAi {
             .update(ReportType::MissedCharly, my_pos);
         self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
         self.base.frame_when_enemy_detected = ctx.frame;
-        if self.base.checkpoint_charly != 0 {
+        if let Some(checkpoint_charly) = self.base.checkpoint_charly {
             self.base
                 .outbox
                 .actor
                 .set_reported_to_officer
-                .push((self.base.checkpoint_charly as NpcHandle, false));
+                .push((checkpoint_charly, false));
         }
 
         let alert_handled = match self.get_rank() {

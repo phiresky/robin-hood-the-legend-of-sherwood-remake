@@ -215,7 +215,7 @@ mod optional_ai_handle_serde_tests {
 )]
 pub enum CharlySeekerTarget {
     SelfNpc,
-    Npc(NpcHandle),
+    Npc(AiEntityHandle),
 }
 
 #[derive(

@@ -2385,6 +2385,35 @@ fn assign_path_yields_until_return_to_duty_finishes() {
 }
 
 #[test]
+fn stare_actor_preserves_entity_slot_zero_and_turn_flag() {
+    let mut host = BoundScriptEffects::new();
+    host.entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    host.entities.push(Some(native_test_soldier()));
+    let target = ScriptHandleCodec::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(1);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(target);
+    stack.push_i32(1);
+    assert!(matches!(
+        HostFunctions::call(&mut host, NativeFn::StareActor as u32, &mut stack),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::StareActor {
+                    actor: yielded_actor,
+                    target: crate::entity_id::EntityId::Pc(crate::entity_id::PcId(0)),
+                    turn_sprite: true,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        }) if yielded_actor == actor
+    ));
+}
+
+#[test]
 fn assign_post_yield_preserves_the_script_points_position_topology() {
     let mut host = BoundScriptEffects::new();
     host.entities.push(Some(native_test_soldier()));

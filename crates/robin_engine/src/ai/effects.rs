@@ -613,14 +613,14 @@ pub struct AiActorOutbox {
     pub delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
     pub enter_swordfight: Option<EnterSwordfightRequest>,
     pub enter_swordfight_jump_line: Option<u32>,
-    pub stop_target: Option<HumanHandle>,
-    pub set_principal: Option<HumanHandle>,
-    pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
-    pub shoot_target: Option<HumanHandle>,
-    /// Raw element-table handle passed to Original `Focus(RHElement*)`.
+    pub stop_target: Option<AiEntityHandle>,
+    pub set_principal: Option<AiEntityHandle>,
+    pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
+    pub shoot_target: Option<AiEntityHandle>,
+    /// Nominal element-table handle passed to Original `Focus(RHElement*)`.
     /// Unlike combat targets, this may name an object (for example an ale
     /// bottle that an NPC is considering picking up).
-    pub focus: Option<ElementHandle>,
+    pub focus: Option<AiEntityHandle>,
     pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
     /// `mpAntagonist` as observed at the synchronous Original
     /// `UnalertAllNearCharlySeekers` call boundary.  The sweep is drained
@@ -629,7 +629,7 @@ pub struct AiActorOutbox {
     #[serde(default)]
     pub unalert_near_charly_seekers_antagonist: Option<AiEntityHandle>,
     pub refill_bow_ammo: bool,
-    pub set_reported_to_officer: Vec<(NpcHandle, bool)>,
+    pub set_reported_to_officer: Vec<(AiEntityHandle, bool)>,
     pub unfocus: bool,
     pub focus_point: Option<Position>,
     pub slowly_open_eyes: bool,
@@ -645,12 +645,12 @@ pub struct AiActorOutbox {
     pub additional_set_attentive_modes: Vec<AttentiveModeEffect>,
     pub set_guarded_pc: Option<GuardedPcEffect>,
     pub launch_commands: Vec<crate::element::Command>,
-    pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
+    pub launch_on_target: Vec<(AiEntityHandle, crate::element::Command)>,
     /// Ordered NPC `Say` calls made on another actor. These remain in the
     /// actor outbox so a preceding `LaunchSequenceElement` on the same target
     /// is applied first at the owner boundary.
     #[serde(default)]
-    pub say_on_target: Vec<(NpcHandle, Remark)>,
+    pub say_on_target: Vec<(AiEntityHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
@@ -749,7 +749,7 @@ impl AiActorOutbox {
             self.set_unfocus();
             return;
         };
-        self.focus = Some(target.get());
+        self.focus = Some(target);
         self.focus_point = None;
         self.unfocus = false;
     }
@@ -783,18 +783,18 @@ pub(crate) struct AiActorCoreEffects {
     pub retry_quit_swordfight: bool,
     pub enter_swordfight: Option<EnterSwordfightRequest>,
     pub enter_swordfight_jump_line: Option<u32>,
-    pub stop_target: Option<HumanHandle>,
-    pub set_principal: Option<HumanHandle>,
-    pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
-    pub shoot_target: Option<HumanHandle>,
-    pub focus: Option<ElementHandle>,
+    pub stop_target: Option<AiEntityHandle>,
+    pub set_principal: Option<AiEntityHandle>,
+    pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
+    pub shoot_target: Option<AiEntityHandle>,
+    pub focus: Option<AiEntityHandle>,
     pub focus_point: Option<Position>,
     pub unfocus: bool,
     pub set_direction_instantly: Option<i16>,
     pub deactivate: bool,
     pub launch_commands: Vec<crate::element::Command>,
-    pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
-    pub say_on_target: Vec<(NpcHandle, Remark)>,
+    pub launch_on_target: Vec<(AiEntityHandle, crate::element::Command)>,
+    pub say_on_target: Vec<(AiEntityHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub refresh_shield: bool,
     pub raise_shield_immediately: bool,
@@ -976,7 +976,7 @@ mod tests {
 
         effects.set_unfocus();
         effects.set_focus(17);
-        assert_eq!(effects.focus, Some(17));
+        assert_eq!(effects.focus, Some(AiEntityHandle::new(17)));
         assert_eq!(effects.focus_point, None);
         assert!(!effects.unfocus);
 
@@ -994,6 +994,20 @@ mod tests {
         assert_eq!(effects.focus, None);
         assert_eq!(effects.focus_point, None);
         assert!(effects.unfocus);
+    }
+
+    #[test]
+    fn actor_effects_preserve_live_slot_zero() {
+        let mut effects = AiActorOutbox::default();
+        effects.set_focus(0);
+        effects.stop_target = Some(AiEntityHandle::new(0));
+        effects.shoot_target = Some(AiEntityHandle::new(0));
+
+        let encoded = bitcode::encode(&effects);
+        let restored: AiActorOutbox = bitcode::decode(&encoded).unwrap();
+        assert_eq!(restored.focus, Some(AiEntityHandle::new(0)));
+        assert_eq!(restored.stop_target, Some(AiEntityHandle::new(0)));
+        assert_eq!(restored.shoot_target, Some(AiEntityHandle::new(0)));
     }
 
     #[test]
