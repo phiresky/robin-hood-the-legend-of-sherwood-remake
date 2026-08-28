@@ -139,6 +139,43 @@ pub struct SectorProduction {
     pub max_amount_reached: bool,
 }
 
+/// Read-only projection of one MAKE_* sector after a production cycle.
+///
+/// This is deliberately produced by [`SectorProduction::forecast`] and the
+/// same private calculation used by [`SectorProduction::update_amount`].  UI
+/// code must not reproduce the production formula: doing so would eventually
+/// make the forecast disagree with campaign state at truncation and saturation
+/// boundaries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductionForecast {
+    pub prod_type: Type,
+    /// Authored duration of the projected mission/cycle, in seconds.
+    pub cycle_seconds: u16,
+    /// PCs currently assigned to this sector, including its specialist.
+    pub worker_count: usize,
+    /// Whether the matching specialist supplies the 1.5x multiplier.
+    pub has_specialist: bool,
+    /// Script-authored production speed (the unscaled `RegisterProductionSector`
+    /// value). Exposed so presentation and automation can explain the input.
+    pub speed: u16,
+    /// Consumable raw-material units required by the shipped production rule.
+    ///
+    /// The original has no raw-material inventory or recipe input: all MAKE_*
+    /// sectors therefore report zero. Keeping the constraint explicit avoids
+    /// presenting workers as though they consume an undocumented resource and
+    /// leaves a typed seam for data-driven recipes later.
+    pub raw_materials_required: u16,
+    pub current_stock: u16,
+    /// Number of item slots represented by production points (five per point).
+    pub storage_capacity: u32,
+    /// Exact amount credited by the production formula for this cycle.
+    pub produced: u16,
+    /// Stored amount after the campaign's `u16::saturating_add` rule.
+    pub projected_total: u16,
+    /// Portion of `projected_total` that cannot be placed at production points.
+    pub overflow: u32,
+}
+
 impl SectorProduction {
     pub fn new(prod_type: Type) -> Self {
         Self {
@@ -157,6 +194,49 @@ impl SectorProduction {
 
     pub fn is_max_reached(&self) -> bool {
         self.max_amount_reached
+    }
+
+    /// Maximum stock that can be materialized in Sherwood (five items for
+    /// each script-registered production point).
+    pub fn storage_capacity(&self) -> u32 {
+        u32::try_from(self.production_points.len())
+            .unwrap_or(u32::MAX)
+            .saturating_mul(5)
+    }
+
+    /// Project this sector through one won mission without changing campaign
+    /// state. `mission_length` uses the same authored seconds value consumed by
+    /// production when the player returns to Sherwood.
+    pub fn forecast(&self, mission_length: u16, has_specialist: bool) -> ProductionForecast {
+        let produced = self.calculate_produced_amount(mission_length, has_specialist);
+        let projected_total = self.amount.saturating_add(produced);
+        let storage_capacity = self.storage_capacity();
+        ProductionForecast {
+            prod_type: self.prod_type,
+            cycle_seconds: mission_length,
+            worker_count: self.occupants.len(),
+            has_specialist,
+            speed: self.speed,
+            raw_materials_required: 0,
+            current_stock: self.amount,
+            storage_capacity,
+            produced,
+            projected_total,
+            overflow: u32::from(projected_total).saturating_sub(storage_capacity),
+        }
+    }
+
+    /// Original `RHSectorProduction::UpdateAmount` arithmetic, including its
+    /// `f32` operations and truncation to an integer. Keep this as the single
+    /// source used by both mutation and forecasting.
+    fn calculate_produced_amount(&self, mission_length: u16, has_specialist: bool) -> u16 {
+        let production_speed = (self.speed as f32) / (100.0 * 10.0);
+        let super_production = if has_specialist { 1.5 } else { 1.0 };
+        let produced = super_production
+            * production_speed
+            * self.occupants.len() as f32
+            * mission_length as f32;
+        (produced as u32).min(u16::MAX as u32) as u16
     }
 
     /// Map a production type to the player `Action` it feeds.  Returns
@@ -207,14 +287,7 @@ impl SectorProduction {
     /// resolves it by scanning occupants for the expected profile name
     /// (see `sherwood_stat::find_specialist`).
     pub fn update_amount(&mut self, mission_length: u16, has_specialist: bool) {
-        let production_speed = (self.speed as f32) / (100.0 * 10.0);
-        let super_production = if has_specialist { 1.5 } else { 1.0 };
-        let produced = super_production
-            * production_speed
-            * self.occupants.len() as f32
-            * mission_length as f32;
-        let produced = produced as u32;
-        self.produced_amount = produced.min(u16::MAX as u32) as u16;
+        self.produced_amount = self.calculate_produced_amount(mission_length, has_specialist);
         self.amount = self.amount.saturating_add(self.produced_amount);
     }
 
@@ -361,5 +434,50 @@ mod tests {
         ];
         sector.update_amount(60, true);
         assert_eq!(sector.produced_amount, 18); // 1.5 * 0.1 * 2 * 60
+    }
+
+    #[test]
+    fn forecast_and_update_share_exact_boundary_arithmetic() {
+        let cases = [
+            (0, 0, 0, false, 0),
+            (99, 1, 9, false, 7),
+            (100, 2, 60, false, 7),
+            (100, 2, 60, true, 7),
+            (u16::MAX, 8, u16::MAX, true, u16::MAX - 3),
+        ];
+
+        for (speed, workers, seconds, specialist, stock) in cases {
+            let mut sector = SectorProduction::new(Type::MakeArrow);
+            sector.speed = speed;
+            sector.amount = stock;
+            sector.occupants = (0..workers)
+                .map(|pc_description_idx| Occupant {
+                    pc_description_idx,
+                    ..Default::default()
+                })
+                .collect();
+
+            let forecast = sector.forecast(seconds, specialist);
+            sector.update_amount(seconds, specialist);
+
+            assert_eq!(forecast.produced, sector.produced_amount);
+            assert_eq!(forecast.projected_total, sector.amount);
+        }
+    }
+
+    #[test]
+    fn forecast_reports_capacity_and_existing_plus_new_overflow() {
+        let mut sector = SectorProduction::new(Type::MakeNet);
+        sector.speed = 100;
+        sector.amount = 9;
+        sector.production_points = vec![point(0.0, 0.0), point(1.0, 0.0)];
+        sector.occupants = vec![Occupant::default(), Occupant::default()];
+
+        let forecast = sector.forecast(60, false);
+        assert_eq!(forecast.storage_capacity, 10);
+        assert_eq!(forecast.produced, 12);
+        assert_eq!(forecast.projected_total, 21);
+        assert_eq!(forecast.overflow, 11);
+        assert_eq!(forecast.raw_materials_required, 0);
     }
 }

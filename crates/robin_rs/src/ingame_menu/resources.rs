@@ -240,7 +240,9 @@ pub const MT_INFOBULLE_BLAZON_WON: usize = 322;
 //   C02 — "led by %s" specialist suffix (Sherwood)      (1x s)
 pub(crate) use robin_engine::sherwood_stat::{
     MT_STR_DB_C01, MT_STR_DB_C02, MT_STR_DB_S01, MT_STR_DB_S02, MT_STR_DB_S03, MT_STR_DB_S04,
-    MT_STR_DB_S05, MT_STR_DB_S12, MT_STR_DB_S14, MT_STR_DB_S16,
+    MT_STR_DB_S05, MT_STR_DB_S12, MT_STR_DB_S14, MT_STR_DB_S16, MT_STR_PRODUCTION_FORECAST_LINE,
+    MT_STR_PRODUCTION_FORECAST_RATE, MT_STR_PRODUCTION_FORECAST_SELECTED,
+    MT_STR_PRODUCTION_FORECAST_SPECIALIST,
 };
 pub const MT_STR_DB_S06: usize = 73;
 pub const MT_STR_DB_S07: usize = 74;
@@ -556,6 +558,19 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m.insert(MT_STR_DB_S16, "Play time: %s");
     m.insert(MT_STR_DB_C01, "with");
     m.insert(MT_STR_DB_C02, "led by %s");
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_SELECTED,
+        "Next production — %s (%s cycle):",
+    );
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_RATE,
+        "Production rate (%s; select a mission for exact cycle totals):",
+    );
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_LINE,
+        "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
+    );
+    m.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
     m.insert(MT_STR_DB_S06, "You collected %u gold pieces.");
     m.insert(MT_STR_DB_S07, "%u of %u enemy soldiers still alive.");
     m.insert(MT_STR_DB_S08, "%u new gang members.");

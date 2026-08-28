@@ -4,6 +4,16 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Live Sherwood production forecast.** The Sherwood report now includes a
+  compact, toggleable item-production panel built from current map stock and
+  live production-zone membership. Once a mission is selected it shows exact
+  output for that mission's authored duration; before selection it reports an
+  exact one-hour rate rather than guessing a mission. Each item line exposes
+  current stock, five-per-production-point capacity, overflow, worker and
+  specialist inputs, authored speed, and the original game's explicit lack of
+  raw-material consumption. Forecasting and campaign production call the same
+  pure calculation, with boundary tests guarding truncation and saturation.
+
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
@@ -385,7 +395,6 @@ A list of which additional features we have added, which ones we might still wan
 - Add a method to unhorse horsed soldiers without killing them; no-kill runs
   are annoying with horses.
   - Add an option for Merry Men to knock people out instead of killing them.
-- Production in Sherwood: show how many items will be produced.
 - More combat gestures; only 9 different ones feels too low.
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
