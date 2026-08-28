@@ -1,6 +1,4 @@
 use super::*;
-use std::num::NonZeroU32;
-
 // ---------------------------------------------------------------------------
 // Opaque entity handle types
 // ---------------------------------------------------------------------------
@@ -23,11 +21,15 @@ pub type DoorHandle = u32;
 
 /// Non-null pointer identity in the Original's global element table.
 ///
-/// AI state historically stored nullable `RHElement*` values as raw table
-/// indices and used index zero as `NULL`. Runtime fields pair this nominal
-/// type with [`Option`], so a present reference cannot accidentally contain
-/// the null encoding. Raw zero is accepted only by legacy/serde migration
-/// helpers at their boundary.
+/// AI state stores resolved indices in Rust's zero-based entity arena. Slot
+/// zero is a real entity (and commonly Robin), so the nominal handle must
+/// represent the complete `u32` range; runtime absence lives exclusively in
+/// `Option<AiEntityHandle>`.
+///
+/// This is deliberately distinct from the Original v48 stream encoding:
+/// `SerializePointerToElement` uses `54321` as its null marker and the legacy
+/// reader translates that marker to `LegacyAiElementRef(None)` before runtime
+/// handle resolution.
 #[derive(
     Debug,
     Clone,
@@ -44,20 +46,17 @@ pub type DoorHandle = u32;
     bitcode::Decode,
 )]
 #[serde(transparent)]
-pub struct AiEntityHandle(NonZeroU32);
+pub struct AiEntityHandle(u32);
 
 impl AiEntityHandle {
     #[inline]
-    pub const fn new(raw: u32) -> Option<Self> {
-        match NonZeroU32::new(raw) {
-            Some(raw) => Some(Self(raw)),
-            None => None,
-        }
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
     }
 
     #[inline]
     pub const fn get(self) -> u32 {
-        self.0.get()
+        self.0
     }
 }
 
@@ -83,7 +82,7 @@ pub trait IntoOptionalAiHandle {
 
 impl IntoOptionalAiHandle for u32 {
     fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
-        AiEntityHandle::new(self)
+        Some(AiEntityHandle::new(self))
     }
 }
 
@@ -99,15 +98,107 @@ impl IntoOptionalAiHandle for Option<AiEntityHandle> {
     }
 }
 
-/// Decode both current `null | non-zero` JSON and pre-migration raw handle
-/// fields where zero represented `NULL`.
+#[derive(Serialize)]
+struct TaggedAiEntityHandle {
+    entity: u32,
+}
+
+/// Encode nullable runtime handles without reintroducing the historical
+/// `0 == NULL` ambiguity. A tagged value can represent live arena slot zero;
+/// `null` remains absence.
+pub(crate) fn serialize_optional_ai_handle<S>(
+    handle: &Option<AiEntityHandle>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match handle {
+        Some(handle) => serializer.serialize_some(&TaggedAiEntityHandle {
+            entity: handle.get(),
+        }),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Decode both the tagged current representation and pre-migration raw JSON,
+/// where bare zero represented `NULL`. Only the tagged representation may
+/// encode a live entity in arena slot zero.
 pub(crate) fn deserialize_optional_ai_handle<'de, D>(
     deserializer: D,
 ) -> Result<Option<AiEntityHandle>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<u32>::deserialize(deserializer).map(|raw| raw.and_then(AiEntityHandle::new))
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum WireHandle {
+        Tagged { entity: u32 },
+        Legacy(u32),
+    }
+
+    Ok(match Option::<WireHandle>::deserialize(deserializer)? {
+        Some(WireHandle::Tagged { entity }) => Some(AiEntityHandle::new(entity)),
+        Some(WireHandle::Legacy(0)) | None => None,
+        Some(WireHandle::Legacy(raw)) => Some(AiEntityHandle::new(raw)),
+    })
+}
+
+#[cfg(test)]
+mod optional_ai_handle_serde_tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct Fixture {
+        #[serde(
+            default,
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        handle: Option<AiEntityHandle>,
+    }
+
+    #[test]
+    fn legacy_bare_zero_decodes_as_null() {
+        let fixture: Fixture = serde_json::from_str(r#"{"handle":0}"#).unwrap();
+        assert_eq!(fixture.handle, None);
+    }
+
+    #[test]
+    fn legacy_bare_nonzero_decodes_as_live_handle() {
+        let fixture: Fixture = serde_json::from_str(r#"{"handle":17}"#).unwrap();
+        assert_eq!(fixture.handle, Some(AiEntityHandle::new(17)));
+    }
+
+    #[test]
+    fn tagged_slot_zero_round_trips_as_live_handle() {
+        let fixture = Fixture {
+            handle: Some(AiEntityHandle::new(0)),
+        };
+        let json = serde_json::to_string(&fixture).unwrap();
+        assert_eq!(json, r#"{"handle":{"entity":0}}"#);
+        assert_eq!(serde_json::from_str::<Fixture>(&json).unwrap(), fixture);
+    }
+
+    #[test]
+    fn null_round_trips_without_a_fake_handle() {
+        let fixture = Fixture { handle: None };
+        let json = serde_json::to_string(&fixture).unwrap();
+        assert_eq!(json, r#"{"handle":null}"#);
+        assert_eq!(serde_json::from_str::<Fixture>(&json).unwrap(), fixture);
+    }
+
+    #[test]
+    fn native_codec_preserves_slot_zero_and_absence() {
+        let handles = [
+            None,
+            Some(AiEntityHandle::new(0)),
+            Some(AiEntityHandle::new(9)),
+        ];
+        let encoded = bitcode::encode(&handles);
+        let decoded: [Option<AiEntityHandle>; 3] = bitcode::decode(&encoded).unwrap();
+        assert_eq!(decoded, handles);
+    }
 }
 
 #[derive(

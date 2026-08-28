@@ -572,7 +572,7 @@ impl EngineInner {
                             .enemy_ai_mut()
                             .expect("successful AI swordfight rebalance owner lost enemy AI")
                             .base
-                            .primary_target = crate::ai::AiEntityHandle::new(target_handle);
+                            .primary_target = Some(crate::ai::AiEntityHandle::new(target_handle));
                     }
                 }
             }
@@ -628,7 +628,7 @@ impl EngineInner {
                     new_target,
                 );
             }
-            friend_ai.primary_target = crate::ai::AiEntityHandle::new(new_target);
+            friend_ai.primary_target = Some(crate::ai::AiEntityHandle::new(new_target));
         }
 
         // Process pending bow shot.
@@ -1013,7 +1013,8 @@ impl EngineInner {
                     // Rank/antagonist guard:
                     //   `rank == Officer || other != antagonist`.
                     if my_rank != crate::profiles::ProfileRank::Officer
-                        && other_id.index() == my_antagonist
+                        && my_antagonist
+                            .is_some_and(|antagonist| other_id.index() == antagonist.get())
                     {
                         continue;
                     }

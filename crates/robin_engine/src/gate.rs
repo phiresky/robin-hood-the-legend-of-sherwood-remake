@@ -17,8 +17,10 @@ use crate::sector::{LiftType, SectorNumber};
 
 /// Index into the engine's door table.
 ///
-/// `u32::MAX` is the Original serialized null-pointer sentinel and cannot be
-/// represented by this type. Runtime absence uses `Option<DoorIndex>`.
+/// Runtime absence uses `Option<DoorIndex>`. `u32::MAX` was the historical
+/// Rust/JSON null marker and cannot be represented by this type; the Original
+/// binary gate-pointer codec instead writes signed 16-bit `-1`, which legacy
+/// readers translate at their boundary.
 #[derive(
     Debug,
     Clone,

@@ -1559,7 +1559,7 @@ pub enum CrossNpcAction {
     /// `ReconsiderPhalanx`'s phalanx-member walk.
     SetPrimaryTarget {
         target: NpcHandle,
-        primary_target: HumanHandle,
+        primary_target: Option<AiEntityHandle>,
     },
     /// Install the merged phalanx them-list and its head target on one
     /// member. `PhalanxReinitializeThemList` recurses to the right end and
@@ -1569,7 +1569,7 @@ pub enum CrossNpcAction {
     SetPhalanxThemList {
         target: NpcHandle,
         them: Vec<HumanHandle>,
-        primary_target: HumanHandle,
+        primary_target: Option<AiEntityHandle>,
     },
     /// Make the target NPC say a remark.
     Say { target: NpcHandle, remark: Remark },
@@ -2255,7 +2255,9 @@ pub struct DoorCombatInfo {
     pub delay: u16,
     pub goal: Position,
     pub direction: u16,
-    pub adversary: HumanHandle,
+    /// Original `SendBeforeDoorToFight` explicitly permits a null adversary.
+    /// Slot zero is a live human, so only `None` represents that null pointer.
+    pub adversary: Option<AiEntityHandle>,
 }
 
 /// The payload of a [`Stimulus`].
@@ -2359,7 +2361,14 @@ impl PartialEq<QueuedSelfStimulus> for StimulusType {
 pub struct Stimulus {
     pub stimulus_type: StimulusType,
     pub info: StimulusInfo,
-    pub owner: NpcHandle,
+    /// Optional Original stimulus owner pointer. This is independent of the
+    /// actor currently processing the stimulus and is initialized to NULL.
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub owner: Option<AiEntityHandle>,
     pub to_whole_patrol: bool,
     #[serde(skip)]
     #[bitcode(skip)]
@@ -2382,7 +2391,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::None,
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2392,7 +2401,7 @@ impl Stimulus {
         Self {
             stimulus_type: queued.stimulus_type,
             info: StimulusInfo::None,
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: queued.origin,
         }
@@ -2402,7 +2411,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::Noise(noise),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2412,7 +2421,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::Position(pos),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2422,7 +2431,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::Human(human),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2432,7 +2441,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::DoorCombat(dc),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2529,7 +2538,11 @@ pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
 }

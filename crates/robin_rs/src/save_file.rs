@@ -466,7 +466,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-pub const SAVE_FORMAT_VERSION: u32 = 57;
+/// - **v58** (2026-08-30, typed runtime sentinel boundaries): nullable AI entity
+///   references use `Option<AiEntityHandle>`, preserving live arena slot zero
+///   without conflating it with absence. The native snapshot layout changed.
+pub const SAVE_FORMAT_VERSION: u32 = 58;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -726,8 +729,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_full_fidelity_campaign_history() {
-        assert_eq!(SAVE_FORMAT_VERSION, 57);
+    fn save_format_version_identifies_typed_runtime_sentinel_boundary() {
+        assert_eq!(SAVE_FORMAT_VERSION, 58);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

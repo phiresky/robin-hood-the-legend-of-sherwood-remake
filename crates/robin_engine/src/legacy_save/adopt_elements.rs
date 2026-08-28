@@ -183,6 +183,13 @@ pub enum LegacyElementAdoptError {
         expected: &'static str,
     },
     #[error(
+        "saved element creation order {creation_order} field {field} is missing a required reference"
+    )]
+    MissingRequiredReference {
+        creation_order: u32,
+        field: &'static str,
+    },
+    #[error(
         "saved NPC creation order {creation_order} field {field} has negative enum value {value}"
     )]
     NegativeEnum {
@@ -502,9 +509,9 @@ enum ConvertedLocalAi {
         other_seen_ale: Vec<u32>,
         pc_gone_away_direction: u16,
         detected_something_there: Position,
-        missed_pc: u32,
+        missed_pc: Option<AiEntityHandle>,
         last_seek_direction_index: u8,
-        beggar_to_examine: u32,
+        beggar_to_examine: Option<AiEntityHandle>,
         pc_missed: bool,
         search_charly_way: Vec<Position>,
         current_task_priority: u16,
@@ -538,8 +545,8 @@ enum ConvertedLocalAi {
         seeking_charly: bool,
         initial_view_cone: crate::ai::ViewCone,
         company_number: u16,
-        left_combat_neighbour: u32,
-        right_combat_neighbour: u32,
+        left_combat_neighbour: Option<AiEntityHandle>,
+        right_combat_neighbour: Option<AiEntityHandle>,
         attentive: bool,
         will_be_attentive: bool,
         forced_attentive: bool,
@@ -558,8 +565,8 @@ enum ConvertedLocalAi {
         other_seen_money: Vec<u32>,
         money_fight_enemies: Vec<u32>,
         money_fight_victims: Vec<u32>,
-        archer_behind_me: u32,
-        shield_bearer_before_me: u32,
+        archer_behind_me: Option<AiEntityHandle>,
+        shield_bearer_before_me: Option<AiEntityHandle>,
         already_seen_bodies: Vec<u32>,
         my_line_jump: Option<u32>,
         shield_bearer_direction: u16,
@@ -642,11 +649,11 @@ struct ConvertedLocalAiCommon {
     use_max_norm_to_stop_before_end_of_path: bool,
     stop_before_end_of_path_distance: u16,
     macro_cursor: Option<ConvertedMacroCursor>,
-    primary_target: u32,
-    friend_in_trouble: u32,
-    detected_body: u32,
-    interesting_object: u32,
-    antagonist: u32,
+    primary_target: Option<AiEntityHandle>,
+    friend_in_trouble: Option<AiEntityHandle>,
+    detected_body: Option<AiEntityHandle>,
+    interesting_object: Option<AiEntityHandle>,
+    antagonist: Option<AiEntityHandle>,
     last_stimulus_actor: Option<u32>,
     macro_in_progress: bool,
     number_of_remaining_macro_bytes: u16,
@@ -659,7 +666,7 @@ struct ConvertedLocalAiCommon {
     last_stimulus: [StimulusType; 5],
     last_stimulus_multiplicity: [u16; 5],
     is_master: bool,
-    master: u32,
+    master: Option<AiEntityHandle>,
     seek_position: Position,
     alert_soldiers_point: Position,
     first_try: bool,
@@ -688,9 +695,9 @@ struct ConvertedLocalAiCommon {
     my_door_index: Option<crate::gate::DoorIndex>,
     looking_for_help_because_enemy_seen: bool,
     forgotten_objects: Vec<u32>,
-    object_of_desire: u32,
-    checkpoint_charly: u32,
-    synchronize_charly: u32,
+    object_of_desire: Option<AiEntityHandle>,
+    checkpoint_charly: Option<AiEntityHandle>,
+    synchronize_charly: Option<AiEntityHandle>,
     inside_halt_method: bool,
     macro_started_in_this_frame: bool,
     synchronizing_actors: Vec<u32>,
@@ -1674,14 +1681,14 @@ fn convert_local_ai(
                     creation_order,
                     "local_ai.enemy.detected_something_there.sector",
                 )?,
-                missed_pc: ai_handle(
+                missed_pc: optional_ai_handle(
                     entities.resolve_ai_element(tail.missed_pc)?,
                     ReferenceKind::Human,
                     creation_order,
                     "local_ai.enemy.missed_pc",
                 )?,
                 last_seek_direction_index: tail.last_seek_direction_index,
-                beggar_to_examine: ai_handle(
+                beggar_to_examine: optional_ai_handle(
                     entities.resolve_ai_element(tail.beggar_to_examine)?,
                     ReferenceKind::Human,
                     creation_order,
@@ -1780,13 +1787,13 @@ fn convert_local_ai(
                 seeking_charly: tail.seeking_charly,
                 initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
                 company_number: tail.company_number,
-                left_combat_neighbour: ai_handle(
+                left_combat_neighbour: optional_ai_handle(
                     entities.resolve_ai_element(tail.left_combat_neighbour)?,
                     ReferenceKind::Human,
                     creation_order,
                     "local_ai.enemy.left_combat_neighbour",
                 )?,
-                right_combat_neighbour: ai_handle(
+                right_combat_neighbour: optional_ai_handle(
                     entities.resolve_ai_element(tail.right_combat_neighbour)?,
                     ReferenceKind::Human,
                     creation_order,
@@ -1847,13 +1854,13 @@ fn convert_local_ai(
                     "local_ai.enemy.money_fight_victims",
                     entities,
                 )?,
-                archer_behind_me: ai_handle(
+                archer_behind_me: optional_ai_handle(
                     entities.resolve_ai_element(tail.archer_behind_me)?,
                     ReferenceKind::Npc,
                     creation_order,
                     "local_ai.enemy.archer_behind_me",
                 )?,
-                shield_bearer_before_me: ai_handle(
+                shield_bearer_before_me: optional_ai_handle(
                     entities.resolve_ai_element(tail.shield_bearer_before_me)?,
                     ReferenceKind::Npc,
                     creation_order,
@@ -2010,31 +2017,31 @@ fn convert_local_ai_common(
         use_max_norm_to_stop_before_end_of_path: saved.use_max_norm_to_stop_before_end_of_path,
         stop_before_end_of_path_distance: saved.stop_before_end_of_path_distance,
         macro_cursor,
-        primary_target: ai_handle(
+        primary_target: optional_ai_handle(
             entities.resolve_ai_element(saved.primary_target)?,
             ReferenceKind::Human,
             creation_order,
             "local_ai.primary_target",
         )?,
-        friend_in_trouble: ai_handle(
+        friend_in_trouble: optional_ai_handle(
             entities.resolve_ai_element(saved.friend_in_trouble)?,
             ReferenceKind::Npc,
             creation_order,
             "local_ai.friend_in_trouble",
         )?,
-        detected_body: ai_handle(
+        detected_body: optional_ai_handle(
             entities.resolve_ai_element(saved.detected_body)?,
             ReferenceKind::Human,
             creation_order,
             "local_ai.detected_body",
         )?,
-        interesting_object: ai_handle(
+        interesting_object: optional_ai_handle(
             entities.resolve_ai_element(saved.interesting_object)?,
             ReferenceKind::Object,
             creation_order,
             "local_ai.interesting_object",
         )?,
-        antagonist: ai_handle(
+        antagonist: optional_ai_handle(
             entities.resolve_ai_element(saved.antagonist)?,
             ReferenceKind::Npc,
             creation_order,
@@ -2063,7 +2070,7 @@ fn convert_local_ai_common(
             .expect("fixed-size stimulus conversion preserves length"),
         last_stimulus_multiplicity: saved.last_stimulus_multiplicities,
         is_master: saved.is_master,
-        master: ai_handle(
+        master: optional_ai_handle(
             entities.resolve_ai_element(saved.master)?,
             ReferenceKind::Npc,
             creation_order,
@@ -2146,19 +2153,19 @@ fn convert_local_ai_common(
             "local_ai.forgotten_objects",
             entities,
         )?,
-        object_of_desire: element_handle(
+        object_of_desire: optional_ai_handle(
             entities.resolve_element(saved.object_of_desire)?,
             ReferenceKind::Object,
             creation_order,
             "local_ai.object_of_desire",
         )?,
-        checkpoint_charly: element_handle(
+        checkpoint_charly: optional_ai_handle(
             entities.resolve_element(saved.checkpoint_charly)?,
             ReferenceKind::Npc,
             creation_order,
             "local_ai.checkpoint_charly",
         )?,
-        synchronize_charly: element_handle(
+        synchronize_charly: optional_ai_handle(
             entities.resolve_element(saved.synchronize_charly)?,
             ReferenceKind::Npc,
             creation_order,
@@ -2340,9 +2347,9 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.other_seen_ale = other_seen_ale;
             ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
             ai.detected_something_there = detected_something_there;
-            ai.missed_pc = AiEntityHandle::new(missed_pc);
+            ai.missed_pc = missed_pc;
             ai.last_seek_direction_index = last_seek_direction_index;
-            ai.beggar_to_examine = AiEntityHandle::new(beggar_to_examine);
+            ai.beggar_to_examine = beggar_to_examine;
             ai.pc_missed = pc_missed;
             ai.search_charly_way = search_charly_way;
             ai.current_task_priority = current_task_priority;
@@ -2376,8 +2383,8 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.seeking_charly = seeking_charly;
             ai.base.initial_view_cone = initial_view_cone;
             ai.company_number = company_number;
-            ai.left_combat_neighbour = AiEntityHandle::new(left_combat_neighbour);
-            ai.right_combat_neighbour = AiEntityHandle::new(right_combat_neighbour);
+            ai.left_combat_neighbour = left_combat_neighbour;
+            ai.right_combat_neighbour = right_combat_neighbour;
             ai.attentive = attentive;
             ai.will_be_attentive = will_be_attentive;
             ai.forced_attentive = forced_attentive;
@@ -2396,8 +2403,8 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.other_seen_money = other_seen_money;
             ai.money_fight_enemies = money_fight_enemies;
             ai.money_fight_victims = money_fight_victims;
-            ai.archer_behind_me = AiEntityHandle::new(archer_behind_me);
-            ai.shield_bearer_before_me = AiEntityHandle::new(shield_bearer_before_me);
+            ai.archer_behind_me = archer_behind_me;
+            ai.shield_bearer_before_me = shield_bearer_before_me;
             ai.already_seen_bodies = already_seen_bodies;
             ai.my_line_jump = my_line_jump;
             ai.shield_bearer_direction = shield_bearer_direction;
@@ -2447,11 +2454,11 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
         ai.macro_command_offset = cursor.offset;
         ai.macro_command_waypoint = cursor.waypoint;
     }
-    ai.primary_target = AiEntityHandle::new(saved.primary_target);
-    ai.friend_in_trouble = AiEntityHandle::new(saved.friend_in_trouble);
-    ai.detected_body = AiEntityHandle::new(saved.detected_body);
-    ai.interesting_object = AiEntityHandle::new(saved.interesting_object);
-    ai.antagonist = AiEntityHandle::new(saved.antagonist);
+    ai.primary_target = saved.primary_target;
+    ai.friend_in_trouble = saved.friend_in_trouble;
+    ai.detected_body = saved.detected_body;
+    ai.interesting_object = saved.interesting_object;
+    ai.antagonist = saved.antagonist;
     ai.last_stimulus_actor = saved.last_stimulus_actor;
     ai.macro_in_progress = saved.macro_in_progress;
     ai.number_of_remaining_macro_bytes = saved.number_of_remaining_macro_bytes;
@@ -2464,7 +2471,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.last_stimulus = saved.last_stimulus;
     ai.last_stimulus_multiplicity = saved.last_stimulus_multiplicity;
     ai.is_master = saved.is_master;
-    ai.master = AiEntityHandle::new(saved.master);
+    ai.master = saved.master;
     ai.seek_position = saved.seek_position;
     ai.alert_soldiers_point = saved.alert_soldiers_point;
     ai.first_try = saved.first_try;
@@ -2494,9 +2501,9 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.my_door_index = saved.my_door_index;
     ai.looking_for_help_because_enemy_seen = saved.looking_for_help_because_enemy_seen;
     ai.forgotten_objects = saved.forgotten_objects;
-    ai.object_of_desire = AiEntityHandle::new(saved.object_of_desire);
-    ai.checkpoint_charly = AiEntityHandle::new(saved.checkpoint_charly);
-    ai.synchronize_charly = AiEntityHandle::new(saved.synchronize_charly);
+    ai.object_of_desire = saved.object_of_desire;
+    ai.checkpoint_charly = saved.checkpoint_charly;
+    ai.synchronize_charly = saved.synchronize_charly;
     ai.inside_halt_method = saved.inside_halt_method;
     ai.macro_started_in_this_frame = saved.macro_started_in_this_frame;
     ai.synchronizing_actors = saved.synchronizing_actors;
@@ -3577,7 +3584,25 @@ fn ai_handle(
     creation_order: u32,
     field: &'static str,
 ) -> Result<u32, LegacyElementAdoptError> {
-    Ok(checked_reference(entity_id, expected, creation_order, field)?.map_or(0, EntityId::index))
+    checked_reference(entity_id, expected, creation_order, field)?
+        .map(EntityId::index)
+        .ok_or(LegacyElementAdoptError::MissingRequiredReference {
+            creation_order,
+            field,
+        })
+}
+
+fn optional_ai_handle(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<AiEntityHandle>, LegacyElementAdoptError> {
+    Ok(
+        checked_reference(entity_id, expected, creation_order, field)?
+            .map(EntityId::index)
+            .map(AiEntityHandle::new),
+    )
 }
 
 fn ai_optional_handle(
@@ -3701,12 +3726,12 @@ fn reconnaissance(
                 )
             })
             .collect::<Result<_, _>>()?,
-        charly: AiEntityHandle::new(element_handle(
+        charly: optional_ai_handle(
             entities.resolve_element(saved.charly)?,
             ReferenceKind::Npc,
             creation_order,
             "local_ai.reconnaissance.charly",
-        )?),
+        )?,
         charly_seen: saved.charly_seen,
     })
 }
@@ -3855,7 +3880,7 @@ fn convert_stimulus(
                     "local_ai.stimulus_queue.door_combat.goal.sector",
                 )?,
                 direction: *direction,
-                adversary: ai_handle(
+                adversary: optional_ai_handle(
                     entities.resolve_ai_element(*adversary)?,
                     ReferenceKind::Human,
                     creation_order,
@@ -3895,7 +3920,7 @@ fn convert_stimulus(
     Ok(Stimulus {
         stimulus_type,
         info,
-        owner: element_handle(
+        owner: optional_ai_handle(
             entities.resolve_element(saved.owner)?,
             ReferenceKind::Npc,
             creation_order,

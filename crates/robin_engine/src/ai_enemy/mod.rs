@@ -158,7 +158,11 @@ pub struct EnemyAi {
     pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub missed_pc: Option<AiEntityHandle>,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
@@ -170,7 +174,11 @@ pub struct EnemyAi {
     pub detected_something_there: Position,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub beggar_to_examine: Option<AiEntityHandle>,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
@@ -240,9 +248,17 @@ pub struct EnemyAi {
     pub money_fight_victims: Vec<NpcHandle>,
 
     // Archer / shield bearer (serialized by semantic entity reference)
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub archer_behind_me: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub shield_bearer_before_me: Option<AiEntityHandle>,
 
     pub shield_bearer_direction: u16,
@@ -382,9 +398,17 @@ pub struct EnemyAi {
     pub next_sword_strike_frame: u32,
 
     pub company_number: u16,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub left_combat_neighbour: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub right_combat_neighbour: Option<AiEntityHandle>,
 
     pub attentive: bool,
@@ -4798,7 +4822,7 @@ impl EnemyAi {
         flags: PrimaryTargetFlags,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         self.get_new_primary_target_with_mult_override(flags, ctx, tick, None)
     }
 
@@ -4814,12 +4838,12 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         mult_override: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         if self.list_them.is_empty() {
-            return 0;
+            return None;
         }
 
-        let mut nearest: HumanHandle = 0;
+        let mut nearest = None;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
         let Some(owner_view) = ctx.entity_view(self.base.me) else {
             // Dense fights can deactivate/delete this owner earlier in the
@@ -4831,15 +4855,11 @@ impl EnemyAi {
                 me = self.base.me,
                 "GetNewPrimaryTarget owner left the live entity view earlier in this frame"
             );
-            return 0;
+            return None;
         };
         let owner_world = owner_view.detection_position_world;
 
         for &enemy in &self.list_them {
-            if enemy == 0 {
-                continue;
-            }
-
             // Gate on `VIPS_ALLOWED || is_allowed_to_attack(enemy)`.
             // Without VIPS_ALLOWED, VIP-protection rules drop the
             // candidate (e.g. VIP soldier may only engage Robin).
@@ -4900,7 +4920,7 @@ impl EnemyAi {
 
             if distance < min_distance {
                 min_distance = distance;
-                nearest = enemy;
+                nearest = Some(AiEntityHandle::new(enemy));
             }
         }
 

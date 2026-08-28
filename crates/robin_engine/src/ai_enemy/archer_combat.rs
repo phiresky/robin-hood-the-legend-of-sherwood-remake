@@ -91,7 +91,7 @@ impl EnemyAi {
         sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         let my_pos = &ctx.position;
         // Nose direction vector (not Y-stretched).
         let nose = sector_to_vector(ctx.direction);
@@ -157,8 +157,8 @@ impl EnemyAi {
                 || sub == Substate::AttackingBowLoading as u32
                 || sub == Substate::AttackingBowAiming as u32
             {
-                let target = f.primary_target;
-                if target != 0 {
+                if let Some(target) = f.primary_target {
+                    let target = target.get();
                     if let Some(entry) = bow_multiplicity.iter_mut().find(|e| e.0 == target) {
                         entry.1 += 1;
                     } else {
@@ -171,13 +171,10 @@ impl EnemyAi {
         let is_forest = self.is_merry_man_forest(ctx);
 
         // Scan all enemies, pick nearest valid target.
-        let mut best: HumanHandle = 0;
+        let mut best = None;
         let mut min_sq_distance = f32::INFINITY;
 
         for &enemy_handle in &self.list_them {
-            if enemy_handle == 0 {
-                continue;
-            }
             if !self.is_allowed_to_attack(enemy_handle, ctx, tick) {
                 continue;
             }
@@ -243,7 +240,7 @@ impl EnemyAi {
             });
 
             if !friend_in_the_way {
-                best = enemy_handle;
+                best = Some(AiEntityHandle::new(enemy_handle));
                 min_sq_distance = sq_distance;
             }
         }
@@ -496,7 +493,7 @@ mod tests {
 
         assert_eq!(
             ai.propose_shot_target(&SimulationContext::with_seed(0), &ctx, &tick),
-            target
+            Some(AiEntityHandle::new(target))
         );
     }
 }

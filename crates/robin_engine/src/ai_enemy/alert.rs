@@ -1026,8 +1026,8 @@ impl EnemyAi {
             report_type: soldier_report_type,
             seek_position: soldier_seek_position,
             seen_bodies: soldier.report_seen_bodies.clone(),
-            charly: AiEntityHandle::new(soldier.report_charly),
-            charly_seen: soldier.report_charly != 0,
+            charly: soldier.report_charly,
+            charly_seen: soldier.report_charly.is_some(),
         };
         self.base.consider_report_merged_at_frame(
             &soldier_report,
@@ -1061,7 +1061,7 @@ impl EnemyAi {
                 AiState::Seeking,
                 Substate::SeekingOfficerGetAlertingReportFromSoldier,
             );
-            self.base.antagonist = AiEntityHandle::new(soldier_handle);
+            self.base.antagonist = Some(AiEntityHandle::new(soldier_handle));
             self.face_npc(soldier_handle, ctx);
             self.base.seek_position = soldier_seek_position;
             self.base
@@ -1233,7 +1233,7 @@ impl EnemyAi {
             .position;
 
         self.current_task_priority = task_priority::ALERT;
-        self.base.antagonist = AiEntityHandle::new(officer_handle);
+        self.base.antagonist = Some(AiEntityHandle::new(officer_handle));
         self.gather_position = officer_target_pos;
         self.go_near(
             AiState::Seeking,

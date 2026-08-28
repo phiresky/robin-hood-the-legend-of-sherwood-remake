@@ -586,6 +586,105 @@ impl EngineInner {
                 self.drain_script_synchronous_actions(sim, assets, active)?;
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::StareActor {
+                actor,
+                target,
+                turn_sprite,
+                ..
+            } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "StareActor owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                let target_position = self
+                    .get_entity(target)
+                    .ok_or_else(|| format!("StareActor target {target} disappeared"))?
+                    .element_data()
+                    .position();
+                let owner_entity = self
+                    .get_entity(owner)
+                    .ok_or_else(|| format!("StareActor owner {owner} disappeared"))?;
+                if !owner_entity.is_npc() {
+                    return Err(format!("StareActor owner {owner} is no longer an NPC").into());
+                }
+                let owner_position = owner_entity.element_data().position();
+                let turn_sprite = turn_sprite
+                    && owner_entity.element_data().posture != crate::element::Posture::Riding;
+                if turn_sprite {
+                    self.halt_actor(owner);
+                }
+                let owner_entity = self
+                    .get_entity_mut(owner)
+                    .expect("validated StareActor owner vanished before view update");
+                crate::ai_vision::focus_entity(
+                    owner_entity
+                        .ai_actor_data_mut()
+                        .expect("validated StareActor NPC lost AI actor data"),
+                    target,
+                );
+                if turn_sprite {
+                    let direction = crate::position_interface::vector_to_sector_0_to_15(
+                        target_position.x - owner_position.x,
+                        target_position.y - owner_position.y,
+                    );
+                    owner_entity.position_iface_mut().set_direction(
+                        crate::position_interface::Direction::from_raw(i32::from(direction)),
+                    );
+                }
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::StareLocation {
+                actor,
+                target,
+                turn_sprite,
+                ..
+            } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "StareLocation owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                let point_3d = self.position_to_point_3d(
+                    assets,
+                    target.sector,
+                    target.level,
+                    target.x,
+                    target.y,
+                );
+                let target_point = crate::coordinates::GroundPoint::new(point_3d.x, point_3d.y);
+                let owner_entity = self
+                    .get_entity(owner)
+                    .ok_or_else(|| format!("StareLocation owner {owner} disappeared"))?;
+                if !owner_entity.is_npc() {
+                    return Err(format!("StareLocation owner {owner} is no longer an NPC").into());
+                }
+                let owner_position = owner_entity.element_data().position();
+                let turn_sprite = turn_sprite
+                    && owner_entity.element_data().posture != crate::element::Posture::Riding;
+                if turn_sprite {
+                    self.halt_actor(owner);
+                }
+                let owner_entity = self
+                    .get_entity_mut(owner)
+                    .expect("validated StareLocation owner vanished before view update");
+                crate::ai_vision::focus_point(
+                    owner_entity
+                        .ai_actor_data_mut()
+                        .expect("validated StareLocation NPC lost AI actor data"),
+                    target_point,
+                );
+                if turn_sprite {
+                    let direction = crate::position_interface::vector_to_sector_0_to_15(
+                        target_point.x - owner_position.x,
+                        target_point.y - owner_position.y,
+                    );
+                    owner_entity.position_iface_mut().set_direction(
+                        crate::position_interface::Direction::from_raw(i32::from(direction)),
+                    );
+                }
+                Ok(0)
+            }
             crate::interp::SynchronousScriptRequest::LockAi {
                 actor,
                 remember_events,
@@ -3094,7 +3193,7 @@ impl EngineInner {
                     | crate::ai::StimulusType::CallYourTalk3
             );
             eprintln!(
-                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={} context_antagonist={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} context_antagonist={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
                 engine.control.frame_counter,
                 entity_id.index(),
                 engine.world.original_creation_order(entity_id),
@@ -4821,7 +4920,7 @@ impl EngineInner {
                                 owner.index()
                             )
                         });
-                    enemy.base.friend_in_trouble = crate::ai::AiEntityHandle::new(charly);
+                    enemy.base.friend_in_trouble = Some(crate::ai::AiEntityHandle::new(charly));
                     enemy.base.face_entity(charly, &ctx);
                     continue;
                 }

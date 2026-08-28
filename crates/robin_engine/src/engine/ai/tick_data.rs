@@ -528,12 +528,10 @@ impl EngineInner {
             return AiPerTickData::stub();
         };
         let primary_target_handle = target_override
-            .map(|id| id.index())
-            .unwrap_or(ai.primary_target);
+            .map(|id| crate::ai::AiEntityHandle::new(id.index()))
+            .or(ai.primary_target);
         let target_id = target_override.or_else(|| {
-            (primary_target_handle != 0)
-                .then(|| self.entity_id_for_index(primary_target_handle))
-                .flatten()
+            primary_target_handle.and_then(|handle| self.entity_id_for_index(handle.get()))
         });
         let my_camp = entity.camp();
         let me_handle = ai.me;
@@ -1196,7 +1194,9 @@ impl EngineInner {
                     tick.has_officer_nearby = true;
                 }
 
-                if friend.ai_state == crate::ai::AiState::Attacking && friend.primary_target != 0 {
+                if friend.ai_state == crate::ai::AiState::Attacking
+                    && friend.primary_target.is_some()
+                {
                     if crate::ai_enemy::is_any_swordfight_substate(friend.current_substate) {
                         tick.friends_nearer_to_enemy =
                             tick.friends_nearer_to_enemy.saturating_add(1);
@@ -1688,7 +1688,7 @@ impl EngineInner {
                     .human
                     .opponents
                     .first()
-                    .and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -1807,13 +1807,13 @@ impl EngineInner {
                     .or_else(|| {
                         pc.pc
                             .melee_target
-                            .and_then(|id| crate::ai::AiEntityHandle::new(id.index()))
+                            .map(|id| crate::ai::AiEntityHandle::new(id.index()))
                     }),
                 principal_opponent: pc
                     .human
                     .opponents
                     .first()
-                    .and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -1827,8 +1827,8 @@ impl EngineInner {
                 is_vip: character.vip,
                 soldier_profile_pride: 0,
                 is_robin: pc.pc.robin,
-                left_combat_neighbour: 0,
-                right_combat_neighbour: 0,
+                left_combat_neighbour: None,
+                right_combat_neighbour: None,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: pc.actor.action_state.is_sword(),
                 elevation: pc.element.sprite.position_iface.get_elevation(),
@@ -1839,14 +1839,14 @@ impl EngineInner {
                     .as_deref()
                     .map(|ai| ai.ai_substate() as u32)
                     .unwrap_or(0),
-                archer_behind_me: 0,
+                archer_behind_me: None,
                 ai_state: pc
                     .pc
                     .ai
                     .as_deref()
                     .map(crate::element::AiActorData::ai_state)
                     .unwrap_or_default(),
-                shield_bearer_before_me: 0,
+                shield_bearer_before_me: None,
                 hth_weapon_id: hth_id,
                 action_state: pc.actor.action_state,
                 shield_bearer_direction: 0,

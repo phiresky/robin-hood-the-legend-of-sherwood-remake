@@ -244,9 +244,11 @@ impl Posture {
 
 /// Elevation-layer index.
 ///
-/// `0xffff` is reserved by the Original's binary formats for "no layer".
-/// Runtime absence is represented by `Option<Layer>`; the sentinel is
-/// translated only by the legacy/level-data readers.
+/// Original PositionInterface uses scalar `0xffff` as the special projectile
+/// discriminator that selects a sight-obstacle reference instead of a
+/// projection-area layer. Runtime `None` represents precisely that special
+/// no-elevation-layer state, and legacy readers translate it only after they
+/// have selected the correct pointer namespace. Layer zero remains live.
 #[derive(
     Debug,
     Clone,

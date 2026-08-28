@@ -352,15 +352,35 @@ pub struct AiController {
     pub macro_started_in_this_frame: bool,
 
     // -- Targets & relationships --
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub primary_target: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub friend_in_trouble: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub detected_body: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub interesting_object: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub antagonist: Option<AiEntityHandle>,
     pub last_stimulus_actor: Option<HumanHandle>,
 
@@ -380,7 +400,11 @@ pub struct AiController {
 
     // -- Group behaviour --
     pub is_master: bool,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub master: Option<AiEntityHandle>,
 
     // -- Seek & alert --
@@ -443,13 +467,25 @@ pub struct AiController {
 
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub object_of_desire: Option<AiEntityHandle>,
 
     // -- Charly (friend-check) --
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub checkpoint_charly: Option<AiEntityHandle>,
-    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
     pub synchronize_charly: Option<AiEntityHandle>,
     /// Synchronization waypoint index for the partner. Lives on
     /// `AiBase` because the macro VM (`InitializeFriendCheck`) needs to
@@ -541,14 +577,6 @@ pub struct AiController {
     /// This gates automatic focus synchronization across explicit outbox
     /// focus/unfocus effects.
     pub last_synced_focus_target: Option<HumanHandle>,
-
-    // -- Stare target --
-    /// If set, the NPC should face toward this actor for `stare_remaining` frames.
-    pub stare_target_actor: Option<HumanHandle>,
-    /// If set, the NPC should face toward this position for `stare_remaining` frames.
-    pub stare_target_position: Option<Position>,
-    /// Frames remaining for the stare behaviour. 0 = inactive.
-    pub stare_remaining: u32,
 
     // -- Static entity context (set once at init/load) --
     /// Initial position (guard post / spawn point), set at level load.
@@ -687,9 +715,6 @@ impl Default for AiController {
             outbox: AiOutbox::default(),
             has_script_filter_override: false,
             last_synced_focus_target: None,
-            stare_target_actor: None,
-            stare_target_position: None,
-            stare_remaining: 0,
             initial_position: Position::default(),
             initial_view_direction: 0,
             max_visibility: 0,
@@ -1708,7 +1733,7 @@ impl AiController {
             .actor
             .delete_detectables
             .push(DetectableType::MissedFriend);
-        self.checkpoint_charly = AiEntityHandle::new(target);
+        self.checkpoint_charly = Some(AiEntityHandle::new(target));
         if target != 0 {
             self.outbox.actor.add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
@@ -3248,7 +3273,7 @@ impl AiController {
         // (c) Pure synchronization branch.
         if frames == 0 && index != u16::MAX {
             let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
-            self.synchronize_charly = AiEntityHandle::new(target);
+            self.synchronize_charly = Some(AiEntityHandle::new(target));
             self.synchronize_index = synchronize_index;
             self.set_checkpoint_charly(0);
             debug_assert!(
@@ -3384,7 +3409,7 @@ impl AiController {
             self.synchronize_charly = None;
             self.synchronize_index = u16::MAX;
         } else {
-            self.synchronize_charly = AiEntityHandle::new(target);
+            self.synchronize_charly = Some(AiEntityHandle::new(target));
             self.synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
         }
 

@@ -627,7 +627,7 @@ pub struct AiActorOutbox {
     /// engine-side, so reading the owner again there is too late: intervening
     /// re-entrant speech can run `ReturnToDuty` and clear the pointer.
     #[serde(default)]
-    pub unalert_near_charly_seekers_antagonist: NpcHandle,
+    pub unalert_near_charly_seekers_antagonist: Option<AiEntityHandle>,
     pub refill_bow_ammo: bool,
     pub set_reported_to_officer: Vec<(NpcHandle, bool)>,
     pub unfocus: bool,
@@ -669,7 +669,7 @@ impl AiActorOutbox {
     pub(crate) fn queue_unalert_near_charly_seekers(
         &mut self,
         target: CharlySeekerTarget,
-        antagonist: NpcHandle,
+        antagonist: Option<AiEntityHandle>,
     ) {
         self.unalert_near_charly_seekers = Some(target);
         self.unalert_near_charly_seekers_antagonist = antagonist;
@@ -677,9 +677,9 @@ impl AiActorOutbox {
 
     pub(crate) fn take_unalert_near_charly_seekers(
         &mut self,
-    ) -> Option<(CharlySeekerTarget, NpcHandle)> {
+    ) -> Option<(CharlySeekerTarget, Option<AiEntityHandle>)> {
         let target = self.unalert_near_charly_seekers.take()?;
-        let antagonist = std::mem::take(&mut self.unalert_near_charly_seekers_antagonist);
+        let antagonist = self.unalert_near_charly_seekers_antagonist.take();
         Some((target, antagonist))
     }
 

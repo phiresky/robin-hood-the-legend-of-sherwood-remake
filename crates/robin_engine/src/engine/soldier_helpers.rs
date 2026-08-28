@@ -1768,7 +1768,7 @@ impl EngineInner {
                     delay,
                     goal,
                     direction,
-                    adversary: adversary.map(|id| id.index()).unwrap_or(0),
+                    adversary: adversary.map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 };
                 // Original Soldier::SendBeforeDoorToFight calls
                 // Think(EVENT_DOOR_COMBAT) directly. The state/target/timer

@@ -607,9 +607,6 @@ impl Engine {
             })
         };
         let resolve_ai_handle = |handle: u32| -> Value {
-            if handle == 0 {
-                return Value::Null;
-            }
             let resolved = self
                 .inner
                 .world
@@ -722,7 +719,7 @@ impl Engine {
                     json!({
                         "kind": "door_combat", "delay": combat.delay, "direction": combat.direction,
                         "goal": ai_position(combat.goal),
-                        "adversary": resolve_ai_handle(combat.adversary),
+                        "adversary": resolve_optional_ai_handle(combat.adversary),
                     }),
                 ),
                 StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
@@ -733,7 +730,7 @@ impl Engine {
             json!({
                 "stimulus_type": stimulus.stimulus_type as u32,
                 "info_type": info_type,
-                "owner": resolve_ai_handle(stimulus.owner),
+                "owner": resolve_optional_ai_handle(stimulus.owner),
                 "to_whole_patrol": stimulus.to_whole_patrol,
                 "info": info,
             })
@@ -748,7 +745,7 @@ impl Engine {
                     stimulus.info,
                     StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
                 )
-                && stimulus.owner == 0
+                && stimulus.owner.is_none()
                 && !stimulus.to_whole_patrol;
             if is_default {
                 Value::Null

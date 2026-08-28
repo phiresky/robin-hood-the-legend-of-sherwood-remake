@@ -2216,7 +2216,7 @@ impl EngineInner {
                 )
             });
             tick_data.missed_pc_forecast = Some(forecast(target_id));
-            tick_data.missed_pc_forecast_handle = missed;
+            tick_data.missed_pc_forecast_handle = Some(missed);
         }
         for soldier in &mut tick_data.camp_soldiers {
             // Only officers are ever selected as forecasted destinations by
@@ -3057,10 +3057,10 @@ impl EngineInner {
                 // raw feet geometry for visibility and is not interchangeable.
                 let (primary_target_position, primary_target_posture, primary_target_animation) = {
                     let target_handle = enemy_ai.base.primary_target;
-                    if target_handle != 0
-                        && let Some(pc) = pc_snapshots
-                            .iter()
-                            .find(|p| p.id == EntityId::Pc(crate::entity_id::PcId(target_handle)))
+                    if let Some(target_handle) = target_handle
+                        && let Some(pc) = pc_snapshots.iter().find(|p| {
+                            p.id == EntityId::Pc(crate::entity_id::PcId(target_handle.get()))
+                        })
                     {
                         (
                             Some(fighter_ai_position(&world.ai_positions, pc.id)),
@@ -3079,13 +3079,14 @@ impl EngineInner {
                     // Prepared without RNG only after this scan produces an
                     // Enemy stimulus block.
                     primary_target_forecast: None,
-                    primary_target_is_pc: pc_snapshots
-                        .iter()
-                        .any(|pc| pc.id.index() == enemy_ai.base.primary_target),
+                    primary_target_is_pc: pc_snapshots.iter().any(|pc| {
+                        crate::ai::AiEntityHandle::new(pc.id.index())
+                            == enemy_ai.base.primary_target
+                    }),
                     missed_pc_forecast: None,
-                    missed_pc_is_pc: pc_snapshots
-                        .iter()
-                        .any(|pc| pc.id.index() == enemy_ai.missed_pc),
+                    missed_pc_is_pc: pc_snapshots.iter().any(|pc| {
+                        crate::ai::AiEntityHandle::new(pc.id.index()) == enemy_ai.missed_pc
+                    }),
                     // Table swordfight jump-line for primary target.
                     primary_target_jump_line: npc_jump_lines.get(&npc_id).copied().flatten(),
                     primary_target_position,
@@ -3380,7 +3381,7 @@ impl EngineInner {
                     if claimant.camp != my_camp || !claimant.able_to_fight {
                         continue;
                     }
-                    if target == enemy_ai.base.primary_target {
+                    if crate::ai::AiEntityHandle::new(target) == enemy_ai.base.primary_target {
                         tick_data.friends_nearer_to_enemy =
                             tick_data.friends_nearer_to_enemy.saturating_add(1);
                     }

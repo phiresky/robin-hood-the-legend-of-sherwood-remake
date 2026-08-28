@@ -3541,7 +3541,7 @@ fn resolve_ai_position_with_selected(
         target: target_position,
         effective: carrier.unwrap_or(target_position),
         carrier,
-        carrier_handle: carrier_id.and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
+        carrier_handle: carrier_id.map(|id| crate::ai::AiEntityHandle::new(id.index())),
     }
 }
 
@@ -3672,7 +3672,7 @@ pub(super) fn build_friend_swap_candidates(
         out.push(crate::ai::FriendSwapCandidate {
             friend_id: friend_id.into(),
             friend_position: friend_pos,
-            friend_primary_target: friend_target_handle,
+            friend_primary_target: Some(friend_target_handle),
             friend_primary_target_position: friend_target_pos,
         });
     }
