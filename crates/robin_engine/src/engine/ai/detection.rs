@@ -2163,7 +2163,7 @@ impl EngineInner {
             .get(npc_id)
             .and_then(Entity::enemy_ai)
             .map(|ai| (ai.base.primary_target, ai.missed_pc))
-            .unwrap_or((0, 0));
+            .unwrap_or((None, None));
         tick_data.enemy_detectable_forecasts.clear();
         let enemy_handles = self
             .world
@@ -2193,8 +2193,10 @@ impl EngineInner {
                 .enemy_detectable_forecasts
                 .push((handle, forecast(target_id)));
         }
-        if tick_data.primary_target_is_pc && primary != 0 {
-            let target_id = self.entity_id_for_index(primary).unwrap_or_else(|| {
+        if tick_data.primary_target_is_pc
+            && let Some(primary) = primary
+        {
+            let target_id = self.entity_id_for_index(primary.get()).unwrap_or_else(|| {
                 panic!(
                     "NPC {} has missing primary-target actor {}",
                     npc_id.index(),
@@ -2203,8 +2205,10 @@ impl EngineInner {
             });
             tick_data.primary_target_forecast = Some(forecast(target_id));
         }
-        if tick_data.missed_pc_is_pc && missed != 0 {
-            let target_id = self.entity_id_for_index(missed).unwrap_or_else(|| {
+        if tick_data.missed_pc_is_pc
+            && let Some(missed) = missed
+        {
+            let target_id = self.entity_id_for_index(missed.get()).unwrap_or_else(|| {
                 panic!(
                     "NPC {} has missing missed-PC actor {}",
                     npc_id.index(),

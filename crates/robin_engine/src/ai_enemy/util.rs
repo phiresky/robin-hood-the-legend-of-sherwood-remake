@@ -233,7 +233,7 @@ pub struct CampSoldierInfo {
     pub knocked_out_in_money_fight: bool,
     /// Live primary target used when BattleDecisions merges an attacking
     /// friend's target into its persistent Them list.
-    pub primary_target: HumanHandle,
+    pub primary_target: Option<AiEntityHandle>,
     /// Soldier-profile pride used by BattleDecisions' side-strength and
     /// too-proud-to-attack calculations.
     pub pride: u16,
@@ -256,7 +256,7 @@ pub struct CampSoldierInfo {
     /// Used by `ConsiderReport` for body/charly list merging.
     pub report_seen_bodies: Vec<HumanHandle>,
     /// Charly (missing friend) handle from the soldier's report.
-    pub report_charly: NpcHandle,
+    pub report_charly: Option<AiEntityHandle>,
     /// The soldier's alert-soldiers point.
     pub alert_soldiers_point: Position,
     /// This soldier's patrol chief.
@@ -266,11 +266,11 @@ pub struct CampSoldierInfo {
     /// This soldier's current antagonist.
     /// Used by `CanCallThisSoldier` to reject a soldier already in a
     /// conversation with someone other than the calling officer.
-    pub antagonist: NpcHandle,
+    pub antagonist: Option<AiEntityHandle>,
     /// Body currently selected by this soldier's AI. The instructed-soldier
     /// conversation reads this from the officer before delivering
     /// `CALL_YOURTALK_2`.
-    pub detected_body: HumanHandle,
+    pub detected_body: Option<AiEntityHandle>,
     /// Current blood-alcohol debility. Values above
     /// `AI_DEBILITY_ALCOHOL_LIMIT` force `Q_SHALL_I_STAY_ON_MY_POST` true
     /// before the active/outdoor branch is considered.
@@ -547,8 +547,8 @@ pub struct FighterSnapshot {
     /// Soldier AI `primary_target` / PC melee target. For soldiers this is the
     /// reference `GetPrimaryTarget()` value, which differs from the principal
     /// swordfight opponent while approaching a target.
-    pub primary_target: HumanHandle,
-    pub principal_opponent: HumanHandle,
+    pub primary_target: Option<AiEntityHandle>,
+    pub principal_opponent: Option<AiEntityHandle>,
     pub number_of_opponents: u16,
     /// All handles this fighter is currently engaged with.
     pub opponent_handles: Vec<HumanHandle>,
@@ -581,9 +581,9 @@ pub struct FighterSnapshot {
     pub is_robin: bool,
     /// This fighter's cached left combat neighbour (for phalanx chain
     /// walking).
-    pub left_combat_neighbour: HumanHandle,
+    pub left_combat_neighbour: Option<AiEntityHandle>,
     /// This fighter's cached right combat neighbour.
-    pub right_combat_neighbour: HumanHandle,
+    pub right_combat_neighbour: Option<AiEntityHandle>,
     /// True if in a recovery animation (being hit, dying, unconscious, etc.).
     pub is_in_recovery_animation: bool,
     /// True if in a valid sword combat action state.
@@ -608,14 +608,14 @@ pub struct FighterSnapshot {
     /// Derived during snapshot building from the reverse
     /// `shield_bearer_before_me` link so archers can't double-claim a
     /// shield bearer.
-    pub archer_behind_me: HumanHandle,
+    pub archer_behind_me: Option<AiEntityHandle>,
     /// The AI state of this fighter (Seeking, Attacking, etc.).
     /// Used by `number_of_nearby_archers_who_need_protection` to filter
     /// fighters in specific states.
     pub ai_state: AiState,
     /// Handle of the shield bearer this archer is hiding behind (0 = none).
     /// Used to identify "orphan" archers who need protection.
-    pub shield_bearer_before_me: u32,
+    pub shield_bearer_before_me: Option<AiEntityHandle>,
     /// Snapshots keep the stable 1-based weapon profile id and resolve
     /// it through the tick's shared `ProfileManager` when strike
     /// damage is evaluated, avoiding per-fighter `HtHWeaponProfile`

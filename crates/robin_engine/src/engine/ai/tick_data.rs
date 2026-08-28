@@ -797,8 +797,8 @@ impl EngineInner {
             .collect();
         tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
-            && enemy_ai.missed_pc != 0
-            && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
+            && let Some(missed_handle) = enemy_ai.missed_pc
+            && let Some(missed_id) = self.entity_id_for_index(missed_handle.get())
             && let Some(missed_entity) = self.world.entities.get(missed_id)
             && let Some(input) = extract_exact_forecast_input(
                 self,
@@ -1684,7 +1684,11 @@ impl EngineInner {
                 is_soldier: true,
                 rank: enemy_ai_other.soldier_profile_rank,
                 primary_target: enemy_ai_other.base.primary_target,
-                principal_opponent: s.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                principal_opponent: s
+                    .human
+                    .opponents
+                    .first()
+                    .and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -1799,9 +1803,17 @@ impl EngineInner {
                     .ai
                     .as_deref()
                     .and_then(|ai| ai.ai_brain.enemy())
-                    .map(|ai| ai.base.primary_target)
-                    .unwrap_or_else(|| pc.pc.melee_target.map(|id| id.index()).unwrap_or(0)),
-                principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                    .and_then(|ai| ai.base.primary_target)
+                    .or_else(|| {
+                        pc.pc
+                            .melee_target
+                            .and_then(|id| crate::ai::AiEntityHandle::new(id.index()))
+                    }),
+                principal_opponent: pc
+                    .human
+                    .opponents
+                    .first()
+                    .and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -2098,10 +2110,13 @@ impl EngineInner {
                 sq_view_radius: (ai_actor.view_radius as f32) * (ai_actor.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
-            if next == 0 || next == current {
+            let Some(next) = next else {
+                break;
+            };
+            if next.get() == current {
                 break;
             }
-            current = next;
+            current = next.get();
         }
         out
     }

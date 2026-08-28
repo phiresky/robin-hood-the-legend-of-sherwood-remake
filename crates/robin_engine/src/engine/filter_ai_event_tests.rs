@@ -2631,7 +2631,8 @@ fn animation_execution_gates_do_not_skip_action_change() {
                 .actor_data_mut()
                 .expect("skipped actor is typed")
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(u32::MAX).expect("valid door index"),
+                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
+                    .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
                 steps: std::collections::VecDeque::new(),
@@ -2761,7 +2762,8 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                 .actor_data_mut()
                 .expect("token-skip actor is typed")
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(u32::MAX).expect("valid door index"),
+                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
+                    .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
                 steps: std::collections::VecDeque::new(),

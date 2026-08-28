@@ -376,11 +376,7 @@ impl LegacyPcHumanAdoptionPlan {
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
                 for slot in 0..saved.quick_action_sequences.len() {
-                    let titbit = saved
-                        .titbits
-                        .get(slot)
-                        .copied()
-                        .and_then(crate::titbit::TitbitId::new);
+                    let titbit = saved.titbits.get(slot).copied().flatten();
                     if let Some(action) = saved.quick_action_sequences[slot].clone() {
                         engine.players.macro_store.adopt_legacy_sequence_slot(
                             record.entity_id,

@@ -572,7 +572,7 @@ impl EngineInner {
                             .enemy_ai_mut()
                             .expect("successful AI swordfight rebalance owner lost enemy AI")
                             .base
-                            .primary_target = target_handle;
+                            .primary_target = crate::ai::AiEntityHandle::new(target_handle);
                     }
                 }
             }
@@ -620,7 +620,7 @@ impl EngineInner {
                 )
             {
                 eprintln!(
-                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={} new_target={}]",
+                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
                     self.control.frame_counter,
                     npc_id.index(),
                     friend_id,
@@ -628,7 +628,7 @@ impl EngineInner {
                     new_target,
                 );
             }
-            friend_ai.primary_target = new_target;
+            friend_ai.primary_target = crate::ai::AiEntityHandle::new(new_target);
         }
 
         // Process pending bow shot.
@@ -703,7 +703,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("pending-drain owner {} lost AI after focus", npc_id.index())
                 });
-            ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
+            ai.last_synced_focus_target = ai.primary_target.map(crate::ai::AiEntityHandle::get);
         }
 
         // Process pending SlowlyOpenEyes — `slowly_open_eyes` sets

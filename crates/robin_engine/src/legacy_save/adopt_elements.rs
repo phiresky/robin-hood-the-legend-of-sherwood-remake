@@ -12,8 +12,8 @@ use thiserror::Error;
 use crate::{
     actor_state::{ActorContinuationState, ActorSeekSector},
     ai::{
-        AiController, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude, CombatInfo,
-        DetachedPatrolPathStatus, DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType,
+        AiController, AiEntityHandle, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude,
+        CombatInfo, DetachedPatrolPathStatus, DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType,
         PathHistoryEntry, PathId, PatrolPath, Position, Question, ReconnaissanceReport, Remark,
         ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
@@ -1483,7 +1483,7 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     // bookkeeping; leaving its marker at the constructor default would make
     // the first post-load RefreshView synthesize a Focus(primary_target) and
     // overwrite a saved LookForward/Stare state that Original preserves.
-    ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
+    ai.last_synced_focus_target = ai.primary_target.map(AiEntityHandle::get);
     ai.initial_position = ai_initial_position;
     ai.initial_view_direction = ai_initial_view_direction;
 }
@@ -2340,9 +2340,9 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.other_seen_ale = other_seen_ale;
             ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
             ai.detected_something_there = detected_something_there;
-            ai.missed_pc = missed_pc;
+            ai.missed_pc = AiEntityHandle::new(missed_pc);
             ai.last_seek_direction_index = last_seek_direction_index;
-            ai.beggar_to_examine = beggar_to_examine;
+            ai.beggar_to_examine = AiEntityHandle::new(beggar_to_examine);
             ai.pc_missed = pc_missed;
             ai.search_charly_way = search_charly_way;
             ai.current_task_priority = current_task_priority;
@@ -2376,8 +2376,8 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.seeking_charly = seeking_charly;
             ai.base.initial_view_cone = initial_view_cone;
             ai.company_number = company_number;
-            ai.left_combat_neighbour = left_combat_neighbour;
-            ai.right_combat_neighbour = right_combat_neighbour;
+            ai.left_combat_neighbour = AiEntityHandle::new(left_combat_neighbour);
+            ai.right_combat_neighbour = AiEntityHandle::new(right_combat_neighbour);
             ai.attentive = attentive;
             ai.will_be_attentive = will_be_attentive;
             ai.forced_attentive = forced_attentive;
@@ -2396,8 +2396,8 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.other_seen_money = other_seen_money;
             ai.money_fight_enemies = money_fight_enemies;
             ai.money_fight_victims = money_fight_victims;
-            ai.archer_behind_me = archer_behind_me;
-            ai.shield_bearer_before_me = shield_bearer_before_me;
+            ai.archer_behind_me = AiEntityHandle::new(archer_behind_me);
+            ai.shield_bearer_before_me = AiEntityHandle::new(shield_bearer_before_me);
             ai.already_seen_bodies = already_seen_bodies;
             ai.my_line_jump = my_line_jump;
             ai.shield_bearer_direction = shield_bearer_direction;
@@ -2447,11 +2447,11 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
         ai.macro_command_offset = cursor.offset;
         ai.macro_command_waypoint = cursor.waypoint;
     }
-    ai.primary_target = saved.primary_target;
-    ai.friend_in_trouble = saved.friend_in_trouble;
-    ai.detected_body = saved.detected_body;
-    ai.interesting_object = saved.interesting_object;
-    ai.antagonist = saved.antagonist;
+    ai.primary_target = AiEntityHandle::new(saved.primary_target);
+    ai.friend_in_trouble = AiEntityHandle::new(saved.friend_in_trouble);
+    ai.detected_body = AiEntityHandle::new(saved.detected_body);
+    ai.interesting_object = AiEntityHandle::new(saved.interesting_object);
+    ai.antagonist = AiEntityHandle::new(saved.antagonist);
     ai.last_stimulus_actor = saved.last_stimulus_actor;
     ai.macro_in_progress = saved.macro_in_progress;
     ai.number_of_remaining_macro_bytes = saved.number_of_remaining_macro_bytes;
@@ -2464,7 +2464,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.last_stimulus = saved.last_stimulus;
     ai.last_stimulus_multiplicity = saved.last_stimulus_multiplicity;
     ai.is_master = saved.is_master;
-    ai.master = saved.master;
+    ai.master = AiEntityHandle::new(saved.master);
     ai.seek_position = saved.seek_position;
     ai.alert_soldiers_point = saved.alert_soldiers_point;
     ai.first_try = saved.first_try;
@@ -2494,9 +2494,9 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.my_door_index = saved.my_door_index;
     ai.looking_for_help_because_enemy_seen = saved.looking_for_help_because_enemy_seen;
     ai.forgotten_objects = saved.forgotten_objects;
-    ai.object_of_desire = saved.object_of_desire;
-    ai.checkpoint_charly = saved.checkpoint_charly;
-    ai.synchronize_charly = saved.synchronize_charly;
+    ai.object_of_desire = AiEntityHandle::new(saved.object_of_desire);
+    ai.checkpoint_charly = AiEntityHandle::new(saved.checkpoint_charly);
+    ai.synchronize_charly = AiEntityHandle::new(saved.synchronize_charly);
     ai.inside_halt_method = saved.inside_halt_method;
     ai.macro_started_in_this_frame = saved.macro_started_in_this_frame;
     ai.synchronizing_actors = saved.synchronizing_actors;
@@ -3701,12 +3701,12 @@ fn reconnaissance(
                 )
             })
             .collect::<Result<_, _>>()?,
-        charly: element_handle(
+        charly: AiEntityHandle::new(element_handle(
             entities.resolve_element(saved.charly)?,
             ReferenceKind::Npc,
             creation_order,
             "local_ai.reconnaissance.charly",
-        )?,
+        )?),
         charly_seen: saved.charly_seen,
     })
 }

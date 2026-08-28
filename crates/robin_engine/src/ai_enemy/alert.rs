@@ -1026,7 +1026,7 @@ impl EnemyAi {
             report_type: soldier_report_type,
             seek_position: soldier_seek_position,
             seen_bodies: soldier.report_seen_bodies.clone(),
-            charly: soldier.report_charly,
+            charly: AiEntityHandle::new(soldier.report_charly),
             charly_seen: soldier.report_charly != 0,
         };
         self.base.consider_report_merged_at_frame(
@@ -1061,7 +1061,7 @@ impl EnemyAi {
                 AiState::Seeking,
                 Substate::SeekingOfficerGetAlertingReportFromSoldier,
             );
-            self.base.antagonist = soldier_handle;
+            self.base.antagonist = AiEntityHandle::new(soldier_handle);
             self.face_npc(soldier_handle, ctx);
             self.base.seek_position = soldier_seek_position;
             self.base
@@ -1103,13 +1103,15 @@ impl EnemyAi {
         // after seeking (REPORT_OFFICER_AFTER flag).
         let mut nearest_officer: Option<&CampSoldierInfo> = None;
 
-        if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER) && self.base.antagonist != 0 {
+        if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
+            && self.base.antagonist.is_some()
+        {
             // Find the antagonist in camp_soldiers
-            if let Some(ant) = tick
-                .camp_soldiers
-                .iter()
-                .find(|cs| cs.handle == self.base.antagonist)
-            {
+            if let Some(ant) = tick.camp_soldiers.iter().find(|cs| {
+                self.base
+                    .antagonist
+                    .is_some_and(|handle| handle.get() == cs.handle)
+            }) {
                 match ant.ai_substate {
                     Substate::SeekingOfficerWaitForInstructedSoldier => {
                         nearest_officer = Some(ant);
@@ -1231,7 +1233,7 @@ impl EnemyAi {
             .position;
 
         self.current_task_priority = task_priority::ALERT;
-        self.base.antagonist = officer_handle;
+        self.base.antagonist = AiEntityHandle::new(officer_handle);
         self.gather_position = officer_target_pos;
         self.go_near(
             AiState::Seeking,
@@ -1272,9 +1274,11 @@ impl EnemyAi {
     /// GoNear and deliberately skips the ordinary final route-failure test.
     pub(crate) fn alert_officer_returns_to_instructed_group(&self, tick: &AiPerTickData) -> bool {
         self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
-            && self.base.antagonist != 0
+            && self.base.antagonist.is_some()
             && tick.camp_soldiers.iter().any(|soldier| {
-                soldier.handle == self.base.antagonist
+                self.base
+                    .antagonist
+                    .is_some_and(|handle| handle.get() == soldier.handle)
                     && soldier.ai_substate == Substate::SeekingOfficerWaitForInstructedGroup
             })
     }
@@ -1306,7 +1310,7 @@ impl EnemyAi {
         // body-alert.
         self.base.alert_soldiers_point = position;
         if reason != ReportType::Body {
-            self.base.detected_body = 0;
+            self.base.detected_body = None;
         }
 
         // Rank policy table.

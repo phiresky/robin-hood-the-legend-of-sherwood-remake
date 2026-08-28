@@ -619,6 +619,9 @@ impl Engine {
                 .unwrap_or_else(|| panic!("parity local AI references missing handle {handle}"));
             entity_ref(resolved)
         };
+        let resolve_optional_ai_handle = |handle: Option<crate::ai::AiEntityHandle>| -> Value {
+            handle.map_or(Value::Null, |handle| resolve_ai_handle(handle.get()))
+        };
         let ai_position = |position: crate::ai::Position| {
             json!({
                 "map": point2(position.x, position.y),
@@ -841,11 +844,11 @@ impl Engine {
 					"next_rand_forecasted": ai.next_macro_rand_forecasted,
 				},
 				"targets": {
-					"primary": resolve_ai_handle(ai.primary_target),
-					"friend_in_trouble": resolve_ai_handle(ai.friend_in_trouble),
-					"detected_body": resolve_ai_handle(ai.detected_body),
-					"interesting_object": resolve_ai_handle(ai.interesting_object),
-					"antagonist": resolve_ai_handle(ai.antagonist),
+					"primary": resolve_optional_ai_handle(ai.primary_target),
+					"friend_in_trouble": resolve_optional_ai_handle(ai.friend_in_trouble),
+					"detected_body": resolve_optional_ai_handle(ai.detected_body),
+					"interesting_object": resolve_optional_ai_handle(ai.interesting_object),
+					"antagonist": resolve_optional_ai_handle(ai.antagonist),
 					"last_stimulus_actor": ai.last_stimulus_actor.map_or(Value::Null, resolve_ai_handle),
 				},
 				"timers": {
@@ -863,7 +866,7 @@ impl Engine {
 				"last_stimuli": ai.last_stimulus.map(|stimulus| stimulus as u32),
 				"last_stimulus_multiplicities": ai.last_stimulus_multiplicity,
 				"group": {
-					"is_master": ai.is_master, "master": resolve_ai_handle(ai.master),
+					"is_master": ai.is_master, "master": resolve_optional_ai_handle(ai.master),
 					"us": handles(&ai.list_us), "alerted_us": handles(&ai.list_alerted_us),
 					"staying_us": handles(&ai.list_staying_us),
 				},
@@ -893,9 +896,9 @@ impl Engine {
 				},
 				"object_memory": {
 					"forgotten": handles(&ai.forgotten_objects),
-					"desire": resolve_ai_handle(ai.object_of_desire),
-					"checkpoint_charly": resolve_ai_handle(ai.checkpoint_charly),
-					"synchronize_charly": resolve_ai_handle(ai.synchronize_charly),
+					"desire": resolve_optional_ai_handle(ai.object_of_desire),
+					"checkpoint_charly": resolve_optional_ai_handle(ai.checkpoint_charly),
+					"synchronize_charly": resolve_optional_ai_handle(ai.synchronize_charly),
 				},
 				"inside_halt": ai.inside_halt_method,
 				"synchronizing_actors": handles(&ai.synchronizing_actors),
@@ -917,7 +920,7 @@ impl Engine {
 					"report_type": ai.my_reconnaissance_report.report_type as u32,
 					"seek_position": ai_position(ai.my_reconnaissance_report.seek_position),
 					"seen_bodies": handles(&ai.my_reconnaissance_report.seen_bodies),
-					"charly": resolve_ai_handle(ai.my_reconnaissance_report.charly),
+					"charly": resolve_optional_ai_handle(ai.my_reconnaissance_report.charly),
 					"charly_seen": ai.my_reconnaissance_report.charly_seen,
 				},
 				"patrol": {
@@ -945,9 +948,9 @@ impl Engine {
 					"fleeing_seen_enemy_counter": enemy.fleeing_seen_enemy_counter,
 					"pc_gone_direction": enemy.pc_gone_away_in_this_direction,
 					"detected_something_there": ai_position(enemy.detected_something_there),
-					"missed_pc": resolve_ai_handle(enemy.missed_pc),
+					"missed_pc": resolve_optional_ai_handle(enemy.missed_pc),
 					"last_seek_direction_index": enemy.last_seek_direction_index,
-					"beggar_to_examine": resolve_ai_handle(enemy.beggar_to_examine),
+					"beggar_to_examine": resolve_optional_ai_handle(enemy.beggar_to_examine),
 					"pc_missed": enemy.pc_missed,
 					"task_priorities": {
 						"current": enemy.current_task_priority,
@@ -990,8 +993,8 @@ impl Engine {
 					"synchronize_index": enemy.base.synchronize_index,
 					"initial_view_cone": enemy.base.initial_view_cone as u32,
 					"company_number": enemy.company_number,
-					"left_combat_neighbour": resolve_ai_handle(enemy.left_combat_neighbour),
-					"right_combat_neighbour": resolve_ai_handle(enemy.right_combat_neighbour),
+					"left_combat_neighbour": resolve_optional_ai_handle(enemy.left_combat_neighbour),
+					"right_combat_neighbour": resolve_optional_ai_handle(enemy.right_combat_neighbour),
 					"attentive": enemy.attentive,
 					"will_be_attentive": enemy.will_be_attentive,
 					"forced_attentive": enemy.forced_attentive,
@@ -1010,8 +1013,8 @@ impl Engine {
 					"other_seen_money": handles(&enemy.other_seen_money),
 					"money_fight_enemies": handles(&enemy.money_fight_enemies),
 					"money_fight_victims": handles(&enemy.money_fight_victims),
-					"archer_behind_me": resolve_ai_handle(enemy.archer_behind_me),
-					"shield_bearer_before_me": resolve_ai_handle(enemy.shield_bearer_before_me),
+					"archer_behind_me": resolve_optional_ai_handle(enemy.archer_behind_me),
+					"shield_bearer_before_me": resolve_optional_ai_handle(enemy.shield_bearer_before_me),
 					"already_seen_bodies": handles(&enemy.already_seen_bodies),
 					"my_line_jump": jump_line(enemy.my_line_jump),
 					"shield_bearer_direction": enemy.shield_bearer_direction,

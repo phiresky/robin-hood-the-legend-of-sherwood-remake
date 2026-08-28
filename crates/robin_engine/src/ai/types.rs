@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 
 // ---------------------------------------------------------------------------
 // Opaque entity handle types
@@ -19,6 +20,95 @@ pub type ElementHandle = u32;
 pub type ObjectHandle = u32;
 /// Opaque handle to a door.
 pub type DoorHandle = u32;
+
+/// Non-null pointer identity in the Original's global element table.
+///
+/// AI state historically stored nullable `RHElement*` values as raw table
+/// indices and used index zero as `NULL`. Runtime fields pair this nominal
+/// type with [`Option`], so a present reference cannot accidentally contain
+/// the null encoding. Raw zero is accepted only by legacy/serde migration
+/// helpers at their boundary.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(transparent)]
+pub struct AiEntityHandle(NonZeroU32);
+
+impl AiEntityHandle {
+    #[inline]
+    pub const fn new(raw: u32) -> Option<Self> {
+        match NonZeroU32::new(raw) {
+            Some(raw) => Some(Self(raw)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl std::fmt::Display for AiEntityHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
+impl From<AiEntityHandle> for u32 {
+    fn from(handle: AiEntityHandle) -> Self {
+        handle.get()
+    }
+}
+
+/// Accepted inputs at AI snapshot lookup boundaries. Raw handles remain
+/// supported for required/list entries that have not historically been
+/// nullable; optional controller references flow through without being
+/// collapsed back to zero first.
+pub trait IntoOptionalAiHandle {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle>;
+}
+
+impl IntoOptionalAiHandle for u32 {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        AiEntityHandle::new(self)
+    }
+}
+
+impl IntoOptionalAiHandle for AiEntityHandle {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        Some(self)
+    }
+}
+
+impl IntoOptionalAiHandle for Option<AiEntityHandle> {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        self
+    }
+}
+
+/// Decode both current `null | non-zero` JSON and pre-migration raw handle
+/// fields where zero represented `NULL`.
+pub(crate) fn deserialize_optional_ai_handle<'de, D>(
+    deserializer: D,
+) -> Result<Option<AiEntityHandle>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<u32>::deserialize(deserializer).map(|raw| raw.and_then(AiEntityHandle::new))
+}
 
 #[derive(
     Debug,
@@ -56,12 +146,10 @@ pub enum AiStateChangeSource {
 }
 
 impl AiStateChangeSource {
-    pub fn from_optional_human(handle: HumanHandle) -> Self {
-        if handle == 0 {
-            Self::Null
-        } else {
-            Self::Human(handle)
-        }
+    pub fn from_optional_human(handle: impl IntoOptionalAiHandle) -> Self {
+        handle
+            .into_optional_ai_handle()
+            .map_or(Self::Null, |handle| Self::Human(handle.get()))
     }
 }
 

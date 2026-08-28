@@ -1495,8 +1495,14 @@ impl EngineInner {
         // of a building sector — which the debug build merely asserts against
         // — keeps its existing obstacle, plane and 3D position.
         if left_building && !direct {
-            let new_obstacle =
-                self.find_projection_area_at(assets, target_layer, target_sector, door_point_out);
+            let target_sector =
+                target_sector.expect("validated PassDoor target sector lost its public handle");
+            let new_obstacle = self.find_projection_area_at(
+                assets,
+                target_layer,
+                target_sector.with_arena_index(target_sector_index),
+                door_point_out,
+            );
             self.set_obstacle_and_material(assets, entity_id, new_obstacle);
         }
 

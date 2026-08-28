@@ -158,7 +158,8 @@ pub struct EnemyAi {
     pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
-    pub missed_pc: ElementHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub missed_pc: Option<AiEntityHandle>,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
     /// Frame when Charly was last observed missing.
@@ -169,7 +170,8 @@ pub struct EnemyAi {
     pub detected_something_there: Position,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
-    pub beggar_to_examine: HumanHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub beggar_to_examine: Option<AiEntityHandle>,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
     /// Checked during IdentifyingBeggar1.
@@ -238,8 +240,10 @@ pub struct EnemyAi {
     pub money_fight_victims: Vec<NpcHandle>,
 
     // Archer / shield bearer (serialized by semantic entity reference)
-    pub archer_behind_me: NpcHandle,
-    pub shield_bearer_before_me: NpcHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub archer_behind_me: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub shield_bearer_before_me: Option<AiEntityHandle>,
 
     pub shield_bearer_direction: u16,
     pub phalanx_aborted: bool,
@@ -378,8 +382,10 @@ pub struct EnemyAi {
     pub next_sword_strike_frame: u32,
 
     pub company_number: u16,
-    pub left_combat_neighbour: HumanHandle,
-    pub right_combat_neighbour: HumanHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub left_combat_neighbour: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub right_combat_neighbour: Option<AiEntityHandle>,
 
     pub attentive: bool,
     pub will_be_attentive: bool,
@@ -403,14 +409,14 @@ impl Default for EnemyAi {
         Self {
             base: AiController::default(),
             pending_special_strike: false,
-            missed_pc: 0,
+            missed_pc: None,
             pc_missed: false,
             pc_gone_away_in_this_direction: 0,
             frame_when_missed_charly: 0,
             heard_nets: Vec::new(),
             detected_something_there: Position::default(),
             last_seek_direction_index: 0,
-            beggar_to_examine: 0,
+            beggar_to_examine: None,
             beggar_is_npc: false,
             current_task_priority: task_priority::NONE,
             minimal_task_priority: task_priority::NONE,
@@ -445,8 +451,8 @@ impl Default for EnemyAi {
             other_seen_ale: Vec::new(),
             money_fight_enemies: Vec::new(),
             money_fight_victims: Vec::new(),
-            archer_behind_me: 0,
-            shield_bearer_before_me: 0,
+            archer_behind_me: None,
+            shield_bearer_before_me: None,
             shield_bearer_direction: 0,
             phalanx_aborted: false,
             changed_to_alert_path: false,
@@ -500,8 +506,8 @@ impl Default for EnemyAi {
             soldier_profile_endurance: 0,
             is_vip: false,
             company_number: 0,
-            left_combat_neighbour: 0,
-            right_combat_neighbour: 0,
+            left_combat_neighbour: None,
+            right_combat_neighbour: None,
             attentive: false,
             will_be_attentive: false,
             forced_attentive: false,
@@ -523,24 +529,24 @@ impl EnemyAi {
     /// consumed by a later phalanx insertion and detach an otherwise valid
     /// formation chain.
     pub(crate) fn clear_combat_neighbours(&mut self) {
-        if self.left_combat_neighbour != 0 {
+        if let Some(left) = self.left_combat_neighbour {
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetRightCombatNeighbour {
-                    target: self.left_combat_neighbour,
+                    target: left.get(),
                     neighbour: 0,
                 },
             );
         }
-        if self.right_combat_neighbour != 0 {
+        if let Some(right) = self.right_combat_neighbour {
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetLeftCombatNeighbour {
-                    target: self.right_combat_neighbour,
+                    target: right.get(),
                     neighbour: 0,
                 },
             );
         }
-        self.left_combat_neighbour = 0;
-        self.right_combat_neighbour = 0;
+        self.left_combat_neighbour = None;
+        self.right_combat_neighbour = None;
     }
 
     pub fn new(owner: NpcHandle) -> Self {
@@ -1295,7 +1301,7 @@ impl EnemyAi {
     /// This is the `Face(RHElement*)` overload: it includes the target's
     /// elevation and preserves `FaceTo`'s already-facing Waiting/Bored
     /// short-circuit.
-    fn face_npc(&mut self, handle: HumanHandle, ctx: &AiContext) {
+    fn face_npc(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         self.base.face_entity(handle, ctx);
     }
 
@@ -2087,7 +2093,11 @@ impl EnemyAi {
     /// Normal `RHElementActorNPC::IsDetecting(human)` check used by
     /// synchronous AI state-machine gates. Unlike the 360-degree helper,
     /// this uses the live post-`RefreshView` cone and opaque line of sight.
-    fn is_detecting(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+    fn is_detecting(&self, target: impl IntoOptionalAiHandle, ctx: &AiContext) -> bool {
+        let target = target
+            .into_optional_ai_handle()
+            .expect("is_detecting requires a non-null target")
+            .get();
         let view = ctx.entity_view(target).unwrap_or_else(|| {
             panic!(
                 "is_detecting: NPC {} requires missing target entity view {target}",
@@ -2524,7 +2534,15 @@ impl EnemyAi {
     /// radius samples the surrounding shadow-light sectors, and the
     /// results land in the shared per-surface radius cache, so it has
     /// to run for exactly the targets that reach it.
-    pub(crate) fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+    pub(crate) fn is_detecting_180_degrees(
+        &self,
+        target: impl IntoOptionalAiHandle,
+        ctx: &AiContext,
+    ) -> bool {
+        let target = target
+            .into_optional_ai_handle()
+            .expect("is_detecting_180_degrees requires a non-null target")
+            .get();
         tracing::trace!(
             target,
             viewer_x = ctx.position.x,

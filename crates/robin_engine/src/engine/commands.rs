@@ -2183,9 +2183,7 @@ impl EngineInner {
             ),
         };
         let manager = ElementHandle(recording_pc.index());
-        let supplier_handle = supplier
-            .map(|id| ElementHandle(id.index()))
-            .unwrap_or(ElementHandle::INVALID);
+        let supplier_handle = supplier.map(|id| ElementHandle(id.index()));
         let titbit_id = self.feedback.titbit_manager.add_titbit(
             pos3d,
             layer,

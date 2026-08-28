@@ -2529,7 +2529,8 @@ pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
-    pub charly: NpcHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
 }
 
@@ -2539,7 +2540,7 @@ impl Default for ReconnaissanceReport {
             seek_position: Position::default(),
             report_type: ReportType::Nothing,
             seen_bodies: Vec::new(),
-            charly: 0,
+            charly: None,
             charly_seen: false,
         }
     }
@@ -2549,7 +2550,7 @@ impl ReconnaissanceReport {
     pub fn reset(&mut self) {
         self.seen_bodies.clear();
         self.report_type = ReportType::Nothing;
-        self.charly = 0;
+        self.charly = None;
     }
 
     pub fn update(&mut self, new_type: ReportType, new_position: Position) {

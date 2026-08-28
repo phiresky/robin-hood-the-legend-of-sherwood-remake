@@ -123,7 +123,7 @@ impl EngineInner {
                                     .fast_grid
                                     .level
                                     .door_projection_infos
-                                    .get(index.0 as usize)
+                                    .get(usize::from(*index))
                             })
                             .find(|door| {
                                 (door.point_in.x - x)
@@ -138,9 +138,10 @@ impl EngineInner {
                                 )
                             });
                     (
-                        door.position_out.sector.unwrap_or_else(|| {
-                            panic!("building exit door has no outside sector identity")
-                        }),
+                        crate::position_interface::SectorHandle::from_number(door.sector_out)
+                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                                panic!("building exit door has no exact outside sector identity")
+                            })),
                         door.layer_out,
                         door.point_out,
                     )

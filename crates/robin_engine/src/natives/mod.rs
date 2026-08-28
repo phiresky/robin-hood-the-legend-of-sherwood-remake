@@ -1054,6 +1054,7 @@ impl NativeContext<'_, '_> {
         if let Some((door_handle, door_direction)) = self
             .get_entity(actor_handle)
             .map(crate::engine::current_door_for_route_source)
+            .flatten()
             && let Some((adapted_source, adapted_sector, adapted_layer)) =
                 crate::engine::adapt_source_to_current_door_with_identity(
                     &self.script_domains.interactables.doors,

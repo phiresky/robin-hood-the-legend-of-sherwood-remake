@@ -236,9 +236,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -427,9 +431,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -859,9 +867,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1037,9 +1049,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1242,9 +1258,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1361,9 +1381,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );

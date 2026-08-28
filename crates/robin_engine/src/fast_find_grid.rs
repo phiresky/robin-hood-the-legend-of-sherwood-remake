@@ -2691,7 +2691,10 @@ impl FastFindGrid {
         self.level
             .level_repulsive_points
             .iter()
-            .filter(|p| p.layer == layer && bbox.contains_point(p.position))
+            .filter(|p| {
+                p.layer == crate::position_interface::Layer::new(layer)
+                    && bbox.contains_point(p.position)
+            })
             .collect()
     }
 

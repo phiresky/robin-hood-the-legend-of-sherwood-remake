@@ -1262,7 +1262,7 @@ impl EngineInner {
         let handle = crate::titbit::ElementHandle(actor.index());
         self.feedback.titbit_manager.add_titbit(
             crate::coordinates::WorldPoint3D::default(),
-            0,
+            None,
             crate::titbit::TitbitKind::Hidden,
             handle,
             phase,
@@ -3094,7 +3094,7 @@ impl EngineInner {
                     | crate::ai::StimulusType::CallYourTalk3
             );
             eprintln!(
-                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={} context_antagonist={:?} ai_antagonist={} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={} context_antagonist={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
                 engine.control.frame_counter,
                 entity_id.index(),
                 engine.world.original_creation_order(entity_id),
@@ -4821,7 +4821,7 @@ impl EngineInner {
                                 owner.index()
                             )
                         });
-                    enemy.base.friend_in_trouble = charly;
+                    enemy.base.friend_in_trouble = crate::ai::AiEntityHandle::new(charly);
                     enemy.base.face_entity(charly, &ctx);
                     continue;
                 }
@@ -5715,8 +5715,7 @@ impl EngineInner {
                                     crate::element::GameMaterial::from_u32(obs.material as u32)
                                 })
                         });
-                        let new_obstacle_handle =
-                            new_obstacle.and_then(crate::position_interface::ObstacleHandle::new);
+                        let new_obstacle_handle = new_obstacle;
                         let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                             new_obstacle_handle,
                             assets.static_sight_obstacles.as_slice(),

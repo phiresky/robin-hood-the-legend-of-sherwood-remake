@@ -100,7 +100,7 @@ impl PlaneZCoeffs {
     ) -> Option<Self> {
         obs.and_then(|h| {
             obstacles
-                .get(usize::from(h.get()))
+                .get(h.get() as usize)
                 .map(|o| Self::from_plane_points(&o.top_plane_points))
         })
     }
@@ -312,6 +312,68 @@ impl std::fmt::Display for Layer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.get().fmt(f)
     }
+}
+
+/// Serde migration for runtime layers that were previously stored as a raw
+/// `u16`. Current JSON uses `null` for absence; historical snapshots used
+/// `65535`. Native bitcode snapshots are schema-versioned and round-trip the
+/// typed `Option` directly.
+pub(crate) fn deserialize_optional_layer<'de, D>(deserializer: D) -> Result<Option<Layer>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Raw(u16),
+        Optional(Option<u16>),
+    }
+
+    let raw = match Wire::deserialize(deserializer)? {
+        Wire::Raw(raw) => Some(raw),
+        Wire::Optional(raw) => raw,
+    };
+    Ok(raw.and_then(Layer::new))
+}
+
+pub(crate) fn deserialize_optional_pathfinder<'de, D>(
+    deserializer: D,
+) -> Result<Option<PathfinderIndex>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Raw(u16),
+        Optional(Option<u16>),
+    }
+
+    let raw = match Wire::deserialize(deserializer)? {
+        Wire::Raw(raw) => Some(raw),
+        Wire::Optional(raw) => raw,
+    };
+    Ok(raw.and_then(PathfinderIndex::new))
+}
+
+pub(crate) fn deserialize_optional_door<'de, D>(
+    deserializer: D,
+) -> Result<Option<crate::gate::DoorIndex>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Raw(u32),
+        Optional(Option<u32>),
+    }
+
+    let raw = match Wire::deserialize(deserializer)? {
+        Wire::Raw(raw) => Some(raw),
+        Wire::Optional(raw) => raw,
+    };
+    Ok(raw.and_then(crate::gate::DoorIndex::new))
 }
 
 /// Index into the loaded pathfinder/move-box table. `0xffff` means
@@ -780,7 +842,9 @@ pub struct PositionInterface {
     directional_tolerance: bool,
 
     // -- Pathfinder indices --
+    #[serde(default, deserialize_with = "deserialize_optional_pathfinder")]
     pathfinder_index: Option<PathfinderIndex>,
+    #[serde(default, deserialize_with = "deserialize_optional_pathfinder")]
     pathfinder_index_alternate: Option<PathfinderIndex>,
 
     // -- Move boxes --
@@ -804,6 +868,7 @@ pub struct PositionInterface {
     saved_old_posture: crate::element::Posture,
 
     // -- Layer & sector --
+    #[serde(default, deserialize_with = "deserialize_optional_layer")]
     layer: Option<Layer>,
     sector: Option<SectorHandle>,
     /// Exact `FastFindGrid::level.sectors` arena identity paired with
@@ -811,6 +876,7 @@ pub struct PositionInterface {
     /// which is not sufficient to distinguish overlapping sector objects.
     #[serde(default)]
     sector_index: Option<SectorIndex>,
+    #[serde(default, deserialize_with = "deserialize_optional_layer")]
     layer_goal: Option<Layer>,
     sector_goal: Option<SectorHandle>,
     /// Arena identity paired with `sector_goal`.
@@ -822,6 +888,7 @@ pub struct PositionInterface {
     plane: Option<PlaneZCoeffs>,
 
     // -- Door --
+    #[serde(default, deserialize_with = "deserialize_optional_door")]
     door: Option<DoorHandle>,
     door_direction: bool,
 
@@ -2959,6 +3026,40 @@ mod tests {
         let pi2: PositionInterface = serde_json::from_str(&json).unwrap();
         assert_eq!(pi2.get_direction(), d(7));
         assert_eq!(pi2.position, p3(10.0, 20.0, 5.0));
+    }
+
+    #[test]
+    fn legacy_serde_sentinels_migrate_to_typed_absence() {
+        let mut encoded = serde_json::to_value(PositionInterface::new()).unwrap();
+        let object = encoded.as_object_mut().unwrap();
+        object.insert("pathfinder_index".into(), serde_json::json!(u16::MAX));
+        object.insert("pathfinder_index_alternate".into(), serde_json::json!(7));
+        object.insert("layer".into(), serde_json::json!(u16::MAX));
+        object.insert("layer_goal".into(), serde_json::json!(3));
+        object.insert("door".into(), serde_json::json!(u32::MAX));
+
+        let restored: PositionInterface = serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored.pathfinder_index, None);
+        assert_eq!(restored.pathfinder_index_alternate, PathfinderIndex::new(7));
+        assert_eq!(restored.optional_layer(), None);
+        assert_eq!(restored.optional_layer_goal(), Layer::new(3));
+        assert_eq!(restored.get_door(), None);
+    }
+
+    #[test]
+    fn native_bitcode_roundtrips_typed_spatial_absence() {
+        let mut pi = PositionInterface::new();
+        pi.clear_layer();
+        pi.clear_layer_goal();
+        pi.clear_pathfinder_index();
+        pi.clear_door();
+
+        let encoded = bitcode::encode(&pi);
+        let restored: PositionInterface = bitcode::decode(&encoded).unwrap();
+        assert_eq!(restored.optional_layer(), None);
+        assert_eq!(restored.optional_layer_goal(), None);
+        assert_eq!(restored.get_pathfinder_index(), None);
+        assert_eq!(restored.get_door(), None);
     }
 
     #[test]

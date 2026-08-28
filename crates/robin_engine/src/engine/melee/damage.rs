@@ -2321,11 +2321,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
             .position_iface()
             .get_position();
-        self.set_obstacle_and_material(
-            assets,
-            victim_id,
-            goal_obstacle.map(|obstacle| obstacle.get()),
-        );
+        self.set_obstacle_and_material(assets, victim_id, goal_obstacle);
         self.get_entity_mut(victim_id)
             .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
             .position_iface_mut()
@@ -2806,12 +2802,12 @@ impl EngineInner {
             let mut left_neighbours = Vec::new();
             let mut right_neighbours = Vec::new();
             let left_neighbour = std::mem::take(&mut enemy.left_combat_neighbour);
-            if left_neighbour != 0 {
-                left_neighbours.push(left_neighbour);
+            if let Some(left_neighbour) = left_neighbour {
+                left_neighbours.push(left_neighbour.get());
             }
             let right_neighbour = std::mem::take(&mut enemy.right_combat_neighbour);
-            if right_neighbour != 0 {
-                right_neighbours.push(right_neighbour);
+            if let Some(right_neighbour) = right_neighbour {
+                right_neighbours.push(right_neighbour.get());
             }
             // `EnemyAi::set_state` zeroes the victim's local fields eagerly,
             // but queues the reciprocal zero writes. Death clears that queue
@@ -2848,12 +2844,12 @@ impl EngineInner {
             let mut shield_bearers = Vec::new();
             let mut archers = Vec::new();
             let shield_bearer = std::mem::take(&mut enemy.shield_bearer_before_me);
-            if shield_bearer != 0 {
-                shield_bearers.push(shield_bearer);
+            if let Some(shield_bearer) = shield_bearer {
+                shield_bearers.push(shield_bearer.get());
             }
             let archer = std::mem::take(&mut enemy.archer_behind_me);
-            if archer != 0 {
-                archers.push(archer);
+            if let Some(archer) = archer {
+                archers.push(archer.get());
             }
             for action in &enemy.base.outbox.reentrant.cross_npc_actions {
                 match *action {

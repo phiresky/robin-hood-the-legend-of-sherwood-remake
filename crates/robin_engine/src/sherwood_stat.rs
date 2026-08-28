@@ -608,7 +608,7 @@ mod tests {
                     pc_description_idx: idx,
                     x: 0.0,
                     y: 0.0,
-                    obstacle: 0xFFFF,
+                    obstacle: None,
                 })
                 .collect(),
             ..Default::default()

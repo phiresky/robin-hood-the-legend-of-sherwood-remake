@@ -769,7 +769,9 @@ pub fn derive_position_topology(
                     "sparse door sector references non-door Original gate index {gate_index}"
                 )));
             }
-            Ok(Some(DoorHandle::new(runtime.0).expect("valid door index")))
+            Ok(Some(
+                DoorHandle::new(runtime.get()).expect("valid door index"),
+            ))
         })
         .collect::<Result<Vec<_>, _>>()?;
     build_position_topology(
@@ -797,7 +799,7 @@ fn build_position_topology(
     }
     let doors = gate_order
         .iter()
-        .map(|index| DoorHandle::new(index.0).expect("valid door index"))
+        .map(|index| DoorHandle::new(index.get()).expect("valid door index"))
         .collect::<Vec<_>>();
 
     // Rust stores only authored obstacles. Place each binding by the retained
@@ -816,7 +818,7 @@ fn build_position_topology(
         }
         let runtime_index = u16::try_from(runtime_index)
             .map_err(|_| position_topology_detail("runtime authored obstacle index exceeds u16"))?;
-        let obstacle_handle = ObstacleHandle::new(runtime_index).ok_or_else(|| {
+        let obstacle_handle = ObstacleHandle::new(u32::from(runtime_index)).ok_or_else(|| {
             position_topology_detail("runtime authored obstacle index equals null sentinel 0xffff")
         })?;
         let binding = LegacyPositionObstacleBinding {

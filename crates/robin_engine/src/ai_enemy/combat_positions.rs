@@ -452,9 +452,10 @@ impl EnemyAi {
     /// Look up a fighter snapshot by handle in the engine-provided cache.
     pub(super) fn find_fighter<'a>(
         &self,
-        handle: HumanHandle,
+        handle: impl IntoOptionalAiHandle,
         tick: &'a AiPerTickData,
     ) -> Option<&'a FighterSnapshot> {
+        let handle = handle.into_optional_ai_handle()?.get();
         tick.nearby_fighters
             .iter()
             .find(|f| f.handle == handle)
@@ -1461,7 +1462,7 @@ impl EnemyAi {
     /// the archer actually needs to reposition.
     pub(super) fn shield_bearer_cover_position(
         &self,
-        shield_bearer: HumanHandle,
+        shield_bearer: impl IntoOptionalAiHandle,
         tick: &AiPerTickData,
     ) -> Option<Position> {
         let snap = self.find_fighter(shield_bearer, tick)?;

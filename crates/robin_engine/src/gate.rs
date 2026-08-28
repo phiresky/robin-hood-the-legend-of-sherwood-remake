@@ -48,6 +48,12 @@ impl DoorIndex {
     }
 }
 
+impl Default for DoorIndex {
+    fn default() -> Self {
+        Self::new(0).expect("zero is a valid door index")
+    }
+}
+
 impl From<DoorIndex> for u32 {
     #[inline]
     fn from(i: DoorIndex) -> u32 {

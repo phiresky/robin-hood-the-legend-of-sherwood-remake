@@ -722,7 +722,6 @@ impl EngineInner {
             let obstacle_list = self.sight_obstacles(assets);
             let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                 fast_find_grid: &self.world.fast_grid,
-                layer,
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
@@ -1138,7 +1137,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -1647,7 +1645,6 @@ impl EngineInner {
         };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -2361,7 +2358,10 @@ mod tests {
         assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
         assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
         assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
-        assert_eq!(purse.projectile.trajectory_origin_layer, 2);
+        assert_eq!(
+            purse.projectile.trajectory_origin_layer,
+            crate::position_interface::Layer::new(2)
+        );
         let after_prime = purse.element.position();
         engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
@@ -2428,17 +2428,17 @@ mod tests {
             assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
             assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
             assert_eq!(coin.projectile.trajectory_origin_sector, None);
-            assert_eq!(coin.projectile.trajectory_origin_layer, u16::MAX);
+            assert_eq!(coin.projectile.trajectory_origin_layer, None);
             assert_eq!(coin.element.sector(), None);
-            assert_eq!(coin.element.layer(), u16::MAX);
+            assert_eq!(coin.element.optional_layer(), None);
             assert!(
                 purse_creation < engine.original_creation_order(child),
                 "purse constructor identity must precede child coin constructors"
             );
         }
-        assert_eq!(empty_purse.element.layer(), u16::MAX);
+        assert_eq!(empty_purse.element.optional_layer(), None);
         assert_eq!(empty_purse.element.sector(), None);
-        assert_eq!(empty_purse.projectile.trajectory_origin_layer, u16::MAX);
+        assert_eq!(empty_purse.projectile.trajectory_origin_layer, None);
         assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
 
         let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
@@ -3429,9 +3429,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            // A deflection trajectory is recomputed from scratch and drops the
-            // projectile's membership, so it carries no layer of its own.
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -3460,7 +3457,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -3984,21 +3980,26 @@ impl EngineInner {
                     | Substate::AttackingBowAiming
                     | Substate::AttackingBowShooting
             );
-            if !tracks || ai.primary_target == 0 {
+            if !tracks {
                 return;
             }
-            ai.primary_target
+            let Some(target) = ai.primary_target else {
+                return;
+            };
+            target
         };
         let my_pos = match self.get_entity(npc_id) {
             Some(e) => e.ground_position(),
             None => panic!("tracking soldier {} disappeared", npc_id.index()),
         };
-        let target_pos = match self.get_entity(
-            self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
-        ) {
-            Some(e) => e.ground_position(),
-            None => return,
-        };
+        let target_pos =
+            match self.get_entity(self.expect_entity_id_for_index(
+                target_handle.get(),
+                "update_bow_defense target handle",
+            )) {
+                Some(e) => e.ground_position(),
+                None => return,
+            };
         let dx = target_pos.x - my_pos.x;
         let dy = target_pos.y - my_pos.y;
         let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
@@ -5530,7 +5531,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };
@@ -5577,7 +5577,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };
@@ -5623,7 +5622,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };

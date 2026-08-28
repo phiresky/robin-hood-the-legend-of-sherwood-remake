@@ -625,9 +625,13 @@ impl EngineInner {
                     // Apply initial facing from the beam-me point (0-15 sector).
                     (beam_me.direction & 15) as i16,
                     material,
-                    crate::position_interface::ObstacleHandle::new(beam_me.projection_area),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        beam_me.projection_area,
+                    ),
                     crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                        crate::position_interface::ObstacleHandle::new(beam_me.projection_area),
+                        crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                            beam_me.projection_area,
+                        ),
                         assets.static_sight_obstacles.as_slice(),
                     ),
                 );

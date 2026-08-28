@@ -744,14 +744,12 @@ impl AiActorOutbox {
     /// Queue `Focus(element)` with Original's synchronous last-write-wins
     /// semantics. A Think call can issue `Focus(NULL)` and then focus a new
     /// target before the deferred engine drain.
-    pub fn set_focus(&mut self, target: ElementHandle) {
-        // `Focus(element)` with a null element is `Unfocus()` in the
-        // Original; handle 0 is the AI's null-target sentinel.
-        if target == 0 {
+    pub fn set_focus(&mut self, target: impl IntoOptionalAiHandle) {
+        let Some(target) = target.into_optional_ai_handle() else {
             self.set_unfocus();
             return;
-        }
-        self.focus = Some(target);
+        };
+        self.focus = Some(target.get());
         self.focus_point = None;
         self.unfocus = false;
     }

@@ -62,7 +62,7 @@ impl AiContext {
             let door = fast_grid
                 .level
                 .door_projection_infos
-                .get(index.0 as usize)
+                .get(usize::from(*index))
                 .unwrap_or_else(|| {
                     panic!(
                         "lift sector {sector_number} references missing door projection {}",
@@ -479,7 +479,7 @@ impl AiContext {
         };
         seed(None, cache.ground);
         for (index, entry) in cache.obstacles.iter().enumerate() {
-            let Some(handle) = u16::try_from(index)
+            let Some(handle) = u32::try_from(index)
                 .ok()
                 .and_then(crate::position_interface::ObstacleHandle::new)
             else {
@@ -590,10 +590,11 @@ impl AiContext {
     /// need a specific field (position, ai_state, …) should pattern-
     /// match on the result and fall back to a safe default only
     /// when it makes sense for the call site.
-    pub fn entity_view(&self, handle: u32) -> Option<&crate::ai_entity_view::AiEntityView> {
-        if handle == 0 {
-            return None;
-        }
+    pub fn entity_view(
+        &self,
+        handle: impl IntoOptionalAiHandle,
+    ) -> Option<&crate::ai_entity_view::AiEntityView> {
+        let handle = handle.into_optional_ai_handle()?.get();
         self.entity_views.get(&handle)
     }
 
@@ -607,22 +608,27 @@ impl AiContext {
     #[track_caller]
     pub fn expect_entity_view(
         &self,
-        handle: u32,
+        handle: impl IntoOptionalAiHandle + Copy,
         ctx: &str,
     ) -> &crate::ai_entity_view::AiEntityView {
+        let raw = handle.into_optional_ai_handle().map(AiEntityHandle::get);
         self.entity_view(handle)
-            .unwrap_or_else(|| panic!("required entity view for handle {handle} missing ({ctx})"))
+            .unwrap_or_else(|| panic!("required entity view for handle {raw:?} missing ({ctx})"))
     }
 
     /// Resolve a raw legacy human/object handle through the live entity-view
     /// snapshot without guessing its typed [`crate::element::EntityId`] kind.
-    pub fn entity_id(&self, handle: u32) -> Option<crate::element::EntityId> {
-        self.entity_view(handle)?.entity_id(handle)
+    pub fn entity_id(
+        &self,
+        handle: impl IntoOptionalAiHandle + Copy,
+    ) -> Option<crate::element::EntityId> {
+        let raw = handle.into_optional_ai_handle()?.get();
+        self.entity_view(handle)?.entity_id(raw)
     }
 
     /// Convenience wrapper around [`Self::entity_view`] that returns
     /// just the position.
-    pub fn entity_position(&self, handle: u32) -> Option<Position> {
+    pub fn entity_position(&self, handle: impl IntoOptionalAiHandle) -> Option<Position> {
         self.entity_view(handle).map(|v| v.position)
     }
 
@@ -663,7 +669,7 @@ impl AiContext {
                                 self.fast_grid
                                     .level
                                     .door_projection_infos
-                                    .get(index.0 as usize)
+                                    .get(usize::from(*index))
                             })
                             .find(|door| {
                                 (door.point_in.x - position.x)
@@ -678,9 +684,10 @@ impl AiContext {
                                 )
                             });
                     (
-                        door.position_out.sector.unwrap_or_else(|| {
-                            panic!("building exit door has no outside sector identity")
-                        }),
+                        crate::position_interface::SectorHandle::from_number(door.sector_out)
+                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                                panic!("building exit door has no outside sector arena identity")
+                            })),
                         door.layer_out,
                         door.point_out,
                     )
@@ -889,7 +896,7 @@ pub struct ReconsiderSwordfightObservationFighter {
     pub is_friendly: bool,
     pub is_able_to_fight: bool,
     pub is_soldier: bool,
-    pub primary_target: HumanHandle,
+    pub primary_target: Option<AiEntityHandle>,
     pub current_substate: u32,
 }
 
@@ -992,7 +999,7 @@ pub struct AiPerTickData {
     pub missed_pc_forecast: Option<PreparedForecastDestination>,
     /// Target identity paired with `missed_pc_forecast`. A queued Think can
     /// change the AI's `missed_pc` after this snapshot was prepared.
-    pub missed_pc_forecast_handle: HumanHandle,
+    pub missed_pc_forecast_handle: Option<AiEntityHandle>,
     /// True when `missed_pc` refers to a player character.
     pub missed_pc_is_pc: bool,
     /// Number of enemies this soldier personally detected (not shared by
@@ -1023,7 +1030,7 @@ pub struct AiPerTickData {
     /// built. A synchronous AI callback can replace `base.primary_target`
     /// before a later handler consumes the same tick data; consumers must
     /// not pair that new handle with this old target's geometry.
-    pub primary_target_snapshot_handle: HumanHandle,
+    pub primary_target_snapshot_handle: Option<AiEntityHandle>,
     /// The target element's literal current position and sector. This differs
     /// from [`Self::primary_target_position`] while passing a door and is for
     /// source sites that call `GetPosition` / `GetSector` directly.
@@ -1041,7 +1048,7 @@ pub struct AiPerTickData {
     /// `primary_target` to this handle so all downstream
     /// position / friend-swap / focus / `BeginSwordfight` reads target
     /// the carrier rather than the carried entity.
-    pub primary_target_carrier_handle: Option<HumanHandle>,
+    pub primary_target_carrier_handle: Option<AiEntityHandle>,
     /// Friend target-swap candidates: same-camp soldiers currently
     /// approaching their own primary target.
     pub friend_swap_candidates: Vec<FriendSwapCandidate>,
@@ -1165,7 +1172,7 @@ pub struct MyExitDoorInfo {
 pub struct FriendSwapCandidate {
     pub friend_id: EntityId,
     pub friend_position: Position,
-    pub friend_primary_target: HumanHandle,
+    pub friend_primary_target: Option<AiEntityHandle>,
     pub friend_primary_target_position: Position,
 }
 
@@ -1174,7 +1181,8 @@ impl AiPerTickData {
     /// specific target handle. Decision arms re-pick their target
     /// mid-tick, so each caller resolves its own live handle here
     /// instead of reusing a single snapshot-target position.
-    pub fn avenger_wait_position_for(&self, target: HumanHandle) -> Option<Position> {
+    pub fn avenger_wait_position_for(&self, target: impl IntoOptionalAiHandle) -> Option<Position> {
+        let target = target.into_optional_ai_handle()?.get();
         self.avenger_on_roof_wait_positions
             .iter()
             .find(|(handle, _)| *handle == target)
@@ -1261,14 +1269,14 @@ impl AiPerTickData {
             enemy_detectable_live_world_positions: Vec::new(),
             primary_target_is_pc: false,
             missed_pc_forecast: None,
-            missed_pc_forecast_handle: 0,
+            missed_pc_forecast_handle: None,
             missed_pc_is_pc: false,
             personally_visible_enemies: 0,
             unconscious_enemies: Vec::new(),
             nearby_sleeping_enemies: Vec::new(),
             primary_target_jump_line: None,
             primary_target_position: None,
-            primary_target_snapshot_handle: 0,
+            primary_target_snapshot_handle: None,
             primary_target_live_position: None,
             primary_target_posture: None,
             primary_target_animation: None,

@@ -117,7 +117,8 @@ impl EngineInner {
             let resolution = self.apply_projectile_landing_resolution(assets, id);
             let landed_layer = resolution
                 .filter(|r| !r.blocked_by_motion_obstacle)
-                .map(|r| r.layer)
+                .and_then(|r| r.layer)
+                .map(crate::position_interface::Layer::get)
                 .unwrap_or(layer);
             self.burst_wasp_nest(id, pos, landed_layer);
         }

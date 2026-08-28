@@ -352,11 +352,16 @@ pub struct AiController {
     pub macro_started_in_this_frame: bool,
 
     // -- Targets & relationships --
-    pub primary_target: HumanHandle,
-    pub friend_in_trouble: NpcHandle,
-    pub detected_body: HumanHandle,
-    pub interesting_object: ObjectHandle,
-    pub antagonist: NpcHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub primary_target: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub friend_in_trouble: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub detected_body: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub interesting_object: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub antagonist: Option<AiEntityHandle>,
     pub last_stimulus_actor: Option<HumanHandle>,
 
     // -- Timers --
@@ -375,7 +380,8 @@ pub struct AiController {
 
     // -- Group behaviour --
     pub is_master: bool,
-    pub master: NpcHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub master: Option<AiEntityHandle>,
 
     // -- Seek & alert --
     pub seek_position: Position,
@@ -437,11 +443,14 @@ pub struct AiController {
 
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
-    pub object_of_desire: ObjectHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub object_of_desire: Option<AiEntityHandle>,
 
     // -- Charly (friend-check) --
-    pub checkpoint_charly: NpcHandle,
-    pub synchronize_charly: NpcHandle,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub checkpoint_charly: Option<AiEntityHandle>,
+    #[serde(default, deserialize_with = "deserialize_optional_ai_handle")]
+    pub synchronize_charly: Option<AiEntityHandle>,
     /// Synchronization waypoint index for the partner. Lives on
     /// `AiBase` because the macro VM (`InitializeFriendCheck`) needs to
     /// write it from `AiController`.
@@ -594,11 +603,11 @@ impl Default for AiController {
             number_of_remaining_macro_bytes: 0,
             macro_in_progress: false,
             macro_started_in_this_frame: false,
-            primary_target: 0,
-            friend_in_trouble: 0,
-            detected_body: 0,
-            interesting_object: 0,
-            antagonist: 0,
+            primary_target: None,
+            friend_in_trouble: None,
+            detected_body: None,
+            interesting_object: None,
+            antagonist: None,
             last_stimulus_actor: None,
             timer_is_running: false,
             when_does_timer_ring: 0,
@@ -609,7 +618,7 @@ impl Default for AiController {
             last_stimulus: [StimulusType::NoEvent; 5],
             last_stimulus_multiplicity: [1; 5],
             is_master: false,
-            master: 0,
+            master: None,
             seek_position: Position::default(),
             alert_soldiers_point: Position::default(),
             first_try: false,
@@ -640,9 +649,9 @@ impl Default for AiController {
             my_door_index: None,
             looking_for_help_because_enemy_seen: false,
             forgotten_objects: Vec::new(),
-            object_of_desire: 0,
-            checkpoint_charly: 0,
-            synchronize_charly: 0,
+            object_of_desire: None,
+            checkpoint_charly: None,
+            synchronize_charly: None,
             synchronize_index: 0,
             delta_sorrow_level: 0,
             missed_in_action: Vec::new(),
@@ -1699,7 +1708,7 @@ impl AiController {
             .actor
             .delete_detectables
             .push(DetectableType::MissedFriend);
-        self.checkpoint_charly = target;
+        self.checkpoint_charly = AiEntityHandle::new(target);
         if target != 0 {
             self.outbox.actor.add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
@@ -1820,12 +1829,16 @@ impl AiController {
 
         // Charly merge + AddDetectable(MISSED_FRIEND).
         if (flags & REPORT_UPDATE_CHARLY) != 0
-            && other.charly != 0
-            && self.my_reconnaissance_report.charly == 0
+            && other.charly.is_some()
+            && self.my_reconnaissance_report.charly.is_none()
         {
             self.my_reconnaissance_report.charly = other.charly;
+            let charly = other
+                .charly
+                .expect("checked reconnaissance report charly")
+                .get();
             self.outbox.actor.append_detectables.push((
-                EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
+                EntityId::Soldier(crate::entity_id::SoldierId(charly)),
                 DetectableType::MissedFriend,
             ));
         }
@@ -3235,7 +3248,7 @@ impl AiController {
         // (c) Pure synchronization branch.
         if frames == 0 && index != u16::MAX {
             let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
-            self.synchronize_charly = target;
+            self.synchronize_charly = AiEntityHandle::new(target);
             self.synchronize_index = synchronize_index;
             self.set_checkpoint_charly(0);
             debug_assert!(
@@ -3368,10 +3381,10 @@ impl AiController {
         }
         // (e) Maybe prepare for later sync.
         if index == u16::MAX {
-            self.synchronize_charly = 0;
+            self.synchronize_charly = None;
             self.synchronize_index = u16::MAX;
         } else {
-            self.synchronize_charly = target;
+            self.synchronize_charly = AiEntityHandle::new(target);
             self.synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
         }
 
@@ -4380,7 +4393,7 @@ impl AiController {
     ///
     /// Silently drops if the handle is `0` or the entity is no longer
     /// present in the snapshot.
-    pub fn face_entity(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn face_entity(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4395,7 +4408,7 @@ impl AiController {
     }
 
     /// Turn quickly to face another entity (`Face(element, true)`).
-    pub fn face_entity_fast(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn face_entity_fast(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4406,7 +4419,11 @@ impl AiController {
     /// Match a direct Original `RHElement::SetDirection` toward an entity:
     /// update only the progressive direction goal and do not launch a Turn
     /// sequence. The currently selected animation may perform the turn itself.
-    pub fn set_direction_toward_entity(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn set_direction_toward_entity(
+        &mut self,
+        handle: impl IntoOptionalAiHandle,
+        ctx: &AiContext,
+    ) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4658,7 +4675,7 @@ impl AiController {
         // friend count rides in on `ctx` so we don't have to crack
         // open `NpcData` from inside the AI.
         if ctx.self_detectable_friend_count == 0 {
-            self.detected_body = 0;
+            self.detected_body = None;
         }
 
         // If this NPC has a live patrol chief that's able to fight

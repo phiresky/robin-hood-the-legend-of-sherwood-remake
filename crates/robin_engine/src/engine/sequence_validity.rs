@@ -1353,7 +1353,6 @@ impl EngineInner {
         );
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: actor.element_data().layer(),
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };

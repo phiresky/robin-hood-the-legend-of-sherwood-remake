@@ -3871,7 +3871,12 @@ impl EngineInner {
                                 .level_repulsive_points
                                 .push(crate::fast_find_grid::LevelRepulsivePoint {
                                     position: MapPoint::new(bx as f32, by as f32),
-                                    layer: layer_idx as u16,
+                                    layer: Some(
+                                        crate::position_interface::Layer::new(layer_idx as u16)
+                                            .expect(
+                                                "level layer index collides with null sentinel",
+                                            ),
+                                    ),
                                     limit_left,
                                     limit_right,
                                     is_concave,
@@ -3959,7 +3964,12 @@ impl EngineInner {
                                     .level_repulsive_points
                                     .push(crate::fast_find_grid::LevelRepulsivePoint {
                                         position: MapPoint::new(ox as f32, oy as f32),
-                                        layer: layer_idx as u16,
+                                        layer: Some(
+                                            crate::position_interface::Layer::new(layer_idx as u16)
+                                                .expect(
+                                                    "level layer index collides with null sentinel",
+                                                ),
+                                        ),
                                         limit_left,
                                         limit_right,
                                         is_concave,
@@ -5953,7 +5963,7 @@ impl EngineInner {
                 .get(usize::from(first_door_index))
                 .ok_or(MissionLevelBuildError::MissingCanonicalBuildingDoor {
                     building_index: building.building_index,
-                    door_index: first_door_index.0,
+                    door_index: first_door_index.get(),
                 })?;
             // `RHSectorBuilding::InitOccupant` resolves GetGate(0) after
             // RHDoor::AdaptPoints, so attachment must use this canonical

@@ -154,6 +154,10 @@ impl EngineInner {
                         .get(&number)
                         .copied()
                         .and_then(|index| {
+                            let index = crate::fast_find_grid::SectorIndex::new(
+                                u32::try_from(index).expect("sector arena index exceeds u32"),
+                            )
+                            .expect("sector arena index collides with the null encoding");
                             crate::position_interface::SectorHandle::new(number.get() as u16)
                                 .map(|handle| handle.with_arena_index(index))
                         })
@@ -177,7 +181,7 @@ impl EngineInner {
                     ?entity_id,
                     context,
                     layer = projection_layer,
-                    sector = projection_sector,
+                    ?projection_sector,
                     probe_x = probe.x,
                     probe_y = probe.y,
                     "special motion finalization found no projection-area obstacle"

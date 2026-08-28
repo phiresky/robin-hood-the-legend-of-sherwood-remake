@@ -3442,7 +3442,7 @@ type PrimaryTargetMetadata = (
     crate::element::Posture,
     Option<crate::order::OrderType>,
     Option<crate::ai::Position>,
-    Option<crate::ai::HumanHandle>,
+    Option<crate::ai::AiEntityHandle>,
 );
 
 pub(super) struct AiPositionResolution {
@@ -3452,7 +3452,7 @@ pub(super) struct AiPositionResolution {
     /// Final `RHArtificialIntelligence::Position(entity)` result.
     pub(super) effective: crate::ai::Position,
     pub(super) carrier: Option<crate::ai::Position>,
-    pub(super) carrier_handle: Option<crate::ai::HumanHandle>,
+    pub(super) carrier_handle: Option<crate::ai::AiEntityHandle>,
 }
 
 pub(super) fn resolve_ai_position_with(
@@ -3482,10 +3482,10 @@ fn resolve_ai_position_with_selected(
     if target.actor_data().is_some()
         && let Some((gate_id, direction)) = selected_door
     {
-        let door = doors.get(gate_id.0 as usize).unwrap_or_else(|| {
+        let door = doors.get(usize::from(gate_id)).unwrap_or_else(|| {
             panic!(
                 "AI position target {target_id:?} references missing door {}",
-                gate_id.0
+                gate_id
             )
         });
         let position = if direction != 0 {
@@ -3541,7 +3541,7 @@ fn resolve_ai_position_with_selected(
         target: target_position,
         effective: carrier.unwrap_or(target_position),
         carrier,
-        carrier_handle: carrier_id.map(crate::element::EntityId::index),
+        carrier_handle: carrier_id.and_then(|id| crate::ai::AiEntityHandle::new(id.index())),
     }
 }
 
@@ -3626,17 +3626,11 @@ pub(super) fn build_friend_swap_candidates(
         ) {
             continue;
         }
-        let friend_target_handle = match s
-            .npc
-            .ai_brain
-            .base()
-            .map(|ai| ai.primary_target)
-            .unwrap_or(0)
-        {
-            0 => continue,
-            h => h,
+        let Some(friend_target_handle) = s.npc.ai_brain.base().and_then(|ai| ai.primary_target)
+        else {
+            continue;
         };
-        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle) else {
+        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle.get()) else {
             continue;
         };
         let Some(_friend_target_entity) = entities.get(friend_target_id) else {

@@ -38,9 +38,12 @@ impl EnemyAi {
     /// substitution authored by `Position`.
     pub(super) fn archer_enemy_position(
         &self,
-        enemy_handle: HumanHandle,
+        enemy_handle: impl IntoOptionalAiHandle,
         ctx: &AiContext,
     ) -> Position {
+        let enemy_handle = enemy_handle
+            .into_optional_ai_handle()
+            .expect("archer position lookup requires an enemy");
         ctx.entity_view(enemy_handle)
             .unwrap_or_else(|| {
                 panic!(
@@ -263,13 +266,13 @@ impl EnemyAi {
     pub fn archer_is_too_near_to_enemy(
         &self,
         pos_me: &Position,
-        enemy_handle: HumanHandle,
+        enemy_handle: impl IntoOptionalAiHandle,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> bool {
         // Shield bearer in front of us — he will
         // protect us, don't flinch.
-        if self.shield_bearer_before_me != 0 {
+        if self.shield_bearer_before_me.is_some() {
             return false;
         }
 
@@ -279,6 +282,10 @@ impl EnemyAi {
             return false;
         }
 
+        let enemy_handle = enemy_handle
+            .into_optional_ai_handle()
+            .expect("archer proximity requires a primary target")
+            .get();
         let enemy = self.find_fighter(enemy_handle, tick).unwrap_or_else(|| {
             panic!(
                 "archer {} requires missing primary-target fighter {}",

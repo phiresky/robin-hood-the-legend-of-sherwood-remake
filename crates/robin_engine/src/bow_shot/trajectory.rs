@@ -88,7 +88,6 @@ pub fn compute_initial_throw_velocity(
 /// Parameters for trajectory obstacle collision checking.
 pub struct TrajectoryObstacleCheck<'a> {
     pub fast_find_grid: &'a crate::fast_find_grid::FastFindGrid,
-    pub layer: u16,
     /// Sight obstacles for 3D ray-obstacle intersection.
     /// When provided, each trajectory segment is also checked against
     /// these in full 3D (height-aware), allowing arrows to arc over

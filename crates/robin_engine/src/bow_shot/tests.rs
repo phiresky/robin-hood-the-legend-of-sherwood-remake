@@ -1331,7 +1331,6 @@ fn spawn_arrow_creates_flying_projectile_with_trajectory() {
         target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 0.0,
@@ -1381,7 +1380,6 @@ fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
             time: 2,
         }],
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1524,7 +1522,6 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
         target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1586,7 +1583,6 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             time: 1,
         }],
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1613,7 +1609,6 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             time: 1,
         }],
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1690,7 +1685,6 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
             time: 1,
         }],
         damage: 30,
-        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -3210,7 +3204,6 @@ fn trajectory_into_material_test_wall(
     );
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         water_zones: Some(water_zones),
     };
@@ -3360,7 +3353,6 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     );
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         water_zones: None,
     };
@@ -3396,7 +3388,6 @@ fn arrow_trajectory_reports_exact_ground_impact_without_an_obstacle() {
     }
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: None,
     };
@@ -3451,7 +3442,6 @@ fn bare_ground_hole_is_propagated_from_terminal_trajectory_impact() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -3512,7 +3502,6 @@ fn bare_ground_water_is_retained_for_arrow_terminal_lifecycle() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -3558,7 +3547,6 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -4175,7 +4163,7 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
         assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
         assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
         assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
-        assert_eq!(arrow.element.layer(), u16::MAX);
+        assert_eq!(arrow.element.optional_layer(), None);
         assert_eq!(arrow.element.sector(), None);
         assert!(!arrow.projectile.flying);
         assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);

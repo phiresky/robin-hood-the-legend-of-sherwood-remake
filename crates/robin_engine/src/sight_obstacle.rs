@@ -42,6 +42,16 @@ impl SightObstacleIndex {
     pub fn get(self) -> u32 {
         self.0.get()
     }
+
+    /// Decode an Original nullable obstacle-table pointer. The legacy stream
+    /// stores exact obstacle indices in 16 bits and reserves `0xffff` for
+    /// `NULL`; runtime code must not retain that raw sentinel.
+    #[inline]
+    pub fn from_serialized_pointer(v: u16) -> Option<Self> {
+        (v != u16::MAX).then(|| {
+            Self::new(u32::from(v)).expect("u16 obstacle index collides with runtime null niche")
+        })
+    }
 }
 impl From<SightObstacleIndex> for u32 {
     #[inline]

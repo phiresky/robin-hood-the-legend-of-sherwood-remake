@@ -1872,7 +1872,7 @@ impl StealthCommandContext<'_> {
         if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
             self.titbit_manager.add_titbit(
                 WorldPoint3D::default(),
-                0,
+                None,
                 TitbitKind::Hidden,
                 handle,
                 hidden_phase.expect("hidden phase resolved before entering hidden posture"),
