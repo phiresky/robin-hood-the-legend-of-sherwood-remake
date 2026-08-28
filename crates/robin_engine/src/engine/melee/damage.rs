@@ -2749,7 +2749,7 @@ impl EngineInner {
     /// reaching the corpse.  Extract both the current relationship and any
     /// already-queued old relationship before that reset so teardown cannot
     /// leave a PC, combat neighbour, or archery reservation pointing at the
-    /// dead soldier.
+    /// dead AI-controlled human.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
         let (
             guarded_pcs,
@@ -2760,10 +2760,12 @@ impl EngineInner {
             shield_bearers,
             archers,
         ) = {
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
-                return;
-            };
-            let Some(enemy) = soldier.npc.ai_brain.enemy_mut() else {
+            let Some(enemy) = self
+                .world
+                .entities
+                .get_mut(victim_id)
+                .and_then(Entity::enemy_ai_mut)
+            else {
                 return;
             };
 
@@ -2891,77 +2893,67 @@ impl EngineInner {
         };
 
         for shield_bearer in shield_bearers {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        shield_bearer,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier shield bearer \
-                     {shield_bearer}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("dead soldier {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi")
-            });
+            let shield_bearer_id =
+                self.expect_human_id_for_ai_handle(shield_bearer, "dead AI owner's shield bearer");
+            let enemy = self
+                .world
+                .entities
+                .get_mut(shield_bearer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
+                    )
+                });
             enemy.archer_behind_me = 0;
         }
         for archer in archers {
-            let Some(Entity::Soldier(soldier)) = self
+            let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
+            let enemy = self
                 .world
                 .entities
-                .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(archer)))
-            else {
-                panic!("dead soldier {victim_id:?} has missing/non-soldier archer {archer}");
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("dead soldier {victim_id:?}'s archer {archer} has no EnemyAi")
-            });
+                .get_mut(archer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi")
+                });
             enemy.shield_bearer_before_me = 0;
         }
 
         for left_neighbour in left_neighbours {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        left_neighbour,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier left combat neighbour \
-                     {left_neighbour}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!(
-                    "dead soldier {victim_id:?}'s left combat neighbour {left_neighbour} has no \
-                     EnemyAi"
-                )
-            });
+            let left_id = self.expect_human_id_for_ai_handle(
+                left_neighbour,
+                "dead AI owner's left combat neighbour",
+            );
+            let enemy = self
+                .world
+                .entities
+                .get_mut(left_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s left combat neighbour {left_neighbour} has \
+                         no EnemyAi"
+                    )
+                });
             enemy.right_combat_neighbour = 0;
         }
         for right_neighbour in right_neighbours {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        right_neighbour,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier right combat neighbour \
-                     {right_neighbour}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!(
-                    "dead soldier {victim_id:?}'s right combat neighbour {right_neighbour} has no \
-                     EnemyAi"
-                )
-            });
+            let right_id = self.expect_human_id_for_ai_handle(
+                right_neighbour,
+                "dead AI owner's right combat neighbour",
+            );
+            let enemy = self
+                .world
+                .entities
+                .get_mut(right_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s right combat neighbour {right_neighbour} has \
+                         no EnemyAi"
+                    )
+                });
             enemy.left_combat_neighbour = 0;
         }
 

@@ -134,7 +134,7 @@ use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::MissionLocation;
 
 pub(crate) fn prepare_replay_mission(
-    profiles: &engine_profiles::ProfileManager,
+    profiles: &mut engine_profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
     data: robin_engine::replay::ReplayData,
     paused: bool,
@@ -154,18 +154,45 @@ pub(crate) fn prepare_replay_mission(
     let campaign: Campaign = bitcode::decode(&data.header.campaign)
         .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
     let mission_id = data.header.mission_id.clone();
-    let mission_idx = campaign
+    let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
+        format!("replay campaign has no current mission for header mission `{mission_id}`")
+    })?;
+    let mission = campaign
         .missions
-        .iter()
-        .position(|mission| mission.profile(profiles).mission_filename == mission_id)
-        .ok_or_else(|| format!("replay mission `{mission_id}` is absent from its campaign"))?;
-    if campaign.current_mission_idx != Some(mission_idx) {
+        .get(mission_idx)
+        .ok_or_else(|| format!("replay current mission index {mission_idx} is out of range"))?;
+    let profile_idx = mission.profile_idx.ok_or_else(|| {
+        format!("replay mission `{mission_id}` at index {mission_idx} has no profile")
+    })? as usize;
+    if profile_idx == profiles.missions.len() {
+        // Forced/custom missions append one synthetic profile immediately
+        // before recording starts. That profile is intentionally absent from
+        // the freshly loaded base ProfileManager during replay bootstrap, but
+        // its index remains in the serialized campaign.
+        // TODO: persist the forced proto-level name in a future replay schema;
+        // legacy replays only contain mission_id and historically use it for
+        // both names (the Custom Missions path does the same).
+        let restored_idx =
+            profiles.add_forced_mission(mission_id.clone(), mission_id.clone(), mission_id.clone())
+                as usize;
+        assert_eq!(
+            restored_idx, profile_idx,
+            "forced replay profile must restore its serialized allocation"
+        );
+    } else if profile_idx > profiles.missions.len() {
         return Err(format!(
-            "replay campaign current mission {:?} does not match header mission `{mission_id}` at index {mission_idx}",
-            campaign.current_mission_idx,
+            "replay mission `{mission_id}` references missing profile {profile_idx}, but only {} profiles are loaded",
+            profiles.missions.len()
         ));
     }
-    let location = campaign.missions[mission_idx].profile(profiles).location;
+    let profile = campaign.missions[mission_idx].profile(profiles);
+    if profile.mission_filename != mission_id {
+        return Err(format!(
+            "replay campaign mission at index {mission_idx} resolves to `{}`, not header mission `{mission_id}`",
+            profile.mission_filename
+        ));
+    }
+    let location = profile.location;
     let rng_seed = data.header.rng_seed;
     let sim_config = data.header.sim_config;
     let mut replay_args = args.clone();
@@ -510,7 +537,7 @@ pub(crate) async fn run_mission_headless(
 pub(crate) async fn run_session(
     window: &mut GameWindow,
     mut campaign: Campaign,
-    profiles: &engine_profiles::ProfileManager,
+    profiles: &mut engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
@@ -1228,11 +1255,11 @@ mod required_state_tests {
 
     #[test]
     fn replay_preparation_restores_all_frame_zero_metadata() {
-        let (profiles, data) = replay_fixture(Some(0));
+        let (mut profiles, data) = replay_fixture(Some(0));
         let args = crate::main_entry::CliArgs::default();
 
         let (campaign, mission_idx, location, prepared_args, seed, config) =
-            prepare_replay_mission(&profiles, &args, data, true).unwrap();
+            prepare_replay_mission(&mut profiles, &args, data, true).unwrap();
 
         assert_eq!(campaign.current_mission_idx, Some(0));
         assert_eq!(mission_idx, 0);
@@ -1249,15 +1276,38 @@ mod required_state_tests {
 
     #[test]
     fn replay_preparation_rejects_current_mission_mismatch() {
-        let (profiles, data) = replay_fixture(None);
+        let (mut profiles, data) = replay_fixture(None);
         let error = prepare_replay_mission(
-            &profiles,
+            &mut profiles,
             &crate::main_entry::CliArgs::default(),
             data,
             false,
         )
         .unwrap_err();
-        assert!(error.contains("current mission None"));
+        assert!(error.contains("has no current mission"));
+    }
+
+    #[test]
+    fn replay_preparation_restores_forced_custom_mission_profile() {
+        let (mut profiles, mut data) = replay_fixture(Some(0));
+        let mut campaign: Campaign =
+            bitcode::decode(&data.header.campaign).expect("decode replay campaign fixture");
+        campaign.missions[0].profile_idx = Some(1);
+        data.header.mission_id = "CustomArena".into();
+        data.header.campaign = bitcode::encode(&campaign);
+
+        let (_, mission_idx, _, _, _, _) = prepare_replay_mission(
+            &mut profiles,
+            &crate::main_entry::CliArgs::default(),
+            data,
+            false,
+        )
+        .expect("forced custom mission replay should restore its synthetic profile");
+
+        assert_eq!(mission_idx, 0);
+        assert_eq!(profiles.missions.len(), 2);
+        assert_eq!(profiles.missions[1].mission_filename, "CustomArena");
+        assert_eq!(profiles.missions[1].proto_level_filename, "CustomArena");
     }
 
     #[test]

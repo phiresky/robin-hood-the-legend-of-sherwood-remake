@@ -6,17 +6,18 @@ impl EngineInner {
         target: u32,
         operation: &str,
     ) -> &mut crate::ai_enemy::EnemyAi {
-        let target_id = EntityId::Soldier(SoldierId(target));
-        let entity =
-            self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                panic!("cross-NPC {operation} target soldier {target} is missing")
-            });
-        let Entity::Soldier(soldier) = entity else {
-            panic!("cross-NPC {operation} target {target} is not a soldier")
-        };
-        soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-            panic!("cross-NPC {operation} target soldier {target} has no enemy AI")
-        })
+        // Original combat-neighbour APIs take RHElementActorHuman pointers.
+        // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
+        // autonomous PC therefore has to retain its ActorPc entity kind here.
+        let target_id = self.expect_human_id_for_ai_handle(target, operation);
+        self.world
+            .entities
+            .get_mut(target_id)
+            .expect("validated cross-NPC human vanished")
+            .enemy_ai_mut()
+            .unwrap_or_else(|| {
+                panic!("cross-NPC {operation} target human {target} has no enemy AI")
+            })
     }
 
     /// Execute the complete Original `ClearPatrol` call made by the
@@ -433,14 +434,14 @@ impl EngineInner {
     }
 
     fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
-        let target_id = EntityId::Soldier(SoldierId(target));
+        let target_id = self.expect_human_id_for_ai_handle(target, "register-synchronizing-actor");
         let entity = self
             .world
             .entities
             .get_mut(target_id)
-            .unwrap_or_else(|| panic!("synchronization target soldier {target} is missing"));
+            .expect("validated synchronization target vanished");
         let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("synchronization target soldier {target} has no AI controller")
+            panic!("synchronization target human {target} has no AI controller")
         });
         // RHArtificialIntelligence::RegisterSynchronizingActor is a direct,
         // unconditional InsertLast. In particular, the target can reach its
@@ -457,17 +458,23 @@ impl EngineInner {
         // Close any direct Think calls left by a global owner-work/self-
         // stimulus fixed point before collecting genuinely deferred actions.
         // Iterate live owner slots in their stable order (PA-013).
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        for owner_id in ai_owner_ids {
+            self.process_synchronous_reentrant_actions_for(sim, owner_id, assets);
         }
         // Collect all pending actions first to avoid borrow issues.
         // Both enemy (soldier) and friendly (civilian) AIs can push
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
         // `CALL_REPORT` to soldiers via `AiController` on their base.
         let mut all_actions: Vec<crate::ai::CrossNpcAction> = Vec::new();
-        for (_, entity) in self.world.entities.npcs_mut() {
-            if let Some(ai) = entity.ai_controller_mut() {
+        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        for owner_id in ai_owner_ids {
+            if let Some(ai) = self
+                .world
+                .entities
+                .get_mut(owner_id)
+                .and_then(Entity::ai_controller_mut)
+            {
                 all_actions.extend(ai.take_pending_cross_npc_actions());
             }
         }
@@ -547,7 +554,10 @@ impl EngineInner {
                     call_instruction,
                     ..
                 } => {
-                    let target_id = EntityId::Soldier(SoldierId(target));
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target,
+                        "deferred gather-instruction target",
+                    );
                     tracing::trace!(
                         target: "robin_engine::ai_enemy::phalanx",
                         instructed = target,
@@ -561,11 +571,11 @@ impl EngineInner {
                         continue;
                     }
                     let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) =
-                            self.world.entities.get_mut(target_id)
-                        else {
-                            continue;
-                        };
+                        let entity = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .expect("validated gather-instruction target vanished");
                         let ctx = build_ai_context_from_entity(
                             entity,
                             frame,
@@ -581,14 +591,14 @@ impl EngineInner {
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
-                        let Entity::Soldier(s) = entity else {
-                            unreachable!()
-                        };
-                        if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                            enemy_ai.gather_position = position;
-                            enemy_ai.gather_direction = direction;
-                            enemy_ai.gather_position_instructed = true;
-                        }
+                        let enemy_ai = entity.enemy_ai_mut().unwrap_or_else(|| {
+                            panic!(
+                                "deferred gather-instruction target human {target} has no EnemyAi"
+                            )
+                        });
+                        enemy_ai.gather_position = position;
+                        enemy_ai.gather_direction = direction;
+                        enemy_ai.gather_position_instructed = true;
                         ctx
                     };
                     if !call_instruction {
@@ -618,19 +628,27 @@ impl EngineInner {
                     fallback_to_sender,
                     to_whole_patrol,
                 } => {
-                    let target_id = EntityId::Soldier(SoldierId(target));
+                    let target_id = self.entity_id_for_index(target);
                     let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
                     stimulus.info = info;
                     stimulus.to_whole_patrol = to_whole_patrol;
 
                     let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) = self.world.entities.get(target_id)
+                        let Some(entity) = target_id
+                            .and_then(|target_id| self.world.entities.get(target_id))
+                            .filter(|entity| entity.ai_controller().is_some())
                         else {
                             // Target missing → try fallback directly below.
                             if let Some(sender) = fallback_to_sender {
-                                let sender_id = EntityId::Soldier(SoldierId(sender));
-                                if let Some(entity @ Entity::Soldier(_)) =
-                                    self.world.entities.get(sender_id)
+                                if let Some((sender_id, entity)) = self
+                                    .entity_id_for_index(sender)
+                                    .and_then(|sender_id| {
+                                        self.world
+                                            .entities
+                                            .get(sender_id)
+                                            .map(|entity| (sender_id, entity))
+                                    })
+                                    .filter(|(_, entity)| entity.ai_controller().is_some())
                                 {
                                     let ctx = build_ai_context_from_entity(
                                         entity,
@@ -677,6 +695,10 @@ impl EngineInner {
                             self.control.sim_config.difficulty,
                         )
                     };
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target,
+                        "validated deferred stimulus target",
+                    );
                     // SendStimulus → enemy soldier target: the
                     // stimulus may be EVENT_VIEW / EVENT_REPORT /
                     // alert-forwarding which feeds BattleDecisions.
@@ -687,10 +709,15 @@ impl EngineInner {
                     // Fallback: if target couldn't handle the stimulus,
                     // redeliver to the sender (e.g. conversation chains).
                     if !handled && let Some(sender) = fallback_to_sender {
-                        let sender_id = EntityId::Soldier(SoldierId(sender));
+                        let Some(sender_id) = self.entity_id_for_index(sender) else {
+                            continue;
+                        };
                         let ctx2 = {
-                            let Some(entity @ Entity::Soldier(_)) =
-                                self.world.entities.get(sender_id)
+                            let Some(entity) = self
+                                .world
+                                .entities
+                                .get(sender_id)
+                                .filter(|entity| entity.ai_controller().is_some())
                             else {
                                 continue;
                             };
@@ -785,20 +812,9 @@ impl EngineInner {
                 } => self.process_synchronous_set_phalanx_them_list(target, them, primary_target),
 
                 crate::ai::CrossNpcAction::Say { target, remark } => {
-                    let target_id = EntityId::Soldier(SoldierId(target));
-                    let Entity::Soldier(s) =
-                        self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                            panic!("cross-NPC speech target {target} is missing")
-                        })
-                    else {
-                        panic!("cross-NPC speech target {target} is not a soldier")
-                    };
-                    s.npc
-                        .ai_brain
-                        .enemy_mut()
-                        .unwrap_or_else(|| {
-                            panic!("cross-NPC speech target {target} has no EnemyAi")
-                        })
+                    let target_id =
+                        self.expect_human_id_for_ai_handle(target, "cross-NPC speech target");
+                    self.required_cross_npc_enemy_mut(target, "cross-NPC speech target")
                         .base
                         .say(remark);
                     self.drain_ai_owner_work_for(sim, assets, target_id);
@@ -1468,83 +1484,35 @@ impl EngineInner {
                         new_right,
                     } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
                     crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let enemy_ai = self
-                            .world
-                            .entities
-                            .get_mut(target_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous left-neighbour setter target {target} is missing"
-                                )
-                            })
-                            .enemy_ai_mut()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous left-neighbour setter target {target} has no EnemyAi"
-                                )
-                            });
-                        enemy_ai.left_combat_neighbour = neighbour;
+                        self.required_cross_npc_enemy_mut(
+                            target,
+                            "synchronous left-neighbour setter",
+                        )
+                        .left_combat_neighbour = neighbour;
                     }
                     crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let enemy_ai = self
-                            .world
-                            .entities
-                            .get_mut(target_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous right-neighbour setter target {target} is missing"
-                                )
-                            })
-                            .enemy_ai_mut()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous right-neighbour setter target {target} has no EnemyAi"
-                                )
-                            });
-                        enemy_ai.right_combat_neighbour = neighbour;
+                        self.required_cross_npc_enemy_mut(
+                            target,
+                            "synchronous right-neighbour setter",
+                        )
+                        .right_combat_neighbour = neighbour;
                     }
                     crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let enemy_ai = self
-                            .world
-                            .entities
-                            .get_mut(target_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous archer-behind setter target {target} is missing"
-                                )
-                            })
-                            .enemy_ai_mut()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous archer-behind setter target {target} has no EnemyAi"
-                                )
-                            });
-                        enemy_ai.archer_behind_me = archer;
+                        self.required_cross_npc_enemy_mut(
+                            target,
+                            "synchronous archer-behind setter",
+                        )
+                        .archer_behind_me = archer;
                     }
                     crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
                         target,
                         shield_bearer,
                     } => {
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let enemy_ai = self
-                            .world
-                            .entities
-                            .get_mut(target_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous shield-bearer setter target {target} is missing"
-                                )
-                            })
-                            .enemy_ai_mut()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous shield-bearer setter target {target} has no EnemyAi"
-                                )
-                            });
-                        enemy_ai.shield_bearer_before_me = shield_bearer;
+                        self.required_cross_npc_enemy_mut(
+                            target,
+                            "synchronous shield-bearer setter",
+                        )
+                        .shield_bearer_before_me = shield_bearer;
                     }
                     crate::ai::CrossNpcAction::SetPrimaryTarget {
                         target,
@@ -1554,23 +1522,12 @@ impl EngineInner {
                         // `mpPrimaryTarget` inline while its recursion unwinds.
                         // Apply that direct setter before a later recursive
                         // `BreakPhalanx` lets the member choose its own target.
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let enemy_ai = self
-                            .world
-                            .entities
-                            .get_mut(target_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous primary-target setter target {target} is missing"
-                                )
-                            })
-                            .enemy_ai_mut()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "synchronous primary-target setter target {target} has no EnemyAi"
-                                )
-                            });
-                        enemy_ai.base.primary_target = primary_target;
+                        self.required_cross_npc_enemy_mut(
+                            target,
+                            "synchronous primary-target setter",
+                        )
+                        .base
+                        .primary_target = primary_target;
                     }
                     crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
                         self.register_synchronizing_actor(target, actor);
@@ -1620,20 +1577,9 @@ impl EngineInner {
                         self.process_synchronous_officer_reports_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::Say { target, remark } => {
-                        let target_id = EntityId::Soldier(SoldierId(target));
-                        let Entity::Soldier(s) =
-                            self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                                panic!("cross-NPC speech target {target} is missing")
-                            })
-                        else {
-                            panic!("cross-NPC speech target {target} is not a soldier")
-                        };
-                        s.npc
-                            .ai_brain
-                            .enemy_mut()
-                            .unwrap_or_else(|| {
-                                panic!("cross-NPC speech target {target} has no EnemyAi")
-                            })
+                        let target_id =
+                            self.expect_human_id_for_ai_handle(target, "cross-NPC speech target");
+                        self.required_cross_npc_enemy_mut(target, "cross-NPC speech target")
                             .base
                             .say(remark);
                         self.drain_ai_owner_work_for(sim, assets, target_id);
@@ -1735,14 +1681,18 @@ impl EngineInner {
         owns_end_think: bool,
         assets: &LevelAssets,
     ) {
-        let target_id = EntityId::Soldier(SoldierId(target));
+        let target_id =
+            self.expect_human_id_for_ai_handle(target, "cross-NPC break-phalanx target");
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let entity = self.world.entities.get(target_id).unwrap_or_else(|| {
-            panic!("cross-NPC break-phalanx target soldier {target} is missing")
-        });
-        let Entity::Soldier(_) = entity else {
-            panic!("cross-NPC break-phalanx target {target} is not a soldier")
-        };
+        let entity = self
+            .world
+            .entities
+            .get(target_id)
+            .expect("validated cross-NPC break-phalanx target vanished");
+        assert!(
+            entity.enemy_ai().is_some(),
+            "cross-NPC break-phalanx target human {target} has no EnemyAi"
+        );
         let mut ctx = build_ai_context_from_entity(
             entity,
             self.control.frame_counter,
@@ -1944,12 +1894,12 @@ impl EngineInner {
     ) {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let frame = self.control.frame_counter;
-        let target_id = EntityId::Soldier(SoldierId(target));
+        let target_id = self.expect_human_id_for_ai_handle(target, "ConsiderReport target");
         self.world
             .entities
             .get_mut(target_id)
             .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("ConsiderReport target {target} is not an enemy soldier"))
+            .unwrap_or_else(|| panic!("ConsiderReport target human {target} has no EnemyAi"))
             .base
             .consider_report_merged_at_frame(
                 &report,
@@ -2210,7 +2160,7 @@ impl EngineInner {
         call_instruction: bool,
         assets: &LevelAssets,
     ) {
-        let target_id = EntityId::Soldier(SoldierId(target));
+        let target_id = self.expect_human_id_for_ai_handle(target, "gather-instruction target");
         tracing::trace!(
             target: "robin_engine::ai_enemy::phalanx",
             instructed = target,
@@ -2229,7 +2179,7 @@ impl EngineInner {
             .get_mut(target_id)
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| {
-                panic!("InstructGatherPosition target {target} is not an enemy soldier")
+                panic!("InstructGatherPosition target human {target} has no EnemyAi")
             });
         enemy.gather_position = position;
         enemy.gather_direction = direction;

@@ -883,13 +883,16 @@ impl EngineInner {
             .map(|ai| std::mem::take(&mut ai.outbox.actor.set_reported_to_officer))
             .unwrap_or_else(|| panic!("report-update owner {} lost its AI", npc_id.index()));
         for (target_handle, value) in reported_updates {
-            let target_id = EntityId::Soldier(SoldierId(target_handle));
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
-                continue;
-            };
-            if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                enemy_ai.reported_to_officer = value;
-            }
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle, "set-reported-to-officer target");
+            self.world
+                .entities
+                .get_mut(target_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!("set-reported-to-officer target human {target_handle} has no EnemyAi")
+                })
+                .reported_to_officer = value;
         }
 
         // Process pending bow-ammo refill — the

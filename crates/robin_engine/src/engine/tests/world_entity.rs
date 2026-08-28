@@ -3973,6 +3973,151 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
 }
 
 #[test]
+fn autonomous_pc_cross_owner_combat_neighbours_preserve_pc_kind() {
+    use crate::ai::CrossNpcAction;
+    use crate::element::{AiActorData, AiBrain};
+
+    let mut engine = EngineInner::new();
+    // EnemyAi reserves raw handle zero as its null human pointer.
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let make_autonomous_pc = || {
+        let mut entity = make_test_pc(crate::element::Posture::Upright);
+        let Entity::Pc(pc) = &mut entity else {
+            unreachable!()
+        };
+        pc.element.active = true;
+        pc.pc.autonomous = true;
+        pc.pc.aggressive_combat = true;
+        pc.pc.ai = Some(Box::new(AiActorData {
+            ai_brain: AiBrain::Enemy(Box::default()),
+            ..AiActorData::default()
+        }));
+        entity
+    };
+    let owner = engine.add_entity(make_autonomous_pc());
+    let left = engine.add_entity(make_autonomous_pc());
+    for id in [owner, left] {
+        engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("autonomous PC has EnemyAi")
+            .base
+            .me = id.index();
+    }
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("autonomous PC has AI controller")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::UpdateLeftCombatNeighbour {
+            target: owner.index(),
+            old_left: 0,
+            new_left: left.index(),
+        });
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.process_synchronous_reentrant_actions_for(
+        &crate::sim_rng::test_context(),
+        owner,
+        &assets,
+    );
+
+    let owner_enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("owner PC retains EnemyAi");
+    assert_eq!(owner_enemy.left_combat_neighbour, left.index());
+    let left_enemy = engine
+        .get_entity(left)
+        .and_then(Entity::enemy_ai)
+        .expect("left PC retains EnemyAi");
+    assert_eq!(left_enemy.right_combat_neighbour, owner.index());
+}
+
+#[test]
+fn autonomous_pc_death_detaches_pc_combat_neighbours() {
+    use crate::element::{AiActorData, AiBrain};
+
+    let mut engine = EngineInner::new();
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let make_autonomous_pc = || {
+        let mut entity = make_test_pc(crate::element::Posture::Upright);
+        let Entity::Pc(pc) = &mut entity else {
+            unreachable!()
+        };
+        pc.element.active = true;
+        pc.pc.life_points = 100;
+        pc.pc.autonomous = true;
+        pc.pc.aggressive_combat = true;
+        pc.pc.ai = Some(Box::new(AiActorData {
+            ai_brain: AiBrain::Enemy(Box::default()),
+            ..AiActorData::default()
+        }));
+        entity
+    };
+    let left = engine.add_entity(make_autonomous_pc());
+    let victim = engine.add_entity(make_autonomous_pc());
+    let right = engine.add_entity(make_autonomous_pc());
+    for id in [left, victim, right] {
+        engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("autonomous PC has EnemyAi")
+            .base
+            .me = id.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(left)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("left PC has EnemyAi");
+        enemy.right_combat_neighbour = victim.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(victim)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("victim PC has EnemyAi");
+        enemy.left_combat_neighbour = left.index();
+        enemy.right_combat_neighbour = right.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(right)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("right PC has EnemyAi");
+        enemy.left_combat_neighbour = victim.index();
+    }
+
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+
+    assert_eq!(
+        engine
+            .get_entity(left)
+            .and_then(Entity::enemy_ai)
+            .expect("left PC retains EnemyAi")
+            .right_combat_neighbour,
+        0
+    );
+    assert_eq!(
+        engine
+            .get_entity(right)
+            .and_then(Entity::enemy_ai)
+            .expect("right PC retains EnemyAi")
+            .left_combat_neighbour,
+        0
+    );
+}
+
+#[test]
 fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     use crate::element::Posture;
 
