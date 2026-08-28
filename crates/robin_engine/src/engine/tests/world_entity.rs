@@ -4423,7 +4423,7 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
             .sprite
             .position_iface
             .get_door()
-            .is_null()
+            .is_none()
     );
     let friend_ai = friend_soldier
         .npc
@@ -4442,13 +4442,15 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
     assert!(target_pc.actor.active_door_pass.is_none());
     // A different live sprite door must not replace the selected movement
     // element's gate or direction for AI Position.
-    target_pc
-        .element
-        .sprite
-        .position_iface
-        .set_door(crate::position_interface::DoorHandle(2), true);
+    target_pc.element.sprite.position_iface.set_door(
+        crate::position_interface::DoorHandle::new(2).expect("valid door index"),
+        true,
+    );
 
-    for (passing, gate, direction) in [(friend, DoorIndex(0), 1), (target, DoorIndex(1), 0)] {
+    for (passing, gate, direction) in [
+        (friend, DoorIndex::new(0).expect("valid door index"), 1),
+        (target, DoorIndex::new(1).expect("valid door index"), 0),
+    ] {
         let mut element = SequenceElement::new_movement(
             1,
             crate::element::Command::PassDoor,
@@ -4636,7 +4638,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
     engine
@@ -4770,7 +4772,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
     engine
@@ -5469,7 +5471,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
     engine
@@ -5614,7 +5616,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         else {
             panic!("PassDoor test element changed kind")
         };
-        *gate_id = Some(DoorIndex(door_index));
+        *gate_id = Some(DoorIndex::new(door_index).expect("valid door index"));
         *direction = 0;
         let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
         engine
@@ -5769,7 +5771,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
     engine

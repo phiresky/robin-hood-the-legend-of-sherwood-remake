@@ -257,7 +257,7 @@ mod suite {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
                     steps: Default::default(),
@@ -469,7 +469,7 @@ mod suite {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
                     steps: Default::default(),

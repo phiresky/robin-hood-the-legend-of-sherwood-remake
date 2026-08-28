@@ -665,15 +665,10 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 continue;
             };
             let r = impact_3d.unwrap();
-            let impact_obstacle = r.obstacle_index.map(|index| {
-                let index = u16::try_from(index)
-                    .expect("projectile obstacle index does not fit ObstacleHandle");
-                crate::position_interface::ObstacleHandle::new(index)
-                    .expect("projectile obstacle index used reserved sentinel")
-            });
+            let impact_obstacle = r.obstacle_index;
             let obstacle = r
                 .obstacle_index
-                .and_then(|i| check.sight_obstacles.get(i as usize));
+                .and_then(|i| check.sight_obstacles.get(usize::from(i)));
             let impact = WorldPoint3D {
                 x: r.impact.x,
                 y: r.impact.y,
@@ -685,7 +680,9 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 ?new_position,
                 ?impact,
                 obstacle_type = obstacle.map(|o| o.obstacle_type),
-                obstacle_layer = obstacle.map(|o| o.layer),
+                obstacle_layer = obstacle
+                    .and_then(crate::sight_obstacle::SightObstacle::projection_area_ref)
+                    .map(|area| area.layer.get()),
                 "Projectile trajectory clipped by obstacle"
             );
 
@@ -873,7 +870,7 @@ pub fn terminal_obstacle_plane(
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Option<crate::position_interface::PlaneZCoeffs> {
     obstacle.map(|handle| {
-        let index = usize::from(u16::from(handle));
+        let index = usize::from(handle);
         let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
             panic!("projectile terminal obstacle {index} is absent from its source list")
         });
@@ -915,7 +912,12 @@ pub fn apply_projectile_landing_resolution(
     );
     element.set_sector(resolution.sector);
     if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-        element.set_layer(resolution.layer);
+        element.set_layer(
+            resolution
+                .layer
+                .expect("authorized projectile landing has no resolved layer")
+                .get(),
+        );
     }
 }
 

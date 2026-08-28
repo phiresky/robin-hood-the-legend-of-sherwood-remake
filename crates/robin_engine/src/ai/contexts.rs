@@ -677,19 +677,31 @@ impl AiContext {
                                     handle.get(), position.x, position.y
                                 )
                             });
-                    (u16::from(door.sector_out), door.layer_out, door.point_out)
+                    (
+                        door.position_out.sector.unwrap_or_else(|| {
+                            panic!("building exit door has no outside sector identity")
+                        }),
+                        door.layer_out,
+                        door.point_out,
+                    )
                 } else {
                     (
-                        handle.get(),
+                        handle,
                         position.level,
                         MapPoint::new(position.x, position.y),
                     )
                 };
+                let projection_layer = crate::position_interface::Layer::new(projection_layer)
+                    .expect("AI projection lookup cannot use absent layer");
+                let projection = crate::sight_obstacle::ProjectionAreaRef {
+                    layer: projection_layer,
+                    sector: projection_sector.arena_index().unwrap_or_else(|| {
+                        panic!("AI projection lookup lacks exact sector identity")
+                    }),
+                };
                 let mut best: Option<(f32, f32)> = None;
                 for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
-                    if !obstacle.is_projection_area()
-                        || obstacle.sector != projection_sector
-                        || obstacle.layer != projection_layer
+                    if obstacle.projection_area_ref() != Some(projection)
                         || !obstacle.box_projection.contains_point(point)
                         || !obstacle.contains_point_projection(point)
                     {

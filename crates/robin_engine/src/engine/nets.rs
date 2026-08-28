@@ -81,9 +81,6 @@ const NET_LANDING_NORMAL_Z_THRESHOLD: f32 = 0.87;
 /// Test-radius for the 8-point reach-ring crumple check.
 const TEST_RADIUS_NET_CRUMPLED: f32 = 40.0;
 
-/// Marker layer value meaning "no associated obstacle layer".
-const INVALID_LAYER: u16 = u16::MAX;
-
 impl EngineInner {
     // ════════════════════════════════════════════════════════════════
     //  Falling-net capture sweep
@@ -647,7 +644,7 @@ impl EngineInner {
         let (landing_xy, layer) = match self.get_entity(net_id) {
             Some(Entity::Net(n)) => (
                 (n.element.position().x, n.element.position().y),
-                n.element.layer(),
+                n.element.optional_layer(),
             ),
             _ => return,
         };
@@ -656,7 +653,7 @@ impl EngineInner {
         //   - no obstacle           → 0.001 (we should already have
         //                             arrived with elevation ≈ 0)
         //   - obstacle, layer valid → snap to top plane + 0.001
-        //   - obstacle, layer = INVALID_LAYER → keep current elevation,
+        //   - obstacle, no layer → keep current elevation,
         //     so a crumpled-launched-no-layer net doesn't get clamped
         //     to 0.001.
         let obstacle_idx = self.find_landing_obstacle(
@@ -668,9 +665,9 @@ impl EngineInner {
             },
         );
         let new_z: Option<f32> = match (layer, obstacle_idx) {
-            (INVALID_LAYER, Some(_)) => None, // keep current elevation
-            (INVALID_LAYER, None) => Some(0.001),
-            (_, Some(idx)) => Some(
+            (None, Some(_)) => None, // keep current elevation
+            (None, None) => Some(0.001),
+            (Some(_), Some(idx)) => Some(
                 assets
                     .static_sight_obstacles
                     .get(idx)
@@ -682,7 +679,7 @@ impl EngineInner {
                     .map(|o| o.compute_top_z(landing_xy.0, landing_xy.1) + 0.001)
                     .unwrap_or(0.001),
             ),
-            (_, None) => Some(0.001),
+            (Some(_), None) => Some(0.001),
         };
 
         if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
@@ -699,13 +696,12 @@ impl EngineInner {
         // Broadcast the BONK so nearby NPCs react to the thud of the
         // landed net.
         let origin = MapPoint::new(landing_xy.0, landing_xy.1);
-        let layer_u16 = if layer == INVALID_LAYER { 0 } else { layer };
         self.broadcast_noise_synchronously(
             sim,
             assets,
             crate::ai::NoiseType::Bonk,
             origin,
-            layer_u16,
+            layer,
             crate::parameters_ai::NOISE_VOLUME_BONK as u16,
             new_z.unwrap_or(0.001).max(0.0) as u16,
             Some(net_id),
@@ -796,7 +792,7 @@ impl EngineInner {
     /// where the net entity is constructed.
     ///
     /// Crumple signals:
-    /// 1. **Layer marker**: layer == [`INVALID_LAYER`] means the net
+    /// 1. **Missing layer**: `layer == None` means the net
     ///    had no valid landing surface at all → crumple.
     /// 2. **Slope**: the obstacle the net lands on has a top-plane
     ///    normal whose Z component ≤ [`NET_LANDING_NORMAL_Z_THRESHOLD`]
@@ -812,7 +808,7 @@ impl EngineInner {
     pub(crate) fn detect_initial_net_crumple(&mut self, assets: &LevelAssets, net_id: EntityId) {
         // ── Snapshot landing pos, layer; bail if not a net ─────────
         let (layer, landing) = match self.get_entity(net_id) {
-            Some(Entity::Net(n)) => (n.element.layer(), n.projectile.end),
+            Some(Entity::Net(n)) => (n.element.optional_layer(), n.projectile.end),
             _ => {
                 tracing::warn!(?net_id, "detect_initial_net_crumple: not a net entity");
                 return;
@@ -831,12 +827,10 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         landing: crate::coordinates::WorldPoint3D,
-        layer: u16,
+        layer: Option<crate::position_interface::Layer>,
     ) -> bool {
         // No valid landing layer at all → crumple.
-        if layer == INVALID_LAYER {
-            return true;
-        }
+        let Some(layer) = layer else { return true };
 
         let obstacle_idx = self.find_landing_obstacle(assets, landing);
 
@@ -899,7 +893,7 @@ impl EngineInner {
                 y: landing.y,
                 z: centre_z + 20.0,
             };
-            if !self.is_reachable_solid(assets, p_test, p_centre_high, layer) {
+            if !self.is_reachable_solid(assets, p_test, p_centre_high, layer.get()) {
                 return true;
             }
 
@@ -908,7 +902,7 @@ impl EngineInner {
                 y: test_proj_y,
                 z: test_proj_z - 40.0,
             };
-            if self.is_reachable_solid(assets, p_test, p_drop, layer) {
+            if self.is_reachable_solid(assets, p_test, p_drop, layer.get()) {
                 return true;
             }
         }

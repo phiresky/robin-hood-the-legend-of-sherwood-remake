@@ -991,7 +991,7 @@ impl NativeContext<'_, '_> {
                     door.sector_out == goal_sector || door.sector_in == goal_sector;
                 let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
                 (matches_endpoint || matches_click_sector)
-                    .then_some(crate::gate::DoorIndex(idx as u32))
+                    .then_some(crate::gate::DoorIndex::new(idx as u32).expect("valid door index"))
             })
     }
 
@@ -2807,24 +2807,36 @@ impl NativeContext<'_, '_> {
         let (x, y) = self
             .resolve_location_pos(loc)
             .unwrap_or_else(|| panic!("AddProductionPoint: invalid location {loc}"));
-        let (layer, sector) = self
-            .resolve_location_layer_sector(loc)
+        let (layer, sector_handle) = self
+            .resolve_location_layer_sector_handle(loc)
             .unwrap_or_else(|| panic!("AddProductionPoint: location {loc} has no sector"));
+        let sector = sector_handle.get();
+        let sector_index = sector_handle.arena_index().unwrap_or_else(|| {
+            panic!("AddProductionPoint: location {loc} has no exact sector identity")
+        });
+        let layer_ref = crate::position_interface::Layer::new(layer)
+            .unwrap_or_else(|| panic!("AddProductionPoint: location {loc} has no layer"));
         let point = crate::coordinates::MapPoint::new(x, y);
-        let mut best: Option<(u16, f32)> = None;
+        let mut best: Option<(crate::sight_obstacle::SightObstacleIndex, f32)> = None;
         let obstacles = self
             .sight_obstacles
             .expect("AddProductionPoint requires live sight obstacles");
         for (index, obstacle) in obstacles.iter_indexed() {
-            if !obstacle.is_projection_area()
-                || obstacle.sector != sector
-                || obstacle.layer != layer
+            if obstacle.projection_area_ref()
+                != Some(crate::sight_obstacle::ProjectionAreaRef {
+                    layer: layer_ref,
+                    sector: sector_index,
+                })
                 || !obstacle.box_projection.contains_point(point)
                 || !obstacle.contains_point_projection(point)
             {
                 continue;
             }
-            let candidate = (index as u16, obstacle.box_3d_max[2]);
+            let candidate = (
+                crate::sight_obstacle::SightObstacleIndex::new(index)
+                    .expect("runtime obstacle index uses reserved value"),
+                obstacle.box_3d_max[2],
+            );
             if best.is_none_or(|(_, height)| candidate.1 > height) {
                 best = Some(candidate);
             }
@@ -2851,7 +2863,7 @@ impl NativeContext<'_, '_> {
                 y,
                 layer,
                 sector,
-                obstacle: best.map_or(0xFFFF, |(index, _)| index),
+                obstacle: best.map(|(index, _)| index),
             });
     }
 

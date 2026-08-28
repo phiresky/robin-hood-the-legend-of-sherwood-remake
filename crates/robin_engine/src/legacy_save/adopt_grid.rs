@@ -1326,7 +1326,7 @@ mod tests {
             .global
             .door_seek_infos
             .push(crate::ai::DoorSeekInfo {
-                door_index: crate::gate::DoorIndex(0),
+                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 door_type: crate::gate::DoorType::Building,
                 point_out: crate::coordinates::MapPoint::ZERO,
                 position_in: Position {

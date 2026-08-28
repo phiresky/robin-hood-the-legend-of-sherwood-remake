@@ -104,13 +104,15 @@ impl EngineInner {
             if let Some(sector) =
                 crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
             {
-                assets.material_sectors.register(0, sector);
+                assets
+                    .material_sectors
+                    .register(Some(crate::position_interface::Layer::ZERO), sector);
             }
         }
         for obstacle in &loaded.proto.sight_obstacles {
             let layer = obstacle
                 .projection_area
-                .map_or(u16::MAX, |(_, layer)| layer);
+                .and_then(|(_, layer)| crate::position_interface::Layer::new(layer));
             for &index in &obstacle.material_indices {
                 let Some(raw) = loaded.proto.material_sectors.get(usize::from(index)) else {
                     tracing::error!(
@@ -446,8 +448,14 @@ impl EngineInner {
                     })
                     .collect();
                 if let Some((sector, layer)) = raw.projection_area {
-                    obs.sector = sector;
-                    obs.layer = layer;
+                    let layer = crate::position_interface::Layer::new(layer).unwrap_or_else(|| {
+                        panic!("projection obstacle {idx} has reserved layer 0xffff")
+                    });
+                    let sector = crate::fast_find_grid::SectorIndex::new(u32::from(sector))
+                        .unwrap_or_else(|| {
+                            panic!("projection obstacle {idx} has reserved sector index")
+                        });
+                    obs.set_projection_area_ref(layer, sector);
                 }
                 // Copy each referenced material sector from the global
                 // material-sector list onto the obstacle.  We resolve

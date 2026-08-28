@@ -432,7 +432,7 @@ pub struct AiController {
     pub last_hint_subject: Question,
     /// Canonical Rust runtime door-table index corresponding to Original
     /// `mpMyDoor` through the retained mixed-gate topology.
-    pub my_door_index: Option<u32>,
+    pub my_door_index: Option<crate::gate::DoorIndex>,
     pub looking_for_help_because_enemy_seen: bool,
 
     // -- Objects --
@@ -4235,8 +4235,23 @@ impl AiController {
         elevation_delta: f32,
         fast: bool,
     ) {
-        let dx = pos.x - ctx.position.x;
-        let dy = (pos.y - ctx.position.y) + elevation_delta;
+        self.face_point_impl(pos.x, pos.y, ctx, elevation_delta, fast);
+    }
+
+    /// Coordinate-only facing tail for stimuli whose Original `RHposition`
+    /// deliberately has no sector/layer pointer. Keeping this separate avoids
+    /// manufacturing a ground-layer [`Position`] merely to reuse the vector
+    /// arithmetic.
+    fn face_point_impl(
+        &mut self,
+        x: f32,
+        y: f32,
+        ctx: &AiContext,
+        elevation_delta: f32,
+        fast: bool,
+    ) {
+        let dx = x - ctx.position.x;
+        let dy = (y - ctx.position.y) + elevation_delta;
         let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
         tracing::trace!(
             me = self.me,
@@ -4344,10 +4359,19 @@ impl AiController {
     /// (`RHartificialintelligence.cpp:3707-3755`). Projectile impact positions
     /// retain the `0xffff` layer sentinel when their sector really was null.
     pub fn face_noise_origin_with_ctx(&mut self, noise: &Noise, ctx: &AiContext) {
-        if noise.origin.sector.is_some() || noise.origin.level == u16::MAX {
-            self.face_position_3d_with_ctx(noise.origin, ctx);
+        if noise.origin.sector.is_some() {
+            self.face_position_3d_with_ctx(
+                noise.origin.position().unwrap_or_else(|| {
+                    panic!("sector-attached noise origin has no required layer")
+                }),
+                ctx,
+            );
         } else {
-            self.face_position_at_elevation_with_ctx(noise.origin, f32::from(noise.elevation), ctx);
+            let elevation_delta = noise
+                .origin
+                .layer
+                .map_or(0.0, |_| f32::from(noise.elevation) - ctx.elevation);
+            self.face_point_impl(noise.origin.x, noise.origin.y, ctx, elevation_delta, false);
         }
     }
 

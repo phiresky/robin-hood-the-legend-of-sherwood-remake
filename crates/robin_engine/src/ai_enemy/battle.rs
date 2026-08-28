@@ -4758,7 +4758,10 @@ mod tests {
             lift_number,
             crate::sector::SectorType::LIFT,
             Some(crate::sector::LiftType::Ladder),
-            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)],
+            vec![
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index"),
+            ],
         ));
         level.sectors.push(sector(
             ordinary_number,

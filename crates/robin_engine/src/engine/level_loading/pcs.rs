@@ -531,9 +531,16 @@ impl EngineInner {
                 let pc_half_diag = self
                     .world
                     .fast_grid
-                    .try_move_box_half_diagonal(pc_pathfinder_idx as usize);
+                    .try_move_box_half_diagonal(pc_pathfinder_idx as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "PC profile {profile_idx} references missing pathfinder slot \
+                             {pc_pathfinder_idx}"
+                        )
+                    });
                 sprite.position_iface.configure_for_actor(
-                    pc_pathfinder_idx,
+                    crate::position_interface::PathfinderIndex::new(u16::from(pc_pathfinder_idx))
+                        .expect("u8 PC pathfinder index cannot equal 0xffff"),
                     pc_half_diag,
                     beam_me.position,
                 );

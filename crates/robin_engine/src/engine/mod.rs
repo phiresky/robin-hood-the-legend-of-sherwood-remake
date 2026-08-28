@@ -744,10 +744,10 @@ impl EngineInner {
         let special_layer = self.world.fast_grid.level.special_layer;
         for (_, entity) in self.world.entities.actors() {
             let elem = entity.element_data();
-            let layer = elem.layer();
-            if layer == 0xFFFF {
+            let Some(layer) = elem.optional_layer() else {
                 continue;
-            }
+            };
+            let layer = layer.get();
             let pos = elem.position_map();
             if layer > special_layer {
                 tracing::error!(
@@ -1269,11 +1269,11 @@ impl EngineInner {
         if let Entity::Pc(pc) = entity {
             let position = pc.element.position_map();
             pc.actor.produced_noise = Some(crate::ai::Noise {
-                origin: crate::ai::Position {
+                origin: crate::ai::NoiseOrigin {
                     x: position.x,
                     y: position.y,
                     sector: pc.element.sector(),
-                    level: pc.element.layer(),
+                    layer: pc.element.optional_layer(),
                 },
                 noise_type: crate::ai::NoiseType::Off,
                 volume: 0,
@@ -4577,7 +4577,7 @@ impl EngineInner {
         saved_pc.quick_action_special_counts[slot] = 0;
         saved_pc.quick_action_buttons[slot] = 0;
         saved_pc.quick_action_interactors[slot] = None;
-        saved_pc.titbits[slot] = u32::MAX;
+        saved_pc.titbits[slot] = None;
         true
     }
 
@@ -4611,7 +4611,7 @@ impl EngineInner {
             saved_pc.quick_action_types[last] = crate::element_kinds::QuickAction::None;
             saved_pc.quick_action_sequences[last] = None;
             saved_pc.quick_seek_sequences[last] = None;
-            saved_pc.titbits[last] = u32::MAX;
+            saved_pc.titbits[last] = None;
             saved_pc.quick_action_interactors[last] = None;
             saved_pc.quick_action_buttons[last] = 0;
         }
@@ -4836,7 +4836,7 @@ impl EngineInner {
                     panic!("recorded quick-action PC {pc_id:?} slot {slot} has no titbit")
                 });
                 crate::element::PcPortraitQuickIconState {
-                    titbit_id: u32::from(self.feedback.titbit_manager.get_phase(titbit)),
+                    titbit_id: Some(titbit),
                     running: self.feedback.titbit_manager.is_running_for_qa(titbit),
                 }
             } else {

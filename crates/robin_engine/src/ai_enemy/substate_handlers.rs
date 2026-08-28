@@ -6114,7 +6114,7 @@ impl EnemyAi {
                                 if let Some(door) = global
                                     .reinforcement_doors
                                     .iter()
-                                    .find(|d| d.door_index.0 == door_idx)
+                                    .find(|d| d.door_index == door_idx)
                                 {
                                     let point_out_pos = Position {
                                         x: door.point_out.x,

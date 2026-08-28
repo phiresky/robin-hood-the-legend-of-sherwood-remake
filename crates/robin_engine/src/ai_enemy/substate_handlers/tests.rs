@@ -3624,7 +3624,10 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
             .iter()
             .map(|step| (step.door_index, step.direct))
             .collect::<Vec<_>>(),
-        vec![(DoorIndex(111), true), (DoorIndex(113), false)]
+        vec![
+            (DoorIndex::new(111).expect("valid door index"), true),
+            (DoorIndex::new(113).expect("valid door index"), false)
+        ]
     );
 
     // Public sector 88 has a distinct duplicate in the arena. Losing the

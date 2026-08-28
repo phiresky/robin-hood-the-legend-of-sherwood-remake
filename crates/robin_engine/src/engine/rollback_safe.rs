@@ -438,11 +438,8 @@ impl Engine {
             })
         };
         let target = position.target_element.map_or(Value::Null, entity_ref);
-        let door = if position.door.is_null() {
-            Value::Null
-        } else {
-            let index = usize::try_from(position.door.0)
-                .unwrap_or_else(|_| panic!("parity position door index exceeds usize"));
+        let door = position.door.map_or(Value::Null, |door_handle| {
+            let index = usize::from(door_handle);
             let door = self
                 .inner
                 .script_domains
@@ -464,7 +461,7 @@ impl Engine {
                 "point_out": point2(door.point_out.x, door.point_out.y),
                 "point_in": point2(door.point_in.x, door.point_in.y),
             })
-        };
+        });
         let obstacle = position.obstacle.map_or(Value::Null, |handle| {
             let handle = usize::from(handle);
             let obstacle = assets
@@ -473,7 +470,7 @@ impl Engine {
                 .unwrap_or_else(|| {
                     panic!("parity position references missing static obstacle {handle}")
                 });
-            if position.layer.get() == u16::MAX {
+            if position.layer.is_none() {
                 json!({ "kind": "sight", "index": obstacle.id })
             } else {
                 let index = assets.static_sight_obstacles[..handle]
@@ -483,7 +480,7 @@ impl Engine {
                 if !obstacle.is_projection_area() {
                     panic!(
                         "parity position on layer {} references non-projection obstacle {handle}",
-                        position.layer.get()
+                        position.layer.expect("checked position layer").get()
                     );
                 }
                 json!({ "kind": "projection", "index": index })
@@ -516,7 +513,8 @@ impl Engine {
                 "direction_goal": i16::from(position.direction_goal),
                 "slow_turn_count": position.slow_turn_count,
                 "direction_count": position.direction_count,
-                "layer": position.layer.get(), "layer_goal": position.layer_goal.get(),
+                "layer": position.layer.map(crate::position_interface::Layer::get),
+                "layer_goal": position.layer_goal.map(crate::position_interface::Layer::get),
                 "tolerance": float(position.tolerance),
                 "directional_tolerance": position.directional_tolerance,
                 "accumulate_movement_map": position.accumulate_movement_map,
@@ -597,7 +595,9 @@ impl Engine {
                 "trajectory_origin": {
                     "map": point2(projectile.start_of_trajectory_x, projectile.start_of_trajectory_y),
                     "sector": projectile.trajectory_origin_sector,
-                    "layer": projectile.trajectory_origin_layer,
+                    "layer": projectile
+                        .trajectory_origin_layer
+                        .map(crate::position_interface::Layer::get),
                 },
                 "flight_direction": projectile.flight_direction,
                 "start": point3(projectile.start.x, projectile.start.y, projectile.start.z),
@@ -665,7 +665,12 @@ impl Engine {
                 StimulusInfo::Noise(noise) => (
                     1,
                     json!({
-                        "kind": "noise", "origin": ai_position(noise.origin),
+                        "kind": "noise",
+                        "origin": {
+                            "map": point2(noise.origin.x, noise.origin.y),
+                            "sector": sector(noise.origin.sector),
+                            "layer": noise.origin.layer.map(crate::position_interface::Layer::get),
+                        },
                         "noise_type": noise.noise_type as u32,
                         "volume": noise.volume, "elevation": noise.elevation,
                     }),
@@ -750,14 +755,14 @@ impl Engine {
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
-			let ai_door = |index: Option<u32>| -> Value {
+			let ai_door = |index: Option<crate::gate::DoorIndex>| -> Value {
 				let Some(index) = index else { return Value::Null };
 				let door = self
 					.inner
 					.script_domains
 					.interactables
 					.doors
-					.get(usize::try_from(index).expect("parity AI door index exceeds usize"))
+					.get(usize::from(index))
 					.unwrap_or_else(|| panic!("parity AI references missing door {index}"));
 				let kind = match door.gate_type {
 					crate::gate::GateType::Door => "door",
@@ -1213,7 +1218,7 @@ impl Engine {
                     json!({
                         "special_count": pc.quick_action_special_counts[slot],
                         "quickito": pc.quick_action_types[slot] as u32,
-                        "titbit": pc.titbits[slot],
+                        "titbit": pc.titbits[slot].map(crate::titbit::TitbitId::get),
                         "button": pc.quick_action_buttons[slot],
                         "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
                         "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
@@ -1254,7 +1259,8 @@ impl Engine {
                 "life_level": float(f32::from(pc.life_points)),
                 "trumpet_enabled": pc.trumpet_enabled,
                 "quick_icons": pc.portrait.quick_icons.iter().map(|icon| json!({
-                    "titbit": icon.titbit_id, "running": icon.running,
+                    "titbit": icon.titbit_id.map(crate::titbit::TitbitId::get),
+                    "running": icon.running,
                 })).collect::<Vec<_>>(),
             })
         });
@@ -2414,10 +2420,10 @@ impl Engine {
     pub fn parity_titbit_manager_state(&self) -> serde_json::Value {
         use serde_json::{Value, json};
 
-        let entity = |handle: crate::titbit::ElementHandle| {
-            if !handle.is_valid() {
+        let entity = |handle: Option<crate::titbit::ElementHandle>| {
+            let Some(handle) = handle else {
                 return Value::Null;
-            }
+            };
             let id = self
                 .inner
                 .entity_id_for_index(handle.0)
@@ -2448,7 +2454,7 @@ impl Engine {
                 "display_order": float(titbit.display_order),
                 "layer": titbit.layer,
                 "blinking": titbit.blinking,
-                "id": titbit.id,
+                "id": titbit.id.get(),
                 "element_supplier": entity(titbit.element_supplier),
                 "element_manager": entity(titbit.element_manager),
                 "position": {

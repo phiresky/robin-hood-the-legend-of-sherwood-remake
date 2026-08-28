@@ -1094,17 +1094,18 @@ impl EngineInner {
             // source.  Without this, the pathfinder starts from inside
             // the door sector, which is not a motion area and yields no
             // valid seed gates.
-            let (door_handle, door_direction) = self
+            let door_source = self
                 .get_entity(*pc_id)
-                .map(current_door_for_route_source)
-                .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
+                .and_then(current_door_for_route_source);
             let (pc_pos, path_src_sector, _path_src_layer) = {
                 let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                    adapt_source_to_current_door_with_identity(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
+                    door_source.and_then(|(door_handle, door_direction)| {
+                        adapt_source_to_current_door_with_identity(
+                            &self.script_domains.interactables.doors,
+                            door_handle,
+                            door_direction,
+                        )
+                    })
                 });
                 match adapted {
                     Some((adj, sector, layer)) => (adj, sector, layer),
@@ -1135,7 +1136,7 @@ impl EngineInner {
                         (pc_pos.x, pc_pos.y),
                         u16::from(path_src_sector),
                         path_src_sector.arena_index(),
-                        crate::gate::DoorIndex(door_idx),
+                        crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
                         pc_auth.as_ref(),
                         false,
                         &|sector| self.building_sector_is_authorized(sector),
@@ -1153,7 +1154,7 @@ impl EngineInner {
                         .expect("path into a door must contain the goal door");
                     assert_eq!(
                         terminal.door_index,
-                        crate::gate::DoorIndex(door_idx),
+                        crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
                         "path into door {door_idx} ended at {}",
                         terminal.door_index
                     );
@@ -1193,7 +1194,7 @@ impl EngineInner {
                 gates
                     .iter()
                     .map(|&(gate_id, direct)| {
-                        let door_index = crate::gate::DoorIndex(gate_id);
+                        let door_index = crate::gate::DoorIndex::new(gate_id).expect("valid door index");
                         self.script_domains
                             .interactables
                             .doors
@@ -1278,7 +1279,8 @@ impl EngineInner {
                     let goal_shape = if let Some((door_idx, _, pt, _sector, layer)) = door_goal_info
                     {
                         GoalShape::Door {
-                            door_index: crate::gate::DoorIndex(door_idx),
+                            door_index: crate::gate::DoorIndex::new(door_idx)
+                                .expect("valid door index"),
                             far_side_point: MapPoint::new(pt.0, pt.1),
                             far_side_layer: layer,
                             far_side_is_building: door_far_side_is_building.unwrap_or(false),

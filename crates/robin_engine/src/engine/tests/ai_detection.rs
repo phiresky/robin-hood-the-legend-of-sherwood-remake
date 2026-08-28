@@ -2214,7 +2214,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     pc.element.active = true;
     pc.pc.life_points = 100;
     pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex(0),
+        door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
         steps: VecDeque::new(),
@@ -2226,10 +2226,9 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     pc.actor.passing_door_directly = true;
     // Forecast preparation only treats the actor as mid door transit while
     // its position interface still holds the live door pointer.
-    pc.element
-        .sprite
-        .position_iface
-        .set_door_for_test(crate::position_interface::DoorHandle(0));
+    pc.element.sprite.position_iface.set_door_for_test(
+        crate::position_interface::DoorHandle::new(0).expect("valid door index"),
+    );
 
     // Original `RHActor::IsPassingDoor` observes the selected PassDoor
     // sequence command. Runtime door mirrors alone no longer arm forecast
@@ -2244,7 +2243,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         gate_id, direction, ..
     } = &mut pass.data
     {
-        *gate_id = Some(DoorIndex(0));
+        *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
         *direction = 1;
     } else {
         unreachable!("PassDoor fixture must be a movement element")
@@ -3117,7 +3116,7 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
         gate_id, direction, ..
     } = &mut pass.data
     {
-        *gate_id = Some(DoorIndex(0));
+        *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
         *direction = 0;
     } else {
         unreachable!("PassDoor fixture must be a movement element")
@@ -4920,7 +4919,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         .element
         .sprite
         .position_iface
-        .set_door_for_test(DoorHandle(0));
+        .set_door_for_test(DoorHandle::new(0).expect("valid door index"));
     observer.npc.detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
         element: Some(runner_id),
         detectable_type: DetectableType::Enemy,
@@ -6837,7 +6836,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
         .element
         .sprite
         .position_iface
-        .set_door_for_test(DoorHandle(0));
+        .set_door_for_test(DoorHandle::new(0).expect("valid door index"));
     observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
 
     assert!(

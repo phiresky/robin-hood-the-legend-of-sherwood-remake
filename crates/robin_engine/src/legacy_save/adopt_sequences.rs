@@ -1600,7 +1600,7 @@ mod tests {
 
     fn topology() -> LegacySequenceTopology {
         LegacySequenceTopology {
-            gates: vec![DoorIndex(7)],
+            gates: vec![DoorIndex::new(7).expect("valid door index")],
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
             unique_line_by_layer: [(2, JumpLineIndex::new(5).unwrap())].into(),
             sectors: (0..6).map(SectorHandle::new).collect(),
@@ -1645,11 +1645,11 @@ mod tests {
         };
         assert_eq!(
             resolve_gate("movement.gate", LegacyGateRef(Some(1)), &topology).unwrap(),
-            Some(DoorIndex(3))
+            Some(DoorIndex::new(3).expect("valid door index"))
         );
         assert_eq!(
             resolve_gate("movement.gate", LegacyGateRef(Some(4)), &topology).unwrap(),
-            Some(DoorIndex(2))
+            Some(DoorIndex::new(2).expect("valid door index"))
         );
     }
 

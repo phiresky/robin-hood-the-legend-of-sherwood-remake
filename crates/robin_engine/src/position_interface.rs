@@ -244,9 +244,9 @@ impl Posture {
 
 /// Elevation-layer index.
 ///
-/// Normal runtime construction rejects `0xffff`, but exact v48 save
-/// restoration preserves that value because the Original uses it as the
-/// projectile/sight-obstacle layer sentinel.
+/// `0xffff` is reserved by the Original's binary formats for "no layer".
+/// Runtime absence is represented by `Option<Layer>`; the sentinel is
+/// translated only by the legacy/level-data readers.
 #[derive(
     Debug,
     Clone,
@@ -259,25 +259,20 @@ impl Posture {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
 )]
-pub struct Layer(u16);
+pub struct Layer(nonmax::NonMaxU16);
+
+crate::bitcode_adapters::impl_native_bitcode_index!(Layer, u16);
 
 impl Layer {
-    pub const ZERO: Layer = Layer(0);
+    pub const ZERO: Layer = Layer(nonmax::NonMaxU16::new(0).unwrap());
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
-        (v != u16::MAX).then_some(Self(v))
-    }
-    /// Restore the Original's `0xffff` projectile-layer sentinel.
-    #[inline]
-    pub(crate) const fn from_saved_raw(v: u16) -> Self {
-        Self(v)
+        nonmax::NonMaxU16::new(v).map(Self)
     }
     #[inline]
     pub fn get(self) -> u16 {
-        self.0
+        self.0.get()
     }
 }
 
@@ -316,6 +311,51 @@ impl Default for Layer {
 impl std::fmt::Display for Layer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.get().fmt(f)
+    }
+}
+
+/// Index into the loaded pathfinder/move-box table. `0xffff` means
+/// "unconfigured" in Original constructors and at binary boundaries.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub struct PathfinderIndex(pub nonmax::NonMaxU16);
+
+crate::bitcode_adapters::impl_native_bitcode_index!(PathfinderIndex, u16);
+
+impl PathfinderIndex {
+    #[inline]
+    pub fn new(value: u16) -> Option<Self> {
+        nonmax::NonMaxU16::new(value).map(Self)
+    }
+
+    #[inline]
+    pub fn get(self) -> u16 {
+        self.0.get()
+    }
+}
+
+impl From<PathfinderIndex> for u16 {
+    #[inline]
+    fn from(index: PathfinderIndex) -> Self {
+        index.get()
+    }
+}
+
+impl From<PathfinderIndex> for usize {
+    #[inline]
+    fn from(index: PathfinderIndex) -> Self {
+        usize::from(index.get())
     }
 }
 
@@ -408,14 +448,13 @@ impl std::fmt::Display for Direction {
     }
 }
 
-/// Opaque handle to a sector.  Newtype around `NonMaxU16` (matches
-/// the on-disk level-data sector index, where `0xFFFF` is reserved as the
-/// binary-format "none" sentinel — see `crate::level_data`).  "No sector"
-/// is represented by `Option<SectorHandle>::None`; the niche optimization
-/// keeps `Option<SectorHandle>` the same size as `u16`.
+/// Reference to a sector's public number, optionally enriched with its exact
+/// live arena identity. Public number `-1` is representable because Original
+/// uses it for the real out-of-map sector; nullable serialized pointers must
+/// translate their `0xffff` marker to `None` at the binary boundary.
 #[derive(Debug, Clone, Copy, robin_state_hash_derive::StateHash)]
 pub struct SectorHandle {
-    public: nonmax::NonMaxU16,
+    public: crate::sector::SectorNumber,
     /// Optional exact live arena object. Equality and hashing deliberately
     /// remain public-number based; Original pointer comparisons must opt in
     /// through [`Self::arena_index`]. Keeping the companion in this copyable
@@ -425,7 +464,7 @@ pub struct SectorHandle {
 }
 
 impl crate::bitcode_adapters::NativeBitcode for SectorHandle {
-    type Wire = (u16, Option<crate::fast_find_grid::SectorIndex>);
+    type Wire = (i16, Option<crate::fast_find_grid::SectorIndex>);
 
     fn to_wire(&self) -> Self::Wire {
         (self.public.get(), self.arena)
@@ -433,8 +472,7 @@ impl crate::bitcode_adapters::NativeBitcode for SectorHandle {
 
     fn from_wire((public, arena): Self::Wire) -> Self {
         Self {
-            public: nonmax::NonMaxU16::new(public)
-                .expect("native bitcode decoded the reserved sector sentinel"),
+            public: crate::sector::SectorNumber::new(public),
             arena,
         }
     }
@@ -445,14 +483,35 @@ crate::bitcode_adapters::impl_native_bitcode!(SectorHandle);
 impl SectorHandle {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(|public| Self {
-            public,
+        Some(Self {
+            public: crate::sector::SectorNumber::new(v as i16),
             arena: None,
         })
     }
+
+    #[inline]
+    pub fn from_number(public: crate::sector::SectorNumber) -> Self {
+        Self {
+            public,
+            arena: None,
+        }
+    }
+
+    /// Decode a nullable serialized `RHSector*` slot. This is intentionally
+    /// distinct from [`Self::new`], because level/authored sector number
+    /// `0xffff` denotes the real out-of-map sector.
+    #[inline]
+    pub fn from_serialized_pointer(v: u16) -> Option<Self> {
+        (v != u16::MAX).then(|| Self::from_number(crate::sector::SectorNumber::new(v as i16)))
+    }
     #[inline]
     pub fn get(self) -> u16 {
-        self.public.get()
+        self.public.get() as u16
+    }
+
+    #[inline]
+    pub fn number(self) -> crate::sector::SectorNumber {
+        self.public
     }
 
     #[inline]
@@ -493,6 +552,11 @@ enum SectorHandleSerde {
         public: nonmax::NonMaxU16,
         arena: crate::fast_find_grid::SectorIndex,
     },
+    Number {
+        number: crate::sector::SectorNumber,
+        #[serde(default)]
+        arena: Option<crate::fast_find_grid::SectorIndex>,
+    },
 }
 
 impl Serialize for SectorHandle {
@@ -501,14 +565,11 @@ impl Serialize for SectorHandle {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            match self.arena {
-                Some(arena) => SectorHandleSerde::Exact {
-                    public: self.public,
-                    arena,
-                }
-                .serialize(serializer),
-                None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
+            SectorHandleSerde::Number {
+                number: self.public,
+                arena: self.arena,
             }
+            .serialize(serializer)
         } else {
             (self.public.get(), self.arena).serialize(serializer)
         }
@@ -523,20 +584,25 @@ impl<'de> Deserialize<'de> for SectorHandle {
         if deserializer.is_human_readable() {
             Ok(match SectorHandleSerde::deserialize(deserializer)? {
                 SectorHandleSerde::Legacy(public) => Self {
-                    public,
+                    public: crate::sector::SectorNumber::new(public.get() as i16),
                     arena: None,
                 },
                 SectorHandleSerde::Exact { public, arena } => Self {
-                    public,
+                    public: crate::sector::SectorNumber::new(public.get() as i16),
                     arena: Some(arena),
+                },
+                SectorHandleSerde::Number { number, arena } => Self {
+                    public: number,
+                    arena,
                 },
             })
         } else {
             let (public, arena) =
-                <(u16, Option<crate::fast_find_grid::SectorIndex>)>::deserialize(deserializer)?;
-            let public = nonmax::NonMaxU16::new(public)
-                .ok_or_else(|| serde::de::Error::custom("reserved sector sentinel 65535"))?;
-            Ok(Self { public, arena })
+                <(i16, Option<crate::fast_find_grid::SectorIndex>)>::deserialize(deserializer)?;
+            Ok(Self {
+                public: crate::sector::SectorNumber::new(public),
+                arena,
+            })
         }
     }
 }
@@ -568,78 +634,15 @@ impl std::fmt::Display for SectorHandle {
     }
 }
 
-/// Opaque handle to a sight obstacle.  Newtype around `NonMaxU16`;
-/// `0xFFFF` is reserved as the binary-format "none" sentinel so a real
-/// handle literally cannot hold it.  "No obstacle" is represented by
-/// `Option<ObstacleHandle>::None`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct ObstacleHandle(pub nonmax::NonMaxU16);
+/// Compatibility name for the canonical flat static+dynamic sight-obstacle
+/// index. The former `u16` wrapper narrowed valid raycast results; all live
+/// surfaces now use the full `SightObstacleIndex` identity.
+pub use crate::sight_obstacle::SightObstacleIndex as ObstacleHandle;
 
-crate::bitcode_adapters::impl_native_bitcode_index!(ObstacleHandle, u16);
-
-impl ObstacleHandle {
-    #[inline]
-    pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u16 {
-        self.0.get()
-    }
-}
-
-impl From<ObstacleHandle> for u16 {
-    #[inline]
-    fn from(h: ObstacleHandle) -> u16 {
-        h.get()
-    }
-}
-
-impl From<ObstacleHandle> for usize {
-    #[inline]
-    fn from(h: ObstacleHandle) -> usize {
-        h.get() as usize
-    }
-}
-
-impl std::fmt::Display for ObstacleHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
-    }
-}
-
-/// Opaque handle to a door.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    Default,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct DoorHandle(pub u32);
-impl DoorHandle {
-    pub const NULL: Self = Self(u32::MAX);
-    pub fn is_null(self) -> bool {
-        self == Self::NULL
-    }
-}
+/// Compatibility name for the canonical door-table index. Runtime absence
+/// is represented by `Option<DoorIndex>`; there is no second door-handle ID
+/// space in the position component.
+pub use crate::gate::DoorIndex as DoorHandle;
 
 /// Opaque handle to an element.
 #[derive(
@@ -777,8 +780,8 @@ pub struct PositionInterface {
     directional_tolerance: bool,
 
     // -- Pathfinder indices --
-    pathfinder_index: u16,
-    pathfinder_index_alternate: u16,
+    pathfinder_index: Option<PathfinderIndex>,
+    pathfinder_index_alternate: Option<PathfinderIndex>,
 
     // -- Move boxes --
     move_box: MoveBox,
@@ -801,14 +804,14 @@ pub struct PositionInterface {
     saved_old_posture: crate::element::Posture,
 
     // -- Layer & sector --
-    layer: Layer,
+    layer: Option<Layer>,
     sector: Option<SectorHandle>,
     /// Exact `FastFindGrid::level.sectors` arena identity paired with
     /// `sector`.  `SectorHandle` retains the compact/public sector number,
     /// which is not sufficient to distinguish overlapping sector objects.
     #[serde(default)]
     sector_index: Option<SectorIndex>,
-    layer_goal: Layer,
+    layer_goal: Option<Layer>,
     sector_goal: Option<SectorHandle>,
     /// Arena identity paired with `sector_goal`.
     #[serde(default)]
@@ -819,7 +822,7 @@ pub struct PositionInterface {
     plane: Option<PlaneZCoeffs>,
 
     // -- Door --
-    door: DoorHandle,
+    door: Option<DoorHandle>,
     door_direction: bool,
 
     // -- Material --
@@ -866,8 +869,8 @@ pub(crate) struct PositionInterfaceV48State {
     pub direction: Direction,
     pub direction_goal: Direction,
     pub slow_turn_count: u8,
-    pub layer: Layer,
-    pub layer_goal: Layer,
+    pub layer: Option<Layer>,
+    pub layer_goal: Option<Layer>,
     pub tolerance: f32,
     pub directional_tolerance: bool,
     pub accumulate_movement_map: bool,
@@ -884,7 +887,7 @@ pub(crate) struct PositionInterfaceV48State {
     pub sector_index: Option<SectorIndex>,
     pub sector_goal: Option<SectorHandle>,
     pub sector_goal_index: Option<SectorIndex>,
-    pub door: DoorHandle,
+    pub door: Option<DoorHandle>,
     pub obstacle: Option<ObstacleHandle>,
     pub plane: Option<PlaneZCoeffs>,
     pub target_element: Option<crate::entity_id::EntityId>,
@@ -938,8 +941,8 @@ impl PositionInterface {
             tolerance: 0.0,
             directional_tolerance: false,
 
-            pathfinder_index: u16::MAX,
-            pathfinder_index_alternate: u16::MAX,
+            pathfinder_index: None,
+            pathfinder_index_alternate: None,
 
             move_box: MoveBox::new(),
             move_box_alternate: MoveBox::new(),
@@ -953,17 +956,17 @@ impl PositionInterface {
             saved_posture: crate::element::Posture::Undefined,
             saved_old_posture: crate::element::Posture::Undefined,
 
-            layer: Layer::ZERO,
+            layer: Some(Layer::ZERO),
             sector: None,
             sector_index: None,
-            layer_goal: Layer::ZERO,
+            layer_goal: Some(Layer::ZERO),
             sector_goal: None,
             sector_goal_index: None,
 
             obstacle: None,
             plane: None,
 
-            door: DoorHandle::NULL,
+            door: None,
             door_direction: false,
 
             material: crate::element::GameMaterial::default().as_u32(),
@@ -1235,10 +1238,19 @@ impl PositionInterface {
     #[inline]
     pub fn layer_goal(&self) -> Layer {
         self.layer_goal
+            .expect("position has no goal layer; legacy no-layer state escaped its boundary")
+    }
+    #[inline]
+    pub fn optional_layer_goal(&self) -> Option<Layer> {
+        self.layer_goal
     }
     #[inline]
     pub fn set_layer_goal(&mut self, layer: Layer) {
-        self.layer_goal = layer;
+        self.layer_goal = Some(layer);
+    }
+    #[inline]
+    pub(crate) fn clear_layer_goal(&mut self) {
+        self.layer_goal = None;
     }
 
     #[inline]
@@ -1274,10 +1286,20 @@ impl PositionInterface {
     #[must_use]
     pub fn get_layer(&self) -> Layer {
         self.layer
+            .expect("position has no layer; legacy no-layer state escaped its boundary")
+    }
+    #[inline]
+    #[must_use]
+    pub fn optional_layer(&self) -> Option<Layer> {
+        self.layer
     }
     #[inline]
     pub fn set_layer(&mut self, l: Layer) {
-        self.layer = l;
+        self.layer = Some(l);
+    }
+    #[inline]
+    pub(crate) fn clear_layer(&mut self) {
+        self.layer = None;
     }
     #[inline]
     #[must_use]
@@ -1623,12 +1645,12 @@ impl PositionInterface {
     /// wants to configure it without constructing a new one.
     pub fn configure_for_actor(
         &mut self,
-        pathfinder_idx: u8,
-        half_diagonal: Option<MoveBoxHalfDiagonal>,
+        pathfinder_idx: PathfinderIndex,
+        half_diagonal: MoveBoxHalfDiagonal,
         position_map: MapPoint,
     ) {
-        let hd = half_diagonal.unwrap_or(MoveBoxHalfDiagonal::new(1.0, 1.0));
-        self.set_pathfinder_index(pathfinder_idx as u16);
+        let hd = half_diagonal;
+        self.set_pathfinder_index(pathfinder_idx);
         self.set_move_box(MoveBox::from_corners(
             MapVec::new(-hd.x, -hd.y),
             MapVec::new(hd.x, hd.y),
@@ -1644,12 +1666,16 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn get_pathfinder_index(&self) -> u16 {
+    pub fn get_pathfinder_index(&self) -> Option<PathfinderIndex> {
         self.pathfinder_index
     }
     #[inline]
-    pub fn set_pathfinder_index(&mut self, i: u16) {
-        self.pathfinder_index = i;
+    pub fn set_pathfinder_index(&mut self, index: PathfinderIndex) {
+        self.pathfinder_index = Some(index);
+    }
+    #[inline]
+    pub fn clear_pathfinder_index(&mut self) {
+        self.pathfinder_index = None;
     }
     #[inline]
     pub fn is_using_emergency_lying_box(&self) -> bool {
@@ -1657,23 +1683,21 @@ impl PositionInterface {
     }
     // Door
     #[inline]
-    pub fn get_door(&self) -> DoorHandle {
+    pub fn get_door(&self) -> Option<DoorHandle> {
         self.door
     }
     #[inline]
     pub(crate) fn set_door(&mut self, door: DoorHandle, direction: bool) {
-        self.door = door;
-        if !door.is_null() {
-            self.door_direction = direction;
-        }
+        self.door = Some(door);
+        self.door_direction = direction;
     }
     #[inline]
     pub(crate) fn clear_door(&mut self) {
-        self.door = DoorHandle::NULL;
+        self.door = None;
     }
     #[cfg(test)]
     pub(crate) fn set_door_for_test(&mut self, door: DoorHandle) {
-        self.door = door;
+        self.door = Some(door);
     }
     #[inline]
     pub fn get_door_direction(&self) -> bool {
@@ -1888,7 +1912,7 @@ impl PositionInterface {
         if self.deviated {
             if self.goal_next_valid {
                 let hd = self.get_half_diagonal();
-                grid.is_reachable_thick(map, self.goal_next_map, self.layer.get(), hd)
+                grid.is_reachable_thick(map, self.goal_next_map, self.get_layer().get(), hd)
             } else if self.blocked_count == 0 {
                 self.directional_goal_check(map, goal, im)
             } else {
@@ -2228,7 +2252,7 @@ impl PositionInterface {
     /// motion-line collisions on the current layer.
     pub fn is_position_authorized(&self, grid: &FastFindGrid) -> bool {
         let move_box_map = self.move_box_map;
-        let lines = grid.get_active_motion_line_indices(self.layer.get(), &move_box_map);
+        let lines = grid.get_active_motion_line_indices(self.get_layer().get(), &move_box_map);
         for &line_idx in &lines {
             let line = &grid.level.lines[usize::from(line_idx)];
             if line.intersects_bbox(&move_box_map) {

@@ -2103,8 +2103,10 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
             z_top: 20.0,
         },
     ];
-    obstacle.layer = 2;
-    obstacle.sector = 7;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::new(2).unwrap(),
+        crate::fast_find_grid::SectorIndex::new(7).unwrap(),
+    );
     obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
     obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
     obstacle.rebuild_geometry();
@@ -2149,7 +2151,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
     level.sectors.push(GridSector {
         sector_type: SectorType::AREA | SectorType::MOTION | SectorType::BUILDING,
         sector_number: building_number,
-        gate_indices: vec![crate::gate::DoorIndex(0)],
+        gate_indices: vec![crate::gate::DoorIndex::new(0).expect("valid door index")],
         points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         layer: 0,
@@ -2205,8 +2207,10 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
             z_top: 20.0,
         },
     ];
-    obstacle.layer = 2;
-    obstacle.sector = 8;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::new(2).unwrap(),
+        crate::fast_find_grid::SectorIndex::new(8).unwrap(),
+    );
     obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
     obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
     obstacle.rebuild_geometry();

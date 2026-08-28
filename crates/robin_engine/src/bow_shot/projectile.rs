@@ -645,7 +645,12 @@ pub fn spawn_purse(
             };
             element.set_sector(resolution.sector);
             if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-                element.set_layer(resolution.layer);
+                element.set_layer(
+                    resolution
+                        .layer
+                        .expect("authorized projectile landing has no resolved layer")
+                        .get(),
+                );
             }
         }
     }
@@ -719,7 +724,7 @@ pub fn spawn_coin(
     source_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     _layer: u16,
-    layer_goal: u16,
+    layer_goal: Option<crate::position_interface::Layer>,
     sector_goal: Option<crate::position_interface::SectorHandle>,
     apex: f32,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -796,7 +801,12 @@ pub fn spawn_coin(
             };
             element.set_sector(resolution.sector);
             if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-                element.set_layer(resolution.layer);
+                element.set_layer(
+                    resolution
+                        .layer
+                        .expect("authorized projectile landing has no resolved layer")
+                        .get(),
+                );
             }
         }
     }
@@ -1091,7 +1101,12 @@ pub(crate) fn make_arrow_falling_down(
         };
         proj.element.set_sector(resolution.sector);
         if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-            proj.element.set_layer(resolution.layer);
+            proj.element.set_layer(
+                resolution
+                    .layer
+                    .expect("authorized projectile landing has no resolved layer")
+                    .get(),
+            );
         }
     }
 
@@ -1662,7 +1677,7 @@ fn tick_arrows_matching(
                     (None, None)
                 } else {
                     let top_plane_z = proj.element.obstacle_index().map(|handle| {
-                        let index = usize::from(u16::from(handle));
+                        let index = usize::from(handle);
                         let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
                             panic!(
                                 "landed projectile obstacle {index} is absent from its source list"
@@ -1678,7 +1693,7 @@ fn tick_arrows_matching(
                         None => Some(0.001),
                         Some(z) => {
                             if !matches!(proj.object.object_type, ObjectType::Arrow)
-                                && proj.element.layer() != 0xFFFF
+                                && proj.element.optional_layer().is_some()
                             {
                                 Some(z + 0.001)
                             } else {
@@ -1692,7 +1707,7 @@ fn tick_arrows_matching(
                     target: "arrow_landing",
                     arrow = arrow_id.index(),
                     object_type = ?proj.object.object_type,
-                    obstacle = ?proj.element.obstacle_index().map(u16::from),
+                    obstacle = ?proj.element.obstacle_index().map(u32::from),
                     layer = proj.element.layer(),
                     ?pos,
                     ?top_plane_z,

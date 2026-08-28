@@ -2937,7 +2937,7 @@ fn delayed_drop_ale_route_overwrites_fallback_only_while_seek_is_pending() {
         source_sector_index: None,
         source_layer: 11,
         outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-            door_index: crate::gate::DoorIndex(7),
+            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: false,
         }]),
     };

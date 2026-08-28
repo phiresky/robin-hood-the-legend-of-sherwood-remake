@@ -594,7 +594,7 @@ impl EngineInner {
                     .and_then(|v| match v {
                         crate::sequence::FieldValue::DoorId(id) => Some(*id),
                         crate::sequence::FieldValue::Integer(id) => {
-                            Some(crate::gate::DoorIndex(*id))
+                            Some(crate::gate::DoorIndex::new(*id).expect("valid door index"))
                         }
                         _ => None,
                     });
@@ -2392,7 +2392,10 @@ mod tests {
         let assets = LevelAssets::new();
         let actor = add_pc(&mut engine);
         let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(actor));
-        element.set_property(Field::Door, FieldValue::DoorId(crate::gate::DoorIndex(0)));
+        element.set_property(
+            Field::Door,
+            FieldValue::DoorId(crate::gate::DoorIndex::new(0).expect("valid door index")),
+        );
 
         engine.check_sequence_element_validity(&assets, actor, &element, true);
     }

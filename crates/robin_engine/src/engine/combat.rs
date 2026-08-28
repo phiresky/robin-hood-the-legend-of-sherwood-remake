@@ -911,7 +911,7 @@ impl EngineInner {
                 ) {
                     let obstacle_list = self.sight_obstacles(assets);
                     let obstacle = terminal_obstacle.map(|handle| {
-                        let index = usize::from(u16::from(handle));
+                        let index = usize::from(handle);
                         let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
                             panic!("diagnostic terminal obstacle {index} disappeared")
                         });
@@ -919,8 +919,7 @@ impl EngineInner {
                             index,
                             obstacle_list.is_active(index),
                             obstacle.is_projection_area(),
-                            obstacle.layer,
-                            obstacle.sector,
+                            obstacle.projection_area_ref(),
                             obstacle.contains_point_projection(
                                 trajectory_end
                                     .expect("terminal impact lost its endpoint")
@@ -932,7 +931,7 @@ impl EngineInner {
                         .expect("terminal impact lost its endpoint")
                         .to_map();
                     let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
-                        let index = usize::from(u16::from(handle));
+                        let index = usize::from(handle);
                         obstacle_list.get(index).unwrap_or_else(|| {
                             panic!("diagnostic terminal obstacle {index} disappeared")
                         })
@@ -974,10 +973,12 @@ impl EngineInner {
                     )
                     .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
                     let candidate_layer = obstacle
-                        .filter(|(_, active, projection, layer, _, _)| {
-                            *active && *projection && *layer != u16::MAX
+                        .filter(|(_, active, projection, topology, _)| {
+                            *active && *projection && topology.is_some()
                         })
-                        .map_or(0, |(_, _, _, layer, _, _)| layer);
+                        .map_or(0, |(_, _, _, topology, _)| {
+                            topology.expect("filtered projection topology").layer.get()
+                        });
                     let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
                         let block = self
                             .world
@@ -1033,7 +1034,12 @@ impl EngineInner {
                 let element = entity.element_data_mut();
                 element.set_sector(resolution.sector);
                 if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-                    element.set_layer(resolution.layer);
+                    element.set_layer(
+                        resolution
+                            .layer
+                            .expect("authorized projectile landing has no resolved layer")
+                            .get(),
+                    );
                 }
             }
             if terminal_membership {
@@ -2215,7 +2221,7 @@ fn set_projectile_trajectory_origin(
 ) {
     projectile.trajectory_origin_sector = sector.map(crate::position_interface::SectorHandle::get);
     projectile.trajectory_origin_sector_index = sector.and_then(|sector| sector.arena_index());
-    projectile.trajectory_origin_layer = layer;
+    projectile.trajectory_origin_layer = crate::position_interface::Layer::new(layer);
 }
 
 fn projectile_trajectory_origin_sector(
@@ -2238,11 +2244,12 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> 
     match entity {
         Entity::Projectile(p) => {
             let sector = projectile_trajectory_origin_sector(&p.projectile);
+            let layer = p.projectile.trajectory_origin_layer?;
             Some(crate::ai::Position {
                 x: p.projectile.start_of_trajectory_x,
                 y: p.projectile.start_of_trajectory_y,
                 sector,
-                level: p.projectile.trajectory_origin_layer,
+                level: layer.get(),
             })
         }
         _ => None,
@@ -4176,7 +4183,7 @@ impl EngineInner {
                         assets,
                         crate::ai::NoiseType::Zonk,
                         position_map,
-                        layer,
+                        crate::position_interface::Layer::new(layer),
                         crate::parameters_ai::NOISE_VOLUME_ZONK as u16,
                         position.z.max(0.0) as u16,
                         Some(arrow),
@@ -4236,7 +4243,7 @@ impl EngineInner {
             assets,
             crate::ai::NoiseType::Plouf,
             position_map,
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
             position.z.max(0.0) as u16,
             Some(arrow),
@@ -5431,13 +5438,13 @@ impl EngineInner {
                                 e.element_data().position().z.max(0.0) as u16,
                             )
                         })
-                        .unwrap_or((0, 0));
+                        .unwrap_or_else(|| panic!("whistle noise owner {actor_id:?} disappeared"));
                     self.broadcast_noise_synchronously(
                         sim,
                         assets,
                         crate::ai::NoiseType::Pfiiit,
                         crate::coordinates::MapPoint::new(position.x, position.y),
-                        layer,
+                        crate::position_interface::Layer::new(layer),
                         crate::abilities::NOISE_VOLUME_WHISTLE,
                         elevation,
                         Some(actor_id),

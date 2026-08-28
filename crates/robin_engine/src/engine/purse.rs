@@ -97,7 +97,7 @@ impl EngineInner {
             assets,
             crate::ai::NoiseType::Plouf,
             map,
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
             position.z.max(0.0) as u16,
             Some(projectile_id),
@@ -222,7 +222,8 @@ impl EngineInner {
         purse.projectile.start_of_trajectory_x = origin_map.x;
         purse.projectile.start_of_trajectory_y = origin_map.y;
         purse.projectile.trajectory_origin_sector = origin_sector.map(|sector| sector.get());
-        purse.projectile.trajectory_origin_layer = origin_layer;
+        purse.projectile.trajectory_origin_layer =
+            crate::position_interface::Layer::new(origin_layer);
         // TODO: retain the arena half of `origin_sector`; the legacy field is
         // currently only the public u16 and must not be spatially guessed.
 
@@ -370,10 +371,9 @@ impl EngineInner {
                 observe_water_impact_stage("reset");
                 self.finish_projectile_water_impact(sim, assets, future_id, position, layer);
             } else if material != crate::element::GameMaterial::Hole && !coin.projectile.disappear {
-                if coin.projectile.purse.layer_goal == u16::MAX {
-                    coin.element.clear_layer();
-                } else {
-                    coin.element.set_layer(coin.projectile.purse.layer_goal);
+                match coin.projectile.purse.layer_goal {
+                    Some(layer) => coin.element.set_layer(layer.get()),
+                    None => coin.element.clear_layer(),
                 }
                 coin.element.set_sector(coin.projectile.purse.sector_goal);
                 self.add_detectable_for_all_npc(future_id, DetectableType::Object);
@@ -385,7 +385,8 @@ impl EngineInner {
         coin.projectile.start_of_trajectory_x = corrected_source.x;
         coin.projectile.start_of_trajectory_y = corrected_source.y;
         coin.projectile.trajectory_origin_sector = source_sector.map(|sector| sector.get());
-        coin.projectile.trajectory_origin_layer = source_layer;
+        coin.projectile.trajectory_origin_layer =
+            crate::position_interface::Layer::new(source_layer);
         let id = self.add_entity_with_reserved_creation_order(entity, creation_order);
         assert_eq!(
             id, future_id,
@@ -419,11 +420,10 @@ impl EngineInner {
         let layer = purse.element.layer();
         let sector = purse.element.sector();
         let mut box_at_pos = move_box.translated(raw_map);
-        let corrected_map = if layer != u16::MAX
-            && self
-                .world
-                .fast_grid
-                .find_authorized_position(&mut box_at_pos, layer)
+        let corrected_map = if self
+            .world
+            .fast_grid
+            .find_authorized_position(&mut box_at_pos, layer)
         {
             box_at_pos.center()
         } else {
@@ -434,7 +434,7 @@ impl EngineInner {
             assets,
             crate::ai::NoiseType::Pling,
             corrected_map,
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_PLING as u16,
             raw_impact.z.max(0.0) as u16,
             Some(future_purse_id),
@@ -461,14 +461,12 @@ impl EngineInner {
                     raw_map.x + candidate_vector.x,
                     raw_map.y + candidate_vector.y,
                 );
-                if layer != u16::MAX
-                    && self.world.fast_grid.is_straight_movement_authorized(
-                        corrected_map,
-                        candidate,
-                        layer,
-                        &move_box,
-                    )
-                {
+                if self.world.fast_grid.is_straight_movement_authorized(
+                    corrected_map,
+                    candidate,
+                    layer,
+                    &move_box,
+                ) {
                     vector = candidate_vector;
                     break;
                 }
@@ -488,7 +486,7 @@ impl EngineInner {
                     raw_impact,
                     target,
                     layer,
-                    layer,
+                    crate::position_interface::Layer::new(layer),
                     sector,
                     bow_shot::APEX_COIN,
                     Some(&obstacle_check),
@@ -843,11 +841,10 @@ impl EngineInner {
             y: impact_pos.y,
         };
         let mut box_at_pos = shooter_move_box.translated(MapPoint::new(impact_pos.x, impact_pos.y));
-        if layer != u16::MAX
-            && self
-                .world
-                .fast_grid
-                .find_authorized_position(&mut box_at_pos, layer)
+        if self
+            .world
+            .fast_grid
+            .find_authorized_position(&mut box_at_pos, layer)
         {
             corrected_2d = box_at_pos.center();
         }
@@ -863,7 +860,7 @@ impl EngineInner {
             assets,
             crate::ai::NoiseType::Pling,
             crate::coordinates::MapPoint::new(source_pos.x, source_pos.y),
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_PLING as u16,
             source_pos.z.max(0.0) as u16,
             Some(purse_id),
@@ -908,14 +905,12 @@ impl EngineInner {
                     x: impact_pos.x + scatter_x,
                     y: impact_pos.y + scatter_y,
                 };
-                if layer != u16::MAX
-                    && self.world.fast_grid.is_straight_movement_authorized(
-                        MapPoint::new(corrected_2d.x, corrected_2d.y),
-                        candidate,
-                        layer,
-                        &shooter_move_box,
-                    )
-                {
+                if self.world.fast_grid.is_straight_movement_authorized(
+                    MapPoint::new(corrected_2d.x, corrected_2d.y),
+                    candidate,
+                    layer,
+                    &shooter_move_box,
+                ) {
                     scatter = crate::coordinates::MapVec::new(scatter_x, scatter_y);
                     break;
                 }
@@ -948,7 +943,7 @@ impl EngineInner {
                     impact_pos,
                     target_pos,
                     layer,
-                    layer,
+                    crate::position_interface::Layer::new(layer),
                     target_sector,
                     bow_shot::APEX_COIN,
                     Some(&obstacle_check),
@@ -1027,11 +1022,9 @@ impl EngineInner {
             // the trajectory-end layer when the scatter-time
             // accessibility search couldn't pin a goal sector (no
             // shooter MoveBox / unreachable scatter target).
-            let goal_layer = coin.projectile.purse.layer_goal;
-            if goal_layer == u16::MAX {
-                coin.element.clear_layer();
-            } else {
-                coin.element.set_layer(goal_layer);
+            match coin.projectile.purse.layer_goal {
+                Some(layer) => coin.element.set_layer(layer.get()),
+                None => coin.element.clear_layer(),
             }
             coin.element.set_sector(coin.projectile.purse.sector_goal);
         }

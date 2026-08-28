@@ -35,7 +35,7 @@ pub struct MobileElement {
     pub sector: u16,
     /// Current projection-area obstacle. Shipped records start at NULL and
     /// acquire one while crossing authored elevation bonds.
-    pub obstacle: Option<u16>,
+    pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
     pub active: bool,
     pub stopped: bool,
     pub speed: f32,

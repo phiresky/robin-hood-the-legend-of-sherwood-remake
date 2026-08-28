@@ -167,12 +167,12 @@ impl EngineInner {
         &self,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
-        origin_layer: u16,
+        origin_layer: Option<crate::position_interface::Layer>,
         volume: u16,
         elevation: u16,
         source_entity: Option<EntityId>,
     ) -> crate::ai::Noise {
-        use crate::ai::{Noise, NoiseType, Position};
+        use crate::ai::{Noise, NoiseType};
 
         let element_id = match noise_type {
             NoiseType::TapTapTap | NoiseType::ZingZing | NoiseType::Aaargh | NoiseType::Heeelp => {
@@ -190,16 +190,16 @@ impl EngineInner {
             .and_then(|id| self.world.entities.get(id))
             .filter(|entity| {
                 entity.element_data().position_map() == origin
-                    && entity.element_data().layer() == origin_layer
+                    && entity.element_data().optional_layer() == origin_layer
             })
             .and_then(|entity| entity.element_data().sector());
 
         Noise {
-            origin: Position {
+            origin: crate::ai::NoiseOrigin {
                 x: origin.x,
                 y: origin.y,
                 sector: origin_sector,
-                level: origin_layer,
+                layer: origin_layer,
             },
             noise_type,
             volume,
@@ -320,7 +320,7 @@ impl EngineInner {
         assets: &LevelAssets,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
-        origin_layer: u16,
+        origin_layer: Option<crate::position_interface::Layer>,
         volume: u16,
         elevation: u16,
         source_entity: Option<EntityId>,

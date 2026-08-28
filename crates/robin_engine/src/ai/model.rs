@@ -1930,6 +1930,48 @@ pub enum NoiseType {
     Off,
 }
 
+/// Spatial origin of a noise. One-shot effects may deliberately have no
+/// world layer (for example a crumpled net launched without a landing
+/// surface), so absence is represented structurally rather than by layer
+/// `0xffff`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct NoiseOrigin {
+    pub x: f32,
+    pub y: f32,
+    pub sector: Option<crate::position_interface::SectorHandle>,
+    pub layer: Option<crate::position_interface::Layer>,
+}
+
+impl NoiseOrigin {
+    pub fn from_position(position: Position) -> Self {
+        Self {
+            x: position.x,
+            y: position.y,
+            sector: position.sector,
+            layer: crate::position_interface::Layer::new(position.level),
+        }
+    }
+
+    pub fn position(self) -> Option<Position> {
+        self.layer.map(|layer| Position {
+            x: self.x,
+            y: self.y,
+            sector: self.sector,
+            level: layer.get(),
+        })
+    }
+}
+
 /// A noise event with origin, type, volume, and elevation.
 #[derive(
     Debug,
@@ -1943,7 +1985,7 @@ pub enum NoiseType {
     bitcode::Decode,
 )]
 pub struct Noise {
-    pub origin: Position,
+    pub origin: NoiseOrigin,
     pub noise_type: NoiseType,
     pub volume: u16,
     pub elevation: u16,

@@ -162,7 +162,7 @@ fn seed_macro_slot(
         });
     }
     state.stop_recording();
-    let titbit = crate::titbit::TitbitId::new(titbit_id).unwrap();
+    let titbit = titbit_id.expect("titbit allocation succeeds");
     state.set_slot_titbit(slot as usize, titbit);
     titbit
 }
@@ -208,7 +208,7 @@ fn seed_invalid_interaction_macro_slot(
         },
     });
     state.stop_recording();
-    let titbit = crate::titbit::TitbitId::new(titbit_id).unwrap();
+    let titbit = titbit_id.expect("titbit allocation succeeds");
     state.set_slot_titbit(slot as usize, titbit);
     titbit
 }
@@ -248,10 +248,7 @@ fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
         .unwrap()
         .portrait
         .quick_icons[slot as usize];
-    assert_eq!(
-        icon.titbit_id,
-        u32::from(engine.feedback.titbit_manager.get_phase(titbit))
-    );
+    assert_eq!(icon.titbit_id, Some(titbit));
     assert_eq!(
         icon.running,
         engine.feedback.titbit_manager.is_running_for_qa(titbit)
@@ -309,7 +306,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
         .unwrap()
         .portrait
         .quick_icons[slot as usize];
-    assert_eq!(empty_icon.titbit_id, u32::MAX);
+    assert_eq!(empty_icon.titbit_id, None);
     assert!(!empty_icon.running);
 
     assert!(
@@ -327,10 +324,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
         .unwrap()
         .portrait
         .quick_icons[slot as usize];
-    assert_eq!(
-        recorded_icon.titbit_id,
-        u32::from(engine.feedback.titbit_manager.get_phase(titbit))
-    );
+    assert_eq!(recorded_icon.titbit_id, Some(titbit));
     assert_eq!(
         recorded_icon.running,
         engine.feedback.titbit_manager.is_running_for_qa(titbit)
@@ -1202,7 +1196,7 @@ fn sherwood_harvest_detaches_production_sector_and_clears_points() {
             y: 34.0,
             layer: 2,
             sector: 7,
-            obstacle: 0xFFFF,
+            obstacle: None,
         });
     engine.mission_domain.campaign.production_sectors = vec![sector];
 

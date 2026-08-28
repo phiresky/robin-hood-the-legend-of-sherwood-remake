@@ -1105,7 +1105,7 @@ impl PassDoorLaunchContext<'_> {
         active_door_pass: ActiveDoorPass,
         sets_passing_door_directly: bool,
     ) {
-        let door_handle = crate::position_interface::DoorHandle(active_door_pass.door_index.0);
+        let door_handle = active_door_pass.door_index;
         let door_direction = active_door_pass.direct;
         let order_id = crate::order::alloc_order_id(self.next_order_id);
         let mut order = crate::order::Order::new(action, destination.x, destination.y, order_id);
@@ -1495,12 +1495,8 @@ impl EngineInner {
         // of a building sector — which the debug build merely asserts against
         // — keeps its existing obstacle, plane and 3D position.
         if left_building && !direct {
-            let new_obstacle = self.find_projection_area_at(
-                assets,
-                target_layer,
-                u16::from(target_sector_num),
-                door_point_out,
-            );
+            let new_obstacle =
+                self.find_projection_area_at(assets, target_layer, target_sector, door_point_out);
             self.set_obstacle_and_material(assets, entity_id, new_obstacle);
         }
 
@@ -1788,10 +1784,10 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         layer: u16,
-        sector_number: u16,
+        sector: crate::position_interface::SectorHandle,
         point: crate::coordinates::MapPoint,
-    ) -> Option<u16> {
-        self.get_projection_area_index(assets, sector_number, layer, point)
+    ) -> Option<crate::sight_obstacle::SightObstacleIndex> {
+        self.get_projection_area_index(assets, sector, layer, point)
     }
 
     /// Apply a projection-area obstacle + its footstep material to an
@@ -1814,11 +1810,11 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        obstacle_index: Option<u16>,
+        obstacle_index: Option<crate::sight_obstacle::SightObstacleIndex>,
     ) {
         let (material, plane) = match obstacle_index {
             Some(idx) => {
-                let obs = self.sight_obstacles(assets).get(idx as usize);
+                let obs = self.sight_obstacles(assets).get(usize::from(idx));
                 let material =
                     obs.map(|o| crate::element::GameMaterial::from_u32(o.material as u32));
                 let plane = obs.map(|o| {
@@ -1844,10 +1840,7 @@ impl EngineInner {
                 entity.element_data_mut().set_material(mat);
             }
             let pi = entity.position_iface_mut();
-            pi.set_obstacle(
-                obstacle_index.and_then(crate::position_interface::ObstacleHandle::new),
-                plane,
-            );
+            pi.set_obstacle(obstacle_index, plane);
             if let Some(mat) = material {
                 pi.set_material(mat);
             }
@@ -2162,7 +2155,7 @@ mod tests {
         else {
             unreachable!()
         };
-        *gate_id = Some(crate::gate::DoorIndex(0));
+        *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *element_flags = flags;
         mutate_element(&mut element);
         let seq_id = engine.orders.sequence_manager.launch_element(element);
@@ -2225,7 +2218,7 @@ mod tests {
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
                 owner,
-                crate::gate::DoorIndex(0),
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct,
                 0,
             );
@@ -2270,7 +2263,7 @@ mod tests {
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             true,
             0,
         );
@@ -2452,7 +2445,7 @@ mod tests {
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             true,
             0,
         );
@@ -2483,7 +2476,7 @@ mod tests {
             assert!(!entity.position_iface().is_anti_collision_on());
             assert_eq!(
                 entity.position_iface().get_door(),
-                crate::position_interface::DoorHandle(0),
+                Some(crate::position_interface::DoorHandle::new(0).expect("valid door index")),
                 "translated door movement must expose Original's sprite door pointer"
             );
             assert_eq!(
@@ -3035,7 +3028,7 @@ mod tests {
         engine.commit_completed_door_pass_position(
             &LevelAssets::new(),
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             true,
         );
 
@@ -3076,8 +3069,10 @@ mod tests {
                 1,
                 crate::sight_obstacle::SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_PROJECTION_AREA,
             );
-            flat_projection.layer = 0;
-            flat_projection.sector = 7;
+            flat_projection.set_projection_area_ref(
+                crate::position_interface::Layer::ZERO,
+                crate::fast_find_grid::SectorIndex::new(7).unwrap(),
+            );
             flat_projection.material = 2;
             flat_projection.obstacle_points = vec![
                 ObstaclePoint {
@@ -3115,8 +3110,15 @@ mod tests {
                 std::sync::Arc::new(vec![flat_projection, installed_rail]);
             engine.world.static_sight_obstacle_active = vec![true, true];
             assert_eq!(
-                engine.get_projection_area_index(&assets, 7, 0, MapPoint::new(20.0, 30.0)),
-                Some(0),
+                engine.get_projection_area_index(
+                    &assets,
+                    crate::position_interface::SectorHandle::new(7)
+                        .unwrap()
+                        .with_arena_index(crate::fast_find_grid::SectorIndex::new(7).unwrap()),
+                    0,
+                    MapPoint::new(20.0, 30.0),
+                ),
+                crate::sight_obstacle::SightObstacleIndex::new(0),
                 "the control projection must genuinely compete at the transition midpoint"
             );
 
@@ -3137,7 +3139,7 @@ mod tests {
                 pi.set_old_map_position(start);
                 pi.set_old_position(pi.get_position());
                 entity.actor_data_mut().unwrap().active_door_pass = Some(ActiveDoorPass {
-                    door_index: crate::gate::DoorIndex(0),
+                    door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
                     steps: VecDeque::new(),
@@ -3219,7 +3221,9 @@ mod tests {
                 let entity = engine.world.entities.get_mut(owner).unwrap();
                 entity.set_posture(initial_posture);
                 entity.actor_data_mut().unwrap().action_state = initial_state;
-                entity.position_iface_mut().set_door(DoorHandle(0), true);
+                entity
+                    .position_iface_mut()
+                    .set_door(DoorHandle::new(0).expect("valid door index"), true);
                 assert!(entity.actor_data().unwrap().active_door_pass.is_none());
             }
 
@@ -3277,7 +3281,7 @@ mod tests {
         engine.commit_completed_door_pass_position(
             &LevelAssets::new(),
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             true,
         );
 
@@ -3701,7 +3705,7 @@ mod tests {
                     &crate::sim_rng::test_context(),
                     &LevelAssets::new(),
                     owner,
-                    crate::gate::DoorIndex(0),
+                    crate::gate::DoorIndex::new(0).expect("valid door index"),
                     true,
                     0,
                 );
@@ -3748,7 +3752,7 @@ mod tests {
                     .set_direction_goal(7);
                 engine.apply_completed_door_pass_lift_entry_state(
                     owner,
-                    crate::gate::DoorIndex(0),
+                    crate::gate::DoorIndex::new(0).expect("valid door index"),
                     true,
                 );
                 assert_eq!(

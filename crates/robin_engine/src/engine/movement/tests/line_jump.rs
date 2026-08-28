@@ -656,10 +656,15 @@ mod suite {
             line_center.x + travel.y * 2.0,
             line_center.y - travel.x * 2.0,
         );
-        let line_index = engine
-            .world
-            .fast_grid_mut()
-            .add_line(GridLine::new_elevation(line_a, line_b, None, Some(0)), 0);
+        let line_index = engine.world.fast_grid_mut().add_line(
+            GridLine::new_elevation(
+                line_a,
+                line_b,
+                None,
+                crate::sight_obstacle::SightObstacleIndex::new(0),
+            ),
+            0,
+        );
 
         let mut ramp = SightObstacle::new_default(1);
         // z = 0.5*x - 340: a real sloped plane whose 3D movement vector
@@ -1211,20 +1216,21 @@ mod suite {
 
     #[test]
     fn elevation_crossing_matches_null_obstacle_side() {
+        let index = |raw| crate::sight_obstacle::SightObstacleIndex::new(raw);
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(None, None, Some(50)),
-            Some(Some(50))
+            EngineInner::crossed_elevation_obstacle(None, None, index(50)),
+            Some(index(50))
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(50), None, Some(50)),
+            EngineInner::crossed_elevation_obstacle(index(50), None, index(50)),
             Some(None)
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(49), Some(49), Some(50)),
-            Some(Some(50))
+            EngineInner::crossed_elevation_obstacle(index(49), index(49), index(50)),
+            Some(index(50))
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(99), Some(49), Some(50)),
+            EngineInner::crossed_elevation_obstacle(index(99), index(49), index(50)),
             None
         );
     }

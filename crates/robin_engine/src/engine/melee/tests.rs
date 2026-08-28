@@ -1606,7 +1606,7 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
             .push(attacker);
         let target_actor = target_entity.actor_data_mut().unwrap();
         target_actor.active_door_pass = Some(crate::element::ActiveDoorPass {
-            door_index: crate::gate::DoorIndex(7),
+            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: true,
             position_direct: true,
             steps: std::collections::VecDeque::new(),
@@ -1615,9 +1615,9 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
             current_reverse: false,
             saved_action_state: None,
         });
-        target_entity
-            .position_iface_mut()
-            .set_door_for_test(crate::position_interface::DoorHandle(7));
+        target_entity.position_iface_mut().set_door_for_test(
+            crate::position_interface::DoorHandle::new(7).expect("valid door index"),
+        );
     }
     assert!(engine.get_entity(target).unwrap().is_in_door_transit());
 
@@ -6099,7 +6099,9 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         0,
@@ -6825,7 +6827,9 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         1,
@@ -6979,7 +6983,9 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         0,
@@ -7349,8 +7355,10 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         0,
         crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
     );
-    obstacle.layer = 0;
-    obstacle.sector = 32;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::ZERO,
+        crate::fast_find_grid::SectorIndex::new(32).unwrap(),
+    );
     obstacle.obstacle_points = vec![
         crate::sight_obstacle::ObstaclePoint {
             x: -1000.0,
@@ -7486,8 +7494,10 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         0,
         crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
     );
-    obstacle.layer = 0;
-    obstacle.sector = 32;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::ZERO,
+        crate::fast_find_grid::SectorIndex::new(32).unwrap(),
+    );
     obstacle.obstacle_points = vec![
         crate::sight_obstacle::ObstaclePoint {
             x: -1000.0,

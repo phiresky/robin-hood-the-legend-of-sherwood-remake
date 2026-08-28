@@ -820,7 +820,7 @@ impl EnemyAi {
         // `my_door_index` semantics — a global door-table index — is
         // shared between merry-man flee, RunAndAlertSoldiers, and the
         // AlertSoldiers indoor formation flow.
-        self.base.my_door_index = Some(door.door_index.0);
+        self.base.my_door_index = Some(door.door_index);
 
         // SetState + GoTo + LaunchTimer first.  The `couldnt_reachpoint`
         // check is deliberately *after* the GoTo so that any prior-tick
@@ -6160,7 +6160,7 @@ mod tests {
 
         let mut global = AiGlobalState::default();
         global.door_seek_infos.push(DoorSeekInfo {
-            door_index: DoorIndex(0),
+            door_index: DoorIndex::new(0).expect("valid door index"),
             door_type,
             point_out,
             position_in,

@@ -2294,21 +2294,18 @@ impl EngineInner {
         let goal_y = goal.y;
         let (goal_obstacle, goal_z) = match victim_sector {
             Some(sector) => {
-                match self.get_projection_area_index(assets, sector.get(), victim_layer, goal) {
+                match self.get_projection_area_index(assets, sector, victim_layer, goal) {
                     Some(obstacle_index) => {
                         let z = self
                             .sight_obstacles(assets)
-                            .get(obstacle_index as usize)
+                            .get(usize::from(obstacle_index))
                             .unwrap_or_else(|| {
                                 panic!(
                                     "falling-hit goal references missing obstacle {obstacle_index}"
                                 )
                             })
                             .compute_top_z_from_projection(goal_x, goal_y);
-                        (
-                            crate::position_interface::ObstacleHandle::new(obstacle_index),
-                            z,
-                        )
+                        (Some(obstacle_index), z)
                     }
                     None => (None, 0.0),
                 }

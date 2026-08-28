@@ -252,7 +252,7 @@ struct ConvertedPc {
     quick_action_special_counts: Vec<u16>,
     quick_action_buttons: Vec<u16>,
     quick_action_interactors: Vec<Option<EntityId>>,
-    titbits: Vec<u32>,
+    titbits: Vec<Option<crate::titbit::TitbitId>>,
     portrait: PcPortraitState,
     carried: Option<EntityId>,
     carried_posture: u32,
@@ -710,7 +710,7 @@ fn convert_pc(
         quick_action_special_counts.push(action.metadata.number_of_special_quick_actions);
         quick_action_buttons.push(action.metadata.button);
         quick_action_interactors.push(interactor);
-        titbits.push(action.metadata.titbit);
+        titbits.push(crate::titbit::TitbitId::new(action.metadata.titbit));
     }
     let carried = checked_ref(
         entities.resolve_element(saved.post_human.carried)?,
@@ -788,7 +788,7 @@ fn convert_pc(
                 .portrait
                 .quick_icons
                 .map(|icon| PcPortraitQuickIconState {
-                    titbit_id: icon.titbit_id,
+                    titbit_id: crate::titbit::TitbitId::new(icon.titbit_id),
                     running: icon.running,
                 }),
         },

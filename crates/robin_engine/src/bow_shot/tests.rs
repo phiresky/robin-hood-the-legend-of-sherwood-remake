@@ -3205,7 +3205,7 @@ fn trajectory_into_material_test_wall(
     // registered the way level loading registers real obstacles.
     grid.add_obstacle_index(
         crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
-        obstacles[0].layer,
+        obstacles[0].projection_area_ref().map(|area| area.layer),
         &obstacles[0].box_ground,
     );
     let check = TrajectoryObstacleCheck {
@@ -3355,7 +3355,7 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     // be registered there the way level loading registers real obstacles.
     grid.add_obstacle_index(
         crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
-        obstacles[0].layer,
+        obstacles[0].projection_area_ref().map(|area| area.layer),
         &obstacles[0].box_ground,
     );
     let check = TrajectoryObstacleCheck {

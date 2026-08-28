@@ -1795,7 +1795,7 @@ impl EngineInner {
             // Position(pEnemy), which is the AI planning position (including
             // committed door-side and carrier substitution), not the raw
             // produced-noise origin used by GetHearVolume above.
-            heard_noise.origin = source_position;
+            heard_noise.origin = crate::ai::NoiseOrigin::from_position(source_position);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let building_sector = self
                 .world
@@ -2751,7 +2751,7 @@ impl EngineInner {
                             panic!(
                                 "Enemy visibility target {} requires missing obstacle {}",
                                 target_id.index(),
-                                u16::from(handle)
+                                handle
                             )
                         })
                     });
@@ -4290,7 +4290,7 @@ impl EngineInner {
                 panic!(
                     "Live detection target {} requires missing sight obstacle {}",
                     target_id.index(),
-                    u16::from(handle)
+                    handle
                 )
             })
         });
@@ -5008,7 +5008,7 @@ impl EngineInner {
                                 "{:?} visibility target {} requires missing obstacle {}",
                                 kind,
                                 target_id.index(),
-                                u16::from(handle)
+                                handle
                             )
                         })
                 });

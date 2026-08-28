@@ -85,7 +85,9 @@ impl EngineInner {
                 point_in: door.point_in,
                 layer_out: door.layer_out,
                 layer_in: door.layer_in,
-                sector_out: u16::from(door.sector_out),
+                sector_out: door.position_out.sector.unwrap_or_else(|| {
+                    panic!("reinforcement door {door_index} has no outside sector identity")
+                }),
             }
         };
 
@@ -177,19 +179,13 @@ impl EngineInner {
         // as the spawn site — i.e. the new PC appears *outside* the map
         // and then walks in via the `PASS_DOOR` element below.
         //
-        // `sector_out == 0xFFFF` is the null-sector sentinel (no
-        // projection area).
-        let obstacle_index = if door_snap.sector_out == 0xFFFF {
-            None
-        } else {
-            self.get_projection_area_index(
-                assets,
-                door_snap.sector_out,
-                door_snap.layer_out,
-                door_snap.point_out,
-            )
-        };
-        let spawn_sector = crate::position_interface::SectorHandle::new(door_snap.sector_out);
+        let obstacle_index = self.get_projection_area_index(
+            assets,
+            door_snap.sector_out,
+            door_snap.layer_out,
+            door_snap.point_out,
+        );
+        let spawn_sector = Some(door_snap.sector_out);
 
         let mut element = ElementData {
             kind: ElementKind::ActorPc,
@@ -199,7 +195,7 @@ impl EngineInner {
         element.set_position_map(door_snap.point_out);
         element.set_layer(door_snap.layer_out);
         element.set_sector(spawn_sector);
-        if let Some(obs) = obstacle_index.and_then(crate::position_interface::ObstacleHandle::new) {
+        if let Some(obs) = obstacle_index {
             // `set_obstacle` always pulls the top-plane from the
             // obstacle whenever the obstacle is non-null — pre-resolve
             // the plane here.
@@ -400,7 +396,7 @@ struct DoorSnapshot {
     point_in: MapPoint,
     layer_out: u16,
     layer_in: u16,
-    sector_out: u16,
+    sector_out: crate::position_interface::SectorHandle,
 }
 
 #[cfg(test)]
@@ -424,7 +420,7 @@ mod tests {
                     sector: None,
                     level: 0,
                 },
-                door_index: crate::gate::DoorIndex(0),
+                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 point_out: MapPoint::new(0.0, 0.0),
                 point_mid: MapPoint::new(0.0, 0.0),
                 layer_out: 0,

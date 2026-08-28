@@ -1363,14 +1363,13 @@ impl EngineInner {
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
                 let live_door = s.element.sprite.position_iface.get_door();
-                let door_pass = (selected_actor_is_passing_door(
+                let door_pass = selected_actor_is_passing_door(
                     &self.orders.sequence_manager,
                     EntityId::Soldier(other_id),
-                ) && !live_door.is_null())
-                .then_some((
-                    crate::gate::DoorIndex(live_door.0),
-                    s.actor.passing_door_directly,
-                ));
+                )
+                .then_some(live_door)
+                .flatten()
+                .map(|door| (door, s.actor.passing_door_directly));
                 let input = crate::ai::ForecastInput {
                     position_map_x: pos_now.x,
                     position_map_y: pos_now.y,

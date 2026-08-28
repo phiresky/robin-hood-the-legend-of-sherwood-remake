@@ -685,7 +685,7 @@ struct ConvertedLocalAiCommon {
     leave_house_number: u16,
     last_hint_actuality: u32,
     last_hint_subject: Question,
-    my_door_index: Option<u32>,
+    my_door_index: Option<crate::gate::DoorIndex>,
     looking_for_help_because_enemy_seen: bool,
     forgotten_objects: Vec<u32>,
     object_of_desire: u32,
@@ -2830,7 +2830,7 @@ fn legacy_door_index(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<u32>, LegacyElementAdoptError> {
+) -> Result<Option<crate::gate::DoorIndex>, LegacyElementAdoptError> {
     value
         .map(|index| {
             let slot =
@@ -2840,14 +2840,16 @@ fn legacy_door_index(
                     index,
                     count: topology.doors.len(),
                 })?;
-            topology.doors.get(slot).map(|door| door.0).ok_or(
-                LegacyElementAdoptError::MissingGate {
+            topology
+                .doors
+                .get(slot)
+                .copied()
+                .ok_or(LegacyElementAdoptError::MissingGate {
                     creation_order,
                     field,
                     index,
                     count: topology.doors.len(),
-                },
-            )
+                })
         })
         .transpose()
 }
@@ -3727,12 +3729,12 @@ fn convert_stimulus(
             1,
             "Noise",
             StimulusInfo::Noise(Noise {
-                origin: stimulus_position(
+                origin: crate::ai::NoiseOrigin::from_position(stimulus_position(
                     *origin,
                     topology,
                     creation_order,
                     "local_ai.stimulus_queue.noise.origin.sector",
-                )?,
+                )?),
                 noise_type: noise_type(
                     *saved_noise_type,
                     creation_order,
@@ -4025,7 +4027,7 @@ mod tests {
 
     #[test]
     fn actor_seek_sector_preserves_a_saved_door_sector_identity() {
-        let door = crate::position_interface::DoorHandle(9);
+        let door = crate::position_interface::DoorHandle::new(9).expect("valid door index");
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(3), None],
             sector_indices: vec![None; 2],

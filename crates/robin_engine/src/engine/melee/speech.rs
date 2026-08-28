@@ -233,13 +233,13 @@ impl EngineInner {
                     e.element_data().position().z.max(0.0) as u16,
                 )
             })
-            .unwrap_or((0, 0));
+            .unwrap_or_else(|| panic!("speech noise owner {entity_id:?} disappeared"));
         self.broadcast_noise_synchronously(
             sim,
             assets,
             crate::ai::NoiseType::Aaargh,
             position,
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_AAARGH as u16,
             elevation,
             Some(entity_id),

@@ -5707,11 +5707,13 @@ impl EngineInner {
                         && spawn_elevation_probe.is_none()
                     {
                         let new_obstacle =
-                            self.get_projection_area_index(assets, sector.get(), layer, pt);
+                            self.get_projection_area_index(assets, sector, layer, pt);
                         let new_material = new_obstacle.and_then(|oi| {
-                            self.sight_obstacles(assets).get(oi as usize).map(|obs| {
-                                crate::element::GameMaterial::from_u32(obs.material as u32)
-                            })
+                            self.sight_obstacles(assets)
+                                .get(usize::from(oi))
+                                .map(|obs| {
+                                    crate::element::GameMaterial::from_u32(obs.material as u32)
+                                })
                         });
                         let new_obstacle_handle =
                             new_obstacle.and_then(crate::position_interface::ObstacleHandle::new);
@@ -5988,7 +5990,7 @@ impl EngineInner {
                         assets,
                         noise_type,
                         crate::coordinates::MapPoint::new(x, y),
-                        layer,
+                        crate::position_interface::Layer::new(layer),
                         volume,
                         source.z as u16,
                         None,
@@ -6579,8 +6581,11 @@ mod script_context_tests {
                 [2000.0, 0.0, 10.0],
                 [2000.0, 3000.0, 10.0],
             ];
-            replacement.layer = 0;
-            replacement.sector = 0;
+            replacement.set_projection_area_ref(
+                crate::position_interface::Layer::ZERO,
+                crate::fast_find_grid::SectorIndex::new(sector_index)
+                    .expect("test arena sector index is valid"),
+            );
             replacement.material = crate::element::GameMaterial::Wood as u8;
             replacement.rebuild_geometry();
             let assets = LevelAssets {

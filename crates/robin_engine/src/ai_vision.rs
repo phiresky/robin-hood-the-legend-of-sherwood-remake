@@ -124,7 +124,7 @@ pub(crate) fn debug_view_radius_cache_event(
 
     static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let surface = surface.map_or(-1, |handle| i32::from(u16::from(handle)));
+    let surface = surface.map_or(-1, |handle| i64::from(u32::from(handle)));
     let stored_viewer = stored.map_or(-1, |entry| i64::from(entry.viewer.index()));
     let stored_frame = stored.map_or(-1, |entry| i64::from(entry.frame));
     let stored_radius_bits = stored.map_or(-1, |entry| i64::from(entry.radius.to_bits()));
@@ -166,8 +166,10 @@ pub(crate) fn debug_view_radius_target_event(
     }
 
     let optional_bool = |value: Option<bool>| value.map_or(-1, |value| if value { 1 } else { 0 });
-    let target_obstacle = target_obstacle.map_or(-1, |handle| i32::from(u16::from(handle)));
-    let obstacle_layer = target_obstacle_data.map_or(-1, |obstacle| i32::from(obstacle.layer));
+    let target_obstacle = target_obstacle.map_or(-1, |handle| i64::from(u32::from(handle)));
+    let obstacle_layer = target_obstacle_data
+        .and_then(SightObstacle::projection_area_ref)
+        .map_or(-1, |area| i32::from(area.layer.get()));
     eprintln!(
         "VRTARGET {{\"engine\":\"rust\",\"stage\":\"{stage}\",\"frame\":{frame},\"viewer_slot\":{},\"kind\":{detectable_kind},\"list_index\":{list_index},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision},\"gate_open\":{gate_open},\"target_pre_filter_passed\":{},\"visibility_blocked\":{},\"target_obstacle\":{target_obstacle},\"obstacle_layer\":{obstacle_layer}}}",
         viewer.index(),
@@ -1124,7 +1126,7 @@ fn debug_night_fog_shadow_sector_candidates(
         };
         let surface = context
             .surface
-            .map_or(-1, |handle| i32::from(u16::from(handle)));
+            .map_or(-1, |handle| i64::from(u32::from(handle)));
 
         for &sector_idx in &layer_data.sector_indices {
             let Some(sector) = level.sectors.get(sector_idx as usize) else {
@@ -1281,7 +1283,9 @@ pub fn compute_view_radius(
 
     // Shadow-sector lookup is scoped to the obstacle's layer when
     // present, else layer 0.
-    let shadow_layer: u16 = target_obstacle.map(|o| o.layer).unwrap_or(0);
+    let shadow_layer = target_obstacle
+        .and_then(SightObstacle::projection_area_ref)
+        .map_or(0, |area| area.layer.get());
 
     let mut factor_result: f32 = 0.5;
 
@@ -1483,7 +1487,10 @@ pub fn los_clear_spatial(
         if !obstacles.is_active(idx) || !obs.is_opaque() {
             continue;
         }
-        if obs.layer != u16::MAX && obs.layer != layer {
+        if obs
+            .projection_area_ref()
+            .is_some_and(|area| area.layer.get() != layer)
+        {
             continue;
         }
         if obs.is_blocking_sight(viewer_ground, target_ground) {
@@ -1497,7 +1504,10 @@ pub fn los_clear_spatial(
         if !obstacles.is_active(idx) || !obs.is_opaque() {
             continue;
         }
-        if obs.layer != u16::MAX && obs.layer != layer {
+        if obs
+            .projection_area_ref()
+            .is_some_and(|area| area.layer.get() != layer)
+        {
             continue;
         }
         if obs.is_blocking_sight(
@@ -2179,7 +2189,11 @@ mod tests {
         grid.allocate_layers(4);
         for (idx, obs) in obstacles.iter().enumerate() {
             let idx = crate::sight_obstacle::SightObstacleIndex::new(idx as u32).unwrap();
-            grid.add_obstacle_index(idx, obs.layer, &obs.box_ground);
+            grid.add_obstacle_index(
+                idx,
+                obs.projection_area_ref().map(|area| area.layer),
+                &obs.box_ground,
+            );
         }
         Box::leak(Box::new(grid))
     }

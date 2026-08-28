@@ -61,6 +61,28 @@ impl std::fmt::Display for SightObstacleIndex {
     }
 }
 
+/// Exact motion-sector attachment of a projection-area obstacle.
+///
+/// Original proto data stores `muwSector` as an index into
+/// `RHFastFindGrid::marraySectors`, not as a public sector number. Keeping
+/// layer and exact sector atomic prevents half-null topology states.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ProjectionAreaRef {
+    pub layer: crate::position_interface::Layer,
+    pub sector: crate::fast_find_grid::SectorIndex,
+}
+
 // ─── Two-part obstacle list (static + dynamic) ────────────────────
 
 /// Borrowed view over the level's static sight obstacles plus any
@@ -498,11 +520,8 @@ pub struct SightObstacle {
     /// Whether the obstacle sits on the ground (all z_bottom == 0).
     pub on_ground: bool,
 
-    /// Layer index (`u16::MAX` if not a projection area).
-    pub layer: u16,
-
-    /// Sector index (`u16::MAX` if not a projection area).
-    pub sector: u16,
+    /// Exact topology attachment, present only for projection areas.
+    pub projection_area: Option<ProjectionAreaRef>,
 
     /// Vertical bounce factor for projectile reflection.
     pub bounce_vertical: f32,
@@ -543,6 +562,20 @@ pub struct SightObstacle {
 }
 
 impl SightObstacle {
+    /// Attach this obstacle to an exact projection-area sector.
+    pub fn set_projection_area_ref(
+        &mut self,
+        layer: crate::position_interface::Layer,
+        sector: crate::fast_find_grid::SectorIndex,
+    ) {
+        self.projection_area = Some(ProjectionAreaRef { layer, sector });
+    }
+
+    #[inline]
+    pub fn projection_area_ref(&self) -> Option<ProjectionAreaRef> {
+        self.projection_area
+    }
+
     /// Create a new obstacle with the given type flags and auto-assigned ID.
     pub fn new(id: u32, obstacle_type: u32) -> Self {
         Self {
@@ -558,8 +591,7 @@ impl SightObstacle {
             top_plane_points: [[0.0; 3]; 3],
             bottom_plane_points: [[0.0; 3]; 3],
             on_ground: true,
-            layer: u16::MAX,
-            sector: u16::MAX,
+            projection_area: None,
             bounce_vertical: 1.0,
             bounce_horizontal: 1.0,
             material: 0,
@@ -1357,7 +1389,7 @@ pub struct ImpactResult3D {
     /// World-space impact point.
     pub impact: crate::coordinates::WorldPoint3D,
     /// Index of the obstacle struck, or `None` for a ground (z = 0) impact.
-    pub obstacle_index: Option<u32>,
+    pub obstacle_index: Option<SightObstacleIndex>,
 }
 
 /// Full 3D obstacle raycast.
@@ -1843,7 +1875,7 @@ pub fn is_reachable_impact_3d(
     // first-sorted group holds a solid wall keeps its cleared
     // layer/sector membership even though a nearer projection-area roof
     // in a later group would have accepted it.
-    let mut impacts: Vec<(WorldPoint3D, Option<u32>)> = Vec::new();
+    let mut impacts: Vec<(WorldPoint3D, Option<SightObstacleIndex>)> = Vec::new();
     for group in &groups {
         for &idx in &group.members {
             let obs = obstacles
@@ -1852,7 +1884,9 @@ pub fn is_reachable_impact_3d(
             if let Some(impact) = obs.blocking_ray_3d_impact(origin_arr, dest_arr) {
                 impacts.push((
                     impact.point,
-                    Some(u32::try_from(idx).expect("obstacle index exceeds u32")),
+                    SightObstacleIndex::new(
+                        u32::try_from(idx).expect("obstacle index exceeds u32"),
+                    ),
                 ));
             }
         }
@@ -1879,7 +1913,7 @@ pub fn is_reachable_impact_3d(
     }
 
     // ── Nearest impact by 3D squared distance ──
-    let mut best: Option<(f32, WorldPoint3D, Option<u32>)> = None;
+    let mut best: Option<(f32, WorldPoint3D, Option<SightObstacleIndex>)> = None;
     for &(point, obstacle_index) in &impacts {
         let ddx = point.x - origin.x;
         let ddy = point.y - origin.y;
@@ -1995,7 +2029,7 @@ pub fn is_reachable_impact_fall_3d(
     }
 
     let mut max_top_z: f32 = 0.0;
-    let mut hit_idx: Option<u32> = None;
+    let mut hit_idx: Option<SightObstacleIndex> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
         if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
@@ -2006,7 +2040,7 @@ pub fn is_reachable_impact_fall_3d(
         let top = obs.compute_top_z(origin.x, origin.y);
         if top > max_top_z && top >= destination_altitude && top <= origin.z {
             max_top_z = top;
-            hit_idx = Some(idx as u32);
+            hit_idx = SightObstacleIndex::new(idx as u32);
         }
     }
 
@@ -2080,7 +2114,7 @@ pub fn is_reachable_impact_up_3d(
     }
 
     let mut min_bot_z: f32 = f32::INFINITY;
-    let mut hit_idx: Option<u32> = None;
+    let mut hit_idx: Option<SightObstacleIndex> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
         if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
@@ -2091,7 +2125,7 @@ pub fn is_reachable_impact_up_3d(
         let bot = obs.compute_bottom_z(origin.x, origin.y);
         if bot < min_bot_z && bot <= destination_altitude && bot >= origin.z {
             min_bot_z = bot;
-            hit_idx = Some(idx as u32);
+            hit_idx = SightObstacleIndex::new(idx as u32);
         }
     }
 
@@ -2597,7 +2631,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         assert!((result.impact.x - 0.0).abs() < 1e-3);
         assert!((result.impact.y - 5.0).abs() < 1e-3);
         assert!((result.impact.z - 1.0).abs() < 1e-3);
@@ -2646,7 +2680,7 @@ mod tests {
         )
         .expect("descending projectile should strike the obstacle top");
 
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         assert_eq!(result.impact.z.to_bits(), 0x42f3_c100);
         let parametric_z = origin.z
             + ((result.impact.x - origin.x) / (destination.x - origin.x))
@@ -2757,7 +2791,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         // Top of obstacle is z=5.
         assert!((result.impact.z - 5.0).abs() < 1e-3);
     }
@@ -2816,7 +2850,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         assert!((result.impact.z - 3.0).abs() < 1e-3);
     }
 
@@ -2878,7 +2912,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         assert!((result.impact.x - (2.0 + 6.0 * (3.0 / 17.0))).abs() < 1e-6);
         assert_eq!(result.impact.y, 5.0);
         assert_eq!(result.impact.z, 3.0);
@@ -3047,7 +3081,7 @@ mod tests {
             None,
         )
         .expect("wall group must produce an impact");
-        assert_eq!(result.obstacle_index, Some(1));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(1));
         assert!((result.impact.y - 70.0).abs() < 1e-3);
 
         // Sanity: with the wall gone the roof is struck at y=80.
@@ -3064,7 +3098,7 @@ mod tests {
             None,
         )
         .expect("roof must produce an impact");
-        assert_eq!(result.obstacle_index, Some(1));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(1));
         assert!((result.impact.y - 80.0).abs() < 1e-3);
     }
 
@@ -3095,7 +3129,7 @@ mod tests {
             None,
         )
         .expect("wall impact expected");
-        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.obstacle_index, SightObstacleIndex::new(0));
         assert!((result.impact.y - 70.0).abs() < 1e-3);
 
         // Ground nearer than the wall: dip early so the crossing sits at

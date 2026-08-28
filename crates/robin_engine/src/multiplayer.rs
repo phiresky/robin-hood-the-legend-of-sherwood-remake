@@ -464,7 +464,7 @@ mod tests {
             source_sector_index: crate::fast_find_grid::SectorIndex::new(57),
             source_layer: 11,
             outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                door_index: crate::gate::DoorIndex(7),
+                door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                 direct: false,
             }]),
         };

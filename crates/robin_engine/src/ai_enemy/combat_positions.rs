@@ -323,8 +323,7 @@ fn phalanx_member_detects_180(
         obstacles.get(usize::from(handle)).unwrap_or_else(|| {
             panic!(
                 "phalanx detection target {} requires missing sight obstacle {}",
-                target.handle,
-                u16::from(handle)
+                target.handle, handle
             )
         })
     });

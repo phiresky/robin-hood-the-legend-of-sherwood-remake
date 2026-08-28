@@ -325,7 +325,7 @@ impl BoundScriptEffects {
                     door.sector_out == goal_sector || door.sector_in == goal_sector;
                 let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
                 (matches_endpoint || matches_click_sector)
-                    .then_some(crate::gate::DoorIndex(idx as u32))
+                    .then_some(crate::gate::DoorIndex::new(idx as u32).expect("valid door index"))
             })
     }
 
@@ -645,7 +645,7 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
 
     assert_eq!(
         host.door_index_for_goal_sector(99, (20.0, 20.0)),
-        Some(crate::gate::DoorIndex(0))
+        Some(crate::gate::DoorIndex::new(0).expect("valid door index"))
     );
 }
 
@@ -826,7 +826,10 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
         panic!("recorded PassDoor must be movement data")
     };
     assert_eq!(*destination, MapPoint::new(859.0, 897.0));
-    assert_eq!(*gate_id, Some(crate::gate::DoorIndex(0)));
+    assert_eq!(
+        *gate_id,
+        Some(crate::gate::DoorIndex::new(0).expect("valid door index"))
+    );
     assert_eq!(
         *direction, 1,
         "SetGate copies direct RHGate::mbDirect into the selected movement element"
@@ -1072,8 +1075,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
             crate::engine::current_door_for_route_source(
                 host.entities.get_legacy_slot(0).unwrap().1
             )
-            .0
-            .is_null()
+            .is_none()
         );
         assert_eq!(
             host.entities
@@ -1162,7 +1164,7 @@ fn recorded_gate_path_missing_door_is_an_invariant_failure() {
     super::script_gate_path_door(
         &[],
         crate::gate::GatePathStep {
-            door_index: crate::gate::DoorIndex(7),
+            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: true,
         },
     );
@@ -1974,7 +1976,7 @@ fn register_production_sector() {
         (saved.x, saved.y, saved.layer, saved.sector),
         (12.0, 34.0, 2, 7)
     );
-    assert_eq!(saved.obstacle, 0xFFFF);
+    assert_eq!(saved.obstacle, None);
     assert!(host.engine_commands().is_empty());
     assert!(host.sound_commands().is_empty());
     assert!(host.simulation_barriers().is_empty());

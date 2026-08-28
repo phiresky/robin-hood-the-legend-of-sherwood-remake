@@ -28,7 +28,10 @@ pub const TIME_BLINK_OFF_RAW: u32 = TIME_BLINK_OFF;
 pub const DISTANCE_DOT: f32 = 10.0;
 pub const GHOST_BLINK: u32 = 10;
 pub const NUMBER_OF_QA_MEMORY: usize = 3;
-pub const INVALID_ID: u32 = 0xFFFF_FFFF;
+/// No caller-forced titbit identity. Kept as a named value so the many
+/// Original-shaped call sites remain readable without carrying a raw
+/// `0xFFFF_FFFF` sentinel through runtime state.
+pub const INVALID_ID: Option<TitbitId> = None;
 
 // ---------------------------------------------------------------------------
 // TitbitId — nominal newtype for titbit identifiers
@@ -359,7 +362,6 @@ pub enum WorkIcon {
 
 /// Opaque handle referencing a game element (entity index).
 ///
-/// [`INVALID`](ElementHandle::INVALID) is the null sentinel.
 #[derive(
     Debug,
     Clone,
@@ -376,12 +378,7 @@ pub enum WorkIcon {
 pub struct ElementHandle(pub u32);
 
 impl ElementHandle {
-    pub const INVALID: Self = Self(INVALID_ID);
-
-    #[inline]
-    pub fn is_valid(self) -> bool {
-        self != Self::INVALID
-    }
+    pub const INVALID: Option<Self> = None;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,16 +404,16 @@ pub struct TitbitInfo {
     pub frame_count: u16,
 
     /// Entity this titbit is attached to / draws info from.
-    pub element_supplier: ElementHandle,
+    pub element_supplier: Option<ElementHandle>,
     /// PC actor that manages this titbit (quick-action chain).
-    pub element_manager: ElementHandle,
+    pub element_manager: Option<ElementHandle>,
 
     pub layer: u16,
     pub position: WorldPoint3D,
     pub display_order: f32,
 
     pub blinking: bool,
-    pub id: u32,
+    pub id: TitbitId,
 }
 
 impl PartialEq for TitbitInfo {
@@ -545,7 +542,7 @@ impl TitbitManager {
 
     // ── Add / Remove ──
 
-    /// Add a titbit.  Returns its ID, or [`INVALID_ID`] if filtered out.
+    /// Add a titbit. Returns `None` when the request is filtered out.
     ///
     /// `supplier_display_order` and `supplier_layer` should be provided
     /// when the element supplier is known.
@@ -555,15 +552,17 @@ impl TitbitManager {
         position: WorldPoint3D,
         layer: u16,
         kind: TitbitKind,
-        element_supplier: ElementHandle,
+        element_supplier: impl Into<Option<ElementHandle>>,
         phase: u16,
-        element_manager: ElementHandle,
+        element_manager: impl Into<Option<ElementHandle>>,
         run: bool,
-        forced_id: u32,
+        forced_id: Option<TitbitId>,
         display_titbits_enabled: bool,
         supplier_display_order: Option<f32>,
         supplier_layer: Option<u16>,
-    ) -> u32 {
+    ) -> Option<TitbitId> {
+        let element_supplier = element_supplier.into();
+        let element_manager = element_manager.into();
         // Filter particle effects (Smoke / Dust / Water) when the user
         // has disabled them.
         if !display_titbits_enabled
@@ -572,19 +571,23 @@ impl TitbitManager {
                 TitbitKind::Smoke | TitbitKind::Dust | TitbitKind::Water
             )
         {
-            return INVALID_ID;
+            return None;
         }
 
         // Counter with phase 0 is a no-op.
         if kind == TitbitKind::Counter && phase == 0 {
-            return INVALID_ID;
+            return None;
         }
 
-        let id = if forced_id != INVALID_ID {
+        let id = if let Some(forced_id) = forced_id {
             forced_id
         } else {
-            let id = self.current_id;
-            self.current_id += 1;
+            let id = TitbitId::new(self.current_id)
+                .expect("titbit identifier counter reached the reserved value");
+            self.current_id = self
+                .current_id
+                .checked_add(1)
+                .expect("titbit identifier counter overflowed");
             id
         };
 
@@ -613,7 +616,7 @@ impl TitbitManager {
         // the same supplier before adding a new one.  Without this,
         // re-KO'ing the same actor before the prior stars expire could
         // leave duplicates.
-        if kind == TitbitKind::UnconsciousStar && element_supplier.is_valid() {
+        if kind == TitbitKind::UnconsciousStar && element_supplier.is_some() {
             self.titbits.retain(|t| {
                 !(t.kind == TitbitKind::UnconsciousStar && t.element_supplier == element_supplier)
             });
@@ -645,20 +648,20 @@ impl TitbitManager {
             self.titbits.push(run_info);
         }
 
-        id
+        Some(id)
     }
 
     /// Remove all titbits of `kind` attached to `element`.
     pub fn remove_titbit(&mut self, kind: TitbitKind, element: ElementHandle) {
         self.titbits
-            .retain(|t| !(t.kind == kind && t.element_supplier == element));
+            .retain(|t| !(t.kind == kind && t.element_supplier == Some(element)));
     }
 
     /// Check if a titbit of `kind` exists for `element`.
     pub fn titbit_exists(&self, kind: TitbitKind, element: ElementHandle) -> bool {
         self.titbits
             .iter()
-            .any(|t| t.kind == kind && t.element_supplier == element)
+            .any(|t| t.kind == kind && t.element_supplier == Some(element))
     }
 
     /// Remove every titbit with `titbit_id`.  Low-level primitive used
@@ -666,9 +669,8 @@ impl TitbitManager {
     /// after the id has been resolved from the PC's QA memory slot.
     /// Returns `true` iff at least one titbit was removed.
     pub fn remove_quick_action_titbits_by_id(&mut self, titbit_id: TitbitId) -> bool {
-        let raw = titbit_id.get();
         let before = self.titbits.len();
-        self.titbits.retain(|t| t.id != raw);
+        self.titbits.retain(|t| t.id != titbit_id);
         self.titbits.len() < before
     }
 
@@ -693,19 +695,19 @@ impl TitbitManager {
             return false;
         }
         let before = self.titbits.len();
-        self.titbits
-            .retain(|t| !(t.kind == TitbitKind::UnconsciousStar && t.element_supplier == element));
+        self.titbits.retain(|t| {
+            !(t.kind == TitbitKind::UnconsciousStar && t.element_supplier == Some(element))
+        });
         self.titbits.len() < before
     }
 
     /// Add a "plus quick" duplicate of an existing titbit (marks it running).
     pub fn set_run(&mut self, titbit_id: TitbitId, phase: u16) {
-        let raw = titbit_id.get();
         // Collect clones first to avoid borrowing issues.
         let to_add: Vec<_> = self
             .titbits
             .iter()
-            .filter(|t| t.id == raw && t.phase == phase)
+            .filter(|t| t.id == titbit_id && t.phase == phase)
             .map(|t| {
                 let mut dup = t.clone();
                 dup.phase = QuickAction::PlusQuick as u16;
@@ -717,34 +719,30 @@ impl TitbitManager {
     }
 
     /// Get the phase of the first titbit matching `titbit_id`.
-    /// Returns `0xFFFF` if not found.
-    pub fn get_phase(&self, titbit_id: TitbitId) -> u16 {
-        let raw = titbit_id.get();
+    /// Returns `None` if the titbit no longer exists.
+    pub fn get_phase(&self, titbit_id: TitbitId) -> Option<u16> {
         self.titbits
             .iter()
-            .find(|t| t.id == raw)
+            .find(|t| t.id == titbit_id)
             .map(|t| t.phase)
-            .unwrap_or(0xFFFF)
     }
 
     /// Check if a quick-action-run titbit exists for the given ID.
     pub fn is_running_for_qa(&self, titbit_id: TitbitId) -> bool {
-        let raw = titbit_id.get();
         self.titbits
             .iter()
-            .any(|t| t.id == raw && t.kind == TitbitKind::QuickActionRun)
+            .any(|t| t.id == titbit_id && t.kind == TitbitKind::QuickActionRun)
     }
 
     /// Upgrade a queued walk titbit to the run presentation used by a
     /// Shift-double-click. Missing IDs are invalid queue state.
     pub fn promote_quick_action_to_run(&mut self, titbit_id: TitbitId) {
-        let raw = titbit_id.get();
         let Some(base_index) = self
             .titbits
             .iter()
-            .position(|titbit| titbit.id == raw && titbit.kind == TitbitKind::QuickAction)
+            .position(|titbit| titbit.id == titbit_id && titbit.kind == TitbitKind::QuickAction)
         else {
-            panic!("queued quick-action titbit {raw} disappeared before run promotion");
+            panic!("queued quick-action titbit {titbit_id} disappeared before run promotion");
         };
         self.titbits[base_index].phase = QuickAction::Run as u16;
         if !self.is_running_for_qa(titbit_id) {
@@ -759,9 +757,8 @@ impl TitbitManager {
 
     /// Set blinking state for all titbits matching `titbit_id`.
     pub fn set_blinking(&mut self, titbit_id: TitbitId, blinking: bool) {
-        let raw = titbit_id.get();
         for t in &mut self.titbits {
-            if t.id == raw {
+            if t.id == titbit_id {
                 t.blinking = blinking;
             }
         }
@@ -816,7 +813,7 @@ impl TitbitManager {
                 TitbitKind::QuickAction | TitbitKind::QuickActionRun => (-0.01, false),
                 _ => continue,
             };
-            match get_display_order(t.element_supplier) {
+            match t.element_supplier.and_then(&get_display_order) {
                 Some(order) => t.display_order = order + offset,
                 None if require_supplier => {
                     tracing::warn!(
@@ -877,7 +874,10 @@ impl TitbitManager {
             }
 
             TitbitKind::WeakStunned => {
-                if !query.is_weak_or_stunned(t.element_supplier) {
+                if !t
+                    .element_supplier
+                    .is_some_and(|supplier| query.is_weak_or_stunned(supplier))
+                {
                     UpdateAction::Remove
                 } else {
                     // Advance sprite frame for star rotation.
@@ -896,8 +896,8 @@ impl TitbitManager {
             }
 
             TitbitKind::UnconsciousStar => {
-                if t.element_supplier.is_valid() {
-                    if !query.is_unconscious_and_alive(t.element_supplier) {
+                if let Some(supplier) = t.element_supplier {
+                    if !query.is_unconscious_and_alive(supplier) {
                         UpdateAction::Remove
                     } else {
                         // Advance sprite frame for star rotation.
@@ -985,7 +985,10 @@ impl TitbitManager {
             }
 
             TitbitKind::Lock => {
-                if !query.is_follow_element(t.element_supplier) {
+                if !t
+                    .element_supplier
+                    .is_some_and(|supplier| query.is_follow_element(supplier))
+                {
                     UpdateAction::Remove
                 } else {
                     UpdateAction::Keep
@@ -998,7 +1001,10 @@ impl TitbitManager {
             }
 
             TitbitKind::Hidden => {
-                if !query.is_hidden_posture(t.element_supplier) {
+                if !t
+                    .element_supplier
+                    .is_some_and(|supplier| query.is_hidden_posture(supplier))
+                {
                     UpdateAction::Remove
                 } else {
                     UpdateAction::Keep
@@ -1276,7 +1282,7 @@ mod tests {
         assert_ne!(id, INVALID_ID);
         // Should have both the quick action and the run variant.
         assert_eq!(mgr.titbits().len(), 2);
-        assert!(mgr.is_running_for_qa(TitbitId::new(id).unwrap()));
+        assert!(mgr.is_running_for_qa(id.expect("titbit allocation succeeds")));
     }
 
     #[test]
@@ -1296,7 +1302,7 @@ mod tests {
             Some(0),
         );
         assert_eq!(mgr.titbits().len(), 2);
-        assert!(mgr.remove_quick_action_titbits_by_id(TitbitId::new(id).unwrap()));
+        assert!(mgr.remove_quick_action_titbits_by_id(id.expect("titbit allocation succeeds")));
         assert_eq!(mgr.titbits().len(), 0);
     }
 
@@ -1316,7 +1322,7 @@ mod tests {
             Some(0.0),
             Some(0),
         );
-        mgr.set_blinking(TitbitId::new(id).unwrap(), true);
+        mgr.set_blinking(id.expect("titbit allocation succeeds"), true);
         assert!(mgr.titbits()[0].blinking);
 
         mgr.reset_blinking();
@@ -1340,7 +1346,10 @@ mod tests {
             Some(0),
         );
         assert_eq!(mgr.titbits().len(), 1);
-        mgr.set_run(TitbitId::new(id).unwrap(), QuickAction::Bow as u16);
+        mgr.set_run(
+            id.expect("titbit allocation succeeds"),
+            QuickAction::Bow as u16,
+        );
         assert_eq!(mgr.titbits().len(), 2);
         assert_eq!(mgr.titbits()[1].phase, QuickAction::PlusQuick as u16);
     }
@@ -1371,6 +1380,7 @@ mod tests {
                 None,
                 None,
             );
+            let id = id.expect("titbit allocation succeeds");
             let titbit = mgr.titbits().iter().find(|t| t.id == id).unwrap();
             assert_eq!(titbit.sprite_row, row as u16, "kind {kind:?}");
         }
@@ -1393,10 +1403,10 @@ mod tests {
             Some(0),
         );
         assert_eq!(
-            mgr.get_phase(TitbitId::new(id).unwrap()),
-            QuickAction::Ale as u16
+            mgr.get_phase(id.expect("titbit allocation succeeds")),
+            Some(QuickAction::Ale as u16)
         );
-        assert_eq!(mgr.get_phase(TitbitId::new(999).unwrap()), 0xFFFF);
+        assert_eq!(mgr.get_phase(TitbitId::new(999).unwrap()), None);
     }
 
     #[test]

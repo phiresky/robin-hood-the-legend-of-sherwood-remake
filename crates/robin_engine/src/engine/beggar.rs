@@ -305,7 +305,7 @@ fn give_money_to_beggar(
             source_pos,
             target_pos,
             layer,
-            0,
+            Some(crate::position_interface::Layer::ZERO),
             None,
             bow_shot::APEX_BEGGAR_COIN,
             Some(&obstacle_check),

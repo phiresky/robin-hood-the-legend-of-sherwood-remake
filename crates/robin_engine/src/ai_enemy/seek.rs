@@ -1677,7 +1677,7 @@ mod tests {
         sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     ) -> DoorSeekInfo {
         DoorSeekInfo {
-            door_index: crate::gate::DoorIndex(door_index),
+            door_index: crate::gate::DoorIndex::new(door_index).expect("valid door index"),
             door_type: crate::gate::DoorType::Building,
             point_out,
             position_in,
