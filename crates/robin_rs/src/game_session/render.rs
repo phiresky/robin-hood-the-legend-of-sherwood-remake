@@ -1259,8 +1259,6 @@ pub(super) fn render_frame(
         return;
     }
 
-    renderer.begin_ui_layer();
-
     // ── GPU phase: multi-selection rubber band box ──
     crate::game_render::draw_multi_selection_box(host, engine, renderer);
 
@@ -1284,6 +1282,11 @@ pub(super) fn render_frame(
     // Allied patrol routes share this foreground, floating-chain layer.
     render_selected_allied_patrol_routes(host, engine, assets, local_seat, renderer);
     crate::ui_panel::render_macro_dotted_chains(host, engine, renderer);
+
+    // The items above are mission-space feedback and belong to the effected
+    // gameplay image. Everything after this boundary is screen-space UI and
+    // is composited sharply after scaling/presentation effects.
+    renderer.begin_ui_layer();
 
     // ── GPU phase: UI panel, minimap ──
     let panel_mouse = threaded_input.position();

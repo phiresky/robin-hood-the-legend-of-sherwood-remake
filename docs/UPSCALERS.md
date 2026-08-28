@@ -63,6 +63,27 @@ freezing their world backdrop. The renderer first executes scaling/effects on
 the scene target and then alpha-composites the transparent UI target using
 sharp-bilinear sampling. Cutscene video uses the same scaling/effect config.
 
+### Original presentation parity
+
+The original `RHGame::Refresh` records the world (`RHEngine::Draw`), refreshes
+the interface, adds `DrawOver`/messages/debug information, refreshes the
+software cursor last, and then calls `SBDrawManager::Flip`. The SDL draw manager
+uploads that already-composited opaque RGB565 logical surface and performs one
+full-texture `SDL_RenderCopy`; `SDL_RenderSetLogicalSize` owns aspect-preserving
+window scaling. There is no surviving alpha channel or separate UI surface in
+that presentation path.
+
+The new separation is therefore an intentional extension required by the
+sharp-HUD setting, not a claim about an original hardware layer. It preserves
+the relevant ordering: mission-space selection, sword-trail, patrol, and macro
+feedback remain in the gameplay layer; panels, menus, messages, console, fade,
+and software cursor remain ordered above it and are composited last. The
+largest aspect-correct destination rectangle mirrors the original logical-size
+fit. Because the new transparent UI target contains RGB that has already been
+alpha-blended over transparent black, the final overlay uses premultiplied
+alpha; multiplying by source alpha a second time would darken font edges and
+cursor shadows. Binary-alpha opaque UI blits remain equivalent.
+
 ## Primary references
 
 - Anime4K upstream and v4 profiles: <https://github.com/bloc97/Anime4K>

@@ -1102,6 +1102,266 @@ mod tests {
     }
 
     #[test]
+    fn every_bundled_entry_point_translates_to_webgl2_glsl() {
+        use naga::back::glsl;
+
+        let module = naga::front::wgsl::parse_str(BUILTIN_MULTIPASS_WGSL)
+            .unwrap_or_else(|error| panic!("built-in presentation WGSL does not parse: {error}"));
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("built-in presentation WGSL is invalid: {error}"));
+        let options = glsl::Options {
+            version: glsl::Version::Embedded {
+                version: 300,
+                is_webgl: true,
+            },
+            ..Default::default()
+        };
+        for entry in &module.entry_points {
+            let pipeline = glsl::PipelineOptions {
+                shader_stage: entry.stage,
+                entry_point: entry.name.clone(),
+                multiview: None,
+            };
+            let mut source = String::new();
+            glsl::Writer::new(
+                &mut source,
+                &module,
+                &info,
+                &options,
+                &pipeline,
+                naga::proc::BoundsCheckPolicies::default(),
+            )
+            .unwrap_or_else(|error| {
+                panic!("{} cannot target WebGL2 GLSL ES 3.00: {error}", entry.name)
+            })
+            .write()
+            .unwrap_or_else(|error| {
+                panic!("{} failed WebGL2 GLSL generation: {error}", entry.name)
+            });
+            assert!(source.starts_with("#version 300 es"), "{}", entry.name);
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn headless_downlevel_device_executes_every_multipass_profile() {
+        use std::sync::Arc;
+
+        pollster::block_on(async {
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = wgpu::Backends::PRIMARY | wgpu::Backends::GL;
+            let instance = Arc::new(wgpu::Instance::new(descriptor));
+            let adapter = match instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: true,
+                    apply_limit_buckets: false,
+                })
+                .await
+            {
+                Ok(adapter) => adapter,
+                Err(fallback_error) => match instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                        apply_limit_buckets: false,
+                    })
+                    .await
+                {
+                    Ok(adapter) => adapter,
+                    Err(hardware_error) => {
+                        eprintln!(
+                            "skipping headless multipass smoke test: no adapter; fallback={fallback_error}; hardware={hardware_error}"
+                        );
+                        return;
+                    }
+                },
+            };
+            let limits =
+                wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("multipass smoke test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: limits,
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .expect("headless adapter must provide WebGL2 baseline limits");
+            let gpu = GpuContext {
+                instance,
+                adapter: Arc::new(adapter),
+                device: Arc::new(device),
+                queue: Arc::new(queue),
+                surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            };
+            let source = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("multipass smoke source"),
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let mut pixels = Vec::with_capacity(4 * 4 * 4);
+            let colours = [
+                [255, 20, 10, 255],
+                [10, 220, 30, 255],
+                [20, 40, 240, 255],
+                [240, 220, 30, 255],
+            ];
+            for y in 0..4 {
+                for x in 0..4 {
+                    pixels.extend_from_slice(&colours[(x + y * 3) % colours.len()]);
+                }
+            }
+            gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &source,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(16),
+                    rows_per_image: Some(4),
+                },
+                wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("multipass smoke output"),
+                size: wgpu::Extent3d {
+                    width: 16,
+                    height: 16,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut upscaler = GpuUpscale::new(gpu.clone(), wgpu::TextureFormat::Rgba8UnormSrgb);
+            for (index, (mode, effect)) in [
+                (TextureScaleMode::Linear, TextureEffect::None),
+                (TextureScaleMode::PixelArt, TextureEffect::None),
+                (TextureScaleMode::Nearest, TextureEffect::CrtGuest),
+                (TextureScaleMode::ScaleNx, TextureEffect::None),
+                (TextureScaleMode::Hqx, TextureEffect::CrtGuest),
+                (TextureScaleMode::Xbrz, TextureEffect::None),
+                (TextureScaleMode::SuperXbr, TextureEffect::CrtRoyale),
+                (TextureScaleMode::Anime4kA, TextureEffect::None),
+                (TextureScaleMode::Anime4kB, TextureEffect::CrtGuest),
+                (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("multipass smoke encoder"),
+                        });
+                assert!(
+                    upscaler
+                        .render_multipass(
+                            mode,
+                            &mut encoder,
+                            &source,
+                            &target_view,
+                            [16, 16],
+                            [0.0, 0.0, 16.0, 16.0],
+                            Some(index),
+                            None,
+                            effect,
+                            UpscaleParameters::default(),
+                            TextureEffectParameters::default(),
+                        )
+                        .unwrap_or_else(|error| panic!("{mode:?}/{effect:?} failed: {error}"))
+                );
+                gpu.queue.submit(Some(encoder.finish()));
+            }
+
+            let padded_bytes_per_row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("multipass smoke readback"),
+                size: u64::from(padded_bytes_per_row * 16),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("multipass smoke readback encoder"),
+                });
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(16),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: 16,
+                    height: 16,
+                    depth_or_array_layers: 1,
+                },
+            );
+            gpu.queue.submit(Some(encoder.finish()));
+            let slice = readback.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            gpu.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("headless device poll failed");
+            let mapped = slice.get_mapped_range().expect("readback did not map");
+            let mut unique_rgb = std::collections::BTreeSet::new();
+            for row in 0..16usize {
+                let start = row * padded_bytes_per_row as usize;
+                for pixel in mapped[start..start + 64].chunks_exact(4) {
+                    unique_rgb.insert([pixel[0], pixel[1], pixel[2]]);
+                    assert_ne!(pixel[3], 0, "profile output unexpectedly transparent");
+                }
+            }
+            assert!(
+                unique_rgb.len() >= 4,
+                "profile output collapsed to fewer than four colours: {unique_rgb:?}"
+            );
+            drop(mapped);
+            readback.unmap();
+        });
+    }
+
+    #[test]
     fn every_curated_mode_is_routed_through_the_runner() {
         for mode in [
             TextureScaleMode::Linear,
@@ -1146,6 +1406,32 @@ mod tests {
         }
         assert_eq!(corners(1, 1, 2, 2, 2), [1, 2, 2, 2]);
         assert_eq!(corners(1, 3, 2, 3, 1), [2; 4]);
+
+        let input = [[0u8, 1, 0], [1, 2, 2], [0, 2, 3]];
+        let mut output = [[0u8; 6]; 6];
+        for y in 0..3usize {
+            for x in 0..3usize {
+                let b = input[y.saturating_sub(1)][x];
+                let d = input[y][x.saturating_sub(1)];
+                let e = input[y][x];
+                let f = input[y][(x + 1).min(2)];
+                let h = input[(y + 1).min(2)][x];
+                let expanded = corners(b, d, e, f, h);
+                output[y * 2][x * 2..x * 2 + 2].copy_from_slice(&expanded[..2]);
+                output[y * 2 + 1][x * 2..x * 2 + 2].copy_from_slice(&expanded[2..]);
+            }
+        }
+        assert_eq!(
+            output,
+            [
+                [0, 0, 1, 1, 0, 0],
+                [0, 1, 1, 1, 0, 0],
+                [1, 1, 1, 2, 2, 2],
+                [1, 1, 2, 2, 2, 2],
+                [0, 0, 2, 2, 2, 3],
+                [0, 0, 2, 2, 3, 3],
+            ]
+        );
     }
 
     #[test]
