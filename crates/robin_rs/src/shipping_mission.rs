@@ -9,15 +9,26 @@ use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mi
 
 const MISSION_FETCH_CONCURRENCY: usize = 8;
 
+/// One observable step at the asynchronous shipping-data boundary.
+pub struct MissionLoadProgress<'a> {
+    pub completed: usize,
+    pub total: usize,
+    pub file: Option<&'a str>,
+}
+
 /// Ensure the selected mission's independently compressed shipping payload is
 /// decoded and mounted before any synchronous level/resource loader runs.
-pub async fn ensure_loaded(
+pub async fn ensure_loaded<F>(
     shipping: Option<&Arc<ShippingDatadir>>,
     mission: &str,
     campaign: &robin_engine::campaign::Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
     has_decoded_saved_world: bool,
-) -> Result<()> {
+    mut progress: F,
+) -> Result<()>
+where
+    F: FnMut(MissionLoadProgress<'_>),
+{
     let Some(datadir) = shipping else {
         return Ok(());
     };
@@ -33,11 +44,22 @@ pub async fn ensure_loaded(
         profiles,
         has_decoded_saved_world,
     )?;
+    let total = dependencies.files.len();
+    progress(MissionLoadProgress {
+        completed: 0,
+        total,
+        file: None,
+    });
     if datadir.is_mission_loaded(mission) {
         datadir
             .activate_mission(mission)
             .with_context(|| format!("activate shipping mission {mission}"))?;
         datadir.set_active_exclamation_ids(dependencies.exclamation_ids);
+        progress(MissionLoadProgress {
+            completed: total,
+            total,
+            file: None,
+        });
         return Ok(());
     }
     let files = dependencies.files;
@@ -53,6 +75,7 @@ pub async fn ensure_loaded(
     }))
     .buffer_unordered(MISSION_FETCH_CONCURRENCY);
     let mut fetched_bytes = 0usize;
+    let mut completed = 0usize;
     let mut merged = ShippingMission::default();
     while let Some((file, bytes, payload)) = fetched.try_next().await? {
         fetched_bytes += bytes;
@@ -60,6 +83,16 @@ pub async fn ensure_loaded(
         merged
             .merge_part(payload)
             .with_context(|| format!("merge shipping file {file}"))?;
+        completed += 1;
+        progress(MissionLoadProgress {
+            completed,
+            total,
+            file: Some(&file),
+        });
+        // On wasm, presenting from the observer does not become visible until
+        // this task yields back to the browser event loop. Native builds make
+        // this a no-op.
+        crate::window::yield_to_runtime().await;
     }
     datadir
         .install_mission_parts(mission, std::iter::once(merged))

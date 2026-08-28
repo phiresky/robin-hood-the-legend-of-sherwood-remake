@@ -1169,6 +1169,25 @@ mod tests {
     }
 
     #[test]
+    fn file_system_reads_host_preloaded_assets_from_its_vfs() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset(
+                "Data/Interface/UI/allied_portrait_background.png",
+                b"png".to_vec(),
+            )
+            .unwrap();
+        let file_system = SbFileSystem::new(assets);
+
+        assert_eq!(
+            file_system
+                .read_all("Data/Interface/UI/allied_portrait_background.png")
+                .unwrap(),
+            b"png"
+        );
+    }
+
+    #[test]
     fn overlay_install_failure_is_not_reported_as_success() {
         let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
         let file_system = SbFileSystem::new(assets);

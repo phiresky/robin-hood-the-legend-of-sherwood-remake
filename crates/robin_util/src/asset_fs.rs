@@ -98,6 +98,7 @@ enum Mount {
 pub struct AssetVfs {
     active_bundle: RwLock<Option<Arc<Bundle>>>,
     mounts: RwLock<Vec<Mount>>,
+    preloaded: RwLock<Bundle>,
 }
 
 impl AssetVfs {
@@ -139,6 +140,24 @@ impl AssetVfs {
             .active_bundle
             .write()
             .expect("active asset bundle poisoned") = Some(bundle);
+        Ok(())
+    }
+
+    /// Install or replace one loose asset supplied by the runtime host.
+    ///
+    /// Browser bootstrap uses this for the small core overlay whose files
+    /// must remain visible while the replaceable mission bundle changes.
+    /// Regular mounts deliberately retain priority over these loose files.
+    pub fn install_preloaded_asset(
+        &self,
+        path: impl AsRef<Path>,
+        bytes: Vec<u8>,
+    ) -> Result<(), AssetError> {
+        let normalized = normalize_virtual_path(path.as_ref())?;
+        self.preloaded
+            .write()
+            .expect("preloaded asset bundle poisoned")
+            .insert(bundle_key_from_normalized(&normalized), bytes.into());
         Ok(())
     }
 
@@ -204,6 +223,15 @@ impl AssetVfs {
                 }
             }
         }
+        drop(mounts);
+        if let Some(bytes) = self
+            .preloaded
+            .read()
+            .expect("preloaded asset bundle poisoned")
+            .get(&key)
+        {
+            return Ok(bytes.clone());
+        }
         Err(AssetError::NotFound(requested.display().to_string()))
     }
 
@@ -242,6 +270,15 @@ impl AssetVfs {
                     }
                 }
             }
+        }
+        drop(mounts);
+        if self
+            .preloaded
+            .read()
+            .expect("preloaded asset bundle poisoned")
+            .contains_key(&key)
+        {
+            return Ok(true);
         }
         Ok(false)
     }
@@ -355,7 +392,6 @@ fn strip_data_prefix(path: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 static GLOBAL: OnceLock<Arc<AssetVfs>> = OnceLock::new();
-static PRELOADED: OnceLock<RwLock<Bundle>> = OnceLock::new();
 
 /// The runtime VFS used by legacy static call sites.
 pub fn global() -> &'static Arc<AssetVfs> {
@@ -367,18 +403,9 @@ pub fn install_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
     global().mount_bundle_first(bundle)
 }
 
-fn preloaded() -> &'static RwLock<Bundle> {
-    PRELOADED.get_or_init(|| RwLock::new(Bundle::new()))
-}
-
 /// Install or replace one host-preloaded asset.
 pub fn install_preloaded_asset<P: AsRef<Path>>(path: P, bytes: Vec<u8>) -> Result<(), AssetError> {
-    let normalized = normalize_virtual_path(path.as_ref())?;
-    preloaded()
-        .write()
-        .expect("preloaded asset bundle poisoned")
-        .insert(bundle_key_from_normalized(&normalized), bytes.into());
-    Ok(())
+    global().install_preloaded_asset(path, bytes)
 }
 
 /// Read through the runtime mounts, then fall back to a direct host path on
@@ -394,14 +421,6 @@ pub fn read_shared<P: AsRef<Path>>(path: P) -> Result<AssetBytes, AssetError> {
         Ok(bytes) => return Ok(bytes),
         Err(AssetError::NotFound(_)) | Err(AssetError::InvalidPath(_)) => {}
         Err(error) => return Err(error),
-    }
-    if let Ok(normalized) = normalize_virtual_path(path)
-        && let Some(bytes) = preloaded()
-            .read()
-            .expect("preloaded asset bundle poisoned")
-            .get(&bundle_key_from_normalized(&normalized))
-    {
-        return Ok(bytes.clone());
     }
     imp::read(path).map(AssetBytes::from)
 }
@@ -419,14 +438,6 @@ pub fn exists<P: AsRef<Path>>(path: P) -> bool {
             tracing_compat::warn_exists(path, &error);
             return false;
         }
-    }
-    if let Ok(normalized) = normalize_virtual_path(path)
-        && preloaded()
-            .read()
-            .expect("preloaded asset bundle poisoned")
-            .contains_key(&bundle_key_from_normalized(&normalized))
-    {
-        return true;
     }
     match imp::try_exists(path) {
         Ok(exists) => exists,
@@ -560,6 +571,29 @@ mod tests {
         assert_eq!(vfs.read("second.dat").unwrap(), b"second");
         assert_eq!(vfs.read("boot.dat").unwrap(), b"boot");
         assert_eq!(vfs.read("shared.dat").unwrap(), b"boot");
+    }
+
+    #[test]
+    fn preloaded_assets_are_instance_owned_replaceable_and_survive_mission_replacement() {
+        let vfs = AssetVfs::new();
+        vfs.install_preloaded_asset("Data/Interface/UI/panel.png", b"first".to_vec())
+            .unwrap();
+        assert_eq!(vfs.read("data/interface/ui/PANEL.PNG").unwrap(), b"first");
+
+        vfs.install_preloaded_asset("Data/Interface/UI/panel.png", b"second".to_vec())
+            .unwrap();
+        vfs.replace_active_bundle(bundle(&[("mission.dat", b"mission")]))
+            .unwrap();
+        assert_eq!(vfs.read("Data/Interface/UI/panel.png").unwrap(), b"second");
+
+        vfs.mount_bundle(bundle(&[("interface/ui/panel.png", b"mounted")]))
+            .unwrap();
+        assert_eq!(vfs.read("Data/Interface/UI/panel.png").unwrap(), b"mounted");
+        assert!(
+            !AssetVfs::new()
+                .try_exists("Data/Interface/UI/panel.png")
+                .unwrap()
+        );
     }
 
     #[test]

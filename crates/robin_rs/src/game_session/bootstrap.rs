@@ -372,6 +372,8 @@ struct MissionLoadingScreen {
 }
 
 impl MissionLoadingScreen {
+    const MAX_LEVEL: f32 = 22.0;
+
     fn open(
         window: &mut GameWindow,
         campaign: &Campaign,
@@ -379,8 +381,6 @@ impl MissionLoadingScreen {
         mission_idx: usize,
         application_context: &ApplicationContext,
     ) -> Self {
-        const LOADING_MAX_LEVEL: f32 = 22.0;
-
         let _ = window.poll_events();
         let proto_level_filename = campaign
             .missions
@@ -412,7 +412,7 @@ impl MissionLoadingScreen {
                 }),
                 &path,
                 datadir_kind,
-                LOADING_MAX_LEVEL,
+                Self::MAX_LEVEL,
                 renderer_config.scale_mode,
             )
         });
@@ -420,7 +420,7 @@ impl MissionLoadingScreen {
             renderer,
             renderer_config,
         };
-        stage.status("Initializing audio...", 0.02);
+        stage.status("Preparing mission data...", 0.02);
         if let Some(renderer) = stage.renderer.as_mut() {
             renderer.refresh();
             renderer.drain_events(window);
@@ -431,6 +431,31 @@ impl MissionLoadingScreen {
     fn status(&mut self, text: &str, progress: f32) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_status(text, progress);
+        }
+    }
+
+    fn shipping_component(
+        &mut self,
+        window: &mut GameWindow,
+        progress: crate::shipping_mission::MissionLoadProgress<'_>,
+    ) {
+        let fraction = if progress.total == 0 {
+            1.0
+        } else {
+            progress.completed as f32 / progress.total as f32
+        };
+        let target = 0.02 + 0.08 * fraction;
+        let text = match progress.file {
+            Some(file) => format!(
+                "Loading mission data ({}/{}): {file}",
+                progress.completed, progress.total
+            ),
+            None if progress.completed == progress.total => "Mission data ready".to_owned(),
+            None => format!("Loading mission data (0/{})", progress.total),
+        };
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_counted_status(text, target);
+            renderer.drain_events(window);
         }
     }
 
@@ -488,18 +513,12 @@ impl InteractiveLoadStage {
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
         multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
+        mut loading: MissionLoadingScreen,
     ) -> Result<InteractiveLoadStart, String> {
         let mission_id = campaign.missions[mission_idx]
             .profile(profiles)
             .mission_filename
             .clone();
-        let mut loading = MissionLoadingScreen::open(
-            window,
-            campaign,
-            profiles,
-            mission_idx,
-            &args.global_options,
-        );
         let mut host = Host::new(
             args.global_options.clone(),
             window.width as f32,
@@ -519,7 +538,7 @@ impl InteractiveLoadStage {
 
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
-        loading.status("Loading process resources...", 0.05);
+        loading.status("Loading process resources...", 0.11);
         let process = MissionProcessResources::load(&mut host, &game);
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
@@ -921,6 +940,36 @@ impl InteractiveMissionBuilder {
             "interactive builder cannot construct headless shims"
         );
 
+        let mut loading = MissionLoadingScreen::open(
+            window,
+            &campaign,
+            profiles,
+            mission_idx,
+            &args.global_options,
+        );
+        let mission_id = campaign.missions[mission_idx]
+            .profile(profiles)
+            .mission_filename
+            .clone();
+        let has_decoded_saved_world = super::pending_decoded_saved_world(callbacks);
+        if let Err(error) = super::ensure_shipping_mission(
+            args,
+            &mission_id,
+            &campaign,
+            profiles,
+            has_decoded_saved_world,
+            |progress| loading.shipping_component(window, progress),
+        )
+        .await
+        {
+            return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                campaign,
+                rng_seed,
+                sim_config,
+                Err(error),
+            ));
+        }
+        let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
         let loading = match InteractiveLoadStage::begin(
             window,
             &campaign,
@@ -931,6 +980,7 @@ impl InteractiveMissionBuilder {
             rng_seed,
             sim_config,
             multiplayer_setup_failure_policy,
+            loading,
         )
         .await
         {
