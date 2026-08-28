@@ -2259,7 +2259,14 @@ impl AiController {
         // Think even though it temporarily owns the movement order itself.
         // Keep EndThink open until the typed continuation has consumed the
         // first verdict and any fallback movement it authors has settled.
-        let typed_continuation = self.has_typed_completion_pending();
+        // Only continuations whose *resumed tail can enqueue another route*
+        // need to hold EndThink open while their first order lives solely in
+        // owner work. Friendly AlertSoldier and the ordinary battle route
+        // tails consume their result entirely inside the owner-work drain;
+        // treating those as an open EndThink changes later timer ownership
+        // (notably a PC door-route callback's 10-frame timer to 30).
+        let typed_continuation = self.outbox.reentrant.dead_body_alert_completion_pending
+            || self.outbox.reentrant.brawl_hitting_completion_pending;
         if !self.completion_latch_inside_think
             || (self.outbox.actor.orders.is_empty() && !typed_continuation)
         {

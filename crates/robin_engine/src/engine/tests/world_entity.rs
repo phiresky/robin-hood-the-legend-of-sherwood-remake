@@ -595,6 +595,21 @@ fn typed_route_continuation_keeps_end_think_open_for_its_fallback_move() {
 }
 
 #[test]
+fn friendly_alert_soldier_tail_does_not_extend_end_think() {
+    let mut ai = crate::ai::AiController::new(168);
+    ai.think_recursion_depth = 1;
+    ai.completion_latch_inside_think = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+
+    // AlertSoldier's result and optional retry are fully consumed by its
+    // owner-work continuation. Unlike DeadBodyAlert, it does not author a
+    // second route which needs the original EndThink frame to remain open.
+    assert!(ai.end_think_completion_events());
+    assert_eq!(ai.think_recursion_depth, 0);
+    assert_eq!(ai.engine_deferred_end_think_frames, 0);
+}
+
+#[test]
 fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
     use crate::ai::{
         AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
