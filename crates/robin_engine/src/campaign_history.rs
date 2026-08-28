@@ -132,46 +132,44 @@ impl From<SimConfig> for MissionAttemptRules {
 )]
 pub struct MissionAttemptStats {
     pub collected_money: Option<u32>,
-    pub available_money: Option<u32>,
+    pub bonus_money: Option<u32>,
+    pub soldier_money: Option<u32>,
     pub living_soldiers: Option<u32>,
     pub total_soldiers: Option<u32>,
     pub recruited_peasants: Option<u32>,
     pub killed_peasants: Option<u32>,
     pub killed_allies: Option<u32>,
     pub added_score: Option<u32>,
-    pub recruited_character_names: Option<Vec<String>>,
+    pub recruited_characters: Option<Vec<crate::mission_stat::PcStatName>>,
 }
 
 impl MissionAttemptStats {
     pub fn from_native(stat: &MissionStat) -> Self {
         Self {
             collected_money: Some(stat.collected_money),
-            available_money: Some(stat.total_level_money()),
+            bonus_money: Some(stat.bonus_money),
+            soldier_money: Some(stat.soldier_money),
             living_soldiers: Some(stat.living_soldier_count),
             total_soldiers: Some(stat.total_soldier_count),
             recruited_peasants: Some(stat.new_peasant_count),
             killed_peasants: Some(stat.killed_peasant_count),
             killed_allies: Some(stat.killed_allied_count),
             added_score: Some(stat.added_score),
-            recruited_character_names: Some(
-                stat.pc_names
-                    .iter()
-                    .map(|name| name.fallback.clone())
-                    .collect(),
-            ),
+            recruited_characters: Some(stat.pc_names.clone()),
         }
     }
 
     pub fn is_complete(&self) -> bool {
         self.collected_money.is_some()
-            && self.available_money.is_some()
+            && self.bonus_money.is_some()
+            && self.soldier_money.is_some()
             && self.living_soldiers.is_some()
             && self.total_soldiers.is_some()
             && self.recruited_peasants.is_some()
             && self.killed_peasants.is_some()
             && self.killed_allies.is_some()
             && self.added_score.is_some()
-            && self.recruited_character_names.is_some()
+            && self.recruited_characters.is_some()
     }
 }
 

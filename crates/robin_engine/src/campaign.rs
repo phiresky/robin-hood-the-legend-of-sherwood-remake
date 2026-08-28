@@ -513,6 +513,13 @@ impl Campaign {
         totals
     }
 
+    pub fn latest_mission_attempt(&self) -> Option<&crate::campaign_history::MissionAttempt> {
+        self.missions
+            .iter()
+            .filter_map(|mission| mission.attempt_history().latest())
+            .max_by_key(|attempt| attempt.sequence())
+    }
+
     pub const fn history_replay_mission(&self) -> Option<usize> {
         self.history_replay_mission_idx
     }

@@ -875,9 +875,11 @@ pub enum PlayerCommand {
         difficulty: crate::player_profile::DifficultyLevel,
         /// Host wall-clock completion time. It is carried by the deterministic
         /// command so peers and replay playback retain the same timestamp.
+        #[serde(default)]
         completed_at_unix_seconds: Option<i64>,
         /// High-resolution identity seed assigned to the campaign's first
         /// native attempt. Carried in the command for peer/replay determinism.
+        #[serde(default)]
         campaign_run_nonce: Option<u64>,
     },
     /// Player confirmed the quit-mission popup.  Sets `quit_won`

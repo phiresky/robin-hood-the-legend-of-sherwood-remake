@@ -492,7 +492,7 @@ async fn show_campaign_progress(
                     let (vx, vy) = transform.from_screen(x, y);
                     input.virt_x = vx as f32;
                     input.virt_y = vy as f32;
-                    if let Some(index) = progress_hit_test(&graph, presentation, vx, vy) {
+                    if let Some(index) = progress_hit_test(&graph, presentation, selected, vx, vy) {
                         selected = index;
                         museum = MuseumNavigator::new(graph.nodes.len(), selected);
                         if graph.nodes[index].selectable {
@@ -541,10 +541,14 @@ async fn show_campaign_progress(
 fn progress_hit_test(
     graph: &CampaignProgressGraph,
     presentation: CampaignPresentationMode,
+    selected: usize,
     x: i32,
     y: i32,
 ) -> Option<usize> {
     graph.nodes.iter().enumerate().find_map(|(idx, _)| {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            return None;
+        }
         let (rx, ry, rw, rh) = progress_node_rect(graph, presentation, idx);
         (x >= rx && x < rx + rw && y >= ry && y < ry + rh).then_some(idx)
     })
@@ -579,8 +583,9 @@ fn progress_node_rect(
             )
         }
         CampaignPresentationMode::SherwoodMuseum => {
-            let col = index % 4;
-            let row = index / 4;
+            let page_index = index % 16;
+            let col = page_index % 4;
+            let row = page_index / 4;
             (35 + col as i32 * 150, 72 + row as i32 * 84, 126, 58)
         }
         CampaignPresentationMode::ClassicMap => unreachable!(),
@@ -651,6 +656,9 @@ fn render_campaign_progress(
     }
 
     for (idx, node) in graph.nodes.iter().enumerate() {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            continue;
+        }
         let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
         let (r, g, b) = color_for(node.state);
         renderer.render_gpu_rect(
@@ -711,11 +719,15 @@ fn render_campaign_progress(
 
     if let Some(font) = assets.font.as_ref() {
         let title = match presentation {
-            CampaignPresentationMode::ProgressTree => "Campaign Progress Tree",
-            CampaignPresentationMode::SherwoodMuseum => "Sherwood Hall of Deeds",
+            CampaignPresentationMode::ProgressTree => "Campaign Progress Tree".to_owned(),
+            CampaignPresentationMode::SherwoodMuseum => format!(
+                "Sherwood Hall of Deeds - Gallery {}/{}",
+                selected / 16 + 1,
+                (graph.nodes.len() + 15) / 16
+            ),
             CampaignPresentationMode::ClassicMap => unreachable!(),
         };
-        layout::render_text_virt(renderer, font, transform, title, 25, 22);
+        layout::render_text_virt(renderer, font, transform, &title, 25, 22);
         layout::render_text_virt(
             renderer,
             font,

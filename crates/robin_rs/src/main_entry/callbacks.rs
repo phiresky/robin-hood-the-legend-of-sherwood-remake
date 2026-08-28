@@ -268,7 +268,13 @@ impl crate::game::GameCallbacks for RustCallbacks {
         campaign: &Campaign,
         profiles: &engine_profiles::ProfileManager,
     ) {
-        let mission_secs = self.get_current_playing_time(campaign);
+        let mission_secs = if campaign.latest_mission_attempt().is_some_and(|attempt| {
+            attempt.kind() == robin_engine::campaign_history::MissionAttemptKind::HistoryReplay
+        }) {
+            0
+        } else {
+            self.get_current_playing_time(campaign)
+        };
         let persistence = self
             .application_context
             .with_player_profiles_mut(|manager| {
