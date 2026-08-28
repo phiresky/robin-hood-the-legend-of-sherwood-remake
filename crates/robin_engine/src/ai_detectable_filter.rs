@@ -56,9 +56,10 @@ pub fn should_add_enemy_detectable_with(
         // Preserve Original's unusual legacy behavior for both built-in
         // civilian camps. Custom civilians compare the target PC's authored
         // allegiance instead of inheriting Original's all-PCs-are-Royalist
-        // assumption.
+        // assumption. Once mission diplomacy is enabled, every allegiance
+        // follows the authored relationship matrix.
         return target_is_pc
-            && (!matches!(npc_camp, Camp::Custom(_))
+            && ((!diplomacy.enabled() && !matches!(npc_camp, Camp::Custom(_)))
                 || diplomacy.is_hostile(npc_camp, target_camp));
     }
     if target_is_soldier && !diplomacy.npc_faction_wars() {
@@ -191,6 +192,31 @@ mod tests {
             &diplomacy,
             Camp::Lacklandists,
             true,
+            true,
+            false,
+            Camp::Royalists,
+        ));
+    }
+
+    #[test]
+    fn enabled_diplomacy_applies_to_builtin_civilian_perception() {
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&crate::diplomacy::DiplomacyDefinition {
+                player_coalition: vec![0],
+                relationships: vec![crate::diplomacy::DiplomacyRule {
+                    first: 0,
+                    second: 1,
+                    relationship: crate::diplomacy::Relationship::Neutral,
+                }],
+            }),
+        )
+        .expect("neutral relationship");
+        assert!(!should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Lacklandists,
+            false,
             true,
             false,
             Camp::Royalists,

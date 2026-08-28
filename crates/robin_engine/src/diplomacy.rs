@@ -351,10 +351,6 @@ pub(crate) fn reconcile_entities(
             ))
         })
         .collect::<Vec<_>>();
-    let camps = humans
-        .iter()
-        .map(|(id, camp, _, _)| (*id, *camp))
-        .collect::<BTreeMap<_, _>>();
     let actors_by_handle = humans
         .iter()
         .map(|(id, camp, is_pc, _)| (id.index(), (*camp, *is_pc)))
@@ -395,10 +391,21 @@ pub(crate) fn reconcile_entities(
             .unwrap_or_else(|| panic!("diplomacy NPC {npc_id:?} has no AI actor data"));
         let enemies = &mut npc.detectable_lists[DetectableType::Enemy as usize];
         enemies.retain(|detectable| {
-            detectable
-                .element
-                .and_then(|id| camps.get(&id).copied())
-                .is_some_and(|camp| diplomacy.is_hostile(npc_camp, camp))
+            detectable.element.is_some_and(|id| {
+                humans
+                    .iter()
+                    .find(|(target_id, _, _, _)| *target_id == id)
+                    .is_some_and(|(_, target_camp, target_is_pc, target_is_soldier)| {
+                        crate::ai_detectable_filter::should_add_enemy_detectable_with(
+                            diplomacy,
+                            npc_camp,
+                            npc_is_soldier,
+                            *target_is_pc,
+                            *target_is_soldier,
+                            *target_camp,
+                        )
+                    })
+            })
         });
         for (target_id, target_camp, target_is_pc, target_is_soldier) in &humans {
             if *target_id == npc_id
@@ -429,10 +436,12 @@ pub(crate) fn reconcile_entities(
         }
         for detectable_type in [DetectableType::Friend, DetectableType::MissedFriend] {
             npc.detectable_lists[detectable_type as usize].retain(|detectable| {
-                detectable
-                    .element
-                    .and_then(|id| camps.get(&id).copied())
-                    .is_some_and(|camp| diplomacy.is_allied(npc_camp, camp))
+                detectable.element.is_some_and(|id| {
+                    humans
+                        .iter()
+                        .find(|(target_id, _, _, _)| *target_id == id)
+                        .is_some_and(|(_, camp, _, _)| diplomacy.is_allied(npc_camp, *camp))
+                })
             });
         }
         if let Some(enemy) = npc.ai_brain.enemy_mut() {
