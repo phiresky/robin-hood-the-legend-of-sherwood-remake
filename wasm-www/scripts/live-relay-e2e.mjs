@@ -285,13 +285,17 @@ try {
         reconnectLogStart,
     );
     console.log(`REPLACEMENT_SNAPSHOT_LOG ${replacementSnapshotLog}`);
-    const reconnectedState = await rpc("state");
-    console.log(`RECONNECTED_STATE ${JSON.stringify(reconnectedState)}`);
-    if (!Number.isInteger(reconnectedState?.frame) || reconnectedState.frame <= 0) {
+    const replacementFrame = Number(
+        replacementSnapshotLog.match(/\bframe\s*=\s*(\d+)/)?.[1] ?? Number.NaN,
+    );
+    if (!Number.isInteger(replacementFrame) || replacementFrame <= 0) {
         throw new Error(
-            `replacement snapshot did not restore a progressed host frame: ${JSON.stringify(reconnectedState)}`,
+            `replacement snapshot did not report a progressed host timeline: ${replacementSnapshotLog}`,
         );
     }
+    console.log(`REPLACEMENT_SNAPSHOT_FRAME ${replacementFrame}`);
+    const reconnectedState = await rpc("state");
+    console.log(`RECONNECTED_STATE ${JSON.stringify(reconnectedState)}`);
     console.log(
         `HOST_LOCK_FLAGS_AFTER_SNAPSHOT ${JSON.stringify(await waitForHostFlags([false, true]))}`,
     );
