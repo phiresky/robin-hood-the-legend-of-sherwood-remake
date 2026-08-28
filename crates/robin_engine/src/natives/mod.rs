@@ -3050,7 +3050,7 @@ impl NativeContext<'_, '_> {
                 if let Some(entity) = self.get_entity_mut(actor)
                     && let Some(pc) = entity.pc_data_mut()
                 {
-                    pc.playable = activate;
+                    pc.set_playable(activate);
                     if !activate {
                         // The Deactivate PC branch walks every
                         // quick-action memory slot, deleting

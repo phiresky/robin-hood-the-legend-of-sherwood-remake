@@ -2717,18 +2717,7 @@ impl AvailabilityImmediateContext<'_> {
                 if let Some(owner) = owner
                     && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
                 {
-                    pc.playable = available;
-                    if available
-                        && pc.mission_role == crate::human_control::MissionRole::RescueTarget
-                    {
-                        // Retail rescue PCs become ordinary party heroes when
-                        // CharacterAvailable(true) fires. Keep that lifecycle
-                        // transition explicit now that body type no longer
-                        // implies controller or mission role.
-                        pc.mission_role = crate::human_control::MissionRole::PlayerParty;
-                        pc.command_interface = crate::human_control::CommandInterface::HeroActions;
-                        pc.combat_stance = crate::human_control::CombatStance::Aggressive;
-                    }
+                    pc.set_playable(available);
                     let message = if available {
                         crate::messenger::PcMessage::EnableCharacter
                     } else {

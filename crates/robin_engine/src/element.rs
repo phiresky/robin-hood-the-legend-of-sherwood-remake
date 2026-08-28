@@ -2185,6 +2185,22 @@ impl Default for PcData {
 }
 
 impl PcData {
+    /// Apply Original's `RHElementActorPC::SetPlayable` state change.
+    ///
+    /// In retail missions, making a PRIS rescue PC playable is also the
+    /// boundary where that scripted prisoner becomes an ordinary party hero.
+    /// The original class hierarchy made those facts implicit; keep the
+    /// transition together now that command surface and mission role are
+    /// represented independently.
+    pub fn set_playable(&mut self, playable: bool) {
+        self.playable = playable;
+        if playable && self.mission_role == MissionRole::RescueTarget {
+            self.mission_role = MissionRole::PlayerParty;
+            self.command_interface = CommandInterface::HeroActions;
+            self.combat_stance = CombatStance::Aggressive;
+        }
+    }
+
     pub fn live_carried_posture(&self) -> Posture {
         Posture::try_from(self.carried_posture).unwrap_or_else(|_| {
             panic!(

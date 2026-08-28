@@ -1287,6 +1287,38 @@ fn generic_mobile_activation_propagates_to_all_children() {
 }
 
 #[test]
+fn activating_a_rescue_pc_makes_it_player_controllable() {
+    use crate::human_control::{CombatStance, CommandInterface, MissionRole};
+
+    let mut prisoner = native_test_pc(Vec::new(), Vec::new());
+    let pc = prisoner.pc_data_mut().expect("rescue fixture must be a PC");
+    pc.playable = false;
+    pc.command_interface = CommandInterface::None;
+    pc.mission_role = MissionRole::RescueTarget;
+    pc.combat_stance = CombatStance::Defensive;
+
+    let mut host = BoundScriptEffects::new();
+    host.entities.push(Some(prisoner));
+    let handle = ScriptHandleCodec::actor_handle_from_index(0);
+    let mut activate = NativeStack::default();
+    activate.push_i32(handle);
+
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::Activate, &mut activate),
+        1
+    );
+
+    let pc = host
+        .entity_at_legacy_slot(0)
+        .pc_data()
+        .expect("activated rescue fixture remains a PC");
+    assert!(pc.playable);
+    assert_eq!(pc.command_interface, CommandInterface::HeroActions);
+    assert_eq!(pc.mission_role, MissionRole::PlayerParty);
+    assert_eq!(pc.combat_stance, CombatStance::Aggressive);
+}
+
+#[test]
 fn is_actor_equal_same() {
     assert_eq!(run_native(86, &[7, 7]), StopReason::ReturnedValue(1));
 }
