@@ -4,6 +4,18 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Timed missions and runtime ambience.** Hackable JSON missions can author
+  an active-play time limit and ordered Day/Night/Fog ambience cues. Timers
+  pause with single-player/noninteractive simulation gates, stop once victory
+  is achieved, and use the ordinary mission-loss flow at expiry. Ambience cues
+  deterministically change AI perception, light-sector gameplay, filtered
+  sound sources, lighting crossfades, sprite dictionaries, background art and
+  minimaps; missing alternate art warns and falls back to Day. Gameplay and
+  presentation/countdown controls are independently configurable. The hashed,
+  serialized tick/cue/crossfade state is shared by saves, replay, rollback and
+  multiplayer. `mods/timed-ambience-demo/` is a launchable example; authoring
+  rules are documented in `docs/TIMED_MISSIONS_AND_AMBIENCE.md`.
+
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four
   deterministic achievements are evaluated independently for each successful
   attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
@@ -581,7 +593,6 @@ A list of which additional features we have added, which ones we might still wan
   rows for every declared PC profile: the full Linux data has 10/10 available
   and eligible tracks; the Leicester demo has 5/5 available tracks eligible
   (its CPF also declares five full-game profiles whose RHS files are absent).
-- timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.

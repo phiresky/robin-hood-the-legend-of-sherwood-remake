@@ -168,10 +168,33 @@ impl EngineInner {
                         .fast_grid_mut()
                         .set_sector_active(sector.get(), mask & ambiance_mask != 0);
                 }
+                let mut stopped_sources = Vec::new();
+                let mut started_sources = Vec::new();
                 for index in 0..self.feedback.sound_sim.sources.num_sources() {
                     if let Some(source) = self.feedback.sound_sim.sources.get_mut(index) {
+                        let was_effective = source.is_effectively_active();
                         source.ambience_enabled = source.ambiences & ambiance_mask != 0;
+                        let is_effective = source.is_effectively_active();
+                        if was_effective && !is_effective {
+                            stopped_sources.push(index);
+                        } else if !was_effective && is_effective {
+                            started_sources.push((index, source.source_kind, source.id));
+                        }
                     }
+                }
+                self.feedback
+                    .sound_sim
+                    .playing_sources
+                    .retain(|playing| !stopped_sources.contains(&(playing.source_index as usize)));
+                for (index, kind, sample_id) in started_sources {
+                    super::script::schedule_source_finish(
+                        &kind,
+                        sample_id,
+                        index,
+                        self.control.frame_counter,
+                        &assets.source_durations,
+                        &mut self.feedback.sound_sim.playing_sources,
+                    );
                 }
                 self.feedback
                     .pending_side_effects
@@ -191,10 +214,7 @@ impl EngineInner {
     /// Advance extensions for one completed interactive simulation tick.
     /// Returns true exactly once when an enabled time limit expires.
     pub(super) fn tick_mission_runtime_features(&mut self, assets: &LevelAssets) -> bool {
-        if self.mission_domain.state.mission_won {
-            return false;
-        }
-
+        let mission_won = self.mission_domain.state.mission_won;
         self.mission_domain
             .state
             .runtime_features
@@ -206,7 +226,8 @@ impl EngineInner {
             .saturating_add(1);
 
         let mut newly_expired = false;
-        if self.control.sim_config.enable_timed_missions
+        if !mission_won
+            && self.control.sim_config.enable_timed_missions
             && let Some(timer) = self
                 .mission_domain
                 .state
@@ -274,6 +295,8 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::level_data::{AmbienceScheduleCue, TimedMissionDefinition};
+    use crate::sound_source::SoundSource;
 
     #[test]
     fn rgb565_blend_has_exact_endpoints() {
@@ -283,5 +306,157 @@ mod tests {
         assert_eq!(blend_rgb565(day, night, 25, 25), night);
         assert_ne!(blend_rgb565(day, night, 12, 25), day);
         assert_ne!(blend_rgb565(day, night, 12, 25), night);
+    }
+
+    #[test]
+    fn timer_expires_on_exact_active_tick_and_stops_after_victory() {
+        let mut loaded = LoadedLevel::empty_for_test();
+        loaded.mission.timed_mission = Some(TimedMissionDefinition {
+            limit_seconds: 1,
+            warning_seconds: 1,
+            countdown: super::super::MissionCountdownMode::Always,
+        });
+        let mut engine = EngineInner::new();
+        engine.initialize_mission_runtime_features(&loaded);
+        let assets = LevelAssets::default();
+        for _ in 0..24 {
+            assert!(!engine.tick_mission_runtime_features(&assets));
+        }
+        assert_eq!(engine.mission_countdown().unwrap().remaining_ticks, 1);
+        assert!(engine.tick_mission_runtime_features(&assets));
+        assert!(engine.mission_countdown().unwrap().expired);
+
+        let mut won = EngineInner::new();
+        won.initialize_mission_runtime_features(&loaded);
+        won.mission_domain.state.mission_won = true;
+        assert!(!won.tick_mission_runtime_features(&assets));
+        assert_eq!(won.mission_countdown().unwrap().remaining_ticks, 25);
+    }
+
+    #[test]
+    fn ambience_cue_switches_perception_and_sound_filters() {
+        let mut loaded = LoadedLevel::empty_for_test();
+        loaded.mission.ambience_schedule = vec![AmbienceScheduleCue {
+            at_seconds: 1,
+            ambiance: Ambiance::Night,
+            transition_seconds: 1,
+        }];
+        let mut engine = EngineInner::new();
+        engine.initialize_mission_runtime_features(&loaded);
+        let mut day = SoundSource::default();
+        day.active = true;
+        day.ambiences = Ambiance::Day.to_bitmask();
+        let mut night = SoundSource::default();
+        night.active = true;
+        night.ambiences = Ambiance::Night.to_bitmask();
+        night.ambience_enabled = false;
+        night.source_kind = crate::sound_source::SoundSourceKind::Single;
+        engine.feedback.sound_sim.sources.sources_push_some(day);
+        engine.feedback.sound_sim.sources.sources_push_some(night);
+        let assets = LevelAssets::default();
+
+        for _ in 0..25 {
+            assert!(!engine.tick_mission_runtime_features(&assets));
+        }
+
+        assert_eq!(engine.world.weather.ambiance, Ambiance::Night);
+        assert_eq!(
+            engine.ai.standard_view_polygon_radius,
+            Ambiance::Night.default_view_polygon_radius()
+        );
+        assert!(
+            !engine
+                .feedback
+                .sound_sim
+                .sources
+                .get(0)
+                .unwrap()
+                .ambience_enabled
+        );
+        assert!(
+            engine
+                .feedback
+                .sound_sim
+                .sources
+                .get(1)
+                .unwrap()
+                .ambience_enabled
+        );
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
+                .sounds
+                .iter()
+                .any(|command| {
+                    matches!(command, super::super::SoundCommand::RefreshAmbienceSources)
+                })
+        );
+        assert_eq!(engine.feedback.sound_sim.playing_sources.len(), 1);
+        assert_ne!(
+            engine.world.weather.night_color,
+            ambiance_color(Ambiance::Night)
+        );
+        for _ in 0..25 {
+            engine.tick_mission_runtime_features(&assets);
+        }
+        assert_eq!(
+            engine.world.weather.night_color,
+            ambiance_color(Ambiance::Night)
+        );
+    }
+
+    #[test]
+    fn disabled_features_freeze_their_authoritative_clocks() {
+        let mut loaded = LoadedLevel::empty_for_test();
+        loaded.mission.timed_mission = Some(TimedMissionDefinition {
+            limit_seconds: 1,
+            warning_seconds: 1,
+            countdown: super::super::MissionCountdownMode::Always,
+        });
+        loaded.mission.ambience_schedule = vec![AmbienceScheduleCue {
+            at_seconds: 1,
+            ambiance: Ambiance::Fog,
+            transition_seconds: 0,
+        }];
+        let mut engine = EngineInner::new();
+        engine.control.sim_config.enable_timed_missions = false;
+        engine.control.sim_config.enable_dynamic_ambience = false;
+        engine.initialize_mission_runtime_features(&loaded);
+        for _ in 0..100 {
+            assert!(!engine.tick_mission_runtime_features(&LevelAssets::default()));
+        }
+        assert_eq!(engine.mission_countdown().unwrap().remaining_ticks, 25);
+        assert_eq!(engine.world.weather.ambiance, Ambiance::Day);
+    }
+
+    #[test]
+    fn hourglass_routes_expiry_through_ordinary_level_failure() {
+        let mut loaded = LoadedLevel::empty_for_test();
+        loaded.mission.timed_mission = Some(TimedMissionDefinition {
+            limit_seconds: 1,
+            warning_seconds: 1,
+            countdown: super::super::MissionCountdownMode::Always,
+        });
+        let mut engine = EngineInner::new();
+        engine.control.sim_config.script_enabled = false;
+        engine.control.sim_config.ignore_default_loose = true;
+        engine.initialize_mission_runtime_features(&loaded);
+        engine
+            .mission_domain
+            .state
+            .runtime_features
+            .timed_mission
+            .as_mut()
+            .unwrap()
+            .limit_ticks = 1;
+        let effects = engine.perform_hourglass(
+            &mut super::super::HostDisplayState::default(),
+            &mut super::super::InputState::default(),
+            &LevelAssets::default(),
+            &mut super::super::DevState::default(),
+        );
+        assert_eq!(effects.code, super::super::GameCode::LevelFailed);
+        assert!(engine.mission_domain.state.quit_lost);
     }
 }

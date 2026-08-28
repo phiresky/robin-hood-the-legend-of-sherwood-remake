@@ -4950,6 +4950,68 @@ mod tests {
     }
 
     #[test]
+    fn hackable_descriptor_compiles_timed_and_ambience_authoring() {
+        let level = LoadedLevel::hackable_from_json(
+            br#"{
+                "map_filename": "TestMap",
+                "spawn": [0, 0],
+                "walkable_polygon": [[0, 0], [100, 0], [0, 100]],
+                "timed_mission": {
+                    "limit_seconds": 90,
+                    "warning_seconds": 15,
+                    "countdown": "final_only"
+                },
+                "ambience_schedule": [
+                    {"at_seconds": 10, "ambiance": "night", "transition_seconds": 4},
+                    {"at_seconds": 30, "ambiance": "fog"}
+                ]
+            }"#,
+        )
+        .expect("timed descriptor");
+        let timer = level.mission.timed_mission.expect("timer");
+        assert_eq!(timer.limit_seconds, 90);
+        assert_eq!(
+            timer.countdown,
+            crate::engine::MissionCountdownMode::FinalOnly
+        );
+        assert_eq!(level.mission.ambience_schedule.len(), 2);
+        assert_eq!(
+            level.mission.ambience_schedule[0].ambiance,
+            crate::engine::Ambiance::Night
+        );
+    }
+
+    #[test]
+    fn hackable_descriptor_rejects_invalid_runtime_feature_rules() {
+        let common = |features: &str| {
+            format!(
+                r#"{{
+                    "map_filename": "TestMap",
+                    "spawn": [0, 0],
+                    "walkable_polygon": [[0, 0], [100, 0], [0, 100]],
+                    {features}
+                }}"#
+            )
+        };
+        let zero = LoadedLevel::hackable_from_json(
+            common(r#""timed_mission":{"limit_seconds":0}"#).as_bytes(),
+        )
+        .expect_err("zero timer");
+        assert!(zero.contains("greater than zero"));
+        let unordered = LoadedLevel::hackable_from_json(
+            common(
+                r#""ambience_schedule":[
+                    {"at_seconds":10,"ambiance":"night"},
+                    {"at_seconds":10,"ambiance":"day"}
+                ]"#,
+            )
+            .as_bytes(),
+        )
+        .expect_err("duplicate cue time");
+        assert!(unordered.contains("strictly ordered"));
+    }
+
+    #[test]
     fn hackable_descriptor_authors_multiple_soldier_and_pc_allegiances() {
         let level = LoadedLevel::hackable_from_json(
             br#"{

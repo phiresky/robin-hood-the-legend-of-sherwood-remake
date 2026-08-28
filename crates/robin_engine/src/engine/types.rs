@@ -1215,6 +1215,7 @@ impl LevelAssets {
             scripts: LevelScriptAssets::default(),
             entities: LevelEntityAssets::default(),
             legacy_grid_topology: None,
+            ambience_shadow_sectors: std::sync::Arc::new(Vec::new()),
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),

@@ -790,9 +790,21 @@ impl EngineInner {
             use std::collections::BTreeSet;
 
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
+            let runtime_switchable = self
+                .mission_domain
+                .state
+                .runtime_features
+                .ambience_schedule
+                .is_some();
             let mut required_ids = BTreeSet::new();
 
             for raw in &loaded.proto.sound_sources {
+                if !runtime_switchable && raw.ambience_filter & ambiance_mask == 0 {
+                    // Preserve Original source-handle alignment for ordinary
+                    // fixed-ambience levels without loading unused samples.
+                    self.feedback.sound_sim.sources.sources_push_none();
+                    continue;
+                }
                 let source_kind = SoundSourceKind::from_u8(raw.source_kind).ok_or_else(|| {
                     EngineError::MissionLevelStage {
                         stage: "sound sources",

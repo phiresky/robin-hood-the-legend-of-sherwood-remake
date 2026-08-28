@@ -7091,7 +7091,7 @@ mod script_context_tests {
 /// A missing duration means the original cache lookup would return a
 /// zero-length sample and complete it in the sound hourglass. Schedule
 /// that same zero-length result and warn rather than inventing a duration.
-fn schedule_source_finish(
+pub(super) fn schedule_source_finish(
     kind: &crate::sound_source::SoundSourceKind,
     sample_id: u32,
     source_index: usize,

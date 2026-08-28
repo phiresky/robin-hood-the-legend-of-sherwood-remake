@@ -4343,6 +4343,12 @@ impl EngineInner {
             // without rebuilding the fast grid or changing sector identity.
             // `is_in_shadow_sector` queries only active sectors.
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
+            let runtime_switchable = self
+                .mission_domain
+                .state
+                .runtime_features
+                .ambience_schedule
+                .is_some();
             let raw_light_sectors = std::mem::take(&mut staging.motion.light_sectors);
             let debug_view_radius_lights = crate::ai_vision::view_radius_cache_debug_enabled();
             if debug_view_radius_lights {
@@ -4353,10 +4359,24 @@ impl EngineInner {
                 );
             }
             let mut light_added = 0usize;
+            let mut light_skipped_ambience = 0usize;
             let mut light_skipped_layer = 0usize;
             let mut light_skipped_polygon = 0usize;
             let mut ambience_shadow_sectors = Vec::new();
             for (raw_index, raw) in raw_light_sectors.into_iter().enumerate() {
+                if !runtime_switchable && raw.ambience & ambiance_mask == 0 {
+                    if debug_view_radius_lights {
+                        debug_view_radius_light(
+                            raw_index,
+                            &raw,
+                            ambiance_mask,
+                            "filtered_ambience",
+                            None,
+                        );
+                    }
+                    light_skipped_ambience += 1;
+                    continue;
+                }
                 if (raw.layer as usize) >= self.world.fast_grid.level.layers.len() {
                     if debug_view_radius_lights {
                         debug_view_radius_light(
@@ -4417,12 +4437,16 @@ impl EngineInner {
                 self.world
                     .fast_grid_mut()
                     .set_sector_active(grid_index, (raw.ambience & ambiance_mask) != 0);
-                ambience_shadow_sectors.push((
-                    crate::fast_find_grid::SectorIndex::new(grid_index).unwrap_or_else(|| {
-                        panic!("shadow grid index {grid_index} cannot use the reserved u32::MAX")
-                    }),
-                    raw.ambience,
-                ));
+                if runtime_switchable {
+                    ambience_shadow_sectors.push((
+                        crate::fast_find_grid::SectorIndex::new(grid_index).unwrap_or_else(|| {
+                            panic!(
+                                "shadow grid index {grid_index} cannot use the reserved u32::MAX"
+                            )
+                        }),
+                        raw.ambience,
+                    ));
+                }
                 if debug_view_radius_lights {
                     debug_view_radius_light(
                         raw_index,
@@ -4436,12 +4460,16 @@ impl EngineInner {
                 light_added += 1;
             }
             assets.ambience_shadow_sectors = std::sync::Arc::new(ambience_shadow_sectors);
-            if light_added + light_skipped_layer + light_skipped_polygon > 0 {
+            if light_added + light_skipped_ambience + light_skipped_layer + light_skipped_polygon
+                > 0
+            {
                 tracing::debug!(
-                    "Loaded {} runtime-switchable shadow sectors ({} bad layer, {} degenerate polygon)",
+                    "Loaded {} shadow sectors ({} filtered by ambience, {} bad layer, {} degenerate polygon; runtime_switchable={})",
                     light_added,
+                    light_skipped_ambience,
                     light_skipped_layer,
                     light_skipped_polygon,
+                    runtime_switchable,
                 );
             }
 
@@ -4456,7 +4484,12 @@ impl EngineInner {
             // so we don't bloat every (mostly non-shadow) GridSector with
             // an `Option<ShadowData>`.  Consumed by the night/fog branch
             // of `ai_vision::compute_view_radius`.
-            if light_added > 0 {
+            let needs_shadow_geometry = runtime_switchable
+                || matches!(
+                    self.world.weather.ambiance,
+                    crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
+                );
+            if needs_shadow_geometry && light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
                 let shadow_inputs: Vec<(u32, Vec<MapPoint>, u16)> = self
