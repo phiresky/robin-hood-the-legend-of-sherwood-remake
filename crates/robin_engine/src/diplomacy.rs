@@ -231,6 +231,47 @@ impl DiplomacyState {
         self.relationship(first, second) == Relationship::Allied
     }
 
+    /// Collapse this allegiance's relationship to every player-controlled
+    /// allegiance into the single classification needed by shared UI, stats,
+    /// and AI difficulty behavior. Hostility to any player takes precedence,
+    /// followed by neutrality; only a faction allied with the whole coalition
+    /// is shown as allied.
+    pub fn relationship_to_player(&self, camp: Camp) -> Relationship {
+        let camp_id = Self::valid_id(camp);
+        if !self.enabled {
+            return if camp_id == Camp::ROYALIST_ID {
+                Relationship::Allied
+            } else {
+                Relationship::Hostile
+            };
+        }
+        assert!(
+            !self.player_coalition.is_empty(),
+            "enabled diplomacy requires a non-empty player coalition"
+        );
+        let mut neutral = false;
+        for &player in &self.player_coalition {
+            match self.relationship_ids(camp_id, player) {
+                Relationship::Hostile => return Relationship::Hostile,
+                Relationship::Neutral => neutral = true,
+                Relationship::Allied => {}
+            }
+        }
+        if neutral {
+            Relationship::Neutral
+        } else {
+            Relationship::Allied
+        }
+    }
+
+    pub fn is_hostile_to_player(&self, camp: Camp) -> bool {
+        self.relationship_to_player(camp) == Relationship::Hostile
+    }
+
+    pub fn is_allied_to_player(&self, camp: Camp) -> bool {
+        self.relationship_to_player(camp) == Relationship::Allied
+    }
+
     pub fn actors_may_fight(
         &self,
         first_camp: Camp,
@@ -471,6 +512,43 @@ mod tests {
 
         assert!(state.is_allied(Camp::Royalists, Camp::Custom(7)));
         assert!(!state.is_player_aligned(Camp::Custom(7)));
+    }
+
+    #[test]
+    fn player_relationship_covers_the_whole_coalition() {
+        let state = DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&DiplomacyDefinition {
+                player_coalition: vec![0, 4],
+                relationships: vec![
+                    DiplomacyRule {
+                        first: 0,
+                        second: 7,
+                        relationship: Relationship::Allied,
+                    },
+                    DiplomacyRule {
+                        first: 4,
+                        second: 7,
+                        relationship: Relationship::Neutral,
+                    },
+                ],
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            state.relationship_to_player(Camp::Custom(7)),
+            Relationship::Neutral
+        );
+        assert_eq!(
+            state.relationship_to_player(Camp::Custom(8)),
+            Relationship::Hostile
+        );
+        assert_eq!(
+            state.relationship_to_player(Camp::Custom(4)),
+            Relationship::Allied
+        );
     }
 
     #[test]

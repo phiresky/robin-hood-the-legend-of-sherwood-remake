@@ -802,7 +802,7 @@ impl EngineInner {
         let is_soldier_vip =
             matches!(entity, Entity::Soldier(_)) && self.is_entity_vip(assets, entity);
 
-        let camp = match self.relationship(entity.camp(), crate::element::Camp::Royalists) {
+        let camp = match self.relationship_to_player(entity.camp()) {
             crate::diplomacy::Relationship::Hostile => MmCamp::Hostile,
             crate::diplomacy::Relationship::Neutral => MmCamp::Neutral,
             crate::diplomacy::Relationship::Allied => MmCamp::Allied,

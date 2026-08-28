@@ -2728,7 +2728,7 @@ impl EngineInner {
                 // targets before its PC-vs-soldier cadence branch. Keep the
                 // detectable (CleanUpDetectables only removes dead enemies),
                 // but clear both live visibility and the cached sample.
-                if self.camps_are_hostile(viewer.camp, Camp::Royalists) && target.hollow_man {
+                if self.is_hostile_to_player_camp(viewer.camp) && target.hollow_man {
                     det.seen_now = false;
                     det.last_visibility = 0.0;
                     continue;
@@ -2737,7 +2737,7 @@ impl EngineInner {
                 // Original's Lacklandist PC-only blip and guard gates run
                 // before the PC cadence decision. They invalidate the cached
                 // sample even when this frame would otherwise reuse it.
-                if self.camps_are_hostile(viewer.camp, Camp::Royalists)
+                if self.is_hostile_to_player_camp(viewer.camp)
                     && target.is_pc
                     && viewer_blipped
                     && !viewer_inside_building
@@ -2746,7 +2746,7 @@ impl EngineInner {
                     det.last_visibility = 0.0;
                     continue;
                 }
-                if self.camps_are_hostile(viewer.camp, Camp::Royalists)
+                if self.is_hostile_to_player_camp(viewer.camp)
                     && target.is_pc
                     && !det.seen_last_frame
                     && target.guarded
@@ -2762,8 +2762,7 @@ impl EngineInner {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_PC
                 };
                 let gate_open = modified_frame.is_multiple_of(frequency)
-                    || (self.camps_are_hostile(viewer.camp, Camp::Royalists)
-                        && lacklandist_refresh_always);
+                    || (self.is_hostile_to_player_camp(viewer.camp) && lacklandist_refresh_always);
                 tracing::trace!(
                     observer = ?npc_id,
                     target = ?target_id,
@@ -2957,7 +2956,7 @@ impl EngineInner {
                 // already has it baked in.
                 let mut visibility = if gate_open {
                     let detection_speed_factor =
-                        if target.is_pc && self.camps_are_hostile(viewer.camp, Camp::Royalists) {
+                        if target.is_pc && self.is_hostile_to_player_camp(viewer.camp) {
                             let detection_speed_pct = if is_forest_level {
                                 target.detection_speed_in_forest
                             } else {
@@ -2990,7 +2989,7 @@ impl EngineInner {
                 // Once the flag is true the NPC sees through future
                 // beggar disguises permanently (per-NPC, not global).
                 visibility = apply_enemy_beggar_disguise_with_relationship(
-                    self.camps_are_hostile(viewer.camp, Camp::Royalists),
+                    self.is_hostile_to_player_camp(viewer.camp),
                     target.is_pc,
                     &mut got_beggar_trick,
                     target.order_type,
@@ -4358,7 +4357,7 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
-        let viewer_hostile_to_player = self.camps_are_hostile(viewer.camp, Camp::Royalists);
+        let viewer_hostile_to_player = self.is_hostile_to_player_camp(viewer.camp);
         let target_obstacle = target_obstacle_handle.map(|handle| {
             sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
                 panic!(

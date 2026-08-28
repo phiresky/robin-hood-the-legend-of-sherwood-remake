@@ -795,9 +795,7 @@ impl EngineInner {
             // We scale cached_max_lp itself so both cached_max_life_points
             // and initial life_points start at the difficulty-adjusted
             // value.
-            if self.camps_are_hostile(cached_camp, crate::element::Camp::Royalists)
-                && !soldier_profile.vip
-            {
+            if self.is_hostile_to_player_camp(cached_camp) && !soldier_profile.vip {
                 let diff = config.difficulty;
                 cached_max_lp = diff.rules().enemy_life_points(cached_max_lp as u16, 10000) as i16;
             }
@@ -969,7 +967,7 @@ impl EngineInner {
             self.mission_domain
                 .mission_stat
                 .record_soldier_encounter(cached_camp);
-            if self.camps_are_hostile(cached_camp, crate::element::Camp::Royalists) {
+            if self.is_hostile_to_player_camp(cached_camp) {
                 self.mission_domain.mission_stat.total_soldier_count += 1;
             }
         }

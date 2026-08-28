@@ -539,6 +539,21 @@ impl EngineInner {
         self.mission_domain.diplomacy.is_player_aligned(camp)
     }
 
+    pub fn relationship_to_player(
+        &self,
+        camp: crate::element::Camp,
+    ) -> crate::diplomacy::Relationship {
+        self.mission_domain.diplomacy.relationship_to_player(camp)
+    }
+
+    pub fn is_hostile_to_player_camp(&self, camp: crate::element::Camp) -> bool {
+        self.mission_domain.diplomacy.is_hostile_to_player(camp)
+    }
+
+    pub fn is_allied_to_player_camp(&self, camp: crate::element::Camp) -> bool {
+        self.mission_domain.diplomacy.is_allied_to_player(camp)
+    }
+
     #[cfg(any(test, feature = "test-helpers"))]
     pub(crate) fn set_engine_locked(&mut self, locked: bool) {
         self.control.set_engine_locked(locked);
@@ -1017,7 +1032,7 @@ impl EngineInner {
 
         let mut score = 0;
         for (_, s) in self.world.entities.soldiers() {
-            if self.camps_are_hostile(s.camp(), Camp::Royalists)
+            if self.is_hostile_to_player_camp(s.camp())
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
             {
@@ -1042,7 +1057,7 @@ impl EngineInner {
             if s.life_points() > 0 {
                 *living_by_camp.entry(s.camp()).or_default() += 1;
             }
-            if self.camps_are_hostile(s.camp(), Camp::Royalists) {
+            if self.is_hostile_to_player_camp(s.camp()) {
                 if s.life_points() > 0 {
                     living += 1;
                 } else {

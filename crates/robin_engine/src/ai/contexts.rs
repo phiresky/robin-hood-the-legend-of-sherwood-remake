@@ -439,7 +439,7 @@ impl AiContext {
     pub fn player_relationship(&self) -> crate::diplomacy::Relationship {
         self.entity_views
             .diplomacy
-            .relationship(self.camp, crate::element::Camp::Royalists)
+            .relationship_to_player(self.camp)
     }
 
     pub fn is_player_aligned(&self) -> bool {

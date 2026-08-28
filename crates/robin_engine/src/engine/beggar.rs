@@ -109,7 +109,7 @@ pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
         .filter_map(|(soldier_id, soldier)| {
             let ai = soldier.npc.ai_brain.enemy()?;
             let iq = difficulty.rules().enemy_iq(ai.soldier_profile_iq, 100);
-            (diplomacy.is_hostile(soldier.soldier.cached_camp, Camp::Royalists)
+            (diplomacy.is_hostile_to_player(soldier.soldier.cached_camp)
                 && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())
             .then_some(soldier_id)

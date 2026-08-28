@@ -384,9 +384,7 @@ impl EngineInner {
                 // The shooting-ability lookup applies FIGHTING modifiers
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
-                let mut shooting = if self
-                    .camps_are_hostile(s.soldier.cached_camp, crate::element::Camp::Royalists)
-                {
+                let mut shooting = if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
                     let diff = self.control.sim_config.difficulty;
                     diff.rules().enemy_shooting(profile.shooting, 100) as u32
                 } else {

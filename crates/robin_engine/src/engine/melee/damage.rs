@@ -957,9 +957,7 @@ impl EngineInner {
             .unwrap_or(false);
         let victim_is_lacklandist =
             match self.expect_entity(victim_id, "sword-damage hero-speech victim") {
-                Entity::Soldier(s) => {
-                    self.camps_are_hostile(s.soldier.cached_camp, crate::element::Camp::Royalists)
-                }
+                Entity::Soldier(s) => self.is_hostile_to_player_camp(s.soldier.cached_camp),
                 _ => false,
             };
 
@@ -3336,7 +3334,7 @@ impl EngineInner {
             .unwrap_or(false);
         let bump_lacklandist_score = self
             .get_entity(victim_id)
-            .map(|e| e.is_soldier() && self.camps_are_hostile(e.camp(), Camp::Royalists))
+            .map(|e| e.is_soldier() && self.is_hostile_to_player_camp(e.camp()))
             .unwrap_or(false);
         if bump_lacklandist_score && !projectile_death {
             self.add_campaign_value(

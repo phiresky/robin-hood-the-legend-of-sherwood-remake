@@ -5358,7 +5358,7 @@ impl EngineInner {
         // `pick_door` closure doesn't need to borrow `self.world.entities`
         // (which is re-borrowed mutably after door selection).
         let dangerous_house_sectors: std::collections::HashSet<u32> =
-            if self.camps_are_hostile(ctx.camp, crate::element::Camp::Royalists) {
+            if self.is_hostile_to_player_camp(ctx.camp) {
                 self.ai
                     .global
                     .houses
