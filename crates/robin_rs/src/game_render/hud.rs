@@ -8,7 +8,38 @@ use crate::renderer::Renderer;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Entity, ListenPhase};
-use robin_engine::engine::{Engine, MULTI_SELECTION_THRESHOLD};
+use robin_engine::engine::{Engine, MULTI_SELECTION_THRESHOLD, MissionCountdownMode};
+
+/// Render the author-controlled active-play countdown at the top centre.
+pub(crate) fn render_mission_countdown(
+    host: &Host,
+    engine: &Engine,
+    renderer: &mut Renderer,
+    fonts: &HudFonts,
+) {
+    let config = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("mission countdown requires an active profile: {error}"));
+    if !config.graphic_config.show_mission_countdown || !engine.sim_config().enable_timed_missions {
+        return;
+    }
+    let Some(status) = engine.mission_countdown() else {
+        return;
+    };
+    let visible = match status.mode {
+        MissionCountdownMode::Always => true,
+        MissionCountdownMode::FinalOnly => status.remaining_ticks <= status.warning_ticks,
+        MissionCountdownMode::Hidden => false,
+    };
+    if !visible {
+        return;
+    }
+    let seconds = status.remaining_ticks.saturating_add(24) / 25;
+    let label = format!("Time {:02}:{:02}", seconds / 60, seconds % 60);
+    let x = (i32::from(renderer.screen_width()) - fonts.tooltip_font.text_width(&label)) / 2;
+    render_text_with_shadow(renderer, fonts, &label, x, 6);
+}
 
 // ─── Combat status bars (red life / blue stamina) ────────────────
 

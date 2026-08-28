@@ -1547,6 +1547,10 @@ pub(super) async fn handle_pause_menu_events(
                         gameplay_config.noise_distraction_feedback =
                             engine.sim_config().noise_distraction_feedback;
                         gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
+                        gameplay_config.enable_timed_missions =
+                            engine.sim_config().enable_timed_missions;
+                        gameplay_config.enable_dynamic_ambience =
+                            engine.sim_config().enable_dynamic_ambience;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
@@ -1557,6 +1561,10 @@ pub(super) async fn handle_pause_menu_events(
                         let simulation_item_gameplay = gameplay_config.item_gameplay;
                         let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
                         let simulation_sherwood_trading = gameplay_config.sherwood_trading;
+                        let simulation_enable_timed_missions =
+                            gameplay_config.enable_timed_missions;
+                        let simulation_enable_dynamic_ambience =
+                            gameplay_config.enable_dynamic_ambience;
                         let resources =
                             required_menu_resources(&mission_resources.menu, "pause-menu options");
                         let cursor = Some(default_modal_cursor(
@@ -1684,6 +1692,22 @@ pub(super) async fn handle_pause_menu_events(
                         if gameplay_config.sherwood_trading != simulation_sherwood_trading {
                             let cmd = PlayerCommand::SetSherwoodTrading {
                                 enabled: gameplay_config.sherwood_trading,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.enable_timed_missions
+                            != simulation_enable_timed_missions
+                        {
+                            let cmd = PlayerCommand::SetTimedMissionsEnabled {
+                                enabled: gameplay_config.enable_timed_missions,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.enable_dynamic_ambience
+                            != simulation_enable_dynamic_ambience
+                        {
+                            let cmd = PlayerCommand::SetDynamicAmbienceEnabled {
+                                enabled: gameplay_config.enable_dynamic_ambience,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

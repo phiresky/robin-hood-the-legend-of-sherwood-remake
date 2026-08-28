@@ -25,7 +25,7 @@ use super::resources::{
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
-// Widget ID ranges: resolution 100..102, widescreen 150, options 200..205,
+// Widget ID ranges: resolution 100..102, widescreen 150, options 200..207,
 // scaling 400.., ok/cancel 300..301.
 const ID_RES_BASE: u32 = 100;
 const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
@@ -33,7 +33,7 @@ const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
-const OPTION_COUNT: u32 = 6;
+const OPTION_COUNT: u32 = 8;
 const ID_EFFECT_BASE: u32 = 500;
 const PRESET_LIST_X: i32 = 360;
 const PRESET_LIST_Y: i32 = 350;
@@ -173,6 +173,22 @@ pub async fn show_graphics(
         super::layout::MenuButton {
             // Rust extension; the original string table has no label for it.
             label: "Native Refresh Rate".to_string(),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
+        super::layout::MenuButton {
+            label: "Mission Countdown".to_string(),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
+        super::layout::MenuButton {
+            label: "Dynamic Ambience Visuals".to_string(),
             enabled: true,
             x: 30,
             y: 0,
@@ -856,6 +872,8 @@ fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
         3 => config.display_anim = !config.display_anim,
         4 => config.apply_fog_to_all_sprites = !config.apply_fog_to_all_sprites,
         5 => config.native_refresh_presentation = !config.native_refresh_presentation,
+        6 => config.show_mission_countdown = !config.show_mission_countdown,
+        7 => config.dynamic_ambience_visuals = !config.dynamic_ambience_visuals,
         _ => {}
     }
 }
@@ -868,6 +886,8 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         3 => config.display_anim,
         4 => config.apply_fog_to_all_sprites,
         5 => config.native_refresh_presentation,
+        6 => config.show_mission_countdown,
+        7 => config.dynamic_ambience_visuals,
         _ => false,
     }
 }
@@ -877,16 +897,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_refresh_is_the_last_reachable_graphics_option() {
+    fn timed_ambience_graphics_options_are_independently_reachable() {
         let mut config = GraphicConfig::default();
         let adaptive_widescreen = config.adaptive_widescreen;
-        let native_refresh_index = OPTION_COUNT as usize - 1;
+        let native_refresh_index = 5;
 
         apply_option_toggle(&mut config, native_refresh_index);
 
         assert!(!config.native_refresh_presentation);
         assert_eq!(config.adaptive_widescreen, adaptive_widescreen);
         assert!(!is_option_selected(&config, native_refresh_index));
+
+        apply_option_toggle(&mut config, 6);
+        assert!(!config.show_mission_countdown);
+        assert!(config.dynamic_ambience_visuals);
+        apply_option_toggle(&mut config, 7);
+        assert!(!config.dynamic_ambience_visuals);
+        assert_eq!(OPTION_COUNT, 8);
     }
 
     #[test]

@@ -63,6 +63,8 @@ const OPTION_LABELS: &[&str] = &[
     "Preview Ale Effect",
     "Preview Purse Effect",
     "Preview Wasp Area",
+    "Authored Mission Timers",
+    "Dynamic Ambience Gameplay",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -99,6 +101,8 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
     "Explain purse value and money-interest conditions.",
     "Show wasp acquisition range and target eligibility.",
+    "Enforce time limits authored by Rust JSON missions.",
+    "Advance authored day, night, and fog gameplay schedules.",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -361,6 +365,8 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        33 => config.enable_timed_missions = !config.enable_timed_missions,
+        34 => config.enable_dynamic_ambience = !config.enable_dynamic_ambience,
         _ => {}
     }
 }
@@ -403,6 +409,8 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         30 => config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area,
+        33 => config.enable_timed_missions,
+        34 => config.enable_dynamic_ambience,
         _ => false,
     }
 }
@@ -449,6 +457,8 @@ mod tests {
                 "Preview Ale Effect",
                 "Preview Purse Effect",
                 "Preview Wasp Area",
+                "Authored Mission Timers",
+                "Dynamic Ambience Gameplay",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -466,6 +476,8 @@ mod tests {
         assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
         assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert!(is_option_selected(&config, 32));
+        assert!(is_option_selected(&config, 33));
+        assert!(is_option_selected(&config, 34));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);

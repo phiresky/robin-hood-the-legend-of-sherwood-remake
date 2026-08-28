@@ -7183,7 +7183,7 @@ fn schedule_source_finishes_for_all_active(
         let Some(src) = sound_sim.sources.get(i) else {
             continue;
         };
-        if !src.active {
+        if !src.is_effectively_active() {
             continue;
         }
         let kind = src.source_kind;

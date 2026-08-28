@@ -1974,6 +1974,12 @@ pub struct LoadedMission {
     pub mobile_elements: Vec<RawMobileElement>,
     /// AI tactic data (from AI /HIRN chunk).
     pub tactic_data: Option<RawTacticData>,
+    /// Optional Rust-authored time limit. Legacy RHM missions leave this empty.
+    #[serde(default)]
+    pub timed_mission: Option<TimedMissionDefinition>,
+    /// Active-play-time ambience cues. Legacy RHM missions leave this empty.
+    #[serde(default)]
+    pub ambience_schedule: Vec<AmbienceScheduleCue>,
 }
 
 /// Complete loaded level (proto-level + mission).
@@ -2028,6 +2034,44 @@ pub struct HackableLevelDescriptor {
     pub soldiers: Vec<HackableSoldier>,
     #[serde(default)]
     pub pcs: Vec<HackablePc>,
+    /// Optional gameplay time limit for this mission.
+    #[serde(default)]
+    pub timed_mission: Option<TimedMissionDefinition>,
+    /// Ordered ambience changes measured in active gameplay seconds.
+    #[serde(default)]
+    pub ambience_schedule: Vec<AmbienceScheduleCue>,
+}
+
+/// Author-facing timed-mission rules for hackable JSON levels.
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(deny_unknown_fields)]
+pub struct TimedMissionDefinition {
+    /// Whole active-play seconds before an ordinary mission loss.
+    pub limit_seconds: u32,
+    /// When a `final_only` tracker becomes visible.
+    #[serde(default = "default_timed_warning_seconds")]
+    pub warning_seconds: u32,
+    /// Mission preference; the player's graphics setting remains the final
+    /// local visibility gate.
+    #[serde(default)]
+    pub countdown: crate::engine::MissionCountdownMode,
+}
+
+fn default_timed_warning_seconds() -> u32 {
+    60
+}
+
+/// One author-facing runtime ambience cue.
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(deny_unknown_fields)]
+pub struct AmbienceScheduleCue {
+    /// Active-play seconds from mission start.
+    pub at_seconds: u32,
+    pub ambiance: crate::engine::Ambiance,
+    /// Lighting crossfade duration. Gameplay perception, ambience-filtered
+    /// sound and background art switch on the cue boundary.
+    #[serde(default)]
+    pub transition_seconds: u32,
 }
 
 fn default_true() -> bool {
@@ -2126,6 +2170,37 @@ impl LoadedLevel {
     pub fn hackable_from_json(bytes: &[u8]) -> Result<Self, String> {
         let descriptor: HackableLevelDescriptor = serde_json::from_slice(bytes)
             .map_err(|error| format!("invalid hackable level descriptor: {error}"))?;
+        if let Some(timed) = descriptor.timed_mission.as_ref() {
+            if timed.limit_seconds == 0 {
+                return Err("timed_mission.limit_seconds must be greater than zero".to_owned());
+            }
+            if timed.warning_seconds > timed.limit_seconds {
+                return Err(format!(
+                    "timed_mission.warning_seconds ({}) exceeds limit_seconds ({})",
+                    timed.warning_seconds, timed.limit_seconds
+                ));
+            }
+            timed
+                .limit_seconds
+                .checked_mul(25)
+                .ok_or_else(|| "timed_mission.limit_seconds is too large".to_owned())?;
+        }
+        let mut previous_cue = None;
+        for (index, cue) in descriptor.ambience_schedule.iter().enumerate() {
+            cue.at_seconds
+                .checked_mul(25)
+                .ok_or_else(|| format!("ambience_schedule[{index}].at_seconds is too large"))?;
+            cue.transition_seconds.checked_mul(25).ok_or_else(|| {
+                format!("ambience_schedule[{index}].transition_seconds is too large")
+            })?;
+            if previous_cue.is_some_and(|previous| cue.at_seconds <= previous) {
+                return Err(format!(
+                    "ambience_schedule must be strictly ordered; cue {index} at {}s does not follow the previous cue",
+                    cue.at_seconds
+                ));
+            }
+            previous_cue = Some(cue.at_seconds);
+        }
         if descriptor.walkable_polygon.len() < 3 {
             return Err("walkable_polygon must contain at least three points".to_owned());
         }
@@ -2393,6 +2468,8 @@ impl LoadedLevel {
                 }
             })
             .collect();
+        level.mission.timed_mission = descriptor.timed_mission;
+        level.mission.ambience_schedule = descriptor.ambience_schedule;
         Ok(level)
     }
 
@@ -2454,6 +2531,8 @@ impl LoadedLevel {
                 hiking_paths: Vec::new(),
                 mobile_elements: Vec::new(),
                 tactic_data: None,
+                timed_mission: None,
+                ambience_schedule: Vec::new(),
             },
         }
     }
@@ -3188,6 +3267,8 @@ pub fn load_mission(
         hiking_paths,
         mobile_elements,
         tactic_data,
+        timed_mission: None,
+        ambience_schedule: Vec::new(),
     })
 }
 

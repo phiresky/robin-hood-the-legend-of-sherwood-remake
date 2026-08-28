@@ -1686,6 +1686,7 @@ fn mobile_sprite_map_position(
 /// consumed by [`EngineInner::apply_background_map`] (fast — GPU upload).
 /// Mask compositing is no longer done CPU-side — `mask_overlay.wgsl`
 /// samples the live bg texture in the fragment stage.
+#[derive(Clone)]
 pub struct PreDecodedBackground {
     pub width: u16,
     pub height: u16,
@@ -1697,6 +1698,7 @@ pub struct PreDecodedBackground {
 }
 
 /// CPU-decoded minimap ready for GPU upload.  See [`PreDecodedBackground`].
+#[derive(Clone)]
 pub struct PreDecodedMinimap {
     pub width: u16,
     pub height: u16,
@@ -3525,6 +3527,21 @@ impl EngineInner {
         entity: &crate::element::Entity,
         apply_fog_to_all_sprites: bool,
     ) -> crate::sprite_variant::SpriteVariant {
+        self.resolve_render_variant_for_ambiance(
+            entity,
+            apply_fog_to_all_sprites,
+            self.world.weather.ambiance,
+        )
+    }
+
+    /// Local-presentation counterpart used when the player disables runtime
+    /// ambience visuals while canonical gameplay continues advancing.
+    pub fn resolve_render_variant_for_ambiance(
+        &self,
+        entity: &crate::element::Entity,
+        apply_fog_to_all_sprites: bool,
+        ambiance: Ambiance,
+    ) -> crate::sprite_variant::SpriteVariant {
         use crate::element::Entity;
         use crate::sprite_variant::SpriteVariant;
 
@@ -3539,7 +3556,7 @@ impl EngineInner {
             _ => false,
         };
         let force_ambiance_variant = apply_fog_to_all_sprites
-            && matches!(self.world.weather.ambiance, Ambiance::Fog | Ambiance::Night)
+            && matches!(ambiance, Ambiance::Fog | Ambiance::Night)
             && !has_ambiance_baked_pixels;
         let apply_ambiance = force_ambiance_variant
             || match entity {
@@ -3558,7 +3575,15 @@ impl EngineInner {
             return SpriteVariant::Day;
         }
 
-        let default = self.default_variant();
+        let default = if self.control.sim_config.bypass_fog_sprites_crash {
+            SpriteVariant::Day
+        } else {
+            match ambiance {
+                Ambiance::Fog => SpriteVariant::Fog,
+                Ambiance::Night => SpriteVariant::Night,
+                _ => SpriteVariant::Day,
+            }
+        };
         if !matches!(default, SpriteVariant::Fog | SpriteVariant::Night) {
             return default;
         }
@@ -4311,12 +4336,12 @@ impl EngineInner {
 
             // ── Light / shadow sectors ──
             //
-            // Each raw light sector becomes a `SectorType::SHADOW` grid
-            // sector on its own layer iff its ambience bitmask overlaps
-            // the mission's ambience.  Sectors whose ambience bit is
-            // clear are dropped.  `is_in_shadow_sector` queries these to
-            // suppress the fog/night sprite variant when an actor stands
-            // inside a torch-lit polygon.
+            // Every valid raw light sector becomes a `SectorType::SHADOW`
+            // grid sector. The initial ambience controls the runtime-active
+            // bit; keeping the other authored polygons in immutable level
+            // geometry lets a timed ambience schedule switch lighting
+            // without rebuilding the fast grid or changing sector identity.
+            // `is_in_shadow_sector` queries only active sectors.
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
             let raw_light_sectors = std::mem::take(&mut staging.motion.light_sectors);
             let debug_view_radius_lights = crate::ai_vision::view_radius_cache_debug_enabled();
@@ -4328,23 +4353,10 @@ impl EngineInner {
                 );
             }
             let mut light_added = 0usize;
-            let mut light_skipped_ambience = 0usize;
             let mut light_skipped_layer = 0usize;
             let mut light_skipped_polygon = 0usize;
+            let mut ambience_shadow_sectors = Vec::new();
             for (raw_index, raw) in raw_light_sectors.into_iter().enumerate() {
-                if (raw.ambience & ambiance_mask) == 0 {
-                    if debug_view_radius_lights {
-                        debug_view_radius_light(
-                            raw_index,
-                            &raw,
-                            ambiance_mask,
-                            "filtered_ambience",
-                            None,
-                        );
-                    }
-                    light_skipped_ambience += 1;
-                    continue;
-                }
                 if (raw.layer as usize) >= self.world.fast_grid.level.layers.len() {
                     if debug_view_radius_lights {
                         debug_view_radius_light(
@@ -4402,6 +4414,15 @@ impl EngineInner {
                     },
                     raw.layer,
                 );
+                self.world
+                    .fast_grid_mut()
+                    .set_sector_active(grid_index, (raw.ambience & ambiance_mask) != 0);
+                ambience_shadow_sectors.push((
+                    crate::fast_find_grid::SectorIndex::new(grid_index).unwrap_or_else(|| {
+                        panic!("shadow grid index {grid_index} cannot use the reserved u32::MAX")
+                    }),
+                    raw.ambience,
+                ));
                 if debug_view_radius_lights {
                     debug_view_radius_light(
                         raw_index,
@@ -4414,13 +4435,11 @@ impl EngineInner {
                 sector_number += 1;
                 light_added += 1;
             }
-            if light_added + light_skipped_ambience + light_skipped_layer + light_skipped_polygon
-                > 0
-            {
+            assets.ambience_shadow_sectors = std::sync::Arc::new(ambience_shadow_sectors);
+            if light_added + light_skipped_layer + light_skipped_polygon > 0 {
                 tracing::debug!(
-                    "Loaded {} shadow sectors ({} filtered by ambience, {} bad layer, {} degenerate polygon)",
+                    "Loaded {} runtime-switchable shadow sectors ({} bad layer, {} degenerate polygon)",
                     light_added,
-                    light_skipped_ambience,
                     light_skipped_layer,
                     light_skipped_polygon,
                 );
@@ -4437,11 +4456,7 @@ impl EngineInner {
             // so we don't bloat every (mostly non-shadow) GridSector with
             // an `Option<ShadowData>`.  Consumed by the night/fog branch
             // of `ai_vision::compute_view_radius`.
-            let is_night_or_fog = matches!(
-                self.world.weather.ambiance,
-                crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-            );
-            if is_night_or_fog && light_added > 0 {
+            if light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
                 let shadow_inputs: Vec<(u32, Vec<MapPoint>, u16)> = self
@@ -4494,7 +4509,7 @@ impl EngineInner {
                         .insert(sector_idx, shadow);
                 }
                 tracing::debug!(
-                    "Initialized shadow centroid data for {} sectors (NIGHT/FOG ambience)",
+                    "Initialized shadow centroid data for {} runtime ambience sectors",
                     self.world.fast_grid.level.shadow_data.len(),
                 );
             }

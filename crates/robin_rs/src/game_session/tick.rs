@@ -40,6 +40,7 @@ pub(super) fn tick_audio(
     let mut pending_play_delayed_sources = Vec::new();
     let mut resume_all_sources = false;
     let mut activate_sources = Vec::new();
+    let mut refresh_ambience_sources = false;
     let mut stop_exclamations = Vec::new();
     let mut stop_exclamation_channels = Vec::new();
     for request in deferred {
@@ -49,6 +50,7 @@ pub(super) fn tick_audio(
             }
             DeferredAudioRequest::ResumeAllSources => resume_all_sources = true,
             DeferredAudioRequest::ActivateSource(index) => activate_sources.push(index),
+            DeferredAudioRequest::RefreshAmbienceSources => refresh_ambience_sources = true,
             DeferredAudioRequest::StopExclamation(actor_id) => {
                 stop_exclamations.push(actor_id);
             }
@@ -66,6 +68,11 @@ pub(super) fn tick_audio(
             host.viewport.sound_listen_point(),
             host.viewport.zoom_factor,
         );
+    }
+    if refresh_ambience_sources {
+        host.audio
+            .sound
+            .sync_ambience_sources(&manager.engine.sound_sim().sources, backend);
     }
     for idx in activate_sources {
         // Sim already flipped `src.active = true` inside

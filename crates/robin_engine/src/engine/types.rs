@@ -335,14 +335,22 @@ pub enum EngineStateRequest {
     bitcode::Decode,
 )]
 pub enum Ambiance {
+    #[serde(alias = "day", alias = "DAY")]
     #[default]
     Day,
+    #[serde(alias = "fog", alias = "FOG")]
     Fog,
+    #[serde(alias = "night", alias = "NIGHT")]
     Night,
+    #[serde(alias = "attack", alias = "ATTACK")]
     Attack,
+    #[serde(alias = "custom1", alias = "custom_1", alias = "CUSTOM_1")]
     Custom1,
+    #[serde(alias = "custom2", alias = "custom_2", alias = "CUSTOM_2")]
     Custom2,
+    #[serde(alias = "custom3", alias = "custom_3", alias = "CUSTOM_3")]
     Custom3,
+    #[serde(alias = "custom4", alias = "custom_4", alias = "CUSTOM_4")]
     Custom4,
 }
 
@@ -903,6 +911,11 @@ pub struct LevelAssets {
     /// `RHFastFindGrid` arrays. `None` is reserved for synthetic/test levels
     /// which did not retain source chunk order.
     pub legacy_grid_topology: Option<LegacyGridTopologyAssets>,
+    /// Every valid authored LIGHT/DARK polygon paired with its ambience
+    /// bitmask. Runtime schedules toggle the corresponding hashed
+    /// `FastFindGrid::sector_active` entries without rebuilding immutable
+    /// level geometry.
+    pub ambience_shadow_sectors: std::sync::Arc<Vec<(crate::fast_find_grid::SectorIndex, u32)>>,
     // TODO(level-assets): migrate rendering, navigation, environment, and
     // audio fields into equivalent domain groups in focused follow-up slices.
     /// Host-provided per-pixel sprite hit-test callback. `None` before
@@ -2117,6 +2130,146 @@ pub struct MissionState {
 
     /// Victory/defeat dialogue ID.
     pub victory_defeat_id: u32,
+
+    /// Optional Rust-authored mission clocks and runtime ambience schedule.
+    /// This state is authoritative: saves, rollback snapshots and network
+    /// state hashes all retain the exact elapsed tick and transition phase.
+    #[serde(default)]
+    pub runtime_features: MissionRuntimeFeatures,
+}
+
+/// Countdown visibility requested by a mission author.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionCountdownMode {
+    /// Keep the tracker visible throughout the active mission.
+    #[default]
+    Always,
+    /// Show only once the authored warning threshold is reached.
+    FinalOnly,
+    /// Do not draw a tracker. Expiry still remains authoritative.
+    Hidden,
+}
+
+/// Deterministic state for a mission time limit.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct TimedMissionRuntime {
+    pub limit_ticks: u32,
+    pub warning_ticks: u32,
+    pub countdown_mode: MissionCountdownMode,
+    pub elapsed_ticks: u32,
+    pub expired: bool,
+}
+
+/// One compiled ambience cue in active-play ticks.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct AmbienceRuntimeCue {
+    pub at_tick: u32,
+    pub ambiance: Ambiance,
+    pub transition_ticks: u32,
+}
+
+/// In-progress deterministic lighting crossfade.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct AmbienceTransitionRuntime {
+    pub started_at_tick: u32,
+    pub duration_ticks: u32,
+    pub from_color: u16,
+    pub to_color: u16,
+}
+
+/// Compiled runtime ambience schedule and transition cursor.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct AmbienceScheduleRuntime {
+    pub initial_ambiance: Ambiance,
+    pub current_ambiance: Ambiance,
+    pub elapsed_ticks: u32,
+    pub cues: Vec<AmbienceRuntimeCue>,
+    pub next_cue: u32,
+    pub transition: Option<AmbienceTransitionRuntime>,
+}
+
+/// Optional mission extensions driven only by completed, interactive
+/// simulation ticks. The Original's universal frame still advances through
+/// some engine locks; this separate clock deliberately does not.
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct MissionRuntimeFeatures {
+    pub active_elapsed_ticks: u32,
+    pub timed_mission: Option<TimedMissionRuntime>,
+    pub ambience_schedule: Option<AmbienceScheduleRuntime>,
+}
+
+/// Read-only countdown data used by local HUD presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionCountdownStatus {
+    pub remaining_ticks: u32,
+    pub limit_ticks: u32,
+    pub warning_ticks: u32,
+    pub mode: MissionCountdownMode,
+    pub expired: bool,
 }
 
 // ─── Input state (transient per-frame) ───────────────────────────────
@@ -2479,6 +2632,8 @@ pub enum SoundCommand {
     },
     /// Activate a previously-idle sound source by index.
     ActivateSource(usize),
+    /// Reconcile host source channels after an authoritative ambience cue.
+    RefreshAmbienceSources,
     /// Start playback for a delayed sound source whose engine-side
     /// countdown timer just hit zero. EngineInner immediately re-rolls the
     /// timer for the next play (using `sim_rng`) so the host doesn't

@@ -35,9 +35,38 @@ pub(crate) use debug::{
 };
 pub(crate) use hud::{
     draw_multi_selection_box, render_combat_status_bars, render_item_effect_preview,
-    render_listen_ping, render_ransom_amulet_overlay, render_trajectory_preview,
+    render_listen_ping, render_mission_countdown, render_ransom_amulet_overlay,
+    render_trajectory_preview,
 };
 pub(crate) use minimap::render_minimap;
+
+fn visual_ambiance(host: &Host, engine: &Engine) -> engine_api::Ambiance {
+    let dynamic = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
+        .graphic_config
+        .dynamic_ambience_visuals;
+    if dynamic {
+        engine.weather().ambiance
+    } else {
+        engine.initial_mission_ambiance()
+    }
+}
+
+fn visual_shadow_color(host: &Host, engine: &Engine) -> u16 {
+    let dynamic = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
+        .graphic_config
+        .dynamic_ambience_visuals;
+    if dynamic {
+        engine.weather().night_color
+    } else {
+        engine.initial_mission_night_color()
+    }
+}
 
 // ─── Door / jump zone alpha overlays ──────────────────────────────────
 
@@ -472,9 +501,12 @@ pub(crate) fn render_view_cone_overlay(
             + (host.viewport.screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport.zoom_factor,
     );
 
-    let alpha = params.alpha.min(crate::shadow_polygon::alpha_for_ambiance(
-        engine.weather().ambiance == Ambiance::Night || engine.weather().ambiance == Ambiance::Fog,
-    ));
+    let alpha = params
+        .alpha
+        .min(crate::shadow_polygon::alpha_for_ambiance(matches!(
+            visual_ambiance(host, engine),
+            Ambiance::Night | Ambiance::Fog
+        )));
 
     let tint = tint.unwrap_or((0, 0, 0));
 
@@ -709,9 +741,10 @@ fn render_all_view_cones(
     // with the NPC's tint — geo's difference guarantees the MultiPolygon
     // parts are disjoint, so same-tint rings never overlap and the GPU
     // path's alpha-blend doesn't double-darken.
-    let weather_alpha = crate::shadow_polygon::alpha_for_ambiance(
-        engine.weather().ambiance == Ambiance::Night || engine.weather().ambiance == Ambiance::Fog,
-    );
+    let weather_alpha = crate::shadow_polygon::alpha_for_ambiance(matches!(
+        visual_ambiance(host, engine),
+        Ambiance::Night | Ambiance::Fog
+    ));
 
     let visible_params: Vec<_> = all_params
         .into_iter()
@@ -828,7 +861,7 @@ fn render_ground_mark_set(
     let screen_h = host.viewport.screen_size.y as i32;
 
     // The same shadow rendering used for entity shadows.
-    let shadow_color = engine.weather().night_color;
+    let shadow_color = visual_shadow_color(host, engine);
     let shadow_level = host.frame_holder.global_shadow();
 
     let view_pos = host.viewport.view_position;
@@ -1017,7 +1050,7 @@ pub(crate) fn render_entities_gpu(
     let zoom = host.viewport.zoom_factor;
     let screen_w = host.viewport.screen_size.x as i32;
     let screen_h = host.viewport.screen_size.y as i32;
-    let shadow_color = engine.weather().night_color;
+    let shadow_color = visual_shadow_color(host, engine);
     let global_shadow = host.frame_holder.global_shadow();
     let blip_shadow = host.frame_holder.global_blip_shadow();
     // When the player has disabled "Display Animations" in the graphics
@@ -1049,7 +1082,11 @@ pub(crate) fn render_entities_gpu(
         if !entity.is_to_be_displayed(display_anim) {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
+        let variant = engine.resolve_render_variant_for_ambiance(
+            entity,
+            apply_fog_to_all_sprites,
+            visual_ambiance(host, engine),
+        );
 
         // ── Interleave titbits that belong behind this entity ─────
         // Immediately before drawing each human entity, flush any
@@ -1579,7 +1616,7 @@ pub(crate) fn render_selection_outlines_gpu(
     let zoom = host.viewport.zoom_factor;
     let screen_w = host.viewport.screen_size.x as i32;
     let screen_h = host.viewport.screen_size.y as i32;
-    let shadow_color = engine.weather().night_color;
+    let shadow_color = visual_shadow_color(host, engine);
     let shadow_level = host.frame_holder.global_shadow();
     let apply_fog_to_all_sprites = host
         .application_context
@@ -1598,7 +1635,11 @@ pub(crate) fn render_selection_outlines_gpu(
         if !entity.is_active() || entity.element_data().hidden_in_building {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
+        let variant = engine.resolve_render_variant_for_ambiance(
+            entity,
+            apply_fog_to_all_sprites,
+            visual_ambiance(host, engine),
+        );
 
         let elem = entity.element_data();
 
@@ -1776,7 +1817,7 @@ where
     let zoom = host.viewport.zoom_factor;
     let screen_w = host.viewport.screen_size.x as i32;
     let screen_h = host.viewport.screen_size.y as i32;
-    let shadow_color = engine.weather().night_color;
+    let shadow_color = visual_shadow_color(host, engine);
     let global_shadow = host.frame_holder.global_shadow();
 
     // Bg animations are unforced ground-level non-masked FX, so they
@@ -1805,7 +1846,11 @@ where
         if !entity.is_to_be_displayed(display_anim) {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
+        let variant = engine.resolve_render_variant_for_ambiance(
+            entity,
+            apply_fog_to_all_sprites,
+            visual_ambiance(host, engine),
+        );
 
         let elem = entity.element_data();
         let sprite = &elem.sprite;

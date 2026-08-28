@@ -347,10 +347,24 @@ impl MissionBootstrap {
             timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
         }
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
-        let control = MissionControl::new(
-            timeline.initially_paused(),
-            manager.engine.weather().night_color,
-        );
+        let dynamic_visuals = self
+            .host
+            .application_context
+            .active_profile_snapshot()
+            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or(true);
+        let visual_ambiance = if dynamic_visuals {
+            manager.engine.weather().ambiance
+        } else {
+            manager.engine.initial_mission_ambiance()
+        };
+        let visual_shadow = if dynamic_visuals {
+            manager.engine.weather().night_color
+        } else {
+            manager.engine.initial_mission_night_color()
+        };
+        let control =
+            MissionControl::new(timeline.initially_paused(), visual_shadow, visual_ambiance);
         MissionRuntime::new(
             MissionWorld::new(self.host, self.game, manager, assets, self.loaded.dev),
             timeline,
@@ -690,30 +704,53 @@ impl LoadedInteractiveStage {
         // decoded pixels, so the decode overlapped everything since the
         // mission header was read. A decode failure aborts the mission
         // launch here (the engine's campaign is recovered by the caller).
-        let (background, minimap) = match self.bootstrap.loaded.pending_terrain.take() {
-            Some(pending) => {
-                let decoded = pending.join().await;
-                let background = decoded.background?;
-                if let Some(bg) = background.as_ref() {
-                    assert_eq!(
-                        (bg.width as f32, bg.height as f32),
-                        self.bootstrap.loaded.bg_pixel_dims,
-                        "background map header dimensions diverge from decoded bitmap"
-                    );
+        let (background, minimap, ambience_backgrounds, ambience_minimaps) =
+            match self.bootstrap.loaded.pending_terrain.take() {
+                Some(pending) => {
+                    let decoded = pending.join().await;
+                    let background = decoded.background?;
+                    if let Some(bg) = background.as_ref() {
+                        assert_eq!(
+                            (bg.width as f32, bg.height as f32),
+                            self.bootstrap.loaded.bg_pixel_dims,
+                            "background map header dimensions diverge from decoded bitmap"
+                        );
+                    }
+                    let mut ambience_backgrounds = decoded.ambience_backgrounds?;
+                    ambience_backgrounds.retain(|(ambiance, decoded)| {
+                        let matches = background.as_ref().is_none_or(|initial| {
+                            initial.width == decoded.width && initial.height == decoded.height
+                        });
+                        if !matches {
+                            tracing::warn!(
+                                ?ambiance,
+                                "ignoring runtime ambience background with mismatched dimensions"
+                            );
+                        }
+                        matches
+                    });
+                    timer.step("terrain decode join");
+                    (
+                        background,
+                        decoded.minimap,
+                        ambience_backgrounds,
+                        decoded.ambience_minimaps,
+                    )
                 }
-                timer.step("terrain decode join");
-                (background, decoded.minimap)
-            }
-            None => (
-                self.bootstrap.loaded.pre_decoded_background.take(),
-                self.bootstrap.loaded.pre_decoded_minimap.take(),
-            ),
-        };
+                None => (
+                    self.bootstrap.loaded.pre_decoded_background.take(),
+                    self.bootstrap.loaded.pre_decoded_minimap.take(),
+                    std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_backgrounds),
+                    std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_minimaps),
+                ),
+            };
         renderer.upload_maps(
             &self.bootstrap.loaded.engine,
             &mut self.bootstrap.host,
             background,
             minimap,
+            ambience_backgrounds,
+            ambience_minimaps,
         );
         timer.step("map upload");
 

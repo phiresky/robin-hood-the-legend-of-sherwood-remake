@@ -1548,8 +1548,18 @@ pub(super) fn load_mission_sprites(
     // ── Selection mark renderer ──
     // Loads RHID_GROUND_SELECT (green idle) and RHID_GROUND_SELECT_SWORD
     // (red combat) sprites from DEFAULT.RES.
+    let dynamic_ambience_visuals = host
+        .application_context
+        .active_profile_snapshot()
+        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+        .unwrap_or(true);
+    let visual_shadow_color = if dynamic_ambience_visuals {
+        engine.weather().night_color
+    } else {
+        engine.initial_mission_night_color()
+    };
     let mut selection_mark_renderer = SelectionMarkRenderer::new();
-    selection_mark_renderer.load(cursor_res, renderer, engine.weather().night_color);
+    selection_mark_renderer.load(cursor_res, renderer, visual_shadow_color);
     timer.step("selection marks");
 
     // ── Swordfight mouse-trail renderer ──
@@ -1583,7 +1593,7 @@ pub(super) fn load_mission_sprites(
     titbit_renderer.load(
         cursor_res,
         renderer.gpu(),
-        engine.weather().night_color,
+        visual_shadow_color,
         renderer.scale_mode(),
     );
     // Row frame counts were absorbed by the engine at construction via
@@ -1819,6 +1829,14 @@ pub(super) struct LoadedMissionCore {
     /// Grid dimensions the engine was constructed with, for the divergence
     /// assert at the deferred join.
     pub(super) bg_pixel_dims: (f32, f32),
+    pub(super) pre_decoded_ambience_backgrounds: Vec<(
+        engine_api::Ambiance,
+        engine_api::level_loading::PreDecodedBackground,
+    )>,
+    pub(super) pre_decoded_ambience_minimaps: Vec<(
+        engine_api::Ambiance,
+        engine_api::level_loading::PreDecodedMinimap,
+    )>,
     pub(super) engine_rng_seed: u64,
     pub(super) engine_sim_config: engine_api::SimConfig,
 }
@@ -1946,9 +1964,15 @@ pub(super) fn load_level_and_sprite_bank(
     };
     timer.step("mission binaries");
 
-    let ambiance_dir = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance)
-        .directory()
-        .to_string();
+    let authored_initial_ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
+    let effective_initial_ambiance = loaded
+        .mission
+        .ambience_schedule
+        .iter()
+        .take_while(|cue| cue.at_seconds == 0)
+        .last()
+        .map_or(authored_initial_ambiance, |cue| cue.ambiance);
+    let ambiance_dir = effective_initial_ambiance.directory().to_string();
     let map_name = loaded.mission.header.map_filename.clone();
 
     // Start the background-map + minimap decode (bzip2/JXL — the slowest
@@ -2124,6 +2148,74 @@ pub(super) fn load_level_and_sprite_bank(
     };
     timer.step("background map dims");
 
+    // Decode every additional authored ambience once during mission loading.
+    // Feature 14's active-mission-only prefetch remains scoped to this load;
+    // nothing is retained in the process cache for unrelated missions.
+    let mut scheduled_ambiances = Vec::new();
+    if authored_initial_ambiance != effective_initial_ambiance {
+        scheduled_ambiances.push(authored_initial_ambiance);
+    }
+    for cue in &loaded.mission.ambience_schedule {
+        if cue.ambiance != effective_initial_ambiance
+            && !scheduled_ambiances.contains(&cue.ambiance)
+        {
+            scheduled_ambiances.push(cue.ambiance);
+        }
+    }
+    let mut pre_decoded_ambience_backgrounds = Vec::new();
+    let mut pre_decoded_ambience_minimaps = Vec::new();
+    for ambiance in scheduled_ambiances {
+        let dir = ambiance.directory();
+        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
+            assets_frame_holder::ProgressUpdate::Tick(delta) => {
+                tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+            }
+            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
+                if let Some(screen) = loading_screen.as_mut() {
+                    screen.set_status(text, LOADING_MAP_DECODE_PROGRESS);
+                }
+            }
+        };
+        let decoded = crate::level_loading_host::pre_decode_background_map(
+            &map_name,
+            dir,
+            &level_directory,
+            host.shipping.as_deref(),
+            &mut update,
+        )
+        .map_err(|error| {
+            MissionLoadError::new(
+                campaign.clone(),
+                format!("{ambiance:?} background map load failed: {error}"),
+            )
+        })?;
+        if let Some(decoded) = decoded {
+            let decoded_dims = (decoded.width as f32, decoded.height as f32);
+            if bg_pixel_dims == (0.0, 0.0) || decoded_dims == bg_pixel_dims {
+                pre_decoded_ambience_backgrounds.push((ambiance, decoded));
+            } else {
+                tracing::warn!(
+                    ?ambiance,
+                    ?decoded_dims,
+                    ?bg_pixel_dims,
+                    "ignoring runtime ambience background with mismatched dimensions"
+                );
+            }
+        }
+        let mut progress = |delta: f32| {
+            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+        };
+        if let Some(decoded) = crate::level_loading_host::pre_decode_minimap(
+            &map_name,
+            dir,
+            &level_directory,
+            host.shipping.as_deref(),
+            &mut progress,
+        ) {
+            pre_decoded_ambience_minimaps.push((ambiance, decoded));
+        }
+    }
+
     // Resolve the engine's initial RNG seed before construction so
     // `Engine::new` is the only site that touches RNG state during
     // setup. Campaign selection has already advanced the single-player /
@@ -2279,8 +2371,17 @@ pub(super) fn load_level_and_sprite_bank(
     // dictionaries together. Preserve that single-generation boundary here:
     // finish every dictionary mutation before publishing engine hit testing.
     crate::level_loading_host::initialize_sprite_variants(host, &engine);
-    host.frame_holder_mut()
-        .apply_arno_law(engine.weather().night_color);
+    let dynamic_visuals = host
+        .application_context
+        .active_profile_snapshot()
+        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+        .unwrap_or(true);
+    let initial_shadow_key = if dynamic_visuals {
+        engine.weather().night_color
+    } else {
+        engine.initial_mission_night_color()
+    };
+    host.frame_holder_mut().apply_arno_law(initial_shadow_key);
     // Engine cannot depend on robin_assets, so LevelAssets holds the trait
     // publisher. Runtime ambiance rebinds replace the immutable generation
     // inside it rather than leaving an Arc::make_mut copy detached.
@@ -2298,6 +2399,8 @@ pub(super) fn load_level_and_sprite_bank(
         pre_decoded_minimap: pre_decoded_mm,
         pending_terrain: pending_terrain_out,
         bg_pixel_dims,
+        pre_decoded_ambience_backgrounds,
+        pre_decoded_ambience_minimaps,
         engine_rng_seed: rng_seed,
         engine_sim_config: sim_config,
     })

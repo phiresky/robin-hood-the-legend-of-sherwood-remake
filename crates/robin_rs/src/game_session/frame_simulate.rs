@@ -63,6 +63,7 @@ struct SimulationModalState {
 /// deterministic tick but before scripted modal drains.
 struct SimulationVisualRefresh<'a> {
     last_shadow_color: &'a mut u16,
+    last_visual_ambiance: &'a mut robin_engine::engine::Ambiance,
     manager: &'a mut robin_engine::engine_manager::EngineManager,
     host: &'a mut Host,
     dev: &'a mut robin_engine::engine::DevState,
@@ -75,6 +76,7 @@ impl SimulationVisualRefresh<'_> {
     fn run(self) {
         let Self {
             last_shadow_color,
+            last_visual_ambiance,
             manager,
             host,
             dev,
@@ -83,14 +85,40 @@ impl SimulationVisualRefresh<'_> {
             window,
         } = self;
 
-        let current_shadow_color = manager.engine.weather().night_color;
-        if current_shadow_color != *last_shadow_color {
+        let dynamic_visuals = host
+            .application_context
+            .active_profile_snapshot()
+            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or(true);
+        let current_visual_ambiance = if dynamic_visuals {
+            manager.engine.weather().ambiance
+        } else {
+            manager.engine.initial_mission_ambiance()
+        };
+        let current_shadow_color = if dynamic_visuals {
+            manager.engine.weather().night_color
+        } else {
+            manager.engine.initial_mission_night_color()
+        };
+        let ambiance_changed = current_visual_ambiance != *last_visual_ambiance;
+        if ambiance_changed {
+            presentation.apply_ambience_maps(&manager.engine, host, current_visual_ambiance);
+            *last_visual_ambiance = current_visual_ambiance;
+        }
+        if current_shadow_color != *last_shadow_color || ambiance_changed {
             tracing::info!(
                 "Ambience shadow-key changed {:#06x} → {:#06x}; rebinding sprite caches",
                 last_shadow_color,
                 current_shadow_color,
             );
-            presentation.rebind_shadow_key(resources, host, &window.gpu, current_shadow_color);
+            presentation.rebind_shadow_key(
+                resources,
+                host,
+                &window.gpu,
+                current_shadow_color,
+                current_visual_ambiance,
+                manager.engine.sim_config().bypass_fog_sprites_crash,
+            );
             *last_shadow_color = current_shadow_color;
         }
 
@@ -548,6 +576,7 @@ impl InteractiveFrameSimulation {
         let MissionControl {
             manual_pause,
             last_shadow_color,
+            last_visual_ambiance,
             ..
         } = control;
         let resources = &mut frontend.resources;
@@ -591,6 +620,7 @@ impl InteractiveFrameSimulation {
         );
         SimulationVisualRefresh {
             last_shadow_color,
+            last_visual_ambiance,
             manager,
             host,
             dev,

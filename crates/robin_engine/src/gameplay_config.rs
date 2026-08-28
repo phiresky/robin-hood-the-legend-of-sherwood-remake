@@ -319,6 +319,15 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     #[state_hash(skip)]
     pub autosave_enabled: bool,
+
+    /// Enforce time limits authored by Rust JSON missions.
+    #[serde(default = "enabled_by_default")]
+    pub enable_timed_missions: bool,
+
+    /// Advance authored day/night/fog schedules, including perception and
+    /// ambience-filtered gameplay sound sources.
+    #[serde(default = "enabled_by_default")]
+    pub enable_dynamic_ambience: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -353,6 +362,8 @@ impl Default for GameplayConfig {
             show_all_enemies_one_building_tracker: false,
             show_achievement_badges: true,
             show_achievement_debrief: true,
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }
@@ -385,6 +396,8 @@ impl GameplayConfig {
             show_all_enemies_one_building_tracker: false,
             show_achievement_badges: true,
             show_achievement_debrief: true,
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }
@@ -423,6 +436,8 @@ mod tests {
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree
         );
+        assert!(config.enable_timed_missions);
+        assert!(config.enable_dynamic_ambience);
     }
 
     #[test]

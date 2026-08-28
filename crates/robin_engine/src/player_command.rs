@@ -1057,6 +1057,14 @@ pub enum PlayerCommand {
     SetNoiseDistractionFeedback {
         enabled: bool,
     },
+    /// Toggle authored time-limit enforcement at a deterministic frame.
+    SetTimedMissionsEnabled {
+        enabled: bool,
+    },
+    /// Toggle authored ambience gameplay changes at a deterministic frame.
+    SetDynamicAmbienceEnabled {
+        enabled: bool,
+    },
 }
 
 /// Deserialize an explicitly present optional value.

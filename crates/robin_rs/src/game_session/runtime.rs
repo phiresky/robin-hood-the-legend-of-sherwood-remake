@@ -308,15 +308,21 @@ pub(super) struct MissionControl {
     pub(super) step_forward_repeat_at_ms: Option<u32>,
     pub(super) step_back_repeat_at_ms: Option<u32>,
     pub(super) last_shadow_color: u16,
+    pub(super) last_visual_ambiance: robin_engine::engine::Ambiance,
 }
 
 impl MissionControl {
-    pub(super) fn new(manual_pause: bool, last_shadow_color: u16) -> Self {
+    pub(super) fn new(
+        manual_pause: bool,
+        last_shadow_color: u16,
+        last_visual_ambiance: robin_engine::engine::Ambiance,
+    ) -> Self {
         Self {
             manual_pause,
             step_forward_repeat_at_ms: None,
             step_back_repeat_at_ms: None,
             last_shadow_color,
+            last_visual_ambiance,
         }
     }
 }
@@ -2204,6 +2210,7 @@ mod tests {
             step_forward_repeat_at_ms: Some(120),
             step_back_repeat_at_ms: Some(240),
             last_shadow_color: 0x1234,
+            last_visual_ambiance: robin_engine::engine::Ambiance::Fog,
         };
         let encoded = serde_json::to_string(&control).expect("serialize mission control");
         let decoded: MissionControl =

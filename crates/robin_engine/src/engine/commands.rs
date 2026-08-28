@@ -1459,6 +1459,12 @@ impl EngineInner {
             SetFixHardReactionTimes { enabled } => {
                 self.control.sim_config.fix_hard_reaction_times = *enabled;
             }
+            SetTimedMissionsEnabled { enabled } => {
+                self.control.sim_config.enable_timed_missions = *enabled;
+            }
+            SetDynamicAmbienceEnabled { enabled } => {
+                self.control.sim_config.enable_dynamic_ambience = *enabled;
+            }
             SetUnbindingEnabled { enabled } => {
                 self.control.sim_config.enable_unbinding = *enabled;
             }

@@ -100,6 +100,15 @@ pub struct SoundSource {
     pub timer: u16,
     /// Whether this source is currently active (playing or ready to play).
     pub active: bool,
+    /// Whether the current runtime ambience is included in `ambiences`.
+    /// Kept separate from `active` so script Activate/Deactivate state
+    /// survives a day/night/fog transition.
+    #[serde(default = "default_ambience_enabled")]
+    pub ambience_enabled: bool,
+}
+
+fn default_ambience_enabled() -> bool {
+    true
 }
 
 impl Default for SoundSource {
@@ -121,6 +130,7 @@ impl Default for SoundSource {
             delay_stepping: 1,
             timer: 0,
             active: false,
+            ambience_enabled: true,
         }
     }
 }
@@ -128,6 +138,10 @@ impl Default for SoundSource {
 impl SoundSource {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn is_effectively_active(&self) -> bool {
+        self.active && self.ambience_enabled
     }
 
     /// Convert to [`SoundSourceInfo`] for use by the geometry engine.
@@ -205,7 +219,7 @@ impl SoundSource {
     ///
     /// The Z coordinate is subtracted from Y for isometric projection.
     pub fn noise_covering_volume_for_3d(&self, x: f32, y: f32, z: f32) -> u16 {
-        if !self.active {
+        if !self.is_effectively_active() {
             return 0;
         }
 

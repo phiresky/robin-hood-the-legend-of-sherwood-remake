@@ -144,8 +144,8 @@ impl EngineInner {
         }
 
         // Apply mission header
-        self.world.weather.ambiance = Ambiance::from_raw(loaded.mission.header.ambiance);
-        // Install the initial view-polygon radius from the ambiance:
+        self.initialize_mission_runtime_features(loaded);
+        // The runtime initializer installs the initial view-polygon radius:
         // DAY / ATTACK / CUSTOM_1..4 → 400, FOG / NIGHT → 300.  Without
         // this seed, Fog/Night missions whose StartUp script does not
         // call `SetViewRadius(300)` would run with NPCs whose view
@@ -153,8 +153,6 @@ impl EngineInner {
         // vision path, detecting PCs from further away than in the
         // original game.  Script opcodes (engine/script.rs
         // `SetViewRadius`) can still overwrite this.
-        self.ai.standard_view_polygon_radius =
-            self.world.weather.ambiance.default_view_polygon_radius();
         self.mission_domain.state.map_name = loaded.mission.header.map_filename.clone();
         assets.scripts.hiking_path_count = loaded.mission.hiking_paths.len();
 
@@ -795,12 +793,6 @@ impl EngineInner {
             let mut required_ids = BTreeSet::new();
 
             for raw in &loaded.proto.sound_sources {
-                if (raw.ambience_filter & ambiance_mask) == 0 {
-                    // Source not in this ambiance — push None to preserve indices
-                    self.feedback.sound_sim.sources.sources_push_none();
-                    continue;
-                }
-
                 let source_kind = SoundSourceKind::from_u8(raw.source_kind).ok_or_else(|| {
                     EngineError::MissionLevelStage {
                         stage: "sound sources",
@@ -874,6 +866,7 @@ impl EngineInner {
                     delay_stepping,
                     timer: 0,
                     active: raw.active,
+                    ambience_enabled: (raw.ambience_filter & ambiance_mask) != 0,
                 };
 
                 required_ids.insert(source.id);
