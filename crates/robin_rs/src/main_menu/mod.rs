@@ -9,7 +9,6 @@
 
 use crate::gfx_types::Keycode;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
-use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
@@ -185,16 +184,16 @@ pub(crate) async fn show_main_menu(
     let shipping = application_context.shipping()?;
     window.set_logical_size(MENU_W as u32, MENU_H as u32);
 
-    // Main menu runs before a profile is loaded, so fall back to the
-    // default texture scale mode.  Once the player selects a profile or
-    // opens options mid-game, the active profile's `graphic_config.scale_mode`
-    // is applied via [`Renderer::set_scale_mode`].
+    let active_graphics = application_context
+        .active_profile_snapshot()?
+        .graphic_config;
     let mut renderer = Renderer::new(
         window,
         MENU_W as u16,
         MENU_H as u16,
-        TextureScaleMode::default(),
+        active_graphics.scale_mode,
     );
+    renderer.apply_upscale_config(&active_graphics);
 
     // Shared menu resources (buttons, fonts, menu text table) — reused
     // by every sub-menu launched from here.
@@ -651,6 +650,7 @@ async fn dispatch_click(
                 .unwrap_or_else(|error| {
                     panic!("Select Player removed the active profile: {error}")
                 });
+            renderer.apply_upscale_config(&profile.graphic_config);
             let active_res = Some((
                 profile.graphic_config.resolution_x.round() as u16,
                 profile.graphic_config.resolution_y.round() as u16,

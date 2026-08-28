@@ -236,19 +236,32 @@ A list of which additional features we have added, which ones we might still wan
     after `run_engine_tick`, so HTTP-driven side effects land on the
     same frame as normal script-native side effects.
 
-- **Upscaling**. Options -> Graphics -> Scaling is wired
-  through `crates/robin_rs/src/gpu_upscale.rs`, `shaders/*.wgsl`, and
-  `build.rs`. Currently shipped in the UI: Nearest, PixelArt, Linear
-  via wgpu, plus single-pass WGSL shaders: **Sharp-Bilinear**,
-  **Bicubic**, **Lanczos**, and **CUT3**, plus **RetroArch Shader** preset
-  selection.
-  - Multi-pass shader runner candidates:
-    **xBRZ**, **hqx**, **super-xbr**, **Anime4K v4**, **ScaleNX with artifact
-    removal**, and CRT shaders (as a separate `TextureEffect` enum).
-  - References:
-    - https://github.com/libretro/slang-shaders
-    - https://github.com/libretro/common-shaders
-    - https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms
+- **Upscaling and presentation effects**. Options -> Graphics -> Scaling now
+  ships a portable multi-pass wgpu runner. It includes Nearest, Linear,
+  Pixel Art/Sharp-Bilinear, Bicubic, Lanczos, CUT3, a published-corner-rule-
+  derived **ScaleNX** path with artifact removal, and clearly labelled clean-room
+  **HQx-style**, **xBRZ-style**, **Super-xBR-style**, and **Anime line A/B/C
+  (v4 layout)** profiles. The Anime profiles follow Anime4K v4's documented
+  restore/soft-restore/denoise pass ordering, but intentionally do not claim
+  to reproduce Anime4K's trained kernels.
+  - CRT is an independent, disableable `TextureEffect`: None,
+    **CRT Guest-class**, or **CRT Royale-class**. Both implementations are
+    original portable WGSL inspired by those shaders' documented controls;
+    no GPL shader code is embedded.
+  - Strength, edge threshold, artifact removal, scanlines, phosphor mask,
+    bloom, curvature, and presentation-rate temporal flicker are persisted
+    per profile. Temporal state advances only after a frame is submitted for
+    presentation, independently of deterministic simulation ticks.
+  - The world/video layer is scaled and effected first. Menus, HUD, cursors,
+    and modal overlays are then alpha-composited with sharp-bilinear sampling
+    so display effects do not blur text.
+  - Standard native builds can choose bundled `.slangp` presets or import and
+    compile an external preset from the Graphics screen. Preset
+    parse/compile/frame errors are reported; a failed preset never silently
+    falls back. Browser builds hide this unavailable choice while retaining
+    all portable WGSL profiles on WebGPU and WebGL2.
+  - Algorithm provenance, exactness, licensing, platform support, and shader
+    restrictions are documented in `docs/UPSCALERS.md`.
 
 - **Deterministic replay and rollback checking**. Sessions can be recorded to
   JSONL, replayed from disk or compact `rhrec-...` strings, and checked with

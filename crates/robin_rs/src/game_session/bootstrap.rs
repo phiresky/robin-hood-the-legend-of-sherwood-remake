@@ -394,6 +394,9 @@ impl MissionLoadingScreen {
         let renderer_config = MissionRendererConfig {
             scale_mode: profile.graphic_config.scale_mode,
             shader_preset: profile.graphic_config.shader_preset,
+            texture_effect: profile.graphic_config.texture_effect,
+            upscale_parameters: profile.graphic_config.upscale_parameters,
+            texture_effect_parameters: profile.graphic_config.texture_effect_parameters,
         };
         let renderer = loading_pak.and_then(|path| {
             let datadir_kind = match detect_demo_mode_with_context(application_context)

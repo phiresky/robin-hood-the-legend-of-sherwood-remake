@@ -208,6 +208,9 @@ pub(super) struct MissionPresentation {
 pub(super) struct MissionRendererConfig {
     pub(super) scale_mode: TextureScaleMode,
     pub(super) shader_preset: String,
+    pub(super) texture_effect: robin_engine::graphic_config::TextureEffect,
+    pub(super) upscale_parameters: robin_engine::graphic_config::UpscaleParameters,
+    pub(super) texture_effect_parameters: robin_engine::graphic_config::TextureEffectParameters,
 }
 
 /// Renderer-only stage. This value can only be constructed after the loading
@@ -225,7 +228,14 @@ impl InteractiveRendererAssembly {
         let render_h = window.height as u16;
         window.set_logical_size(u32::from(render_w), u32::from(render_h));
         let mut renderer = Renderer::new(window, render_w, render_h, config.scale_mode);
-        renderer.set_shader_preset(config.shader_preset);
+        renderer.apply_upscale_config(&robin_engine::graphic_config::GraphicConfig {
+            scale_mode: config.scale_mode,
+            shader_preset: config.shader_preset,
+            texture_effect: config.texture_effect,
+            upscale_parameters: config.upscale_parameters,
+            texture_effect_parameters: config.texture_effect_parameters,
+            ..robin_engine::graphic_config::GraphicConfig::default()
+        });
         Self { renderer }
     }
 

@@ -216,6 +216,7 @@ pub fn dim_screen(renderer: &mut Renderer) {
 /// path resumes.
 pub fn enter_modal_gpu_phase(renderer: &mut Renderer) {
     renderer.freeze_scene_for_modal();
+    renderer.begin_ui_layer();
 }
 
 /// Blit a background surface into a virtual sub-rect at `(virt_x, virt_y)`

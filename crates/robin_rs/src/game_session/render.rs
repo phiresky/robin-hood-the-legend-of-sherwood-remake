@@ -989,7 +989,6 @@ pub(super) fn render_frame(
     // noisy.  All fields are `&'a mut T` / `&'a T`, so this is a
     // reborrow, not a move.
     let renderer = &mut *ctx.renderer;
-    renderer.set_shader_frame_count(Some(engine.frame_counter() as usize));
     let cursor_renderer = &mut *ctx.cursor_renderer;
     let selection_mark_renderer = &mut *ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
@@ -1259,6 +1258,8 @@ pub(super) fn render_frame(
     if !draw_hud {
         return;
     }
+
+    renderer.begin_ui_layer();
 
     // ── GPU phase: multi-selection rubber band box ──
     crate::game_render::draw_multi_selection_box(host, engine, renderer);

@@ -115,7 +115,7 @@ pub(crate) async fn show_main_menu_options(
             renderer.screen_height() as u32,
         );
     }
-    renderer.set_shader_preset(graphic.shader_preset.clone());
+    renderer.apply_upscale_config(&graphic);
 
     if outcome.changed {
         application_context
