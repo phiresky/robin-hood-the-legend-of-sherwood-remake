@@ -174,6 +174,35 @@ mod tests {
         );
         assert_eq!(target.x, 65_500.0);
     }
+
+    #[test]
+    fn authoritative_soldier_camps_override_legacy_presence_flags() {
+        let mut global = AiGlobalState::default();
+        global.there_are_royalist_soldiers = true;
+        global.there_are_lacklandist_soldiers = true;
+        global.soldier_camps.extend([
+            crate::element::Camp::Royalists,
+            crate::element::Camp::Lacklandists,
+        ]);
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&crate::diplomacy::DiplomacyDefinition {
+                player_coalition: vec![0],
+                relationships: vec![crate::diplomacy::DiplomacyRule {
+                    first: 0,
+                    second: 1,
+                    relationship: crate::diplomacy::Relationship::Neutral,
+                }],
+            }),
+        )
+        .unwrap();
+
+        assert!(!global.npcs_can_be_enemies(&diplomacy));
+        global.soldier_camps.clear();
+        assert!(!global.npcs_can_be_enemies(&diplomacy));
+        assert!(global.npcs_can_be_enemies(&crate::diplomacy::DiplomacyState::default()));
+    }
 }
 
 /// Per-frame entity state passed into `think()` by the engine.
@@ -1630,12 +1659,22 @@ impl AiGlobalState {
         if !diplomacy.npc_faction_wars() {
             return false;
         }
-        self.soldier_camps.iter().enumerate().any(|(index, camp)| {
-            self.soldier_camps
-                .iter()
-                .skip(index + 1)
-                .any(|other| diplomacy.is_hostile(*camp, *other))
-        }) || (self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers)
+        if !self.soldier_camps.is_empty() {
+            return self.soldier_camps.iter().enumerate().any(|(index, camp)| {
+                self.soldier_camps
+                    .iter()
+                    .skip(index + 1)
+                    .any(|other| diplomacy.is_hostile(*camp, *other))
+            });
+        }
+        // Old snapshots predate `soldier_camps`; retain their two-flag
+        // fallback only when the authoritative set is genuinely absent.
+        self.there_are_royalist_soldiers
+            && self.there_are_lacklandist_soldiers
+            && diplomacy.is_hostile(
+                crate::element::Camp::Royalists,
+                crate::element::Camp::Lacklandists,
+            )
     }
 
     pub fn overall_villain_alert(&self) -> AlertLevel {
