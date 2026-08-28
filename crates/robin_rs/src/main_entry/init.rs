@@ -548,10 +548,18 @@ struct SoldierProfilePatch {
 #[serde(deny_unknown_fields)]
 struct CharacterProfileAddition {
     template: String,
+    /// Retail soldier profile supplying the promoted NPC's combat statistics.
+    /// The character template still supplies player actions and ammunition.
+    #[serde(default)]
+    combat_profile: Option<String>,
     filename: String,
     profile_name: String,
     display_name: String,
     exclamation_profile: String,
+    /// Contextual actions inherited from the playable template that the NPC's
+    /// sprite set cannot actually perform.
+    #[serde(default)]
+    remove_contextual_actions: Vec<engine_profiles::Action>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -701,6 +709,31 @@ fn apply_soldier_profile_patch(
         profile.profile_name = addition.profile_name;
         profile.display_name = addition.display_name;
         profile.exclamation_id = exclamation_id;
+        if let Some(combat_reference) = addition.combat_profile.as_deref() {
+            let combat = resolve_soldier_profile_template(profiles, combat_reference)
+                .map_err(|message| format!("combat_profile {combat_reference:?}: {message}"))?;
+            profile.shooting = combat.shooting;
+            profile.fighting = combat.fighting;
+            profile.endurance = combat.endurance;
+            profile.hth_weapon_id = combat.hth_weapon_id;
+            profile.shooting_weapon_id = combat.shooting_weapon_id;
+            profile.wake_up = combat.wake_up;
+            profile.weapon_material = combat.weapon_material;
+            profile.armor_material = combat.armor_material;
+        }
+        for action in addition.remove_contextual_actions {
+            let slot = profile
+                .contextual_actions
+                .iter_mut()
+                .find(|inherited| **inherited == action)
+                .ok_or_else(|| {
+                    format!(
+                        "character template {:?} does not have contextual action {action:?}",
+                        addition.template
+                    )
+                })?;
+            *slot = engine_profiles::Action::NoAction;
+        }
         profile.alternative_profile_name.clear();
         profile.valid_alternative_profile = false;
         profiles.characters.push(profile);
@@ -967,11 +1000,22 @@ mod tests {
         profiles.characters.push(engine_profiles::CharacterProfile {
             filename: "RobinHood".to_owned(),
             profile_name: "Robin des Bois".to_owned(),
+            contextual_actions: [
+                engine_profiles::Action::Search,
+                engine_profiles::Action::Climb,
+                engine_profiles::Action::Jump,
+                engine_profiles::Action::NoAction,
+            ],
             ..Default::default()
         });
         profiles.soldiers.push(engine_profiles::SoldierProfile {
             filename: "Guisbourne".to_owned(),
             exclamation_id: 0x4747_0016,
+            fighting: 100,
+            endurance: 80,
+            hth_weapon_id: 19,
+            weapon_material: engine_profiles::WeaponMaterial::Steel,
+            armor_material: engine_profiles::ArmorMaterial::Plate,
             ..Default::default()
         });
         profiles.civilians.push(engine_profiles::CivilianProfile {
@@ -982,10 +1026,12 @@ mod tests {
         let patch = SoldierProfilePatch {
             characters: vec![CharacterProfileAddition {
                 template: "RobinHood".to_owned(),
+                combat_profile: Some("Guisbourne".to_owned()),
                 filename: "Guisbourne".to_owned(),
                 profile_name: "Guisbourne".to_owned(),
                 display_name: "Guy of Guisbourne".to_owned(),
                 exclamation_profile: "Guisbourne".to_owned(),
+                remove_contextual_actions: vec![engine_profiles::Action::Jump],
             }],
             soldiers: Vec::new(),
         };
@@ -999,6 +1045,22 @@ mod tests {
         assert_eq!(profiles.characters[1].profile_name, "Guisbourne");
         assert_eq!(profiles.characters[1].display_name, "Guy of Guisbourne");
         assert_eq!(profiles.characters[1].exclamation_id, 0x4747_0016);
+        assert_eq!(profiles.characters[1].fighting, 100);
+        assert_eq!(profiles.characters[1].endurance, 80);
+        assert_eq!(profiles.characters[1].hth_weapon_id, 19);
+        assert_eq!(
+            profiles.characters[1].weapon_material,
+            engine_profiles::WeaponMaterial::Steel
+        );
+        assert_eq!(
+            profiles.characters[1].armor_material,
+            engine_profiles::ArmorMaterial::Plate
+        );
+        assert!(
+            !profiles.characters[1]
+                .contextual_actions
+                .contains(&engine_profiles::Action::Jump)
+        );
     }
 
     #[test]

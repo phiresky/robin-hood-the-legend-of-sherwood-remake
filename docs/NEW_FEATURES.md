@@ -123,6 +123,10 @@ A list of which additional features we have added, which ones we might still wan
   bank separate from the internal RHS profile key, so promoted villains retain
   their own voices. NPC sprite sets used as PCs also fall back to compatible
   authored attack rows for target interactions they do not natively animate.
+  Promoted NPCs can import their retail soldier combat statistics while
+  retaining a playable character template's action layout. Mods can remove
+  inherited contextual actions unsupported by the NPC sprite; Five Villains
+  disables wall jumping while retaining authored ladder climbing.
   Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
   and type-aware line, box, staggered, and flank formations. Selecting soldiers

@@ -2,27 +2,33 @@
   "characters": [
     {
       "template": "RobinHood",
+      "combat_profile": "Guisbourne",
       "filename": "Guisbourne",
       "profile_name": "Guisbourne",
       "display_name": "Guy of Guisbourne",
-      "exclamation_profile": "Guisbourne"
+      "exclamation_profile": "Guisbourne",
+      "remove_contextual_actions": ["Jump"]
     },
     {
       "template": "WillScarlet",
+      "combat_profile": "Longchamp",
       "filename": "Longchamp",
       "profile_name": "Longchamp",
       "display_name": "Longchamp",
-      "exclamation_profile": "Longchamp"
+      "exclamation_profile": "Longchamp",
+      "remove_contextual_actions": ["Jump"]
     },
     {
       "template": "RobinHood",
       "filename": "PrinceJohn",
       "profile_name": "Prince Jean",
       "display_name": "Prince John",
-      "exclamation_profile": "PrinceJohn"
+      "exclamation_profile": "PrinceJohn",
+      "remove_contextual_actions": ["Jump"]
     },
     {
       "template": "Friar Tuck",
+      "combat_profile": "Scatlock",
       "filename": "Scatlock",
       "profile_name": "Scatlock",
       "display_name": "Scathlock",
@@ -30,6 +36,7 @@
     },
     {
       "template": "Stuteley",
+      "combat_profile": "sherif",
       "filename": "sherif",
       "profile_name": "Sherif",
       "display_name": "Sheriff",
