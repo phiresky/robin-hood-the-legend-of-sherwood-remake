@@ -766,6 +766,13 @@ pub struct BeamMe {
     pub index: u16,
     pub script: Option<String>,
     pub required_pc: u8,
+    /// Optional Rust-port override used by legacy-mission roster mods while
+    /// preserving the authored beam-me and script-table slot.
+    #[serde(default)]
+    pub profile_override: Option<u32>,
+    /// Preserve Robin-only mission behavior for a visually replaced PC.
+    #[serde(default)]
+    pub robin_role: bool,
 }
 
 /// Action requirement flags for beam-me spawn points.
@@ -901,6 +908,10 @@ pub struct RawTarget {
     pub polyline: Vec<(i16, i16)>,
     pub blit_type: u8,
     pub script_class: Option<String>,
+    /// Rust-port extension for roster mods whose interactive stand-in target
+    /// should render a real character sprite (for example a tied prisoner).
+    #[serde(default)]
+    pub character_sprite: bool,
 }
 
 /// Raw bonus data from the BONU/ZORG chunk.
@@ -2177,6 +2188,8 @@ impl LoadedLevel {
                 index: 0,
                 script: None,
                 required_pc: 0,
+                profile_override: None,
+                robin_role: false,
             }];
         }
         if !descriptor.soldiers.is_empty() {
@@ -3350,6 +3363,8 @@ fn read_beam_mes(reader: &mut ChunkReader, format: LevelFormat) -> Result<Vec<Be
             index,
             script,
             required_pc,
+            profile_override: None,
+            robin_role: false,
         });
     }
 
@@ -3504,6 +3519,7 @@ fn read_targets(
             polyline,
             blit_type,
             script_class,
+            character_sprite: false,
         });
     }
 

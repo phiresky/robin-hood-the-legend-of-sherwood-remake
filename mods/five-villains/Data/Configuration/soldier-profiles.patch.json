@@ -1,0 +1,29 @@
+{
+  "characters": [
+    {
+      "template": "RobinHood",
+      "filename": "Guisbourne",
+      "profile_name": "Guy of Guisbourne"
+    },
+    {
+      "template": "WillScarlet",
+      "filename": "Longchamp",
+      "profile_name": "Longchamp"
+    },
+    {
+      "template": "RobinHood",
+      "filename": "PrinceJohn",
+      "profile_name": "Prince John"
+    },
+    {
+      "template": "Friar Tuck",
+      "filename": "Scatlock",
+      "profile_name": "Scathlock"
+    },
+    {
+      "template": "Stuteley",
+      "filename": "sherif",
+      "profile_name": "Sheriff"
+    }
+  ]
+}

@@ -1228,6 +1228,8 @@ mod tests {
             index: 0,
             script: None,
             required_pc: 0,
+            profile_override: None,
+            robin_role: false,
         });
         (campaign, assets, loaded)
     }

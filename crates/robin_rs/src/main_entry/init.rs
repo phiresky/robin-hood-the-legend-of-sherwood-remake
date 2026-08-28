@@ -538,7 +538,18 @@ const SOLDIER_PROFILE_PATCH_PATH: &str = "Data/Configuration/soldier-profiles.pa
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SoldierProfilePatch {
+    #[serde(default)]
     soldiers: Vec<SoldierProfileAddition>,
+    #[serde(default)]
+    characters: Vec<CharacterProfileAddition>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CharacterProfileAddition {
+    template: String,
+    filename: String,
+    profile_name: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -546,6 +557,8 @@ struct SoldierProfilePatch {
 struct SoldierProfileAddition {
     template: String,
     filename: String,
+    #[serde(default)]
+    profile_name: Option<String>,
     display_name: String,
     #[serde(default)]
     hostile: Option<bool>,
@@ -555,6 +568,39 @@ fn apply_soldier_profile_patch(
     profiles: &mut ProfileManager,
     patch: SoldierProfilePatch,
 ) -> Result<(), String> {
+    for addition in patch.characters {
+        if profiles
+            .characters
+            .iter()
+            .any(|profile| profile.filename == addition.filename)
+        {
+            return Err(format!(
+                "new character filename {:?} already exists",
+                addition.filename
+            ));
+        }
+        let mut templates = profiles
+            .characters
+            .iter()
+            .filter(|profile| profile.filename == addition.template);
+        let mut profile = templates
+            .next()
+            .cloned()
+            .ok_or_else(|| format!("character template {:?} does not exist", addition.template))?;
+        if templates.next().is_some() {
+            return Err(format!(
+                "character template {:?} is ambiguous",
+                addition.template
+            ));
+        }
+        profile.index = profiles.characters.len() as u32;
+        profile.filename = addition.filename;
+        profile.profile_name = addition.profile_name;
+        profile.alternative_profile_name.clear();
+        profile.valid_alternative_profile = false;
+        profiles.characters.push(profile);
+    }
+
     for addition in patch.soldiers {
         if profiles
             .soldiers
@@ -578,6 +624,9 @@ fn apply_soldier_profile_patch(
             return Err(format!("template {:?} is ambiguous", addition.template));
         }
         profile.filename = addition.filename;
+        if let Some(profile_name) = addition.profile_name {
+            profile.profile_name = profile_name;
+        }
         profile.display_name = addition.display_name;
         if let Some(hostile) = addition.hostile {
             profile.hostile = hostile;
@@ -788,9 +837,11 @@ mod tests {
             ..Default::default()
         });
         let patch = SoldierProfilePatch {
+            characters: Vec::new(),
             soldiers: vec![SoldierProfileAddition {
                 template: "Knight03".to_owned(),
                 filename: "Knight00".to_owned(),
+                profile_name: Some("Blue Cavalier".to_owned()),
                 display_name: "Blue Cavalier".to_owned(),
                 hostile: Some(false),
             }],
@@ -803,6 +854,7 @@ mod tests {
         assert_eq!(profiles.soldiers[0].display_name, "Red Cavalier");
         assert!(profiles.soldiers[0].hostile);
         assert_eq!(profiles.soldiers[1].filename, "Knight00");
+        assert_eq!(profiles.soldiers[1].profile_name, "Blue Cavalier");
         assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
         assert!(!profiles.soldiers[1].hostile);
     }

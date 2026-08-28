@@ -104,6 +104,13 @@ pub struct LevelDescriptors {
     pub popup_text: PopupTextDescriptor,
     pub debriefing: DebriefingDescriptor,
     pub short_briefing: ShortBriefingDescriptor,
+    /// Mod-local text overrides indexed by the original script text IDs.
+    #[serde(default)]
+    pub custom_popup_texts: Vec<Option<String>>,
+    #[serde(default)]
+    pub custom_short_briefings: Vec<Option<String>>,
+    #[serde(default)]
+    pub custom_dialogue_texts: Vec<Option<Vec<String>>>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -193,6 +200,9 @@ pub fn load(path: &str) -> Result<LevelDescriptors> {
         popup_text,
         debriefing,
         short_briefing,
+        custom_popup_texts: Vec::new(),
+        custom_short_briefings: Vec::new(),
+        custom_dialogue_texts: Vec::new(),
     })
 }
 

@@ -474,18 +474,26 @@ impl EngineInner {
                         if profile.vip {
                             // Original maps the seven fixed French profile
                             // identities to localized menu IDs 144..150 and
-                            // performs no random draws.
-                            status.name = assets
-                                .fixed_vip_names
-                                .get(&profile.profile_name)
-                                .cloned()
-                                .ok_or_else(|| EngineError::MissionLevelStage {
+                            // performs no random draws. Mod-added VIP profiles
+                            // have no retail menu-text slot, so their stable
+                            // authored profile name is the only valid name.
+                            status.name = if let Some(name) =
+                                assets.fixed_vip_names.get(&profile.profile_name)
+                            {
+                                name.clone()
+                            } else if kind.is_none() {
+                                // TODO(mod-localization): allow profile patches
+                                // to provide locale-specific display names.
+                                profile.profile_name.clone()
+                            } else {
+                                return Err(EngineError::MissionLevelStage {
                                     stage: "rescue PCs",
                                     reason: format!(
                                         "missing localized fixed VIP name for profile {:?}",
                                         profile.profile_name
                                     ),
-                                })?;
+                                });
+                            };
                         } else {
                             const ORIGINAL_NAME_COUNT: usize = 22;
                             const MAX_ATTEMPTS: usize = 10;
@@ -630,6 +638,7 @@ impl EngineInner {
                     has_jump,
                     immortal: config.highlander,
                     playable: raw.playable,
+                    interface_hidden: !raw.playable,
                     autonomous: raw.autonomous,
                     aggressive_combat: raw.aggressive_combat,
                     ai: autonomous_ai,
@@ -923,15 +932,25 @@ impl EngineInner {
         // direction)` is applied. Accessory targets reuse the object-master
         // profile preloaded before mission entities, matching the original
         // filename/profile-keyed SpriteScriptor cache.
-        let anim_base_dir = "Data/Animations";
         let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
         for raw in &loaded.mission.targets {
             let mut sprite = crate::sprite::Sprite::default();
+            let (frame_kind, base_dir) = if raw.character_sprite {
+                (
+                    crate::sprite_script::FrameKind::Character,
+                    "Data/Characters",
+                )
+            } else {
+                (
+                    crate::sprite_script::FrameKind::Animation,
+                    "Data/Animations",
+                )
+            };
 
             match sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
-                crate::sprite_script::FrameKind::Animation,
-                anim_base_dir,
+                frame_kind,
+                base_dir,
                 &raw.filename,
                 &raw.profile_name,
                 bank_signature,

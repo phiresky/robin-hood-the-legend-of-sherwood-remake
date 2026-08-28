@@ -48,6 +48,7 @@ const ELEMENT_WIDTH: u16 = 112;
 const ALLIED_ACTION_ICON_WIDTH: u16 = 34;
 const ALLIED_ACTION_ICON_HEIGHT: u16 = 32;
 const ALLIED_PIN_ICON_SIZE: u16 = 27;
+const ALLIED_VISAGE_COUNT: usize = 6;
 // Scale the old 18px icon around its center, then move that center 9px
 // right/up. The resulting pin hangs slightly over the scroll's top-right.
 const ALLIED_PIN_LEFT: u16 = 86;
@@ -114,6 +115,57 @@ enum ActionButtonVisual {
     Hover,
     Pressed,
     HoverPressed,
+}
+
+/// Profile-specific visage art for player-controlled soldiers. The five named
+/// variants are cropped from Original's dialogue portraits; `Generic` keeps
+/// the established helmet portrait for every other soldier profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlliedVisageKind {
+    Generic,
+    Guisbourne,
+    Longchamp,
+    PrinceJohn,
+    Scathlock,
+    Sheriff,
+}
+
+impl AlliedVisageKind {
+    const VARIANTS: [Self; ALLIED_VISAGE_COUNT] = [
+        Self::Generic,
+        Self::Guisbourne,
+        Self::Longchamp,
+        Self::PrinceJohn,
+        Self::Scathlock,
+        Self::Sheriff,
+    ];
+
+    fn from_profile_filename(filename: &str) -> Self {
+        match filename {
+            "Guisbourne" => Self::Guisbourne,
+            "Longchamp" => Self::Longchamp,
+            "PrinceJohn" => Self::PrinceJohn,
+            "Scatlock" => Self::Scathlock,
+            "sherif" | "Sherif" => Self::Sheriff,
+            _ => Self::Generic,
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    fn pc_action_template(self) -> Option<CharacterKind> {
+        match self {
+            Self::Generic => None,
+            Self::Guisbourne | Self::PrinceJohn => {
+                Some(CharacterKind::RobinHood { is_town: false })
+            }
+            Self::Longchamp => Some(CharacterKind::WillScarlet),
+            Self::Scathlock => Some(CharacterKind::FriarTuck),
+            Self::Sheriff => Some(CharacterKind::Stutely),
+        }
+    }
 }
 
 const ACTION_SUB_ID_DISABLED: usize = 0;
@@ -212,8 +264,8 @@ pub struct PortraitCache {
     bottom_scroll_surface: Option<u32>,
     /// Authored 112x134 transparent scroll background for allied groups.
     allied_portrait_background: Option<GpuImage>,
-    /// Authored 112x134 transparent soldier foreground for allied groups.
-    allied_portrait_foreground: Option<GpuImage>,
+    /// Complete 112x50 visage strips for generic and named allied soldiers.
+    allied_visages: [Option<GpuImage>; ALLIED_VISAGE_COUNT],
     /// Transparent medieval brooch artwork for the transient and pinned states.
     allied_pin_icons: [Option<GpuImage>; 2],
     /// State-specific artwork: three stances, two patrol states, and four
@@ -291,7 +343,7 @@ impl PortraitCache {
             top_scroll_alt_surface: None,
             bottom_scroll_surface: None,
             allied_portrait_background: None,
-            allied_portrait_foreground: None,
+            allied_visages: [const { None }; ALLIED_VISAGE_COUNT],
             allied_pin_icons: [None, None],
             allied_action_surfaces: [const { None }; 9],
             border_top_left: None,
@@ -369,19 +421,27 @@ impl PortraitCache {
                 .expect("allied portrait background dimensions must match its payload"),
         );
 
-        let (width, height, pixels) =
-            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_foreground.png"))
-                .expect("allied portrait foreground must be a valid RGB/RGBA PNG");
-        assert_eq!(
-            (width, height),
-            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
-            "allied portrait foreground must match the native open HUD slot"
-        );
-        self.allied_portrait_foreground = Some(
-            renderer
-                .create_rgba_gpu_image(width, height, &pixels, "allied portrait foreground")
-                .expect("allied portrait foreground dimensions must match its payload"),
-        );
+        for (kind, file) in AlliedVisageKind::VARIANTS.into_iter().zip([
+            "allied_portrait_generic.png",
+            "allied_portrait_guisbourne.png",
+            "allied_portrait_longchamp.png",
+            "allied_portrait_prince_john.png",
+            "allied_portrait_scathlock.png",
+            "allied_portrait_sheriff.png",
+        ]) {
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file))
+                .unwrap_or_else(|error| panic!("decode allied visage {file}: {error}"));
+            assert_eq!(
+                (width, height),
+                (ELEMENT_WIDTH, VISAGE_HEIGHT),
+                "allied visage {file} must match the native 112x50 HUD visage slot"
+            );
+            self.allied_visages[kind.index()] = Some(
+                renderer
+                    .create_rgba_gpu_image(width, height, &pixels, file)
+                    .unwrap_or_else(|| panic!("allied visage {file} dimensions mismatch")),
+            );
+        }
 
         for (index, (file, label)) in [
             ("allied_pin_unpinned.png", "allied portrait pin (unpinned)"),
@@ -1148,6 +1208,30 @@ fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
     }
 }
 
+fn pc_custom_visage_kind(
+    entity: &Entity,
+    profiles: &engine_profiles::ProfileManager,
+) -> Option<AlliedVisageKind> {
+    let pc = entity.pc_data()?;
+    let profile = profiles.get_character(pc.profile_index).unwrap_or_else(|| {
+        panic!(
+            "PC references missing character profile {}",
+            pc.profile_index
+        )
+    });
+    let kind = AlliedVisageKind::from_profile_filename(&profile.filename);
+    (kind != AlliedVisageKind::Generic).then_some(kind)
+}
+
+fn pc_action_character_kind(
+    entity: &Entity,
+    profiles: &engine_profiles::ProfileManager,
+) -> Option<CharacterKind> {
+    pc_character_kind(entity).or_else(|| {
+        pc_custom_visage_kind(entity, profiles).and_then(AlliedVisageKind::pc_action_template)
+    })
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 /// Minimum number of layout slots the bar is divided into. Matches the
@@ -1432,6 +1516,7 @@ fn render_allied_portrait(
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
     seat: PlayerId,
     item: &PortraitBarItem,
     x: u16,
@@ -1454,15 +1539,25 @@ fn render_allied_portrait(
         sh,
         selected,
     );
-    render_allied_portrait_layer(
-        renderer,
-        portraits
-            .allied_portrait_foreground
-            .as_ref()
-            .expect("allied portrait foreground must be loaded before drawing the HUD"),
-        x,
-        sh,
-        selected,
+    let visage_kind = allied_visage_kind(engine, profiles, &item.members);
+    let visage = portraits.allied_visages[visage_kind.index()]
+        .as_ref()
+        .unwrap_or_else(|| panic!("allied visage {visage_kind:?} was not loaded"));
+    let visage_top = if selected {
+        sh - POSITION_VISAGE
+    } else {
+        sh - CLOSE_POSITION_VISAGE
+    };
+    renderer.render_gpu_image(
+        visage,
+        None,
+        Some(&bbox(
+            x,
+            visage_top,
+            x + ELEMENT_WIDTH,
+            visage_top + VISAGE_HEIGHT,
+        )),
+        BlendMode::Blend,
     );
 
     // Reuse the native merry-man crossed-swords overlay for controlled
@@ -1574,6 +1669,38 @@ fn render_allied_portrait(
                 );
             }
         }
+    }
+}
+
+fn allied_visage_kind(
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+    members: &[EntityId],
+) -> AlliedVisageKind {
+    let mut resolved = members.iter().map(|member| {
+        let entity = engine
+            .get_entity(*member)
+            .unwrap_or_else(|| panic!("allied portrait member {member:?} disappeared"));
+        let Entity::Soldier(soldier) = entity else {
+            panic!("allied portrait member {member:?} is not a soldier");
+        };
+        let profile = profiles
+            .get_soldier(soldier.soldier.soldier_profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "allied portrait member {member:?} references missing soldier profile {}",
+                    soldier.soldier.soldier_profile_index
+                )
+            });
+        AlliedVisageKind::from_profile_filename(&profile.filename)
+    });
+    let Some(first) = resolved.next() else {
+        panic!("allied portrait has no members");
+    };
+    if resolved.all(|kind| kind == first) {
+        first
+    } else {
+        AlliedVisageKind::Generic
     }
 }
 
@@ -1856,7 +1983,7 @@ pub fn draw_panel(
                 .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
                 .map(|(_, button)| button);
             render_allied_portrait(
-                renderer, portraits, engine, local_seat, item, x, sh, hovered,
+                renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
             );
             continue;
         }
@@ -1977,7 +2104,23 @@ pub fn draw_panel(
             };
 
             let mut portrait_drawn = false;
-            if let Some(ent) = entity
+            if let Some(visage_kind) = entity.and_then(|ent| pc_custom_visage_kind(ent, profiles)) {
+                let visage = portraits.allied_visages[visage_kind.index()]
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("PC visage {visage_kind:?} was not loaded"));
+                renderer.render_gpu_image(
+                    visage,
+                    None,
+                    Some(&bbox(
+                        x,
+                        vis_top,
+                        x + ELEMENT_WIDTH,
+                        vis_top + VISAGE_HEIGHT,
+                    )),
+                    BlendMode::Blend,
+                );
+                portrait_drawn = true;
+            } else if let Some(ent) = entity
                 && let Some(kind) = pc_character_kind(ent)
                 && let Some(surface_id) = portraits.get_surface(kind)
             {
@@ -2007,7 +2150,7 @@ pub fn draw_panel(
                 let fighting_visible = is_selected || (frame / 10).is_multiple_of(2);
                 if fighting_visible
                     && let Some(ent) = entity
-                    && let Some(kind) = pc_character_kind(ent)
+                    && let Some(kind) = pc_action_character_kind(ent, profiles)
                     && let Some(sid) = portraits.get_fighting_surface(kind)
                 {
                     let fw = renderer.surface_width(sid);
@@ -2025,7 +2168,7 @@ pub fn draw_panel(
                 let act_top = sh - POSITION_ACTION;
                 let act_bot = sh - POSITION_BOTTOM_SCROLL;
 
-                let kind = entity.and_then(pc_character_kind);
+                let kind = entity.and_then(|entity| pc_action_character_kind(entity, profiles));
                 let action_icons = kind.and_then(|k| portraits.get_action_surfaces(k).cloned());
                 let action_disabled =
                     kind.and_then(|k| portraits.get_action_disabled_surfaces(k).cloned());
@@ -3403,6 +3546,21 @@ mod tests {
             action_button_visual(true, true, true),
             ActionButtonVisual::Disabled
         );
+    }
+
+    #[test]
+    fn allied_villain_profiles_select_named_visages() {
+        for (filename, expected) in [
+            ("Guisbourne", AlliedVisageKind::Guisbourne),
+            ("Longchamp", AlliedVisageKind::Longchamp),
+            ("PrinceJohn", AlliedVisageKind::PrinceJohn),
+            ("Scatlock", AlliedVisageKind::Scathlock),
+            ("sherif", AlliedVisageKind::Sheriff),
+            ("Sherif", AlliedVisageKind::Sheriff),
+            ("Soldier A03", AlliedVisageKind::Generic),
+        ] {
+            assert_eq!(AlliedVisageKind::from_profile_filename(filename), expected);
+        }
     }
 
     #[test]

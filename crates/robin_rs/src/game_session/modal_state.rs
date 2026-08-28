@@ -731,13 +731,18 @@ pub(super) fn start_active_popup_scroll_batch(
     for text_id in text_ids {
         let (text, picture_id) = if let Some(descriptors) = level_descriptors.as_ref() {
             let table_id = descriptors.popup_text.text_table_id;
-            let text = match text_res.get_string(table_id, text_id as usize) {
-                Ok(s) => s.to_string(),
-                Err(e) => {
-                    tracing::warn!("DisplayPopupText({text_id}): text lookup failed: {e}");
-                    "Invalid popup text ID...".to_string()
-                }
-            };
+            let text = usize::try_from(text_id)
+                .ok()
+                .and_then(|index| descriptors.custom_popup_texts.get(index))
+                .and_then(Option::as_ref)
+                .cloned()
+                .unwrap_or_else(|| match text_res.get_string(table_id, text_id as usize) {
+                    Ok(s) => s.to_string(),
+                    Err(e) => {
+                        tracing::warn!("DisplayPopupText({text_id}): text lookup failed: {e}");
+                        "Invalid popup text ID...".to_string()
+                    }
+                });
             let pid = descriptors
                 .popup_text
                 .picture_ids
@@ -1032,17 +1037,22 @@ pub(super) async fn drain_pending_popup_scroll(
             // broken-resource scenario still shows the same UI.
             let (text, picture_id) = if let Some(descriptors) = level_descriptors.as_ref() {
                 let table_id = descriptors.popup_text.text_table_id;
-                let text = match text_res.get_string(table_id, text_id as usize) {
-                    Ok(s) => s.to_string(),
-                    Err(e) => {
-                        tracing::warn!("DisplayPopupText({text_id}): text lookup failed: {e}");
-                        // Both the missing-text-table and missing-id
-                        // branches render the same UI shape; collapse
-                        // them to "Invalid popup text ID..." and rely
-                        // on the warn log to disambiguate.
-                        "Invalid popup text ID...".to_string()
-                    }
-                };
+                let text = usize::try_from(text_id)
+                    .ok()
+                    .and_then(|index| descriptors.custom_popup_texts.get(index))
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .unwrap_or_else(|| match text_res.get_string(table_id, text_id as usize) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            tracing::warn!("DisplayPopupText({text_id}): text lookup failed: {e}");
+                            // Both the missing-text-table and missing-id
+                            // branches render the same UI shape; collapse
+                            // them to "Invalid popup text ID..." and rely
+                            // on the warn log to disambiguate.
+                            "Invalid popup text ID...".to_string()
+                        }
+                    });
                 // Look up the picture resource ID.  When the index
                 // is in range, return the array entry verbatim —
                 // including a literal `0`, which `picture_from` then
@@ -1339,29 +1349,40 @@ fn build_dialogue_sentences(
     };
 
     let sentence_count = desc.portrait_ids.len();
+    let custom_sentences = descriptors
+        .custom_dialogue_texts
+        .get(idx)
+        .and_then(Option::as_ref);
     let mut sentences = Vec::with_capacity(sentence_count);
 
     for i in 0..sentence_count {
         // Missing text is still rendered, not skipped — the user
         // needs to see that something broke and step through it.
-        let mut text = match res.get_string(desc.text_table_id, i) {
-            Ok(s) => s.to_string(),
-            Err(e) => {
-                tracing::warn!("Dialogue {dialog_id} sentence {i}: text lookup failed: {e}");
-                "Unable to retrieve the sentence text : invalide resource !".to_string()
-            }
-        };
+        let mut text = custom_sentences
+            .and_then(|sentences| sentences.get(i))
+            .cloned()
+            .unwrap_or_else(|| match res.get_string(desc.text_table_id, i) {
+                Ok(s) => s.to_string(),
+                Err(e) => {
+                    tracing::warn!("Dialogue {dialog_id} sentence {i}: text lookup failed: {e}");
+                    "Unable to retrieve the sentence text : invalide resource !".to_string()
+                }
+            });
 
         // When the sample lookup fails the error is *appended* to
         // the visible text (preserving the dialogue's normal text
         // above it) and the sound path is left empty so playback is
         // skipped.
-        let sound_path = match res.get_sample(desc.sound_table_id, i) {
-            Ok(s) => format!("{text_directory}/{s}"),
-            Err(e) => {
-                tracing::debug!("Dialogue {dialog_id} sentence {i}: sound lookup failed: {e}");
-                text.push_str("Unable to retreive the sentence sound : invalide resource !");
-                String::new()
+        let sound_path = if custom_sentences.is_some() {
+            String::new()
+        } else {
+            match res.get_sample(desc.sound_table_id, i) {
+                Ok(s) => format!("{text_directory}/{s}"),
+                Err(e) => {
+                    tracing::debug!("Dialogue {dialog_id} sentence {i}: sound lookup failed: {e}");
+                    text.push_str("Unable to retreive the sentence sound : invalide resource !");
+                    String::new()
+                }
             }
         };
 

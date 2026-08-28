@@ -108,7 +108,18 @@ A list of which additional features we have added, which ones we might still wan
 - **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
   game option enables direct control of active green/Royalist soldiers. Click
   or drag a selection box to create a temporary portrait beside the heroes;
-  its illustrated pin button preserves an individual or group portrait. Allied portraits
+  its illustrated pin button preserves an individual or group portrait.
+  Named soldier profiles can supply dedicated 112x50 visage art; Guy of
+  Guisbourne, Longchamp, Prince John, Scathlock, and the Sheriff use portraits
+  cropped from the Original's dialogue resources, while ordinary and mixed
+  groups retain the helmet portrait. The bundled `mods/five-villains` custom
+  mission remixes the original Save Stuteley mission: Guy starts in Robin's
+  place and frees the other four villains from its original prisoner slots.
+  Legacy roster mods can preserve compiled-script actor indices while
+  overriding beam-me, rescue-PC, and tied-prisoner visuals. A per-mission
+  `.text.patch.json` can override popup, short-briefing, and dialogue strings
+  while retaining the base mission's descriptor pictures and timing.
+  Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
   and type-aware line, box, staggered, and flank formations. Selecting soldiers
   visualizes both player-issued patrols and authored mission patrol paths as an

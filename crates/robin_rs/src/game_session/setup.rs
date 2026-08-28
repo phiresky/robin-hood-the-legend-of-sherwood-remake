@@ -3,6 +3,8 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
+use std::collections::BTreeMap;
+
 use crate::audio_backend::KiraAudioBackend;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -72,6 +74,17 @@ struct HackableRhsProfile {
     center_x: f32,
     center_y: f32,
     rows: Vec<HackableRhsRow>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustomMissionTextPatch {
+    #[serde(default)]
+    popup_texts: BTreeMap<usize, String>,
+    #[serde(default)]
+    short_briefings: BTreeMap<usize, String>,
+    #[serde(default)]
+    dialogues: BTreeMap<usize, Vec<String>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -770,6 +783,97 @@ pub(super) struct LoadedInteractiveResources {
     pub(super) hud_fonts: Option<HudFonts>,
 }
 
+fn descriptor_mission_id(campaign: &Campaign, profiles: &engine_profiles::ProfileManager) -> u32 {
+    let current_id = current_mission_id(campaign, profiles);
+    let current_profile = campaign
+        .current_mission_idx
+        .and_then(|index| campaign.missions.get(index))
+        .map(|mission| mission.profile(profiles))
+        .expect("descriptor lookup requires a current campaign mission");
+    let patch_path = format!(
+        "Data/Levels/{}.characters.patch.json",
+        current_profile.mission_filename
+    );
+    if !engine_sbfile::SbFile::exists(&patch_path) {
+        return current_id;
+    }
+    let bytes = engine_sbfile::SbFile::read_all(&patch_path)
+        .unwrap_or_else(|status| panic!("read descriptor alias patch {patch_path}: {status}"));
+    let patch: serde_json::Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parse descriptor alias patch {patch_path}: {error}"));
+    let alias = patch
+        .get("descriptor_mission")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("{patch_path} is missing descriptor_mission"));
+    let mut matches = profiles
+        .missions
+        .iter()
+        .filter(|profile| profile.mission_filename == alias);
+    let id = matches
+        .next()
+        .unwrap_or_else(|| panic!("{patch_path} descriptor mission {alias:?} does not exist"))
+        .id;
+    assert!(
+        matches.next().is_none(),
+        "{patch_path} descriptor mission {alias:?} is ambiguous"
+    );
+    id
+}
+
+fn apply_custom_mission_text_patch(
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    descriptors: &mut assets_res_descr::LevelDescriptors,
+) {
+    let mission_filename = campaign
+        .current_mission_idx
+        .and_then(|index| campaign.missions.get(index))
+        .map(|mission| mission.profile(profiles).mission_filename.as_str())
+        .expect("custom mission text lookup requires a current campaign mission");
+    let path = format!("Data/Levels/{mission_filename}.text.patch.json");
+    if !engine_sbfile::SbFile::exists(&path) {
+        return;
+    }
+    let bytes = engine_sbfile::SbFile::read_all(&path)
+        .unwrap_or_else(|status| panic!("read custom mission text patch {path}: {status}"));
+    let patch: CustomMissionTextPatch = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parse custom mission text patch {path}: {error}"));
+    let install = |target: &mut Vec<Option<String>>, values: BTreeMap<usize, String>| {
+        if let Some(max_index) = values.keys().next_back().copied() {
+            target.resize(target.len().max(max_index + 1), None);
+        }
+        for (index, text) in values {
+            target[index] = Some(text);
+        }
+    };
+    install(&mut descriptors.custom_popup_texts, patch.popup_texts);
+    install(
+        &mut descriptors.custom_short_briefings,
+        patch.short_briefings,
+    );
+    if let Some(max_index) = patch.dialogues.keys().next_back().copied() {
+        descriptors.custom_dialogue_texts.resize(
+            descriptors.custom_dialogue_texts.len().max(max_index + 1),
+            None,
+        );
+    }
+    for (index, sentences) in patch.dialogues {
+        let expected = descriptors
+            .dialogues
+            .get(index)
+            .unwrap_or_else(|| panic!("{path} dialogue {index} has no base descriptor"))
+            .portrait_ids
+            .len();
+        assert_eq!(
+            sentences.len(),
+            expected,
+            "{path} dialogue {index} requires {expected} sentences"
+        );
+        descriptors.custom_dialogue_texts[index] = Some(sentences);
+    }
+    tracing::info!("Applied custom mission text patch {path}");
+}
+
 /// Process-only resources acquired before the deterministic engine is built.
 ///
 /// The text and interface archives provide both construction metadata and the
@@ -878,7 +982,7 @@ impl MissionProcessResources {
             return std::collections::HashMap::new();
         };
         let table_id = descriptor.short_briefing.text_table_id;
-        match self.text.get_string_count(table_id) {
+        let mut resolved = match self.text.get_string_count(table_id) {
             Ok(count) => (0..count)
                 .filter_map(|index| {
                     self.text
@@ -893,7 +997,13 @@ impl MissionProcessResources {
                 );
                 std::collections::HashMap::new()
             }
+        };
+        for (index, text) in descriptor.custom_short_briefings.iter().enumerate() {
+            if let Some(text) = text {
+                resolved.insert(index as u32, text.clone());
+            }
         }
+        resolved
     }
 }
 
@@ -935,9 +1045,9 @@ pub(super) fn pre_decode_maps_and_resources(
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
-    let level_descriptors = (|| {
+    let mut level_descriptors = (|| {
         let campaign = engine.campaign();
-        let mission_id = current_mission_id(campaign, profiles);
+        let mission_id = descriptor_mission_id(campaign, profiles);
         let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
             && let Some(desc) = dd.red_files.get(&filename)
@@ -963,6 +1073,9 @@ pub(super) fn pre_decode_maps_and_resources(
             }
         }
     })();
+    if let Some(descriptors) = level_descriptors.as_mut() {
+        apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors);
+    }
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
