@@ -151,6 +151,9 @@ impl DiplomacyState {
             state
                 .player_coalition
                 .extend(definition.player_coalition.iter().copied());
+            if state.player_coalition.len() != definition.player_coalition.len() {
+                return Err("player_coalition contains a duplicate allegiance".to_owned());
+            }
         }
         for &first in &state.player_coalition {
             for &second in &state.player_coalition {
@@ -161,9 +164,21 @@ impl DiplomacyState {
                 }
             }
         }
+        let mut authored_pairs = BTreeSet::new();
         for rule in &definition.relationships {
+            let key = Self::key(rule.first, rule.second);
+            if !authored_pairs.insert(key) {
+                return Err(format!(
+                    "duplicate diplomacy relationship for allegiances {} and {}",
+                    key.0, key.1
+                ));
+            }
             state.set_relationship_ids(rule.first, rule.second, rule.relationship)?;
         }
+        // Authored data is the frame-zero baseline, not a runtime mutation.
+        // Its canonical map is already hashed, so initial revision must not
+        // depend on harmless JSON rule ordering.
+        state.revision = 0;
         Ok(state)
     }
 
@@ -324,9 +339,20 @@ impl DiplomacyState {
             ));
         }
         let key = Self::key(first, second);
-        if self.relationships.insert(key, relationship) != Some(relationship) {
-            self.revision = self.revision.wrapping_add(1);
+        let previous = self
+            .relationships
+            .get(&key)
+            .copied()
+            .unwrap_or(Relationship::Hostile);
+        if previous == relationship {
+            return Ok(());
         }
+        if relationship == Relationship::Hostile {
+            self.relationships.remove(&key);
+        } else {
+            self.relationships.insert(key, relationship);
+        }
+        self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
 }
@@ -571,6 +597,26 @@ mod tests {
     }
 
     #[test]
+    fn redundant_default_relationship_is_a_canonical_no_op() {
+        let mut state = DiplomacyState::default();
+        state
+            .set_relationship_ids(2, 9, Relationship::Hostile)
+            .unwrap();
+        assert_eq!(state.revision(), 0);
+        assert!(state.relationships.is_empty());
+
+        state
+            .set_relationship_ids(2, 9, Relationship::Neutral)
+            .unwrap();
+        assert_eq!(state.revision(), 1);
+        state
+            .set_relationship_ids(9, 2, Relationship::Hostile)
+            .unwrap();
+        assert_eq!(state.revision(), 2);
+        assert!(state.relationships.is_empty());
+    }
+
+    #[test]
     fn player_coalition_cannot_be_split_by_authored_or_runtime_rule() {
         let definition = DiplomacyDefinition {
             player_coalition: vec![0, 4],
@@ -596,6 +642,35 @@ mod tests {
                 .set_relationship_ids(0, 4, Relationship::Hostile)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn duplicate_authored_pairs_are_rejected_symmetrically() {
+        let definition = DiplomacyDefinition {
+            player_coalition: vec![0],
+            relationships: vec![
+                DiplomacyRule {
+                    first: 2,
+                    second: 7,
+                    relationship: Relationship::Neutral,
+                },
+                DiplomacyRule {
+                    first: 7,
+                    second: 2,
+                    relationship: Relationship::Allied,
+                },
+            ],
+        };
+        assert!(DiplomacyState::from_definition(true, true, Some(&definition)).is_err());
+    }
+
+    #[test]
+    fn duplicate_player_coalition_members_are_rejected() {
+        let definition = DiplomacyDefinition {
+            player_coalition: vec![0, 4, 4],
+            relationships: Vec::new(),
+        };
+        assert!(DiplomacyState::from_definition(true, true, Some(&definition)).is_err());
     }
 
     #[test]
