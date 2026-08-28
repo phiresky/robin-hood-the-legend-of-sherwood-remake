@@ -2327,15 +2327,101 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
     }
     families.retain(|_, members| members.len() > 1);
+
+    // Measured base selection (docs/COMPRESSION.md 2026-08-29): the
+    // lexicographically-first member is the best coding hub in only 1 of 9
+    // fullgame families; choosing the base that minimizes a sampled
+    // conditional-entropy proxy — H(base | above) for the base itself plus
+    // H(member | base tile) for every other member — recovers ~4% of the
+    // family half of the corpus at zero format cost (the chunk already
+    // records `base_rhs`). Falls back to the first member when the proxy
+    // cannot be computed (e.g. indices beyond the 12-bit proxy key).
+    let mut member_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    for members in families.values() {
+        for name in members {
+            if member_orders.contains_key(name) {
+                continue;
+            }
+            let rel = format!("Characters/{name}.rhs");
+            let path = in_path(&rel)
+                .ok_or_else(|| anyhow!("family member RHS {rel} missing from the datadir"))?;
+            let (_, profiles) =
+                sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                    .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+            let mut order = Vec::new();
+            for (_, info) in &profiles {
+                for script in info.scripts.iter() {
+                    order.extend_from_slice(&script.frame_ids);
+                }
+            }
+            member_orders.insert(name.clone(), order);
+        }
+    }
+    let mut family_bases = std::collections::BTreeMap::<String, String>::new();
+    for (key, members) in &families {
+        let mut best: Option<(f64, &String)> = None;
+        let mut proxy_failed = false;
+        for candidate in members {
+            let mut cost = match family_base_standalone_proxy(&holder, &member_orders[candidate]) {
+                Some(bits) => bits,
+                None => {
+                    proxy_failed = true;
+                    break;
+                }
+            };
+            for member in members {
+                if member == candidate {
+                    continue;
+                }
+                match family_base_pair_proxy(
+                    &holder,
+                    &member_orders[candidate],
+                    &member_orders[member],
+                ) {
+                    Some(bits) => cost += bits,
+                    None => {
+                        proxy_failed = true;
+                        break;
+                    }
+                }
+            }
+            if proxy_failed {
+                break;
+            }
+            if best.is_none_or(|(b, _)| cost < b) {
+                best = Some((cost, candidate));
+            }
+        }
+        let base = match (proxy_failed, best) {
+            (false, Some((_, name))) => name.clone(),
+            _ => {
+                tracing::warn!(
+                    family = key.as_str(),
+                    "family base proxy unavailable; falling back to first member"
+                );
+                members[0].clone()
+            }
+        };
+        tracing::info!(
+            family = key.as_str(),
+            base = base.as_str(),
+            "selected family coding base"
+        );
+        family_bases.insert(key.clone(), base);
+    }
+
     // Lowercased variant name -> disk-cased base name. CPF-derived rels and
     // on-disk filenames can disagree in case, so matching is case-blind.
     let variant_base_names: std::collections::BTreeMap<String, String> = families
-        .values()
-        .flat_map(|members| {
-            let base = members[0].clone();
+        .iter()
+        .flat_map(|(key, members)| {
+            let base = family_bases[key].clone();
             members
                 .iter()
-                .skip(1)
+                .filter({
+                    let base = base.clone();
+                    move |name| **name != base
+                })
                 .map(move |name| (name.to_ascii_lowercase(), base.clone()))
         })
         .collect();
@@ -4024,6 +4110,115 @@ fn level_asset_rel_existing(
                 "required level asset {map}{extension} is absent from {directory}, Day, and Levels root"
             )
         })
+}
+
+/// Cap on sampled tiles per family-base proxy measurement: enough for a
+/// stable entropy estimate, small enough to keep conversion fast.
+const FAMILY_PROXY_TILE_CAP: u64 = 1_500_000;
+
+/// Conditional entropy in *total bits over all tiles* from 24-bit joint
+/// (ctx<<12|sym) counts, scaled from the sampled tile count to `full_tiles`.
+fn family_proxy_bits(
+    joint: &std::collections::HashMap<u32, u32>,
+    ctx_totals: &std::collections::HashMap<u16, u32>,
+    sampled: u64,
+    full_tiles: u64,
+) -> f64 {
+    if sampled == 0 {
+        return 0.0;
+    }
+    let mut bits = 0.0f64;
+    for (&k, &n) in joint {
+        let ctx_total = ctx_totals[&((k >> 12) as u16)] as f64;
+        bits -= n as f64 * (n as f64 / ctx_total).log2();
+    }
+    bits / sampled as f64 * full_tiles as f64
+}
+
+/// Sampled H(tile | above) * tile-count for one family member coded
+/// standalone. `None` when an index doesn't fit the 12-bit proxy key.
+fn family_base_standalone_proxy(holder: &FrameHolder, script_order: &[u32]) -> Option<f64> {
+    let mut ids: Vec<u32> = script_order.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut joint = std::collections::HashMap::<u32, u32>::new();
+    let mut ctx_totals = std::collections::HashMap::<u16, u32>::new();
+    let mut sampled = 0u64;
+    let mut full_tiles = 0u64;
+    for &id in &ids {
+        let sprite = holder.sprites().get(id as usize)?;
+        if sprite.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(packed) = holder.packed_data(id) else {
+            continue;
+        };
+        full_tiles += packed.len() as u64;
+        if sampled >= FAMILY_PROXY_TILE_CAP {
+            continue;
+        }
+        let cols = (sprite.width / 4) as usize;
+        for (i, &x) in packed.iter().enumerate().skip(cols) {
+            if x >= 4096 || packed[i - cols] >= 4096 {
+                return None;
+            }
+            *joint
+                .entry(((packed[i - cols] as u32) << 12) | x as u32)
+                .or_default() += 1;
+            *ctx_totals.entry(packed[i - cols]).or_default() += 1;
+            sampled += 1;
+        }
+    }
+    Some(family_proxy_bits(&joint, &ctx_totals, sampled, full_tiles))
+}
+
+/// Sampled H(member tile | candidate-base tile) * tile-count for coding
+/// `member` against `candidate` (positional script pairing, mismatches
+/// skipped like the real chunk builder).
+fn family_base_pair_proxy(
+    holder: &FrameHolder,
+    candidate_order: &[u32],
+    member_order: &[u32],
+) -> Option<f64> {
+    let mut pairs: Vec<(u32, u32)> = member_order
+        .iter()
+        .copied()
+        .zip(candidate_order.iter().copied())
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut joint = std::collections::HashMap::<u32, u32>::new();
+    let mut ctx_totals = std::collections::HashMap::<u16, u32>::new();
+    let mut sampled = 0u64;
+    let mut full_tiles = 0u64;
+    for &(mid, cid) in &pairs {
+        let (ms, cs) = (
+            holder.sprites().get(mid as usize)?,
+            holder.sprites().get(cid as usize)?,
+        );
+        if ms.dictionary_index == UNMAPPED_DICT || cs.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let (Some(mp), Some(cp)) = (holder.packed_data(mid), holder.packed_data(cid)) else {
+            continue;
+        };
+        if (ms.width, ms.height) != (cs.width, cs.height) || mp.len() != cp.len() {
+            continue;
+        }
+        full_tiles += mp.len() as u64;
+        if sampled >= FAMILY_PROXY_TILE_CAP {
+            continue;
+        }
+        for (&x, &b) in mp.iter().zip(cp.iter()) {
+            if x >= 4096 || b >= 4096 {
+                return None;
+            }
+            *joint.entry(((b as u32) << 12) | x as u32).or_default() += 1;
+            *ctx_totals.entry(b).or_default() += 1;
+            sampled += 1;
+        }
+    }
+    Some(family_proxy_bits(&joint, &ctx_totals, sampled, full_tiles))
 }
 
 fn add_required_character_rhs_profiles_for_index(
