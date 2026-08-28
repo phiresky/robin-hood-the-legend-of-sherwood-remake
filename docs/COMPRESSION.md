@@ -756,3 +756,321 @@ cargo run --release --bin convert_datadir -- \
     --format shipping --map-format jxl-q90 --zstd-window-log 30
 cargo run --release --example datadir_breakdown -- /tmp/ship-q90/Data/datadir.bin
 ```
+
+## Sprite research: VQ structure, cross-variant coding, context modeling (2026-08-28)
+
+A research pass on shrinking the RHS sprite corpus further for web delivery,
+prompted by the SOG v2 gaussian-splat format
+([playcanvas/splat-transform#38](https://github.com/playcanvas/splat-transform/issues/38):
+k-means codebooks + label images + byte-plane splitting) and Meta's
+[OpenZL](https://engineering.fb.com/2025/10/06/developer-tools/openzl-open-source-format-aware-compression-framework/)
+format-aware framework (field extraction, tokenization, transpose, delta).
+Tool: `crates/robin_rs/examples/sprite_compression_probe.rs`. Data:
+`datadirs/fullgame_linux`. Compressors: zstd 1.5.7, xz 5.8.1, bzip2, cjxl
+0.12.0, libwebp 1.5.0 (magick), ffmpeg 7.1.5 libaom/FFV1. Wasm compatibility
+and decode time were deliberately out of scope for this pass.
+
+**Headline: the character corpus (161.2 MB under today's zstd-analog) measures
+at 73.8 MB (2.19x) with a context-model coder plus cross-variant coding —
+without touching a pixel. All numbers below are lossless.**
+
+### What a character chunk actually is
+
+Character sprites are 100% vector-quantized — no RLE at all (RLE lives only in
+patches/accessories/UI). Each character has exactly one `FrameDictionary` with
+4096/4096 entries used; tiles are 4x1 pixels, so a sprite is a `(w/4) x h`
+grid of 12-bit tile indices stored in u16 words.
+
+```
+character    unique  avg dims  opaque  colors  packed      = index words
+RobinTown      7584   37 x 56   43.6%    2596   7.83 MB      3,917,240
+Knight01       4352   80 x 97   47.8%    1809  16.45 MB      8,222,780
+Guard A00      5072   53 x 69   29.8%    1652   8.63 MB      4,312,900
+```
+
+A character is 2 MB+ compressed simply because every action x frame x 16
+directions is pre-rendered: 4-8k unique frames each. At ~1 bit/pixel the
+current format is respectable — but zstd turns out to sit almost exactly at
+the *order-0* entropy of the tile-index stream, i.e. LZ extracts nothing from
+the 2-D grid structure.
+
+### Variant families: not recolors, but tile-predictable
+
+48 of 117 characters form palette-variant families (Archer00-05,
+Crossbowman00-05, Guard A/B 00-05, Knight01-03, Officer02-05, Officier B00-04,
+Soldier A/B 00-05). Structure findings:
+
+- Variant RHS metadata is byte-identical apart from the frame-id tables, and
+  frames pair positionally 1:1 with **zero** dimension mismatches. The split
+  chunk payloads are even byte-identical in *size* (all three knights:
+  16,637,473 B).
+- They are **not** palette swaps: ~70% of opaque pixels differ (variants were
+  re-rendered from re-textured 3D models; lighting/dither diverge per pixel).
+  A best-fit global color LUT leaves 17-34% of pixels wrong, single colors
+  fanning out to hundreds of targets. Correspondingly, zstd-22 over the
+  concatenated knight family finds ~no cross-variant matches (49.9 MB -> 12.91
+  MB vs 12.98 MB compressed separately).
+- But at *tile-symbol* level the mapping is nearly functional — variant B's
+  tile id is almost determined by base A's tile id at the same position:
+
+```
+conditional entropy of variant given base   bits/tile   bytes   (standalone zstd)
+Knight02 | Knight01 tile                        0.958   984 KB   (4.40 MB)
+Knight02 | Knight01 tile + above                0.546   562 KB
+Guard A01 | Guard A00 tile                      0.757   408 KB   (2.39 MB)
+Guard A01 | Guard A00 tile + above              0.306   165 KB
+```
+
+The `| A-tile` rows use only 4096 contexts over 4-8M samples, so they are
+robust, not overfit. An honest adaptive simulation (PPMC escapes, online
+learning, chain (A-tile,above) -> A-tile -> above -> order-0) confirms:
+Archer01 codes at 512,825 B against Archer00 vs 2,338,144 B standalone zstd19
+(4.56x).
+
+### Context-modeling headroom (standalone characters)
+
+Conditional entropies of the tile-index grid, and a realistic adaptive PPM
+simulation (single pass, all learning cost included, no mixing/exclusion):
+
+```
+RobinTown (3.92M tiles)     bits/tile     bytes
+order-0                         6.139   3.01 MB   <- zstd-22 achieves 3.09 MB
+| left                          4.745   2.32 MB
+| above                         3.610   1.77 MB   (4k contexts, robust)
+| left+above                    1.806   0.88 MB   (493k contexts, partly overfit)
+adaptive PPM sim                4.350   2.13 MB   (-31% vs zstd)
+
+Knight01: order-0 5.90 MB, |l+a 1.35 MB, PPM sim 3.06 MB (-31%)
+Guard A00: PPM sim 1.69 MB (-31%)
+```
+
+The naive PPM already beats zstd-22 by ~31%; proper context mixing/SSE should
+land -40..50%. The 2-D structure zstd cannot see is the entire opportunity.
+
+### Transform matrix (RobinTown, one zstd-22 --long=30 frame unless noted)
+
+OpenZL-style format-aware splits, hand-rolled:
+
+```
+baseline (w,h,dict,len,packed AoS)      3,089,401 B   (raw 7,910,320)
+baseline xz -9e                         2,849,832     -7.8%
+baseline bzip2 -9                       3,051,517     -1.2%
+SoA field split                         3,087,904     -0.05%
+vq_idx lo/hi byte planes                3,609,534     +17%  WORSE
+vq up-delta (numeric, per column)       4,062,663     +31%  WORSE
+freq-ranked dict permutation + planes   2,928,451     -5.2%
+freq-ranked + xz -9e                    2,811,644     -9.0%  best "no new codec"
+freq-ranked then delta                  3,691,696     +20%  WORSE
+```
+
+Lessons: tile ids are nominal symbols — numeric deltas and byte planes destroy
+the exact-match structure LZ uses. A frequency-ranked dictionary permutation
+(free at conversion; dictionary ships reordered) is the only transform that
+helps zstd/xz, and xz is consistently ~8% ahead of zstd on this data. The
+dictionary itself is noise (32 KB raw -> 23 KB); headers are trivial.
+
+### Direction/frame-interleaved layouts and video codecs
+
+Tested the "merge 16 directions as 4x4 blocks + exploit frame-to-frame
+similarity" idea end to end: per-action sheets (16 directions across, frames
+down, aligned via script offsets on a common canvas) for image codecs, and a
+constant-size rawvideo stream (each video frame = 4x4 grid of the 16
+directions, actions concatenated, 909 frames of 512x528 for RobinTown) for
+video codecs:
+
+```
+RobinTown, all lossless                 bytes      vs 3.09 MB baseline
+sheets JXL 0.12 -d0 e7 RGB          22,273,671     7.2x worse
+sheets JXL RGBA-keyed               21,332,359     6.9x worse
+sheets WebP m6 exact                 8,965,012     2.9x worse
+aligned raw565 stream zstd-22        4,529,862     1.5x worse  (491 MB raw)
+aligned raw565 stream xz -9e         4,593,752     1.5x worse
+aligned raw565 stream bzip2          11,052,832    3.6x worse
+video FFV1                          51,486,953     17x worse
+video AV1 lossless (libaom,
+  enable-palette + enable-intrabc)  45,891,485     15x worse
+```
+
+Conclusively negative: even with screen-content tools and inter prediction
+across the direction grid and time, pixel-domain codecs cannot exploit the
+similarity, because adjacent directions/frames diverge in nearly every opaque
+pixel (same root cause as the recolor finding). The similarity that actually
+exists is at tile-symbol level, where the CM results above capture it far more
+cheaply. This closes the layout/atlas/video line of inquiry with data.
+
+### Corpus projection (all 117 Characters/*.rhs)
+
+`--corpus` codes every character: standalone PPM for family bases and
+non-family characters, cross-variant PPM against the family base for the 39
+variants (9 families detected by name):
+
+```
+                                packed        zstd19        cm/cm2
+39 family variants          (89,803,350)  89,803,350 -> 24,091,234   3.73x
+78 standalone VQ characters              71,375,290 -> 49,670,100   1.44x
+RLE-only accessories/relics                  62,902 (kept at zstd)
+TOTAL                      464,511,438  161,241,542 -> 73,761,334   2.19x
+```
+
+This projects the character RHS corpus at **46% of today's size** with a
+first-generation coder, before context mixing, before touching the ~106
+animation/patch RHS chunks (RLE-domain; the same context-modeling approach
+applies to their pixel streams but is unmeasured), and fully lossless.
+
+### Recommendations
+
+1. **Free win now:** frequency-rank dictionary permutation at conversion time
+   (-5% zstd, -9% with xz). No decoder change beyond using the shipped
+   reordered dictionary.
+2. **Cheap win:** switch RHS chunk entropy stage from zstd to LZMA/xz (-8%).
+   Pure-Rust decode exists (`lzma-rs`); decode-speed budget deferred by scope.
+3. **The real win:** a small rANS/arithmetic coder over tile indices with
+   context (above, left) — measured -31% naive, -40..50% expected with
+   mixing — plus cross-variant coding for the 39 family variants (3.73x on
+   that half of the corpus). Family variants add a chunk dependency edge
+   (variant chunk requires base chunk); content-addressed fetching and
+   caching already support multi-chunk closures.
+4. **Do not pursue:** image/video codecs on any sprite layout (JXL/WebP/AV1/
+   FFV1 all lose 3-17x), byte planes, numeric index deltas, per-pixel color
+   LUTs for variants, bzip2.
+5. **OpenZL**: its transform vocabulary is exactly what was hand-tested here;
+   the measured winners (tokenization already inherent, rank permutation) are
+   simple enough that pulling in the C++ framework is not warranted for this
+   one fixed format. Revisit if many more structured formats need the same
+   treatment.
+
+### Reproducing
+
+```
+cargo build --release --example sprite_compression_probe
+target/release/examples/sprite_compression_probe --data-dir datadirs/fullgame_linux \
+    --stats RobinTown --recolor Knight01:Knight02 --entropy RobinTown --cm RobinTown \
+    --entropy2 'Guard A00:Guard A01' --cm2 Archer00:Archer01 --corpus
+# stream/atlas file emission for external compressors:
+target/release/examples/sprite_compression_probe --data-dir datadirs/fullgame_linux \
+    --streams RobinTown --atlas RobinTown --out /tmp/sprite_streams
+```
+
+The shell drivers for the external-compressor sweeps (zstd/xz/bz2 combos,
+cjxl/webp sheets, FFV1/AV1 video) are `scripts/sprite_compress_streams.sh` and
+`scripts/sprite_compress_atlas.sh`; they only need the emitted stream/atlas
+files and standard CLIs (`CJXL=<path>` to point at a static cjxl 0.12 binary).
+
+## Implementation: sprite_codec + dictionary ranking (2026-08-28, same session)
+
+Follow-up to the research section above: both wins are now implemented.
+
+### Small win, shipped: dictionary rank permutation in the converter
+
+`convert_datadir --rank-dictionaries` (default **on**; `=false` to disable)
+counts how often every dictionary entry is referenced across the whole bank,
+reorders each dictionary so the most used tile is index 0, and rewrites every
+VQ sprite's packed indices through the same map. A consistent permutation is
+invisible to the decoder — no runtime change at all.
+
+A/B on `demo_leicester_ecoste` (`--map-format raw --zstd-window-log 30`):
+
+```
+                       no rank         ranked
+Data/ total         51,169,682     50,397,716   -1.5%
+Data/rhs bucket     26,703,578     25,943,258   -2.85%
+```
+
+Verified end to end with `sprite_compression_probe --verify-shipping`: all 52
+chunks, 65,058 sprites (64,414 VQ), 146,584,025 pixels decode identically to
+the source bank in both variants.
+
+Two pre-existing demo-conversion bugs surfaced and were fixed along the way
+(current main could not convert `demo_leicester_ecoste` at all): the boot
+manifest's all-profiles character index `bail!`ed on CPF profiles whose RHS
+(MerryMan gang) or exclamation samples (`X_PC_MA_*.wav`) are absent from the
+demo datadir. Mission-authored requirements stay strict; index-only profiles
+now warn and are omitted from the manifest.
+
+### Big win, implemented as a library: `robin_assets::sprite_codec`
+
+Adaptive context-model codec for VQ tile-index grids. Entropy stage is an
+LZMA-style range coder — deliberately *not* rANS: rANS emits symbols LIFO,
+which fights adaptive models (the decoder must replay updates in encode
+order); a FIFO range coder pairs with adaptation naturally. Model: PPM escape
+chain with PPMC escapes, full exclusion, per-context count halving.
+
+```
+standalone: (above, left) -> above -> left -> order-0 -> uniform
+vs base:    (base, above) -> base -> above -> order-0 -> uniform
+```
+
+`--code` / `--code2` in the probe run the real codec against the bank and
+verify the roundtrip bit-exactly. Real measured sizes (fullgame_linux):
+
+```
+                          zstd reference  real codec    bits/tile
+RobinTown standalone      3,089,401 z22   2,072,062     4.23   (-33%)
+Knight01 standalone       4,504,233 z19   2,984,055     2.90   (-34%)
+Guard A00 standalone      2,389,774 z19   1,639,664     3.04   (-31%)
+Knight02 vs Knight01      4,472,735 z19     977,814     0.95   (4.6x)
+Guard A01 vs Guard A00    2,341,539 z19     466,297     0.86   (5.0x)
+Archer01 vs Archer00      2,338,144 z19     490,056     1.31   (4.8x)
+```
+
+Model experiments, all measured on real data (kept ✓ / rejected ✗):
+
+```
+✓ above before left in the fallback chain      -3% vs left-first
+✓ PPM exclusion (stamp-set, O(1))              -3%; bit-identical output to
+                                               naive exclusion, 7x faster
+✗ faster adaptation (count increment 4)        +4..9% — streams are stationary
+✗ order-3 context (diag / base+above+left)     ±1% wash, more memory/time
+✗ PPMD-style escape (distinct/2)               +1.3..1.9% standalone,
+                                               -0.3..0.5% variants: net loss
+```
+
+Speeds are research-grade and untuned (RobinTown: enc ~4s, dec ~9s; decode
+optimization deferred by scope — the escape path rescans large order-1
+contexts linearly).
+
+### Real-codec corpus result (replaces the simulation estimate)
+
+`--corpus` now encodes every character with the real codec (39 variants
+against their family base):
+
+```
+                              packed        zstd19       sprite_codec
+39 family variants                       89,803,350  ->  23,053,518   3.90x
+78 standalone characters                 71,375,290  ->  48,130,326   1.48x
+TOTAL                    464,511,438    161,241,542  ->  71,183,844   2.27x
+```
+
+### Shipping integration design (schema v7, not yet wired)
+
+- Chunk payload: per-RHS `ShippingSpriteBank.sprites` keeps `(bank_id, w, h,
+  dictionary_index)` rows, but VQ `packed_data` moves into one
+  `sprite_codec::encode_grids` blob per chunk (grids in `bank_id` order).
+  RLE sprites keep raw `packed_data` (they are the tiny minority in RHS
+  chunks and live mostly in patch/animation chunks).
+- Cross-variant chunks: family membership is detected at conversion (name
+  stem + verified positional pairing, as in the probe); a variant chunk
+  records `base_rhs: String` plus per-sprite base bank ids, and its blob is
+  encoded with `base` slices. The mission dependency closure gains a
+  variant->base edge so the base chunk downloads and decodes first; the
+  content-addressed fetch/cache layer already handles multi-chunk closures.
+- The boot manifest keeps the (now rank-permuted) dictionaries; alphabet for
+  each chunk's codec = its dictionary's `num_entries()`.
+- Decode order inside a chunk is deterministic (bank-id order), so the
+  decoder needs no per-sprite framing — dims come from the sprite rows.
+- Expected effect at H01 scale: the measured 27.1 MB RHS closure shrinks to
+  roughly 12-13 MB; fullgame character corpus 161 MB -> ~71 MB.
+- Decode speed must be optimized before shipping (currently ~0.5M tiles/s;
+  worst single chunk Knight01 ~15s): candidate fixes are cum-frequency
+  skip structures for big contexts, capping order-1 context sizes, and
+  move-to-front symbol lists. Deferred by scope this session.
+
+### New probe modes (reproduction)
+
+```
+target/release/examples/sprite_compression_probe --data-dir datadirs/fullgame_linux \
+    --code RobinTown --code2 Knight01:Knight02 --corpus
+# verify a converted shipping tree pixel-for-pixel against its source bank:
+target/release/examples/sprite_compression_probe \
+    --data-dir datadirs/demo_leicester_ecoste --verify-shipping /tmp/ship/Data
+```

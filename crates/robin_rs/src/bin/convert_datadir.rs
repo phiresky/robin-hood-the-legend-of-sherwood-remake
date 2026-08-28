@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
 use rayon::prelude::*;
-use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
+use robin_assets::frame_holder::{FrameDictionary, FrameHolder, SpriteVariant, UNMAPPED_DICT};
 use robin_assets::picture::Picture;
 use robin_assets::res_descr;
 use robin_assets::resource_manager::{EncodedPicture, ResourceManager};
@@ -90,6 +90,13 @@ struct Args {
     /// artifacts; native/loose datadirs keep their source formats.
     #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
     audio_format: AudioFormat,
+
+    /// Shipping: reorder every sprite dictionary by descending tile-index
+    /// frequency and rewrite all VQ sprite indices to match. Invisible to
+    /// the decoder (a consistent permutation), but the ranked index streams
+    /// compress ~5% smaller under zstd (docs/COMPRESSION.md, 2026-08-28).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    rank_dictionaries: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -185,6 +192,7 @@ fn main() -> Result<()> {
                 audio_format: args.audio_format,
                 zstd_window_log: args.zstd_window_log,
                 resume: args.resume,
+                rank_dictionaries: args.rank_dictionaries,
             },
         ),
     }
@@ -197,10 +205,70 @@ struct ShippingOpts {
     audio_format: AudioFormat,
     zstd_window_log: u32,
     resume: bool,
+    rank_dictionaries: bool,
 }
 
 /// Locate the game data directory inside the input folder.
 /// The original datadir capitalization varies (`DATA/` in demos, `Data/` in fullgame).
+/// Count how often every dictionary entry is referenced across the whole
+/// bank and derive an old→new index map per dictionary that puts the most
+/// frequent tile at index 0 (ties keep source order for determinism).
+fn build_dictionary_rank_remaps(holder: &FrameHolder) -> Result<Vec<Vec<u16>>> {
+    let mut freq: Vec<Vec<u64>> = holder
+        .dictionaries()
+        .iter()
+        .map(|d| vec![0u64; d.num_entries() as usize])
+        .collect();
+    for (idx, sprite) in holder.sprites().iter().enumerate() {
+        if sprite.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(packed) = holder.packed_data(idx as u32) else {
+            continue;
+        };
+        let f = freq
+            .get_mut(sprite.dictionary_index as usize)
+            .ok_or_else(|| {
+                anyhow!(
+                    "sprite {idx} references missing dictionary {}",
+                    sprite.dictionary_index
+                )
+            })?;
+        for &i in packed {
+            let slot = f.get_mut(i as usize).ok_or_else(|| {
+                anyhow!(
+                    "sprite {idx} index {i} out of range for dictionary {}",
+                    sprite.dictionary_index
+                )
+            })?;
+            *slot += 1;
+        }
+    }
+    Ok(freq
+        .into_iter()
+        .map(|f| {
+            let mut order: Vec<u16> = (0..f.len() as u16).collect();
+            order.sort_by_key(|&i| (std::cmp::Reverse(f[i as usize]), i));
+            let mut remap = vec![0u16; f.len()];
+            for (new, &old) in order.iter().enumerate() {
+                remap[old as usize] = new as u16;
+            }
+            remap
+        })
+        .collect())
+}
+
+/// Apply an old→new index map to a dictionary's entries.
+fn permute_dictionary(dict: &FrameDictionary, remap: &[u16]) -> FrameDictionary {
+    let n = dict.num_entries();
+    let mut values = vec![0u16; n as usize * 4];
+    for old in 0..n {
+        let new = remap[old as usize] as usize;
+        values[new * 4..new * 4 + 4].copy_from_slice(dict.lookup_pixels(old));
+    }
+    FrameDictionary::from_raw(n, values)
+}
+
 fn find_data_dir(input: &Path) -> Result<PathBuf> {
     for name in ["Data", "DATA", "data"] {
         let p = input.join(name);
@@ -1762,7 +1830,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     for (index, profile) in cpf.characters.iter().enumerate() {
         let profile_index = u32::try_from(index).context("character profile index exceeds u32")?;
         let required = character_rhs_requirements.entry(profile_index).or_default();
-        add_required_character_rhs_profiles_for_index(required, &cpf, index, &in_path);
+        add_character_rhs_profiles_for_index(required, &cpf, index, &in_path, false);
         add_character_action_rhs_profiles(
             required,
             profile
@@ -1788,9 +1856,26 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         .ok_or_else(|| anyhow!("data dir has no parent"))?;
     let holder =
         FrameHolder::from_data_dir(&parent.to_string_lossy()).context("loading sprite bank")?;
+    // Frequency-rank the dictionaries so the most used tile of each becomes
+    // index 0, and remember the old→new maps to rewrite every VQ sprite's
+    // indices below. A consistent permutation is invisible to the decoder.
+    let dict_remaps = if opts.rank_dictionaries {
+        Some(build_dictionary_rank_remaps(&holder)?)
+    } else {
+        None
+    };
+    let shipping_dictionaries = match &dict_remaps {
+        Some(remaps) => holder
+            .dictionaries()
+            .iter()
+            .zip(remaps)
+            .map(|(dict, remap)| permute_dictionary(dict, remap))
+            .collect(),
+        None => holder.dictionaries().to_vec(),
+    };
     dd.sprite_bank = Some(ShippingSpriteBank {
         signature: holder.signature(),
-        dictionaries: holder.dictionaries().to_vec(),
+        dictionaries: shipping_dictionaries,
         sprite_count: holder.sprites().len() as u32,
         sprites: Vec::new(),
     });
@@ -1862,7 +1947,23 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     anyhow!("RHS {rel} references sprite {idx} beyond the shipping bank")
                 })?;
                 let packed_data = match holder.packed_data(idx) {
-                    Some(packed) => packed.to_vec(),
+                    Some(packed) => match &dict_remaps {
+                        Some(remaps) if sprite.dictionary_index != UNMAPPED_DICT => {
+                            let remap = &remaps[sprite.dictionary_index as usize];
+                            packed
+                                .iter()
+                                .map(|&i| {
+                                    remap.get(i as usize).copied().ok_or_else(|| {
+                                        anyhow!(
+                                            "sprite {idx} index {i} out of range for dictionary {}",
+                                            sprite.dictionary_index
+                                        )
+                                    })
+                                })
+                                .collect::<Result<Vec<u16>>>()?
+                        }
+                        _ => packed.to_vec(),
+                    },
                     None if sprite.width == 0 || sprite.height == 0 => Vec::new(),
                     None => bail!(
                         "RHS {rel} references non-empty sprite {idx} with no packed bank data"
@@ -2103,7 +2204,16 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         opts.resume,
     )?;
 
-    let required_exclamation_ids: BTreeSet<u32> = mission_builds
+    // Mission-authored exclamation profiles must resolve completely; ids
+    // that only appear in the all-profiles character manifest index may be
+    // absent from a trimmed (demo) datadir and are then dropped from the
+    // manifest instead of failing the conversion.
+    let mission_exclamation_ids: BTreeSet<u32> = mission_builds
+        .values()
+        .flat_map(|build| build.required_exclamation_ids.iter().copied())
+        .collect();
+    let mut dropped_exclamation_ids = BTreeSet::<u32>::new();
+    let mut required_exclamation_ids: BTreeSet<u32> = mission_builds
         .values()
         .flat_map(|build| build.required_exclamation_ids.iter().copied())
         .chain(
@@ -2153,14 +2263,23 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     actors_res.attach_resource_file(&actors_res_path.to_string_lossy())?;
     let mut actor_samples = std::collections::BTreeMap::<u32, Vec<(String, PathBuf)>>::new();
     let mut sample_profile_counts = std::collections::BTreeMap::<String, usize>::new();
-    for &exclamation_id in &required_exclamation_ids {
+    'ids: for &exclamation_id in &required_exclamation_ids {
+        let strict = mission_exclamation_ids.contains(&exclamation_id);
         let dat_filename = exclamation_dat_filename(exclamation_id);
         let dat_rel = format!("Sounds/Exclamations/{dat_filename}");
-        let dat_path = in_path(&dat_rel).ok_or_else(|| {
-            anyhow!(
+        let dat_path = match in_path(&dat_rel) {
+            Some(path) => path,
+            None if strict => bail!(
                 "required exclamation profile {exclamation_id:#010x} is missing metadata {dat_rel}"
-            )
-        })?;
+            ),
+            None => {
+                tracing::warn!(
+                    "exclamation profile {exclamation_id:#010x} has no metadata {dat_rel} in this datadir; omitting from manifest index"
+                );
+                dropped_exclamation_ids.insert(exclamation_id);
+                continue 'ids;
+            }
+        };
         let dat = fs::read(&dat_path)
             .with_context(|| format!("read exclamation metadata {}", dat_path.display()))?;
         let prefix_id = exclamation_id & 0xffff_0000;
@@ -2180,16 +2299,27 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 })?
                 .replace('\\', "/");
             let sample_rel = format!("Sounds/Exclamations/{sample}");
-            let sample_path = in_path(&sample_rel).ok_or_else(|| {
-                anyhow!(
+            let sample_path = match in_path(&sample_rel) {
+                Some(path) => path,
+                None if strict => bail!(
                     "required exclamation profile {exclamation_id:#010x} variant {variant_index} references missing sample {sample_rel}"
-                )
-            })?;
+                ),
+                None => {
+                    tracing::warn!(
+                        "exclamation profile {exclamation_id:#010x} references missing sample {sample_rel} in this datadir; omitting from manifest index"
+                    );
+                    dropped_exclamation_ids.insert(exclamation_id);
+                    continue 'ids;
+                }
+            };
             samples.push((sample_rel.clone(), sample_path));
-            *sample_profile_counts.entry(sample_rel).or_default() += 1;
+        }
+        for (sample_rel, _) in &samples {
+            *sample_profile_counts.entry(sample_rel.clone()).or_default() += 1;
         }
         actor_samples.insert(exclamation_id, samples);
     }
+    required_exclamation_ids.retain(|id| !dropped_exclamation_ids.contains(id));
 
     // A handful of generic samples (notably x_empty.wav) are referenced by
     // multiple actor tables. Store those once in the shared exclamation
@@ -2254,7 +2384,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .into_iter()
             .collect();
         dd.character_audio_files.insert(profile_index, files);
-        if exclamation_id != 0 {
+        if exclamation_id != 0 && !dropped_exclamation_ids.contains(&exclamation_id) {
             dd.character_exclamation_ids
                 .insert(profile_index, exclamation_id);
         }
@@ -3213,6 +3343,20 @@ fn add_required_character_rhs_profiles_for_index(
     index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) {
+    add_character_rhs_profiles_for_index(required, profiles, index, in_path, true);
+}
+
+/// `required_on_disk = true` insists the RHS exists (mission-authored
+/// characters must ship); `false` skips profiles whose RHS is absent from
+/// this datadir entirely — the boot manifest indexes every CPF profile, but
+/// a demo datadir only carries the files its missions can actually use.
+fn add_character_rhs_profiles_for_index(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
+    profiles: &ProfileManager,
+    index: usize,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+    required_on_disk: bool,
+) {
     let Some(profile) = profiles.characters.get(index) else {
         return;
     };
@@ -3229,11 +3373,19 @@ fn add_required_character_rhs_profiles_for_index(
         }
     }
     if !found {
-        add_required_rhs_rel(
-            required,
-            format!("Characters/{}.rhs", profile.filename),
-            &profile.profile_name,
-        );
+        if required_on_disk {
+            add_required_rhs_rel(
+                required,
+                format!("Characters/{}.rhs", profile.filename),
+                &profile.profile_name,
+            );
+        } else {
+            tracing::warn!(
+                "character profile '{}' ({}) has no RHS in this datadir; omitting from manifest index",
+                profile.profile_name,
+                profile.filename,
+            );
+        }
     }
 }
 
