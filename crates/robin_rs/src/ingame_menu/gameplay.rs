@@ -31,6 +31,7 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Campaign Presentation",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -180,6 +181,16 @@ pub async fn show_gameplay(
                 );
             }
         }
+        if let Some(font) = resources.label_font() {
+            render_text_virt(
+                renderer,
+                font,
+                transform,
+                working.campaign_presentation.label(),
+                315,
+                opt_layout[3].y + 7,
+            );
+        }
 
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
@@ -209,6 +220,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
+        3 => config.campaign_presentation = config.campaign_presentation.next(),
         _ => {}
     }
 }
@@ -218,6 +230,10 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
+        3 => {
+            config.campaign_presentation
+                != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
+        }
         _ => false,
     }
 }

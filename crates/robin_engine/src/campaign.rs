@@ -13,6 +13,9 @@ use crate::achievement::{
     AchievementHistoryError, AchievementHistoryUpdate, AchievementId, AchievementRunContext,
     AchievementSet, AchievementUnlockPolicy, MissionAchievementHistory, MissionAchievementResults,
 };
+use crate::campaign_history::{
+    CampaignHistoryTotals, MissionAttempt, MissionAttemptKind, MissionAttemptOutcome,
+};
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus, SkillName};
 use crate::player_profile::DifficultyLevel;
@@ -242,6 +245,20 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
     #[serde(default)]
     pub earned_achievements: AchievementSet,
 
+    /// Monotonic identifier for immutable attempt records in this campaign.
+    #[serde(default)]
+    pub mission_attempt_sequence: u64,
+    /// Stable source identity used when promoting attempts into the active
+    /// player's lifetime archive. Assigned by the first native terminal
+    /// command and preserved by saves/replays.
+    #[serde(default)]
+    pub campaign_history_run_id: Option<u64>,
+    /// A completed mission selected from history.  While set, terminal
+    /// progression is restored from the normal pre-mission checkpoint and
+    /// only the new immutable attempt is retained.
+    #[serde(default)]
+    pub history_replay_mission_idx: Option<usize>,
+
     // ── Characters / gang ──
     pub characters: Vec<PcDescription>,
     /// Indices into `characters` for active gang members.
@@ -303,6 +320,9 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             last_pseudo_mission_status,
             last_pseudo_mission_id,
             earned_achievements,
+            mission_attempt_sequence,
+            campaign_history_run_id,
+            history_replay_mission_idx,
             characters,
             gang_indices,
             reservist_indices,
@@ -330,6 +350,9 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             last_pseudo_mission_status,
             last_pseudo_mission_id,
             earned_achievements,
+            mission_attempt_sequence,
+            campaign_history_run_id,
+            history_replay_mission_idx,
             characters,
             gang_indices,
             reservist_indices,
@@ -376,6 +399,9 @@ impl Default for Campaign {
             last_pseudo_mission_status: MissionStatus::Available,
             last_pseudo_mission_id: 0,
             earned_achievements: AchievementSet::default(),
+            mission_attempt_sequence: 0,
+            campaign_history_run_id: None,
+            history_replay_mission_idx: None,
             characters: Vec::new(),
             gang_indices: Vec::new(),
             reservist_indices: Vec::new(),
@@ -464,6 +490,128 @@ pub fn calculate_warcrime_recruitment(
 impl Campaign {
     pub const fn earned_achievements(&self) -> AchievementSet {
         self.earned_achievements
+    }
+
+    pub fn mission_attempts(
+        &self,
+        mission_index: usize,
+    ) -> Option<&[crate::campaign_history::MissionAttempt]> {
+        self.missions
+            .get(mission_index)
+            .map(|mission| mission.attempt_history().attempts())
+    }
+
+    pub fn history_totals(&self) -> CampaignHistoryTotals {
+        let mut totals = CampaignHistoryTotals::default();
+        for attempt in self
+            .missions
+            .iter()
+            .flat_map(|mission| mission.attempt_history().attempts())
+        {
+            totals.include(attempt);
+        }
+        totals
+    }
+
+    pub const fn history_replay_mission(&self) -> Option<usize> {
+        self.history_replay_mission_idx
+    }
+
+    pub const fn history_run_id(&self) -> Option<u64> {
+        self.campaign_history_run_id
+    }
+
+    /// Create explicit incomplete records for mission statuses loaded from an
+    /// aggregate-only campaign.  This is idempotent and never invents stats.
+    pub fn migrate_legacy_aggregate_history(&mut self) -> usize {
+        let mut migrated = 0;
+        for mission in &mut self.missions {
+            if !mission.attempt_history.attempts().is_empty() {
+                continue;
+            }
+            let outcome = match mission.status {
+                MissionStatus::Won => Some(MissionAttemptOutcome::Won),
+                MissionStatus::Lost => Some(MissionAttemptOutcome::Lost),
+                MissionStatus::Available => None,
+            };
+            if let Some(outcome) = outcome {
+                self.mission_attempt_sequence = self
+                    .mission_attempt_sequence
+                    .checked_add(1)
+                    .expect("campaign attempt sequence overflow during migration");
+                mission
+                    .attempt_history
+                    .append(MissionAttempt::legacy_aggregate(
+                        self.mission_attempt_sequence,
+                        outcome,
+                    ));
+                migrated += 1;
+            }
+        }
+        migrated
+    }
+
+    /// Append one native record.  History replay restores campaign state from
+    /// the normal restart image first, preserving only the immutable record.
+    pub fn record_mission_attempt(
+        &mut self,
+        mission_index: usize,
+        outcome: MissionAttemptOutcome,
+        completed_at_unix_seconds: Option<i64>,
+        campaign_run_nonce: Option<u64>,
+        duration_seconds: u32,
+        config: crate::engine::SimConfig,
+        stat: &crate::mission_stat::MissionStat,
+        achievements: Option<MissionAchievementResults>,
+    ) {
+        let mission_count = self.missions.len();
+        assert!(
+            mission_index < mission_count,
+            "cannot record attempt for mission index {mission_index}; campaign has {mission_count} missions"
+        );
+        let campaign_run_id = self
+            .campaign_history_run_id
+            .or(campaign_run_nonce)
+            .expect("native campaign attempt requires a host-provided campaign run identity");
+        let kind = if self.history_replay_mission_idx == Some(mission_index) {
+            MissionAttemptKind::HistoryReplay
+        } else {
+            MissionAttemptKind::Campaign
+        };
+
+        if kind == MissionAttemptKind::HistoryReplay {
+            assert!(
+                self.restore_snapshot(),
+                "history replay finished without its required pre-mission checkpoint"
+            );
+            assert_eq!(
+                self.history_replay_mission_idx,
+                Some(mission_index),
+                "history replay checkpoint lost the selected mission"
+            );
+            self.history_replay_mission_idx = None;
+            // The pre-selection checkpoint necessarily still names the
+            // practice target. Consume it so the session returns to normal
+            // Sherwood selection instead of relaunching the replay forever.
+            self.next_mission_idx = None;
+        }
+        self.campaign_history_run_id = Some(campaign_run_id);
+
+        self.mission_attempt_sequence = self
+            .mission_attempt_sequence
+            .checked_add(1)
+            .expect("campaign attempt sequence overflow");
+        let attempt = MissionAttempt::native(
+            self.mission_attempt_sequence,
+            outcome,
+            kind,
+            completed_at_unix_seconds,
+            duration_seconds,
+            config,
+            stat,
+            achievements,
+        );
+        self.missions[mission_index].attempt_history.append(attempt);
     }
 
     pub fn mission_achievement_history(
@@ -1566,10 +1714,27 @@ impl Campaign {
             .or(self.next_mission_idx)
             .expect("select_next_mission: no mission specified");
 
-        debug_assert!(
-            self.accessible_mission_indices.contains(&target_idx),
-            "select_next_mission: mission not in accessible list"
+        assert!(
+            target_idx < self.missions.len(),
+            "select_next_mission: mission index {target_idx} out of range"
         );
+        if !self.accessible_mission_indices.contains(&target_idx) {
+            let replayable = self.missions[target_idx].attempt_history.has_success()
+                || self.missions[target_idx].status == MissionStatus::Won;
+            assert!(
+                replayable,
+                "select_next_mission: locked mission {target_idx} is neither accessible nor completed"
+            );
+            assert_ne!(
+                target_idx,
+                self.get_sherwood_mission_idx(),
+                "select_next_mission: Sherwood cannot be launched as a history replay"
+            );
+            self.history_replay_mission_idx = Some(target_idx);
+            self.next_mission_idx = Some(target_idx);
+            self.add_all_to_mission_team();
+            return;
+        }
 
         let indices = self.accessible_mission_indices.clone();
         let mut removal_pos = None;
@@ -2040,6 +2205,9 @@ impl Campaign {
         self.pre_mission_sim_config = None;
         self.pre_mission_was_preselected = false;
         self.earned_achievements = AchievementSet::empty();
+        self.mission_attempt_sequence = 0;
+        self.campaign_history_run_id = None;
+        self.history_replay_mission_idx = None;
 
         // Reset values, set initial ransom
         self.values = enum_map! { _ => 0 }.into();
@@ -2705,6 +2873,67 @@ mod tests {
                 .successful_attempts(),
             2
         );
+    }
+
+    #[test]
+    fn aggregate_status_migration_is_idempotent_and_explicitly_incomplete() {
+        let mut campaign = Campaign::default();
+        let mut won = Mission::new();
+        won.status = MissionStatus::Won;
+        campaign.missions.push(won);
+
+        assert_eq!(campaign.migrate_legacy_aggregate_history(), 1);
+        assert_eq!(campaign.migrate_legacy_aggregate_history(), 0);
+        let attempt = &campaign.missions[0].attempt_history().attempts()[0];
+        assert_eq!(
+            attempt.source(),
+            crate::campaign_history::MissionAttemptSource::LegacyAggregateMigration
+        );
+        assert_eq!(attempt.stats().added_score, None);
+        assert_eq!(campaign.history_totals().incomplete_attempts, 1);
+    }
+
+    #[test]
+    fn history_replay_restores_progress_and_keeps_only_attempt_record() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let mut completed = Mission::new();
+        completed.status = MissionStatus::Won;
+        campaign.missions.push(completed);
+        campaign.current_mission_idx = Some(0);
+        campaign.migrate_legacy_aggregate_history();
+
+        campaign.select_next_mission(Some(1), &ProfileManager::new());
+        assert_eq!(campaign.history_replay_mission(), Some(1));
+        campaign.snapshot_with_simulation(7, crate::engine::SimConfig::default());
+        campaign.current_mission_idx = Some(1);
+        campaign.next_mission_idx = None;
+        campaign.set_value(CampaignValue::Score, 9_999);
+
+        let mut stat = crate::mission_stat::MissionStat::default();
+        stat.added_score = 123;
+        campaign.record_mission_attempt(
+            1,
+            crate::campaign_history::MissionAttemptOutcome::Won,
+            Some(123_456),
+            Some(987_654),
+            80,
+            crate::engine::SimConfig::default(),
+            &stat,
+            None,
+        );
+
+        assert_eq!(campaign.current_mission_idx, Some(0));
+        assert_eq!(campaign.next_mission_idx, None);
+        assert_eq!(campaign.history_replay_mission(), None);
+        assert_eq!(campaign.get_value(CampaignValue::Score), 0);
+        let attempts = campaign.missions[1].attempt_history().attempts();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(
+            attempts[1].kind(),
+            crate::campaign_history::MissionAttemptKind::HistoryReplay
+        );
+        assert_eq!(attempts[1].stats().added_score, Some(123));
     }
 
     #[test]

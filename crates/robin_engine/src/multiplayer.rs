@@ -438,6 +438,8 @@ mod tests {
             command: PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: crate::game_operation::GameCode::LevelSucceeded,
                 difficulty: crate::player_profile::DifficultyLevel::Hard,
+                completed_at_unix_seconds: None,
+                campaign_run_nonce: Some(1),
             },
         };
 
@@ -449,6 +451,8 @@ mod tests {
                 command: PlayerCommand::ApplyQuitMissionUpdates {
                     exit_code: crate::game_operation::GameCode::LevelSucceeded,
                     difficulty: crate::player_profile::DifficultyLevel::Hard,
+                    completed_at_unix_seconds: None,
+                    campaign_run_nonce: Some(1),
                 },
             }
         ));

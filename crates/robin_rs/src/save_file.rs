@@ -649,8 +649,17 @@ impl GameSaveFile {
         )
         .with_context(|| format!("parsing save header {}", path.display()))?;
         header.validate()?;
-        serde_json::from_value(document)
-            .with_context(|| format!("parsing save payload {}", path.display()))
+        let mut save: Self = serde_json::from_value(document)
+            .with_context(|| format!("parsing save payload {}", path.display()))?;
+        let migrated = save.engine.migrate_legacy_campaign_history();
+        if migrated != 0 {
+            tracing::info!(
+                migrated,
+                path = %path.display(),
+                "migrated aggregate-only campaign mission history"
+            );
+        }
+        Ok(save)
     }
 }
 

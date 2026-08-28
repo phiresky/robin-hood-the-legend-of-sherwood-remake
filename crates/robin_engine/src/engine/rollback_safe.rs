@@ -3438,6 +3438,15 @@ impl Engine {
         self.inner.control.sim_config
     }
 
+    /// Upgrade aggregate-only campaign mission statuses into explicit,
+    /// incomplete history records after serde loading. Idempotent.
+    pub fn migrate_legacy_campaign_history(&mut self) -> usize {
+        self.inner
+            .mission_domain
+            .required_campaign_mut("migrating campaign history")
+            .migrate_legacy_aggregate_history()
+    }
+
     /// Seed and configuration captured before this mission's frame-0 setup.
     pub fn mission_start_simulation(&self) -> (u64, SimConfig) {
         (

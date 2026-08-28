@@ -873,6 +873,12 @@ pub enum PlayerCommand {
         /// deterministic command. Recruitment is the only quit-mission
         /// update affected by it.
         difficulty: crate::player_profile::DifficultyLevel,
+        /// Host wall-clock completion time. It is carried by the deterministic
+        /// command so peers and replay playback retain the same timestamp.
+        completed_at_unix_seconds: Option<i64>,
+        /// High-resolution identity seed assigned to the campaign's first
+        /// native attempt. Carried in the command for peer/replay determinism.
+        campaign_run_nonce: Option<u64>,
     },
     /// Player confirmed the quit-mission popup.  Sets `quit_won`
     /// when the mission was already marked won (first-time-mission-

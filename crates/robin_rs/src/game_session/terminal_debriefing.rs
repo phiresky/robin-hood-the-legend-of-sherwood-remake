@@ -295,6 +295,14 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
             difficulty,
+            completed_at_unix_seconds: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| i64::try_from(duration.as_secs()).ok()),
+            campaign_run_nonce: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| u64::try_from(duration.as_nanos()).ok()),
         },
     );
 

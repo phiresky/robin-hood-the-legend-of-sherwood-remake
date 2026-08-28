@@ -22,6 +22,7 @@ pub mod alert_colors;
 pub mod bitcode_adapters;
 pub mod bow_shot;
 pub mod campaign;
+pub mod campaign_history;
 pub mod change;
 pub mod character_kind;
 pub mod combat;

@@ -307,7 +307,7 @@ impl LegacyCampaign {
             .map(|(index, sector)| sector.to_rust(character_count, index))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let campaign = Campaign {
+        let mut campaign = Campaign {
             values: enum_map! {
                 CampaignValue::Amulets => self.values[0],
                 CampaignValue::Ransom => self.values[1],
@@ -369,6 +369,9 @@ impl LegacyCampaign {
             )?,
             last_pseudo_mission_id: self.last_pseudo_mission_id,
             earned_achievements: crate::achievement::AchievementSet::empty(),
+            mission_attempt_sequence: 0,
+            campaign_history_run_id: None,
+            history_replay_mission_idx: None,
             characters,
             gang_indices,
             reservist_indices,
@@ -382,6 +385,7 @@ impl LegacyCampaign {
             pre_mission_sim_config: None,
             pre_mission_was_preselected: false,
         };
+        campaign.migrate_legacy_aggregate_history();
 
         let profile = &profiles.missions[header_profile_index];
         Ok(LegacyCampaignBootstrap {
@@ -440,6 +444,7 @@ impl LegacyMission {
             profile_idx: Some(profile_idx as u32),
             ares_state_override: None,
             achievement_history: crate::achievement::MissionAchievementHistory::default(),
+            attempt_history: crate::campaign_history::MissionAttemptHistory::default(),
         })
     }
 }

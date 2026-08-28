@@ -868,6 +868,8 @@ impl EngineInner {
         assets: &LevelAssets,
         exit_code: crate::game_operation::GameCode,
         difficulty: crate::player_profile::DifficultyLevel,
+        completed_at_unix_seconds: Option<i64>,
+        campaign_run_nonce: Option<u64>,
     ) {
         let won = exit_code == crate::game_operation::GameCode::LevelSucceeded;
 
@@ -908,6 +910,43 @@ impl EngineInner {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
         }
+
+        let Some(mission_index) = self.mission_domain.campaign.current_mission_idx else {
+            return;
+        };
+        let outcome = match exit_code {
+            crate::game_operation::GameCode::LevelSucceeded => {
+                crate::campaign_history::MissionAttemptOutcome::Won
+            }
+            crate::game_operation::GameCode::LevelFailed => {
+                crate::campaign_history::MissionAttemptOutcome::Lost
+            }
+            crate::game_operation::GameCode::LevelInterrupted => {
+                crate::campaign_history::MissionAttemptOutcome::Interrupted
+            }
+            other => panic!("quit-mission history received non-terminal game code {other:?}"),
+        };
+        let stat = self.mission_domain.mission_stat.clone();
+        let achievements = self
+            .mission_domain
+            .achievements
+            .finalized_results()
+            .copied();
+        let duration_seconds = self
+            .mission_domain
+            .campaign
+            .get_value(crate::campaign::CampaignValue::MissionLength)
+            .max(0) as u32;
+        self.mission_domain.campaign.record_mission_attempt(
+            mission_index,
+            outcome,
+            completed_at_unix_seconds,
+            campaign_run_nonce,
+            duration_seconds,
+            self.control.sim_config,
+            &stat,
+            achievements,
+        );
     }
 
     /// Split-borrow the engine owners used by the campaign-only tail of
@@ -6025,6 +6064,8 @@ mod campaign_lifecycle_tests {
         let command = PlayerCommand::ApplyQuitMissionUpdates {
             exit_code: GameCode::LevelSucceeded,
             difficulty: DifficultyLevel::Hard,
+            completed_at_unix_seconds: None,
+            campaign_run_nonce: Some(1),
         };
         let encoded = serde_json::to_string(&command).expect("serialize quit command");
         let decoded: PlayerCommand =

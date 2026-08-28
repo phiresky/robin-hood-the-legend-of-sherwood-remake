@@ -157,6 +157,10 @@ pub struct PlayerProfile {
     /// attempts. Existing profile JSON starts with no unlocks.
     #[serde(default)]
     pub earned_achievements: crate::achievement::AchievementSet,
+    /// Lossless all-time history, independent from replaceable campaign save
+    /// slots. Campaign attempts are promoted idempotently at synchronization.
+    #[serde(default)]
+    pub campaign_history: crate::campaign_history::ProfileCampaignHistory,
     pub minimap_x: f32,
     pub minimap_y: f32,
     pub graphic_config: GraphicConfig,
@@ -184,6 +188,7 @@ impl PlayerProfile {
             play_time: 0,
             progression: 0,
             earned_achievements: crate::achievement::AchievementSet::empty(),
+            campaign_history: crate::campaign_history::ProfileCampaignHistory::default(),
             minimap_x: 65536.0,
             minimap_y: 65536.0,
             graphic_config: GraphicConfig::default(),
@@ -218,6 +223,30 @@ impl PlayerProfile {
         campaign: &crate::campaign::Campaign,
     ) -> crate::achievement::AchievementSet {
         self.unlock_achievements(campaign.earned_achievements())
+    }
+
+    pub fn promote_campaign_history(
+        &mut self,
+        campaign: &crate::campaign::Campaign,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Result<usize, crate::campaign_history::ProfileHistoryPromotionError> {
+        self.campaign_history.promote_campaign(campaign, profiles)
+    }
+
+    pub fn lifetime_campaign_totals(&self) -> crate::campaign_history::CampaignHistoryTotals {
+        self.campaign_history.totals()
+    }
+
+    fn migrate_legacy_campaign_aggregate(&mut self) -> bool {
+        self.campaign_history.migrate_legacy_profile_aggregate(
+            crate::campaign_history::LegacyProfileAggregate {
+                score: self.score,
+                ransom: self.ransom,
+                preserved_lives_percent: self.preserved_lives,
+                play_time_seconds: self.play_time,
+                progression_percent: self.progression,
+            },
+        )
     }
 }
 
@@ -271,6 +300,9 @@ impl PlayerProfileManager {
             let data = fs::read_to_string(&path)?;
             let mut mgr: PlayerProfileManager = serde_json::from_str(&data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            for profile in &mut mgr.profiles {
+                profile.migrate_legacy_campaign_aggregate();
+            }
             mgr.save_directory = directory.to_owned();
             Ok(mgr)
         } else {

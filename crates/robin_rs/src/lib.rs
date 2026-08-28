@@ -169,6 +169,7 @@ pub mod app_effect;
 pub mod bg_cache;
 pub mod blit_to_map;
 pub mod campaign_map;
+pub mod campaign_progress;
 pub mod console_overlay;
 pub mod corner_hud;
 pub mod cursor;

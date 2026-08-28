@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::achievement::{
     AchievementEvaluation, AchievementId, AchievementSet, MissionAchievementHistory,
 };
+use crate::campaign_history::MissionAttemptHistory;
 
 /// Mission completion status.
 #[repr(u32)]
@@ -55,6 +56,10 @@ pub struct Mission {
     /// this mission. The original game has no corresponding field.
     #[serde(default)]
     pub achievement_history: MissionAchievementHistory,
+    /// Lossless terminal records for every played attempt, including losses,
+    /// interruptions, and successful history replays.
+    #[serde(default)]
+    pub attempt_history: MissionAttemptHistory,
 }
 
 impl Default for Mission {
@@ -72,6 +77,7 @@ impl Mission {
             profile_idx: None,
             ares_state_override: None,
             achievement_history: MissionAchievementHistory::default(),
+            attempt_history: MissionAttemptHistory::default(),
         }
     }
 
@@ -90,6 +96,10 @@ impl Mission {
 
     pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
         self.achievement_history.best(id)
+    }
+
+    pub const fn attempt_history(&self) -> &MissionAttemptHistory {
+        &self.attempt_history
     }
 
     /// Get the profile for this mission.
