@@ -170,6 +170,7 @@ pub mod bg_cache;
 pub mod blit_to_map;
 pub mod campaign_map;
 pub mod console_overlay;
+pub mod core_overlay;
 pub mod corner_hud;
 pub mod cursor;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

@@ -4,6 +4,14 @@ Always-on overlay datadir shipped with the engine (registered at startup
 before the `mods/` overlays; overlays take precedence over the primary
 datadir).
 
+`core-overlay-manifest.json` is the canonical, strictly sorted inventory for
+packaged targets. It pins this overlay to shipping-datadir schema v9 and records
+the byte length and SHA-256 digest of every required file. Android's Gradle
+build validates the manifest against the directory, then Android startup reads,
+validates, and mounts all 26 entries before any font or UI construction. A
+missing, unlisted, or corrupt entry aborts startup instead of falling through
+to retail data.
+
 ## Native bitmap fonts
 
 `Data/Interface/Fonts/` restores the game's original bitmap fonts
@@ -30,5 +38,8 @@ from Windows; the Linux port shipped this same file in its datadir).
 ## Engine UI assets
 
 `Data/Interface/UI/` holds the engine's own UI additions (the allied
-portrait/pin/stance/formation icons). They load through the virtual
-filesystem, so mods can restyle them by overlaying the same paths.
+portrait, pin, stance, patrol, and formation icons). The complete inventory is
+13 font/config files under `Data/Interface/Fonts/` and 13 PNG files under
+`Data/Interface/UI/`; additions to either directory must also update the
+manifest and the compiled required-path list. They load through the virtual
+filesystem at engine-overlay priority, ahead of shipping and mission bundles.

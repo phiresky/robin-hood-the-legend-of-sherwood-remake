@@ -166,8 +166,9 @@ pub struct CliArgs {
     #[arg(long, value_name = "ZIP", requires = "mission")]
     pub custom_mission: Option<std::path::PathBuf>,
 
-    /// TCP port for the local script-RPC HTTP server.
-    /// Default 17640 (loopback only). Set to 0 to disable.
+    /// TCP port for the desktop-native local script-RPC HTTP server.
+    /// Default 17640 (loopback only). Set to 0 to disable. Android always
+    /// disables this transport; wasm uses the in-process JavaScript bridge.
     /// See `crate::http_server` for the wire format.
     #[arg(long, default_value_t = crate::http_server::DEFAULT_PORT)]
     pub http_server: u16,

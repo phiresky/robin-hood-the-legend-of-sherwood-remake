@@ -204,6 +204,12 @@ Leicester demo shipping datadir is bundled under `android/assets/Data/`:
 `--audio-format source`; do not use the web-only Opus artifact. Its generated
 `missions/`, `rhs/`, and `audio/` directories must be copied alongside it.
 Android reads selected payloads directly through `AAssetManager`.
+The retail-content-free `assets/core-datadir/` is packaged separately into
+every APK. Its canonical manifest pins the 13 font/config files and 13 allied
+control PNGs (size plus SHA-256) to shipping-datadir schema v9; Gradle checks
+the source inventory, and Android validates and mounts it ahead of shipping
+and mission bundles before UI initialization. Missing or corrupt core entries
+fail startup rather than falling back to bundled game data.
 
 Prerequisites:
 
@@ -237,7 +243,8 @@ manifest metadata:
 
     <meta-data android:name="android.app.lib_name" android:value="robin_rs" />
 
-Runtime data is loaded from the bundled APK asset first. Loose
+Runtime shipping data is loaded from the bundled APK asset. The validated core
+overlay has higher VFS priority. Loose
 filesystem data is still supported as a developer override via
 `ROBINHOOD_DATA_DIR` or a `Data/` folder under the app files directory.
 Saves go to the app internal data directory under `saves/`. Video is

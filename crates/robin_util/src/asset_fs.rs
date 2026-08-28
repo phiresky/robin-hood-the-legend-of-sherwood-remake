@@ -96,6 +96,12 @@ enum Mount {
 /// prevents a symlink inside a mount from escaping it.
 #[derive(Debug, Default)]
 pub struct AssetVfs {
+    /// Engine-owned overlays searched before mission and shipping content.
+    ///
+    /// This is distinct from `mounts`: the core datadir must override a
+    /// retail installation's incomplete font configuration, and it must keep
+    /// that priority while `active_bundle` is replaced between missions.
+    overlay_bundles: RwLock<Vec<Arc<Bundle>>>,
     active_bundle: RwLock<Option<Arc<Bundle>>>,
     mounts: RwLock<Vec<Mount>>,
     preloaded: RwLock<Bundle>,
@@ -104,6 +110,20 @@ pub struct AssetVfs {
 impl AssetVfs {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Append an immutable engine overlay.
+    ///
+    /// Overlay bundles are searched in installation order, before the active
+    /// mission, shipping boot data, loose directories, and host-preloaded
+    /// compatibility assets. This mirrors `SbFile`'s native overlay order.
+    pub fn mount_overlay_bundle(&self, bundle: Arc<Bundle>) -> Result<(), AssetError> {
+        validate_bundle(&bundle)?;
+        self.overlay_bundles
+            .write()
+            .expect("asset VFS overlay bundles poisoned")
+            .push(bundle);
+        Ok(())
     }
 
     /// Append an in-memory bundle as the lowest-priority mount.
@@ -116,7 +136,7 @@ impl AssetVfs {
         Ok(())
     }
 
-    /// Insert an in-memory bundle as the highest-priority mount.
+    /// Insert an in-memory bundle as the highest-priority regular mount.
     ///
     /// Runtime shipping data uses this so it retains the historical priority
     /// over host-preloaded and loose files regardless of bootstrap order.
@@ -187,6 +207,16 @@ impl AssetVfs {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        let overlays = self
+            .overlay_bundles
+            .read()
+            .expect("asset VFS overlay bundles poisoned");
+        for bundle in overlays.iter() {
+            if let Some(bytes) = bundle.get(&key) {
+                return Ok(bytes.clone());
+            }
+        }
+        drop(overlays);
         if let Some(bytes) = self
             .active_bundle
             .read()
@@ -247,6 +277,15 @@ impl AssetVfs {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        if self
+            .overlay_bundles
+            .read()
+            .expect("asset VFS overlay bundles poisoned")
+            .iter()
+            .any(|bundle| bundle.contains_key(&key))
+        {
+            return Ok(true);
+        }
         if self
             .active_bundle
             .read()
@@ -394,11 +433,15 @@ pub fn global() -> &'static Arc<AssetVfs> {
     GLOBAL.get_or_init(|| Arc::new(AssetVfs::new()))
 }
 
-/// Install the shipping bundle at highest priority.
+/// Install the shipping bundle at the highest regular-mount priority.
 pub fn install_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
     global().mount_bundle_first(bundle)
 }
 
+/// Install an engine-owned overlay ahead of mission and shipping assets.
+pub fn install_overlay_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
+    global().mount_overlay_bundle(bundle)
+}
 /// Install or replace one host-preloaded asset.
 pub fn install_preloaded_asset<P: AsRef<Path>>(path: P, bytes: Vec<u8>) -> Result<(), AssetError> {
     global().install_preloaded_asset(path, bytes)
@@ -567,6 +610,28 @@ mod tests {
         assert_eq!(vfs.read("second.dat").unwrap(), b"second");
         assert_eq!(vfs.read("boot.dat").unwrap(), b"boot");
         assert_eq!(vfs.read("shared.dat").unwrap(), b"boot");
+    }
+
+    #[test]
+    fn locale_then_engine_overlay_precedence_survives_mission_replacement() {
+        let vfs = AssetVfs::new();
+        vfs.mount_bundle(bundle(&[("interface/shared.dat", b"shipping")]))
+            .unwrap();
+        vfs.replace_active_bundle(bundle(&[("interface/shared.dat", b"mission-one")]))
+            .unwrap();
+        vfs.mount_overlay_bundle(bundle(&[("interface/shared.dat", b"core")]))
+            .unwrap();
+
+        assert_eq!(vfs.read("interface/shared.dat").unwrap(), b"core");
+        vfs.set_locale_bundle(Some(bundle(&[("interface/shared.dat", b"localized")])))
+            .unwrap();
+        assert_eq!(vfs.read("interface/shared.dat").unwrap(), b"localized");
+
+        vfs.replace_active_bundle(bundle(&[("interface/shared.dat", b"mission-two")]))
+            .unwrap();
+        assert_eq!(vfs.read("interface/shared.dat").unwrap(), b"localized");
+        vfs.set_locale_bundle(None).unwrap();
+        assert_eq!(vfs.read("interface/shared.dat").unwrap(), b"core");
     }
 
     #[test]

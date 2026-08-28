@@ -123,7 +123,11 @@ A list of which additional features we have added, which ones we might still wan
   the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
   fixing the Steam release — whose depot ships only the international
   TrueType (SimSun) font set and therefore renders every menu in a
-  Windows system font in the original build too. See
+  Windows system font in the original build too. It also carries the 13
+  allied-control UI PNGs. Packaged targets validate the strictly sorted
+  26-file size/SHA-256 inventory in `core-overlay-manifest.json`; Android
+  packages it as a retail-content-free asset root, validates every entry, and
+  mounts it ahead of schema-v9 shipping/mission bundles before UI startup. See
   `assets/core-datadir/README.md`.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
@@ -226,10 +230,11 @@ A list of which additional features we have added, which ones we might still wan
   mission titles as filenames.
 
 - **Local script-RPC HTTP server** (`crates/robin_rs/src/http_server.rs`).
-  Loopback-only blocking-IO server (`tiny_http`) that exposes the script VM
+  Desktop-native-only loopback blocking-IO server (`tiny_http`) that exposes the script VM
   and engine internals to external tooling: debug shells, test harnesses, AI
   drivers. Default port **17640**, configurable via `--http-server <port>`,
-  `--http-server 0` to disable.
+  `--http-server 0` to disable. Android disables this transport; browser builds
+  expose the same queue through the in-process `rh_rpc` JavaScript bridge.
   - `GET /` — endpoint listing.
   - `GET /natives` — every NativeFn (index, name, return_type, params)
     with signature provenance from `original-code/RHScriptAPI.scs`.

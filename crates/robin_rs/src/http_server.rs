@@ -5,8 +5,9 @@
 //!
 //! Two transports share the same request/reply enums + per-tick drain:
 //!
-//! - **Native:** a `tiny_http` listener on `127.0.0.1:<port>` (see
-//!   [`start_global`]).  Endpoints are:
+//! - **Desktop native:** a `tiny_http` listener on `127.0.0.1:<port>`
+//!   (see [`start_global`]). Android deliberately disables this local HTTP
+//!   transport at its platform entry point. Endpoints are:
 //!
 //!   | Method | Path                | Body / Query                                 | Response                                               |
 //!   |--------|---------------------|----------------------------------------------|--------------------------------------------------------|
@@ -293,7 +294,8 @@ static GLOBAL: OnceLock<HttpServer> = OnceLock::new();
 /// process-global so the per-tick drain can reach it without threading
 /// the queue through every signature.  Re-calls are silently ignored.
 ///
-/// Native: binds a loopback HTTP listener on `port` (0 disables).
+/// Desktop native: binds a loopback HTTP listener on `port` (0 disables).
+/// Android calls this with `0`, so no socket or queue is installed.
 /// Wasm: ignores `port`; just installs the empty queue so `rh_rpc`
 /// has somewhere to push.
 pub fn start_global(port: u16) -> Result<(), String> {

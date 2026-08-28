@@ -1,8 +1,11 @@
 # HTTP automation server
 
-The `robin` binary exposes a loopback-only HTTP endpoint for debug tools,
-test harnesses, replay drivers and screenshot pipelines. The implementation is
-in [`http_server.rs`](../crates/robin_rs/src/http_server.rs).
+The desktop-native `robin` binary exposes a loopback-only HTTP endpoint for
+debug tools, test harnesses, replay drivers and screenshot pipelines. Android
+does not start this HTTP transport. Browser builds use the in-process
+`rh_rpc(...)` JavaScript bridge instead. The shared queue and desktop listener
+implementation are in
+[`http_server.rs`](../crates/robin_rs/src/http_server.rs).
 
 This is a small JSON-over-HTTP API, not a JSON-RPC 2.0 server. Responses are
 JSON except for `/screenshot`.
