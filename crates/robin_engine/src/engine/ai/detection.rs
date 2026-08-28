@@ -1306,6 +1306,7 @@ impl EngineInner {
             };
             if !pc.element.active
                 || !pc.pc.playable
+                || pc.pc.command_interface != crate::human_control::CommandInterface::HeroActions
                 || pc.pc.life_points <= 0
                 || pc.human.unconscious
             {

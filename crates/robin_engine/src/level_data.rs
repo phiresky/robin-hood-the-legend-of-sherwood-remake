@@ -10,6 +10,7 @@
 //! - **Fullgame** (`_NEW_LEVELS`): obfuscated tags like `MEUH`/`DUTY`, higher versions
 
 use crate::coordinates::MapPoint;
+use crate::human_control::{CombatStance, CommandInterface, DecisionPolicy, MissionRole};
 use crate::sbfile::{SB_FILE_READ, SbFile};
 use serde::{Deserialize, Serialize};
 
@@ -832,6 +833,15 @@ pub struct RawSoldier {
     /// derive allegiance from `SoldierProfile::hostile` as before.
     #[serde(default)]
     pub allegiance: Option<u16>,
+    /// Optional player command surface, independent from allegiance.
+    #[serde(default)]
+    pub command_interface: CommandInterface,
+    /// Mission bookkeeping role, independent from body type and allegiance.
+    #[serde(default)]
+    pub mission_role: MissionRole,
+    /// Default combat engagement policy.
+    #[serde(default)]
+    pub combat_stance: CombatStance,
     /// Custom missions may bypass the normal town-map fog silhouette.
     #[serde(default)]
     pub revealed: bool,
@@ -959,14 +969,20 @@ pub struct RawPcRescue {
     /// Optional Rust-port extension for custom multi-team missions.
     #[serde(default)]
     pub allegiance: Option<u16>,
+    /// Who owns moment-to-moment decisions for this hero.
+    #[serde(default = "default_scripted_decision_policy")]
+    pub decision_policy: DecisionPolicy,
+    /// Player-facing command surface, if any.
     #[serde(default)]
-    pub autonomous: bool,
-    /// Skip the initial offensive hesitation roll while retaining all normal
-    /// strike legality, skill, timing, damage, tiredness, and defence rules.
+    pub command_interface: CommandInterface,
+    /// Mission bookkeeping role.
+    #[serde(default = "default_rescue_mission_role")]
+    pub mission_role: MissionRole,
+    /// Combat engagement policy.
     #[serde(default)]
-    pub aggressive_combat: bool,
+    pub combat_stance: CombatStance,
     /// Readable soldier-profile identifier supplying the established enemy
-    /// AI's personality/decision parameters for an autonomous PC.
+    /// AI's personality/decision parameters for an AI-controlled hero.
     #[serde(default)]
     pub ai_profile: Option<String>,
     /// Makes a custom-mission PC immediately player-controllable instead of
@@ -2026,6 +2042,12 @@ pub struct HackableSoldier {
     pub allegiance: u16,
     #[serde(default)]
     pub direction: u32,
+    #[serde(default)]
+    pub command_interface: CommandInterface,
+    #[serde(default)]
+    pub mission_role: MissionRole,
+    #[serde(default)]
+    pub combat_stance: CombatStance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -2043,19 +2065,36 @@ pub struct HackablePc {
     pub allegiance: u16,
     #[serde(default)]
     pub direction: u32,
-    /// Excludes this PC from player selection so an attached combat AI may
-    /// control it.
     #[serde(default)]
-    pub autonomous: bool,
-    /// Opt-in high-activity combat behavior for autonomous battle examples.
+    pub decision_policy: Option<DecisionPolicy>,
     #[serde(default)]
-    pub aggressive_combat: bool,
+    pub command_interface: Option<CommandInterface>,
+    #[serde(default)]
+    pub mission_role: Option<MissionRole>,
+    #[serde(default)]
+    pub combat_stance: Option<CombatStance>,
+    /// Deprecated compatibility spelling. New descriptors should use
+    /// `decision_policy: "enemy_ai"`.
+    #[serde(default)]
+    pub autonomous: Option<bool>,
+    /// Deprecated compatibility spelling. New descriptors should use
+    /// `combat_stance: "aggressive"`.
+    #[serde(default)]
+    pub aggressive_combat: Option<bool>,
     /// Soldier profile used only for AI decision parameters. The PC retains
     /// its own character sprite, weapon, health, and combat skill.
     #[serde(default)]
     pub ai_profile: Option<String>,
     #[serde(default)]
     pub playable: bool,
+}
+
+const fn default_scripted_decision_policy() -> DecisionPolicy {
+    DecisionPolicy::Scripted
+}
+
+const fn default_rescue_mission_role() -> MissionRole {
+    MissionRole::RescueTarget
 }
 
 /// One simplified, convex architectural volume in a hackable level descriptor.
@@ -2089,6 +2128,55 @@ impl LoadedLevel {
             .map_err(|error| format!("invalid hackable level descriptor: {error}"))?;
         if descriptor.walkable_polygon.len() < 3 {
             return Err("walkable_polygon must contain at least three points".to_owned());
+        }
+        for (index, pc) in descriptor.pcs.iter().enumerate() {
+            if let (Some(policy), Some(legacy_autonomous)) = (pc.decision_policy, pc.autonomous)
+                && (policy == DecisionPolicy::EnemyAi) != legacy_autonomous
+            {
+                return Err(format!(
+                    "pcs[{index}] has conflicting decision_policy and deprecated autonomous fields"
+                ));
+            }
+            if let (Some(stance), Some(legacy_aggressive)) =
+                (pc.combat_stance, pc.aggressive_combat)
+                && (stance == CombatStance::Aggressive) != legacy_aggressive
+            {
+                return Err(format!(
+                    "pcs[{index}] has conflicting combat_stance and deprecated aggressive_combat fields"
+                ));
+            }
+            let policy = pc
+                .decision_policy
+                .unwrap_or(if pc.autonomous.unwrap_or(false) {
+                    DecisionPolicy::EnemyAi
+                } else if pc.playable {
+                    DecisionPolicy::PlayerDirected
+                } else {
+                    DecisionPolicy::Scripted
+                });
+            let commands = pc.command_interface.unwrap_or(
+                if policy == DecisionPolicy::PlayerDirected || pc.playable {
+                    CommandInterface::HeroActions
+                } else {
+                    CommandInterface::None
+                },
+            );
+            let valid_pair = matches!(
+                (policy, commands),
+                (
+                    DecisionPolicy::PlayerDirected,
+                    CommandInterface::HeroActions
+                ) | (DecisionPolicy::EnemyAi, CommandInterface::None)
+                    | (DecisionPolicy::EnemyAi, CommandInterface::TacticalOrders)
+                    | (DecisionPolicy::Scripted, CommandInterface::None)
+            );
+            // TODO: allow FriendlyAi on hero bodies once the friendly brain
+            // no longer assumes the civilian macro/state family.
+            if !valid_pair {
+                return Err(format!(
+                    "pcs[{index}] has incompatible decision_policy {policy:?} and command_interface {commands:?}"
+                ));
+            }
         }
         for volume in &descriptor.volumes {
             if volume.footprint.len() < 3 {
@@ -2229,6 +2317,9 @@ impl LoadedLevel {
                         HackableSoldierProfile::LegacyIndex(_) => None,
                     },
                     allegiance: Some(soldier.allegiance),
+                    command_interface: soldier.command_interface,
+                    mission_role: soldier.mission_role,
+                    combat_stance: soldier.combat_stance,
                     revealed: reveal_all,
                     tower_guard: false,
                     company_number: 0,
@@ -2250,23 +2341,56 @@ impl LoadedLevel {
         level.mission.pcs_to_rescue = descriptor
             .pcs
             .into_iter()
-            .map(|pc| RawPcRescue {
-                position_x: pc.position.0,
-                position_y: pc.position.1,
-                direction: pc.direction,
-                action: 0,
-                obstacle_index: u16::MAX,
-                sector: 0,
-                layer: 0,
-                material: 0,
-                profile_index: pc.profile,
-                allegiance: Some(pc.allegiance),
-                autonomous: pc.autonomous,
-                aggressive_combat: pc.aggressive_combat,
-                ai_profile: pc.ai_profile.clone(),
-                playable: pc.playable,
-                attributes: 0,
-                script_class: None,
+            .map(|pc| {
+                let legacy_autonomous = pc.autonomous.unwrap_or(false);
+                let decision_policy = pc.decision_policy.unwrap_or(if legacy_autonomous {
+                    DecisionPolicy::EnemyAi
+                } else if pc.playable {
+                    DecisionPolicy::PlayerDirected
+                } else {
+                    DecisionPolicy::Scripted
+                });
+                let command_interface = pc.command_interface.unwrap_or(
+                    if decision_policy == DecisionPolicy::PlayerDirected || pc.playable {
+                        CommandInterface::HeroActions
+                    } else {
+                        CommandInterface::None
+                    },
+                );
+                let combat_stance =
+                    pc.combat_stance
+                        .unwrap_or(if pc.aggressive_combat.unwrap_or(false) {
+                            CombatStance::Aggressive
+                        } else {
+                            CombatStance::Defensive
+                        });
+                let mission_role = pc.mission_role.unwrap_or(if pc.playable {
+                    MissionRole::PlayerParty
+                } else if decision_policy == DecisionPolicy::EnemyAi {
+                    MissionRole::Combatant
+                } else {
+                    MissionRole::RescueTarget
+                });
+                RawPcRescue {
+                    position_x: pc.position.0,
+                    position_y: pc.position.1,
+                    direction: pc.direction,
+                    action: 0,
+                    obstacle_index: u16::MAX,
+                    sector: 0,
+                    layer: 0,
+                    material: 0,
+                    profile_index: pc.profile,
+                    allegiance: Some(pc.allegiance),
+                    decision_policy,
+                    command_interface,
+                    mission_role,
+                    combat_stance,
+                    ai_profile: pc.ai_profile.clone(),
+                    playable: pc.playable,
+                    attributes: 0,
+                    script_class: None,
+                }
             })
             .collect();
         Ok(level)
@@ -3294,6 +3418,9 @@ fn read_soldiers(
             profile_number,
             profile_id: None,
             allegiance: None,
+            command_interface: CommandInterface::None,
+            mission_role: MissionRole::Combatant,
+            combat_stance: CombatStance::Aggressive,
             revealed: false,
             tower_guard,
             company_number,
@@ -3569,8 +3696,10 @@ fn read_pcs_to_rescue(
             material,
             profile_index,
             allegiance: None,
-            autonomous: false,
-            aggressive_combat: false,
+            decision_policy: DecisionPolicy::Scripted,
+            command_interface: CommandInterface::None,
+            mission_role: MissionRole::RescueTarget,
+            combat_stance: CombatStance::Defensive,
             ai_profile: None,
             playable: false,
             attributes,
@@ -4748,7 +4877,7 @@ mod tests {
                 "spawn_player": false,
                 "walkable_polygon": [[0, 0], [100, 0], [100, 100]],
                 "soldiers": [
-                    {"position": [20, 20], "profile": 0, "allegiance": 2},
+                    {"position": [20, 20], "profile": 0, "allegiance": 2, "command_interface": "tactical_orders", "mission_role": "tactical_ally", "combat_stance": "defensive"},
                     {"position": [80, 20], "profile": 1, "allegiance": 9}
                 ],
                 "pcs": [
@@ -4761,14 +4890,28 @@ mod tests {
         assert!(level.mission.beam_mes.is_empty());
         assert_eq!(level.mission.soldiers.len(), 2);
         assert_eq!(level.mission.soldiers[0].allegiance, Some(2));
+        assert_eq!(
+            level.mission.soldiers[0].command_interface,
+            CommandInterface::TacticalOrders
+        );
+        assert_eq!(
+            level.mission.soldiers[0].mission_role,
+            MissionRole::TacticalAlly
+        );
         assert_eq!(level.mission.soldiers[1].allegiance, Some(9));
         assert!(level.mission.soldiers.iter().all(|soldier| {
             soldier.path_id == NO_HIKING_PATH_ID && soldier.alert_path_id == NO_HIKING_PATH_ID
         }));
         assert!(crate::ai::PathId::new(level.mission.soldiers[0].path_id).is_none());
         assert_eq!(level.mission.pcs_to_rescue[0].allegiance, Some(7));
-        assert!(level.mission.pcs_to_rescue[0].autonomous);
-        assert!(level.mission.pcs_to_rescue[0].aggressive_combat);
+        assert_eq!(
+            level.mission.pcs_to_rescue[0].decision_policy,
+            DecisionPolicy::EnemyAi
+        );
+        assert_eq!(
+            level.mission.pcs_to_rescue[0].combat_stance,
+            CombatStance::Aggressive
+        );
         assert_eq!(
             level.mission.pcs_to_rescue[0].ai_profile.as_deref(),
             Some("soldier_b04")
@@ -4828,8 +4971,9 @@ mod tests {
                     .mission
                     .pcs_to_rescue
                     .iter()
-                    .all(|pc| !pc.aggressive_combat || pc.ai_profile.is_some()),
-                "{mission} aggressive PCs must select an AI behavior profile"
+                    .all(|pc| pc.decision_policy != DecisionPolicy::EnemyAi
+                        || pc.ai_profile.is_some()),
+                "{mission} enemy-AI heroes must select an AI behavior profile"
             );
             assert!(
                 level
@@ -4844,12 +4988,17 @@ mod tests {
             "mods/multi-team-robin-vs-little-john/Data/Levels/MultiTeamRobinVsLittleJohn.level.json",
         );
         let duel = LoadedLevel::hackable_from_json(&fs::read(duel_path).unwrap()).unwrap();
-        assert!(duel.mission.pcs_to_rescue.iter().all(|pc| pc.autonomous));
         assert!(
             duel.mission
                 .pcs_to_rescue
                 .iter()
-                .all(|pc| pc.aggressive_combat)
+                .all(|pc| pc.decision_policy == DecisionPolicy::EnemyAi)
+        );
+        assert!(
+            duel.mission
+                .pcs_to_rescue
+                .iter()
+                .all(|pc| pc.combat_stance == CombatStance::Aggressive)
         );
         assert_eq!(duel.mission.pcs_to_rescue[0].profile_index, 0);
         assert_eq!(duel.mission.pcs_to_rescue[1].profile_index, 2);
@@ -4863,8 +5012,8 @@ mod tests {
                 .mission
                 .pcs_to_rescue
                 .iter()
-                .all(|pc| pc.autonomous
-                    && pc.aggressive_combat
+                .all(|pc| pc.decision_policy == DecisionPolicy::EnemyAi
+                    && pc.combat_stance == CombatStance::Aggressive
                     && pc.ai_profile.as_deref() == Some("soldier_b04"))
         );
         let pc_profiles: std::collections::BTreeSet<_> = pc_circle
@@ -4891,8 +5040,8 @@ mod tests {
         assert!(robins.mission.pcs_to_rescue.iter().all(|pc| {
             pc.allegiance == Some(2)
                 && matches!(pc.profile_index, 0 | 1)
-                && pc.autonomous
-                && pc.aggressive_combat
+                && pc.decision_policy == DecisionPolicy::EnemyAi
+                && pc.combat_stance == CombatStance::Aggressive
                 && pc.ai_profile.as_deref() == Some("soldier_b04")
         }));
         assert_eq!(

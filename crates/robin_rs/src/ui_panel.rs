@@ -15,7 +15,6 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
-use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -26,6 +25,7 @@ use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sim_rng::{self, AuxiliaryRngSite};
 use robin_engine::sprite::BBox;
+use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
 use std::collections::HashMap;
 
 use crate::gfx_types::{BlendMode, Rect};
@@ -1285,16 +1285,16 @@ pub(crate) fn portrait_bar_items(
             members: vec![pc],
         })
         .collect();
-    for group in engine.allied_pinned_groups(seat) {
+    for group in engine.tactical_pinned_groups(seat) {
         all.push(PortraitBarItem {
             target: PortraitTarget::AlliedGroup(group.id),
             members: group.members.clone(),
         });
     }
-    let selection = engine.allied_selection(seat);
+    let selection = engine.tactical_selection(seat);
     if !selection.is_empty()
         && !engine
-            .allied_pinned_groups(seat)
+            .tactical_pinned_groups(seat)
             .iter()
             .any(|group| group.members == selection)
     {
@@ -1306,7 +1306,7 @@ pub(crate) fn portrait_bar_items(
     let capacity = portrait_capacity(screen_width);
     let paged = all.len() > capacity;
     if paged {
-        let offset = engine.allied_first_visible_portrait(seat) % all.len();
+        let offset = engine.tactical_first_visible_portrait(seat) % all.len();
         all.rotate_left(offset);
         all.truncate(capacity);
     }
@@ -1419,26 +1419,26 @@ fn allied_action_index(relative_x: f32) -> u8 {
 
 fn allied_state_icon_index(
     action: u8,
-    order: Option<&robin_engine::allied_control::AlliedSoldierOrder>,
+    order: Option<&robin_engine::tactical_control::TacticalUnitOrder>,
 ) -> usize {
     match action {
-        0 => match order.map_or(AlliedStance::Defensive, |order| order.stance) {
-            AlliedStance::Hold => 0,
-            AlliedStance::Defensive => 1,
-            AlliedStance::Aggressive => 2,
+        0 => match order.map_or(CombatStance::Defensive, |order| order.stance) {
+            CombatStance::Hold => 0,
+            CombatStance::Defensive => 1,
+            CombatStance::Aggressive => 2,
         },
         1 => {
-            if order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. })) {
+            if order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. })) {
                 4
             } else {
                 3
             }
         }
-        2 => match order.map_or(AlliedFormation::Line, |order| order.formation) {
-            AlliedFormation::Line => 5,
-            AlliedFormation::Box => 6,
-            AlliedFormation::Staggered => 7,
-            AlliedFormation::Flank => 8,
+        2 => match order.map_or(TacticalFormation::Line, |order| order.formation) {
+            TacticalFormation::Line => 5,
+            TacticalFormation::Box => 6,
+            TacticalFormation::Staggered => 7,
+            TacticalFormation::Flank => 8,
         },
         _ => panic!("allied action index {action} is outside the three-button row"),
     }
@@ -1523,7 +1523,7 @@ fn render_allied_portrait(
     sh: u16,
     hovered_action: Option<u8>,
 ) {
-    let selected = engine.allied_selection(seat) == item.members;
+    let selected = engine.tactical_selection(seat) == item.members;
     let top_scroll = if selected {
         POSITION_TOP_SCROLL
     } else {
@@ -1624,7 +1624,7 @@ fn render_allied_portrait(
         let order = item
             .members
             .first()
-            .and_then(|soldier| engine.allied_order(*soldier));
+            .and_then(|soldier| engine.tactical_order(*soldier));
         let button_w = ELEMENT_WIDTH / 3;
         for index in 0..3 {
             let left = x + index as u16 * button_w;
@@ -1634,7 +1634,7 @@ fn render_allied_portrait(
                 left + button_w
             };
             let active = index == 1
-                && order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
+                && order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. }));
             let icon_index = allied_state_icon_index(index as u8, order);
             let image = portraits.allied_action_surfaces[icon_index]
                 .as_ref()
@@ -1991,7 +1991,7 @@ pub fn draw_panel(
             unreachable!()
         };
         let entity = engine.get_entity(pc_id);
-        let is_selected = engine.seat_selection(local_seat).contains(&pc_id);
+        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
 
         // ── Extract PC-specific state for overlay rendering ──
         let (is_dead, is_coma, is_sword_fighting, is_guarded, has_trumpet) = match entity {
@@ -3268,7 +3268,7 @@ pub fn hit_test_portrait_detailed(
 
         let pc_id = item.members[0];
         if !matches!(item.target, PortraitTarget::Pc(_)) {
-            let selected = engine.allied_selection(local_seat) == item.members;
+            let selected = engine.tactical_selection(local_seat) == item.members;
             let top_scroll_top = if selected {
                 (sh - POSITION_TOP_SCROLL) as f32
             } else {
@@ -3307,7 +3307,7 @@ pub fn hit_test_portrait_detailed(
         }
 
         let entity = engine.get_entity(pc_id);
-        let is_selected = engine.seat_selection(local_seat).contains(&pc_id);
+        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
 
         let is_coma = entity.map(|e| is_pc_in_coma(engine, e)).unwrap_or(false);
         if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 && (!is_selected || is_coma) {

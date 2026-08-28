@@ -2779,15 +2779,8 @@ impl EngineInner {
         // delayed AI strike queued behind it. The flag is still consumed below
         // so the rejected proposal cannot leak out after a stance change or
         // after the player action completes.
-        let mut suppressed_considerations: std::collections::HashSet<EntityId> = self
-            .players
-            .allied
-            .orders
-            .keys()
-            .copied()
-            .filter(|&id| !self.allied_allows_normal_strikes(id))
-            .collect();
-        for seat in &self.players.allied.seats {
+        let mut suppressed_considerations = std::collections::HashSet::new();
+        for seat in &self.players.tactical.seats {
             for &id in &seat.selection {
                 if self
                     .orders
@@ -2823,7 +2816,10 @@ impl EngineInner {
                 continue;
             };
             let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
-            if pending && !suppressed_considerations.contains(&npc_id) {
+            if pending
+                && !suppressed_considerations.contains(&npc_id)
+                && self.tactical_allows_normal_strikes(npc_id)
+            {
                 pending_considerations.insert(npc_id);
             }
         }
@@ -3270,7 +3266,7 @@ impl EngineInner {
             // are EnemyAi combatants rather than players awaiting a warning,
             // so PC-vs-PC battle missions use the normal immediate cadence.
             let target_is_player_controlled_pc = match self.get_entity(attack.target_id) {
-                Some(Entity::Pc(pc)) => !pc.pc.autonomous,
+                Some(entity @ Entity::Pc(_)) => entity.accepts_hero_commands(),
                 Some(_) => false,
                 None => panic!(
                     "sword-strike target {:?} disappeared before preparation",

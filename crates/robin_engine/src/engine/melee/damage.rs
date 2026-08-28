@@ -912,7 +912,7 @@ impl EngineInner {
                 .expect_entity(atk_id, "sword-damage Provoke attacker")
                 .kind()
                 .is_pc()
-                && self.selected_pc_ids().contains(&atk_id);
+                && self.selected_hero_ids().contains(&atk_id);
             if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
                 && !attacker_is_selected_pc
             {

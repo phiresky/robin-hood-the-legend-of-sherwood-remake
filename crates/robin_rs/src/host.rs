@@ -8,7 +8,6 @@
 
 use robin_assets::frame_holder::{FrameHolder, PublishedFrameHolder};
 use robin_assets::shipping_datadir::ShippingDatadir;
-use robin_engine::allied_control::AlliedFormation;
 use robin_engine::coordinates::{
     MapPoint, MapSize, ScreenPoint, ScreenSize, ScreenVec, WorldPoint3D,
 };
@@ -24,6 +23,7 @@ use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_profile::{PlayerProfile, PlayerProfileManager};
 use robin_engine::profiles::Action;
+use robin_engine::tactical_control::TacticalFormation;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -41,10 +41,10 @@ const DISPLAY_INFO_SAMPLES: usize = 16;
 
 /// A world-space target still required by an allied portrait action.
 #[derive(Debug, Clone)]
-pub enum AlliedTargetMode {
+pub enum TacticalTargetMode {
     Patrol {
         soldiers: Vec<EntityId>,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     },
 }
 
@@ -79,7 +79,8 @@ struct HostContextSnapshot {
     shipping: Option<Arc<ShippingDatadir>>,
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
-    control_allied_soldiers: bool,
+    #[serde(alias = "control_allied_soldiers")]
+    control_tactical_units: bool,
 }
 
 impl ApplicationContext {
@@ -352,10 +353,10 @@ impl ApplicationContext {
             shipping: services.shipping.clone(),
             key_config,
             custom_key_config,
-            control_allied_soldiers: self
+            control_tactical_units: self
                 .active_profile_snapshot()?
                 .gameplay_config
-                .control_allied_soldiers,
+                .control_tactical_units,
         })
     }
 
@@ -607,13 +608,13 @@ pub struct HostFrontend {
     /// release event has no click-count field, so portrait input consumes it.
     pub right_double_click_pending: bool,
 
-    /// Active profile's opt-in allied-soldier control setting. Host-local
+    /// Active profile's opt-in tactical-unit control setting. Host-local
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
-    pub control_allied_soldiers: bool,
+    pub control_tactical_units: bool,
 
-    /// Host-local targeting prompt armed by the allied patrol portrait button.
-    pub allied_target_mode: Option<AlliedTargetMode>,
+    /// Host-local targeting prompt armed by the tactical patrol portrait button.
+    pub tactical_target_mode: Option<TacticalTargetMode>,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -1013,7 +1014,7 @@ impl Host {
                 shipping: snapshot.shipping,
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
-                control_allied_soldiers: snapshot.control_allied_soldiers,
+                control_tactical_units: snapshot.control_tactical_units,
                 ..Default::default()
             },
             ..Default::default()

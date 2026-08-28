@@ -1539,7 +1539,7 @@ pub(crate) fn propose_good_sword_strike_with_debug(
     nearby: &[NearbyVictim],
     sword_strike_boredom: &mut Vec<u16>,
     also_parade: bool,
-    // Custom-mission autonomous PCs use the ordinary strike evaluator but
+    // Custom-mission AI-controlled heroes use the ordinary strike evaluator but
     // should not spend half their turns failing its initial hesitation roll.
     // Candidate skill requirements and every other combat rule still apply.
     skip_initial_skill_gate: bool,

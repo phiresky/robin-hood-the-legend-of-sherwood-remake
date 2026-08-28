@@ -1,11 +1,13 @@
-//! Direct-control orders for Royalist soldier NPCs.
+//! High-level tactical orders for explicitly commandable human actors.
 
-use crate::allied_control::{
-    AlliedDuty, AlliedFormation, AlliedPinnedGroup, AlliedSoldierOrder, AlliedStance,
-};
 use crate::coordinates::MapPoint;
-use crate::element::{Camp, Entity, EntityId};
+#[cfg(test)]
+use crate::element::Camp;
+use crate::element::{Entity, EntityId};
 use crate::profiles::ProfileRank;
+use crate::tactical_control::{
+    CombatStance, TacticalDuty, TacticalFormation, TacticalPinnedGroup, TacticalUnitOrder,
+};
 
 use super::movement::{CIRCULAR_DISPATCH_RADIUS, GROUP_LIMIT_MAX};
 use super::{EngineInner, LevelAssets};
@@ -32,43 +34,45 @@ fn distance_squared(a: MapPoint, b: MapPoint) -> f32 {
     dx * dx + dy * dy
 }
 
-fn allied_order_locks_ai(
-    order: &AlliedSoldierOrder,
+fn tactical_order_locks_ai(
+    order: &TacticalUnitOrder,
     threatened: bool,
     reached_hold_anchor: bool,
 ) -> bool {
     match order.stance {
-        AlliedStance::Hold => true,
-        AlliedStance::Defensive => !threatened,
+        CombatStance::Hold => true,
+        CombatStance::Defensive => !threatened,
         // Aggressive soldiers remain under direct movement control while
         // carrying out an explicit move/patrol/follow duty. Their normal AI
         // takes over when a threat is detected, then the duty resumes
         // afterwards. A completed move releases the soldier so the default
         // aggressive stance can resume autonomous combat without restoring
         // an authored mission patrol before the player destination is reached.
-        AlliedStance::Aggressive => !threatened && !reached_hold_anchor,
+        CombatStance::Aggressive => !threatened && !reached_hold_anchor,
     }
 }
 
-fn allied_stance_allows_normal_strikes(stance: AlliedStance) -> bool {
-    !matches!(stance, AlliedStance::Hold)
+fn tactical_stance_allows_normal_strikes(stance: CombatStance) -> bool {
+    !matches!(stance, CombatStance::Hold)
 }
 
-fn allied_stance_allows_combat_movement(stance: AlliedStance) -> bool {
-    matches!(stance, AlliedStance::Aggressive)
+fn tactical_stance_allows_combat_movement(stance: CombatStance) -> bool {
+    matches!(stance, CombatStance::Aggressive)
 }
 
-fn slot_preference(role: FormationRole, formation: AlliedFormation, point: MapPoint) -> [f32; 3] {
+fn slot_preference(role: FormationRole, formation: TacticalFormation, point: MapPoint) -> [f32; 3] {
     let radius_squared = point.x * point.x + point.y * point.y;
     match (role, formation) {
-        (FormationRole::Officer, AlliedFormation::Box) => [radius_squared, -point.y, point.x.abs()],
+        (FormationRole::Officer, TacticalFormation::Box) => {
+            [radius_squared, -point.y, point.x.abs()]
+        }
         (FormationRole::Officer, _) => [-point.y, point.x.abs(), point.x],
         (FormationRole::Knight, _) => [radius_squared, -point.y, point.x.abs()],
-        (FormationRole::Shield | FormationRole::Melee, AlliedFormation::Box) => {
+        (FormationRole::Shield | FormationRole::Melee, TacticalFormation::Box) => {
             [-radius_squared, -point.y, point.x.abs()]
         }
         (FormationRole::Shield | FormationRole::Melee, _) => [-point.y, point.x.abs(), point.x],
-        (FormationRole::Ranged, AlliedFormation::Box) => [radius_squared, point.y, point.x.abs()],
+        (FormationRole::Ranged, TacticalFormation::Box) => [radius_squared, point.y, point.x.abs()],
         (FormationRole::Ranged, _) => [point.y, point.x.abs(), point.x],
     }
 }
@@ -82,7 +86,7 @@ fn compare_slot_preferences(a: [f32; 3], b: [f32; 3]) -> std::cmp::Ordering {
 fn assign_formation_offsets(
     roles: &[FormationRole],
     slots: Vec<MapPoint>,
-    formation: AlliedFormation,
+    formation: TacticalFormation,
 ) -> Vec<MapPoint> {
     assert_eq!(
         roles.len(),
@@ -172,7 +176,7 @@ mod tests {
         let offsets = assign_formation_offsets(
             &roles,
             row_offsets(roles.len(), 4, FORMATION_SPACING, false),
-            AlliedFormation::Line,
+            TacticalFormation::Line,
         );
         let officer = offsets[5];
         assert_eq!(officer.y, 0.0);
@@ -191,7 +195,7 @@ mod tests {
         let offsets = assign_formation_offsets(
             &roles,
             row_offsets(roles.len(), 3, FORMATION_SPACING, false),
-            AlliedFormation::Line,
+            TacticalFormation::Line,
         );
         assert!(offsets[0].y < offsets[1].y);
         assert!(offsets[0].y < offsets[2].y);
@@ -209,7 +213,7 @@ mod tests {
         let offsets = assign_formation_offsets(
             &roles,
             flank_offsets(roles.len(), true),
-            AlliedFormation::Flank,
+            TacticalFormation::Flank,
         );
         assert_eq!(offsets[2], MapPoint::new(0.0, 0.0));
         assert!(offsets[..2].iter().all(|point| point.x != 0.0));
@@ -228,7 +232,7 @@ mod tests {
             FormationRole::Ranged,
             FormationRole::Ranged,
         ];
-        let offsets = assign_formation_offsets(&roles, box_offsets(&roles), AlliedFormation::Box);
+        let offsets = assign_formation_offsets(&roles, box_offsets(&roles), TacticalFormation::Box);
         let minimum_melee_radius = offsets[1..5]
             .iter()
             .map(|point| point.x * point.x + point.y * point.y)
@@ -260,10 +264,10 @@ mod tests {
 
     #[test]
     fn aggressive_patrol_group_stays_directed_until_threatened() {
-        let patrol_order = |x| AlliedSoldierOrder {
-            stance: AlliedStance::Aggressive,
-            formation: AlliedFormation::Line,
-            duty: AlliedDuty::Patrol {
+        let patrol_order = |x| TacticalUnitOrder {
+            stance: CombatStance::Aggressive,
+            formation: TacticalFormation::Line,
+            duty: TacticalDuty::Patrol {
                 points: [MapPoint::new(x, 0.0), MapPoint::new(x, 100.0)],
                 next: 1,
             },
@@ -276,42 +280,44 @@ mod tests {
         assert!(
             group
                 .iter()
-                .all(|order| allied_order_locks_ai(order, false, false))
+                .all(|order| tactical_order_locks_ai(order, false, false))
         );
         assert!(
             group
                 .iter()
-                .all(|order| !allied_order_locks_ai(order, true, false))
+                .all(|order| !tactical_order_locks_ai(order, true, false))
         );
 
-        let idle_aggressive = AlliedSoldierOrder {
-            duty: AlliedDuty::Hold {
+        let idle_aggressive = TacticalUnitOrder {
+            duty: TacticalDuty::Hold {
                 anchor: MapPoint::new(0.0, 0.0),
             },
             ..patrol_order(0.0)
         };
-        assert!(!allied_order_locks_ai(&idle_aggressive, false, true));
+        assert!(!tactical_order_locks_ai(&idle_aggressive, false, true));
         assert!(
-            allied_order_locks_ai(&idle_aggressive, false, false),
+            tactical_order_locks_ai(&idle_aggressive, false, false),
             "an explicit move must continue suppressing the mission patrol until arrival"
         );
     }
 
     #[test]
     fn stances_separate_striking_from_pursuit() {
-        assert!(!allied_stance_allows_normal_strikes(AlliedStance::Hold));
-        assert!(!allied_stance_allows_combat_movement(AlliedStance::Hold));
+        assert!(!tactical_stance_allows_normal_strikes(CombatStance::Hold));
+        assert!(!tactical_stance_allows_combat_movement(CombatStance::Hold));
 
-        assert!(allied_stance_allows_normal_strikes(AlliedStance::Defensive));
-        assert!(!allied_stance_allows_combat_movement(
-            AlliedStance::Defensive
+        assert!(tactical_stance_allows_normal_strikes(
+            CombatStance::Defensive
+        ));
+        assert!(!tactical_stance_allows_combat_movement(
+            CombatStance::Defensive
         ));
 
-        assert!(allied_stance_allows_normal_strikes(
-            AlliedStance::Aggressive
+        assert!(tactical_stance_allows_normal_strikes(
+            CombatStance::Aggressive
         ));
-        assert!(allied_stance_allows_combat_movement(
-            AlliedStance::Aggressive
+        assert!(tactical_stance_allows_combat_movement(
+            CombatStance::Aggressive
         ));
     }
 
@@ -349,11 +355,12 @@ mod tests {
             npc,
             soldier: crate::element::SoldierData {
                 cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
                 ..Default::default()
             },
         }));
 
-        engine.set_allied_ai_locked(soldier, true);
+        engine.set_tactical_ai_locked(soldier, true);
 
         let ai = engine
             .get_entity(soldier)
@@ -405,7 +412,7 @@ mod tests {
             },
         }));
 
-        engine.store_allied_current_position_as_post(soldier);
+        engine.store_tactical_current_position_as_post(soldier);
 
         let entity = engine.get_entity(soldier).unwrap();
         let Entity::Soldier(soldier) = entity else {
@@ -459,9 +466,9 @@ mod tests {
                 ..Default::default()
             },
         }));
-        engine.players.allied.seats[0].selection.push(soldier);
+        engine.players.tactical.seats[0].selection.push(soldier);
 
-        engine.prepare_allied_player_combat_command(soldier);
+        engine.prepare_tactical_player_combat_command(soldier);
 
         let ai = engine
             .get_entity(soldier)
@@ -484,20 +491,115 @@ mod tests {
             human: Default::default(),
             npc: crate::element::NpcData {
                 life_points: 100,
-                ..Default::default()
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
             },
             soldier: crate::element::SoldierData {
                 cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
                 ..Default::default()
             },
         }));
 
-        assert!(engine.is_controllable_allied_soldier(soldier));
-        assert_eq!(engine.allied_path_failure_fallback(soldier), None);
+        assert!(engine.is_tactically_controllable(soldier));
+        assert_eq!(engine.tactical_path_failure_fallback(soldier), None);
     }
 
     #[test]
-    fn explicit_allied_order_replaces_authored_patrol() {
+    fn tactical_commandability_is_authored_independently_from_allegiance() {
+        let make_soldier = |camp, command_interface| {
+            Entity::Soldier(crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    active: true,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: crate::element::NpcData {
+                    life_points: 100,
+                    ai: crate::element::AiActorData {
+                        ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                        ..Default::default()
+                    },
+                },
+                soldier: crate::element::SoldierData {
+                    cached_camp: camp,
+                    command_interface,
+                    ..Default::default()
+                },
+            })
+        };
+        let mut engine = EngineInner::new();
+        let hostile_commandable = engine.add_entity(make_soldier(
+            Camp::Lacklandists,
+            crate::human_control::CommandInterface::TacticalOrders,
+        ));
+        let friendly_uncommandable = engine.add_entity(make_soldier(
+            Camp::Royalists,
+            crate::human_control::CommandInterface::None,
+        ));
+        let tactical_villain = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                life_points: 100,
+                cached_camp: Camp::Lacklandists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                mission_role: crate::human_control::MissionRole::TacticalAlly,
+                ai: Some(Box::new(crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        }));
+
+        assert!(engine.is_tactically_controllable(hostile_commandable));
+        assert!(!engine.is_tactically_controllable(friendly_uncommandable));
+        assert!(engine.is_tactically_controllable(tactical_villain));
+    }
+
+    #[test]
+    fn authored_tactical_stance_is_effective_before_the_first_order() {
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                combat_stance: CombatStance::Defensive,
+                ..Default::default()
+            },
+        }));
+
+        assert_eq!(engine.tactical_order(soldier), None);
+        assert!(engine.tactical_allows_normal_strikes(soldier));
+        assert!(!engine.tactical_allows_combat_movement(soldier));
+    }
+
+    #[test]
+    fn explicit_tactical_order_replaces_authored_patrol() {
         let paths = vec![crate::level_data::RawHikingPath {
             waypoints: vec![crate::level_data::RawWaypoint {
                 x: 10,
@@ -537,7 +639,7 @@ mod tests {
             },
         }));
 
-        engine.replace_authored_allied_patrol(soldier);
+        engine.replace_authored_tactical_patrol(soldier);
 
         let ai = engine
             .get_entity(soldier)
@@ -725,63 +827,83 @@ fn formation_anchor_behind_leaders(
 }
 
 impl EngineInner {
-    pub fn allied_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
+    pub fn tactical_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
         self.players
-            .allied
+            .tactical
             .seats
             .get(player_id.0 as usize)
             .map(|state| state.selection.as_slice())
             .unwrap_or(&[])
     }
 
-    pub fn allied_pinned_groups(
+    pub fn tactical_pinned_groups(
         &self,
         player_id: crate::player_command::PlayerId,
-    ) -> &[AlliedPinnedGroup] {
+    ) -> &[TacticalPinnedGroup] {
         self.players
-            .allied
+            .tactical
             .seats
             .get(player_id.0 as usize)
             .map(|state| state.pinned_groups.as_slice())
             .unwrap_or(&[])
     }
 
-    pub fn allied_first_visible_portrait(
+    pub fn tactical_first_visible_portrait(
         &self,
         player_id: crate::player_command::PlayerId,
     ) -> usize {
         self.players
-            .allied
+            .tactical
             .seats
             .get(player_id.0 as usize)
             .map(|state| state.first_visible_portrait)
             .unwrap_or(0)
     }
 
-    pub fn allied_order(&self, soldier: EntityId) -> Option<&AlliedSoldierOrder> {
-        self.players.allied.orders.get(&soldier)
+    pub fn tactical_order(&self, soldier: EntityId) -> Option<&TacticalUnitOrder> {
+        self.players.tactical.orders.get(&soldier)
     }
 
-    /// Whether stance policy permits a soldier's AI to launch an ordinary
+    fn effective_tactical_stance(&self, unit: EntityId) -> Option<CombatStance> {
+        if let Some(order) = self.tactical_order(unit) {
+            return Some(order.stance);
+        }
+        let entity = self.get_entity(unit)?;
+        if !entity.accepts_tactical_orders() {
+            return None;
+        }
+        Some(
+            entity
+                .combat_stance()
+                .unwrap_or_else(|| panic!("tactical unit {unit:?} has no authored combat stance")),
+        )
+    }
+
+    fn initial_tactical_stance(&self, unit: EntityId) -> CombatStance {
+        self.effective_tactical_stance(unit)
+            .unwrap_or_else(|| panic!("unit {unit:?} does not accept tactical orders"))
+    }
+
+    /// Whether stance policy permits a tactical unit's AI to launch an ordinary
     /// damaging sword strike. Smalltalk and reactive parries do not use this
     /// path and deliberately remain available in every stance.
-    pub(super) fn allied_allows_normal_strikes(&self, soldier: EntityId) -> bool {
-        self.allied_order(soldier)
-            .is_none_or(|order| allied_stance_allows_normal_strikes(order.stance))
+    pub(super) fn tactical_allows_normal_strikes(&self, unit: EntityId) -> bool {
+        self.effective_tactical_stance(unit)
+            .is_none_or(tactical_stance_allows_normal_strikes)
     }
 
     /// Whether stance policy permits AI-authored combat movement. Direct
     /// player movement and patrol/follow maintenance bypass the AI intent
     /// queue, so Defensive can reject pursuit without freezing its duty.
-    pub(super) fn allied_allows_combat_movement(&self, soldier: EntityId) -> bool {
-        self.allied_order(soldier)
-            .is_none_or(|order| allied_stance_allows_combat_movement(order.stance))
+    pub(super) fn tactical_allows_combat_movement(&self, unit: EntityId) -> bool {
+        self.effective_tactical_stance(unit)
+            .is_none_or(tactical_stance_allows_combat_movement)
     }
 
     /// True while a controllable soldier is selected by any player seat.
-    pub(super) fn allied_soldier_is_selected(&self, soldier: EntityId) -> bool {
+    pub(super) fn tactical_unit_is_selected(&self, soldier: EntityId) -> bool {
         self.players
-            .allied
+            .tactical
             .seats
             .iter()
             .any(|seat| seat.selection.contains(&soldier))
@@ -789,8 +911,8 @@ impl EngineInner {
 
     /// Give an explicit player combat command precedence over work the
     /// soldier AI planned before the gesture was received.
-    pub(super) fn prepare_allied_player_combat_command(&mut self, soldier: EntityId) {
-        if !self.allied_soldier_is_selected(soldier) {
+    pub(super) fn prepare_tactical_player_combat_command(&mut self, soldier: EntityId) {
+        if !self.tactical_unit_is_selected(soldier) {
             return;
         }
         self.stop_owner(soldier, crate::sequence::SequencePriority::Preference);
@@ -802,14 +924,14 @@ impl EngineInner {
         ai.base.outbox.actor.orders.clear();
     }
 
-    pub fn find_controllable_allied_soldier(
+    pub fn find_tactically_controllable_unit(
         &self,
         assets: &LevelAssets,
         draw_order: &[EntityId],
         mouse_map: MapPoint,
     ) -> Option<EntityId> {
         draw_order.iter().rev().copied().find(|id| {
-            if !self.is_controllable_allied_soldier(*id) {
+            if !self.is_tactically_controllable(*id) {
                 return false;
             }
             let entity = self
@@ -819,15 +941,18 @@ impl EngineInner {
         })
     }
 
-    pub(crate) fn is_controllable_allied_soldier(&self, id: EntityId) -> bool {
-        matches!(self.get_entity(id), Some(Entity::Soldier(s))
-            if s.soldier.cached_camp == Camp::Royalists
-                && s.element.active
-                && s.npc.life_points > 0
-                && !s.human.unconscious)
+    pub(crate) fn is_tactically_controllable(&self, id: EntityId) -> bool {
+        let Some(entity) = self.get_entity(id) else {
+            return false;
+        };
+        entity.accepts_tactical_orders()
+            && entity.is_active()
+            && entity.human_life_points() > 0
+            && entity.human_data().is_some_and(|human| !human.unconscious)
+            && entity.enemy_ai().is_some()
     }
 
-    pub(crate) fn select_allied_soldiers(
+    pub(crate) fn select_tactical_units(
         &mut self,
         seat: usize,
         soldiers: &[EntityId],
@@ -836,10 +961,10 @@ impl EngineInner {
         let valid: Vec<_> = soldiers
             .iter()
             .copied()
-            .filter(|id| self.is_controllable_allied_soldier(*id))
+            .filter(|id| self.is_tactically_controllable(*id))
             .collect();
         let newly_selected = {
-            let state = self.players.allied.ensure_seat(seat);
+            let state = self.players.tactical.ensure_seat(seat);
             let previous = state.selection.clone();
             if !append {
                 state.selection.clear();
@@ -871,12 +996,12 @@ impl EngineInner {
     /// Advance selection-outline fades on controllable allied soldiers.
     ///
     /// PCs use `PcData::already_selected` to detect the selection edge.
-    /// Allied selection seeds the fade directly in `select_allied_soldiers`,
+    /// Allied selection seeds the fade directly in `select_tactical_units`,
     /// so this pass only has to advance an animation already in flight.
-    pub(super) fn refresh_allied_selection_hulks(&mut self) {
+    pub(super) fn refresh_tactical_selection_hulks(&mut self) {
         let soldier_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for id in soldier_ids {
-            if !self.is_controllable_allied_soldier(id) {
+            if !self.is_tactically_controllable(id) {
                 continue;
             }
             let entity = self
@@ -906,7 +1031,7 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn box_select_allied_soldiers(
+    pub(crate) fn box_select_tactical_units(
         &mut self,
         seat: usize,
         pt1: MapPoint,
@@ -921,7 +1046,7 @@ impl EngineInner {
             .world
             .entities
             .npc_ids()
-            .filter(|id| self.is_controllable_allied_soldier(*id))
+            .filter(|id| self.is_tactically_controllable(*id))
             .filter(|id| {
                 let entity = self
                     .get_entity(*id)
@@ -936,34 +1061,34 @@ impl EngineInner {
                 selection_box.contains_point(crate::coordinates::ScreenPoint::new(pos.x, pos.y))
             })
             .collect();
-        self.select_allied_soldiers(seat, &selected, shift);
+        self.select_tactical_units(seat, &selected, shift);
     }
 
-    pub(crate) fn pin_allied_selection(&mut self, seat: usize) {
-        let members = self.players.allied.ensure_seat(seat).selection.clone();
+    pub(crate) fn pin_tactical_selection(&mut self, seat: usize) {
+        let members = self.players.tactical.ensure_seat(seat).selection.clone();
         if members.is_empty() {
             return;
         }
-        let already_pinned = self.players.allied.seats[seat]
+        let already_pinned = self.players.tactical.seats[seat]
             .pinned_groups
             .iter()
             .any(|group| group.members == members);
         if already_pinned {
             return;
         }
-        let id = self.players.allied.next_group_id;
-        self.players.allied.next_group_id = id
+        let id = self.players.tactical.next_group_id;
+        self.players.tactical.next_group_id = id
             .checked_add(1)
             .expect("allied pinned-group id space exhausted");
-        self.players.allied.seats[seat]
+        self.players.tactical.seats[seat]
             .pinned_groups
-            .push(AlliedPinnedGroup { id, members });
+            .push(TacticalPinnedGroup { id, members });
     }
 
-    pub(crate) fn select_allied_group(&mut self, seat: usize, group_id: u32, append: bool) {
+    pub(crate) fn select_tactical_group(&mut self, seat: usize, group_id: u32, append: bool) {
         let members = self
             .players
-            .allied
+            .tactical
             .ensure_seat(seat)
             .pinned_groups
             .iter()
@@ -971,11 +1096,11 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("selected missing allied pinned group {group_id}"))
             .members
             .clone();
-        self.select_allied_soldiers(seat, &members, append);
+        self.select_tactical_units(seat, &members, append);
     }
 
-    pub(crate) fn unpin_allied_group(&mut self, seat: usize, group_id: u32) {
-        let groups = &mut self.players.allied.ensure_seat(seat).pinned_groups;
+    pub(crate) fn unpin_tactical_group(&mut self, seat: usize, group_id: u32) {
+        let groups = &mut self.players.tactical.ensure_seat(seat).pinned_groups;
         let index = groups
             .iter()
             .position(|group| group.id == group_id)
@@ -983,9 +1108,9 @@ impl EngineInner {
         groups.remove(index);
     }
 
-    pub(crate) fn page_allied_portraits(&mut self, seat: usize, delta: i8) {
+    pub(crate) fn page_tactical_portraits(&mut self, seat: usize, delta: i8) {
         let hero_count = self.displayed_pc_ids().len();
-        let state = self.players.allied.ensure_seat(seat);
+        let state = self.players.tactical.ensure_seat(seat);
         let transient_count = usize::from(
             !state.selection.is_empty()
                 && !state
@@ -1005,7 +1130,7 @@ impl EngineInner {
         };
     }
 
-    fn set_allied_ai_locked(&mut self, id: EntityId, locked: bool) {
+    fn set_tactical_ai_locked(&mut self, id: EntityId, locked: bool) {
         let entity = self
             .get_entity_mut(id)
             .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
@@ -1034,7 +1159,7 @@ impl EngineInner {
         }
     }
 
-    fn replace_authored_allied_patrol(&mut self, id: EntityId) {
+    fn replace_authored_tactical_patrol(&mut self, id: EntityId) {
         let ai = self
             .get_entity_mut(id)
             .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"))
@@ -1049,36 +1174,35 @@ impl EngineInner {
     /// `RHElementActorNPC::mposInitialPosition` (`RHartificialintelligence.cpp`
     /// 2206-2238), so retaining the mission-start snapshot here would make an
     /// aggressive ally undo every completed player move.
-    fn store_allied_current_position_as_post(&mut self, id: EntityId) {
+    fn store_tactical_current_position_as_post(&mut self, id: EntityId) {
         let entity = self
             .get_entity_mut(id)
-            .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
-        let Entity::Soldier(soldier) = entity else {
-            panic!("controlled allied soldier {id:?} changed entity kind");
-        };
-        let position = soldier.element.position_map();
-        let sector = soldier.element.sector();
-        let level = soldier.element.layer();
-        let direction = soldier
-            .element
+            .unwrap_or_else(|| panic!("controlled tactical unit {id:?} disappeared"));
+        let position = entity.element_data().position_map();
+        let sector = entity.element_data().sector();
+        let level = entity.element_data().layer();
+        let direction = entity
+            .element_data()
             .sprite
             .position_iface
             .get_direction()
             .as_u8() as i16;
         let direction_vector = crate::shadow_polygon::sector_to_direction(direction);
 
-        soldier.npc.initial_position_x = position.x;
-        soldier.npc.initial_position_y = position.y;
-        soldier.npc.initial_position_sector = sector;
-        soldier.npc.initial_position_level = level;
-        soldier.npc.initial_view_direction.x = direction_vector[0];
-        soldier.npc.initial_view_direction.y = direction_vector[1];
+        let actor_ai = entity
+            .ai_actor_data_mut()
+            .expect("controlled tactical unit has no AI actor data");
+        actor_ai.initial_position_x = position.x;
+        actor_ai.initial_position_y = position.y;
+        actor_ai.initial_position_sector = sector;
+        actor_ai.initial_position_level = level;
+        actor_ai.initial_view_direction.x = direction_vector[0];
+        actor_ai.initial_view_direction.y = direction_vector[1];
 
-        let ai = soldier
-            .npc
+        let ai = actor_ai
             .ai_brain
             .base_mut()
-            .expect("controlled allied soldier has no AI controller");
+            .expect("controlled tactical unit has no AI controller");
         ai.initial_position = crate::ai::Position {
             x: position.x,
             y: position.y,
@@ -1093,13 +1217,13 @@ impl EngineInner {
             .expect("0-to-15 direction must fit u16");
     }
 
-    fn allied_formation_slots(
+    fn tactical_formation_slots(
         &self,
         assets: &LevelAssets,
         soldiers: &[EntityId],
         leaders: &[EntityId],
         destination: MapPoint,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
         use_marching_column: bool,
     ) -> Vec<(EntityId, MapPoint)> {
         if soldiers.is_empty() {
@@ -1140,10 +1264,15 @@ impl EngineInner {
             .copied()
             .enumerate()
             .map(|(original_index, id)| {
-                let soldier = self
+                let entity = self
                     .get_entity(id)
-                    .and_then(Entity::soldier_data)
-                    .unwrap_or_else(|| panic!("allied formation member {id:?} is not a soldier"));
+                    .unwrap_or_else(|| panic!("tactical formation member {id:?} disappeared"));
+                if matches!(entity, Entity::Pc(_)) {
+                    return (FormationRole::Officer, original_index, id);
+                }
+                let soldier = entity.soldier_data().unwrap_or_else(|| {
+                    panic!("tactical formation member {id:?} has unsupported archetype")
+                });
                 let profile = assets
                     .profile_manager
                     .get_soldier(soldier.soldier_profile_index)
@@ -1183,21 +1312,21 @@ impl EngineInner {
 
         let travel_distance = distance_squared(centroid, destination).sqrt();
         let local_slots = match formation {
-            AlliedFormation::Line
+            TacticalFormation::Line
                 if use_marching_column && travel_distance > LINE_TO_COLUMN_DISTANCE =>
             {
                 march_column_offsets(soldiers.len())
             }
-            AlliedFormation::Line => {
+            TacticalFormation::Line => {
                 let columns = ((soldiers.len() as f32 * 2.0).sqrt().ceil() as usize).max(1);
                 row_offsets(soldiers.len(), columns, FORMATION_SPACING, false)
             }
-            AlliedFormation::Box => box_offsets(&roles),
-            AlliedFormation::Staggered => {
+            TacticalFormation::Box => box_offsets(&roles),
+            TacticalFormation::Staggered => {
                 let columns = ((soldiers.len() as f32 * 2.0).sqrt().ceil() as usize).max(1);
                 row_offsets(soldiers.len(), columns, STAGGERED_SPACING, true)
             }
-            AlliedFormation::Flank => flank_offsets(soldiers.len(), has_officer),
+            TacticalFormation::Flank => flank_offsets(soldiers.len(), has_officer),
         };
 
         let offsets = assign_formation_offsets(&roles, local_slots, formation);
@@ -1215,7 +1344,7 @@ impl EngineInner {
             .collect()
     }
 
-    fn move_allied_to_slots(
+    fn move_tactical_to_slots(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1223,17 +1352,17 @@ impl EngineInner {
         leaders: &[EntityId],
         destination: MapPoint,
         running: bool,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     ) -> Vec<(EntityId, MapPoint)> {
         let valid: Vec<_> = soldiers
             .iter()
             .copied()
-            .filter(|id| self.is_controllable_allied_soldier(*id))
+            .filter(|id| self.is_tactically_controllable(*id))
             .collect();
         let slots =
-            self.allied_formation_slots(assets, &valid, leaders, destination, formation, true);
+            self.tactical_formation_slots(assets, &valid, leaders, destination, formation, true);
         for &(id, _) in &slots {
-            self.set_allied_ai_locked(id, true);
+            self.set_tactical_ai_locked(id, true);
         }
         let actor_ids: Vec<_> = slots.iter().map(|(id, _)| *id).collect();
         let destinations: Vec<_> = slots.iter().map(|(_, point)| *point).collect();
@@ -1249,7 +1378,7 @@ impl EngineInner {
         slots
     }
 
-    pub(crate) fn command_allied_move(
+    pub(crate) fn command_tactical_move(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1257,21 +1386,21 @@ impl EngineInner {
         leaders: &[EntityId],
         destination: MapPoint,
         running: bool,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     ) {
         let valid: Vec<_> = soldiers
             .iter()
             .copied()
-            .filter(|id| self.is_controllable_allied_soldier(*id))
+            .filter(|id| self.is_tactically_controllable(*id))
             .collect();
         if valid.is_empty() {
             return;
         }
         for &id in &valid {
-            self.replace_authored_allied_patrol(id);
+            self.replace_authored_tactical_patrol(id);
         }
         let deployed_slots =
-            self.allied_formation_slots(assets, &valid, leaders, destination, formation, false);
+            self.tactical_formation_slots(assets, &valid, leaders, destination, formation, false);
         let deployed_by_id: std::collections::BTreeMap<_, _> = deployed_slots.into_iter().collect();
         let leader_positions: Vec<_> = leaders
             .iter()
@@ -1312,7 +1441,7 @@ impl EngineInner {
         );
         let formation_anchor =
             formation_anchor_behind_leaders(centroid, destination, &leader_positions);
-        for (id, slot) in self.move_allied_to_slots(
+        for (id, slot) in self.move_tactical_to_slots(
             sim,
             assets,
             &valid,
@@ -1321,19 +1450,13 @@ impl EngineInner {
             running,
             formation,
         ) {
-            let stance = self
-                .players
-                .allied
-                .orders
-                .get(&id)
-                .map(|order| order.stance)
-                .unwrap_or_default();
-            self.players.allied.orders.insert(
+            let stance = self.initial_tactical_stance(id);
+            self.players.tactical.orders.insert(
                 id,
-                AlliedSoldierOrder {
+                TacticalUnitOrder {
                     stance,
                     formation,
-                    duty: AlliedDuty::Hold { anchor: slot },
+                    duty: TacticalDuty::Hold { anchor: slot },
                     last_destination: slot,
                     path_fallback: (distance_squared(slot, formation_anchor) > 1.0)
                         .then_some(formation_anchor),
@@ -1346,9 +1469,9 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn set_allied_stance(&mut self, soldiers: &[EntityId], stance: AlliedStance) {
+    pub(crate) fn set_tactical_stance(&mut self, soldiers: &[EntityId], stance: CombatStance) {
         for &id in soldiers {
-            if !self.is_controllable_allied_soldier(id) {
+            if !self.is_tactically_controllable(id) {
                 continue;
             }
             let position = self
@@ -1358,20 +1481,20 @@ impl EngineInner {
                 .position_map();
             let order = self
                 .players
-                .allied
+                .tactical
                 .orders
                 .entry(id)
-                .or_insert(AlliedSoldierOrder {
+                .or_insert(TacticalUnitOrder {
                     stance,
-                    formation: AlliedFormation::default(),
-                    duty: AlliedDuty::Hold { anchor: position },
+                    formation: TacticalFormation::default(),
+                    duty: TacticalDuty::Hold { anchor: position },
                     last_destination: position,
                     path_fallback: None,
                     deploy_destination: None,
                 });
             order.stance = stance;
-            if stance == AlliedStance::Hold {
-                order.duty = AlliedDuty::Hold { anchor: position };
+            if stance == CombatStance::Hold {
+                order.duty = TacticalDuty::Hold { anchor: position };
                 order.deploy_destination = None;
                 // Preference is the priority used by ordinary sword strikes.
                 // Stopping only at Normal left an already-planned AI strike
@@ -1381,17 +1504,17 @@ impl EngineInner {
                     ai.pending_sword_strike_consideration = false;
                 }
             }
-            self.set_allied_ai_locked(id, stance != AlliedStance::Aggressive);
+            self.set_tactical_ai_locked(id, stance != CombatStance::Aggressive);
         }
     }
 
-    pub(crate) fn set_allied_formation(
+    pub(crate) fn set_tactical_formation(
         &mut self,
         soldiers: &[EntityId],
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     ) {
         for &id in soldiers {
-            if !self.is_controllable_allied_soldier(id) {
+            if !self.is_tactically_controllable(id) {
                 continue;
             }
             let position = self
@@ -1399,15 +1522,16 @@ impl EngineInner {
                 .expect("validated allied soldier disappeared")
                 .element_data()
                 .position_map();
+            let stance = self.initial_tactical_stance(id);
             let order = self
                 .players
-                .allied
+                .tactical
                 .orders
                 .entry(id)
-                .or_insert(AlliedSoldierOrder {
-                    stance: AlliedStance::default(),
+                .or_insert(TacticalUnitOrder {
+                    stance,
                     formation,
-                    duty: AlliedDuty::Hold { anchor: position },
+                    duty: TacticalDuty::Hold { anchor: position },
                     last_destination: position,
                     path_fallback: None,
                     deploy_destination: None,
@@ -1416,40 +1540,34 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn set_allied_patrol(
+    pub(crate) fn set_tactical_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         soldiers: &[EntityId],
         destination: MapPoint,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     ) {
         for &id in soldiers {
-            if self.is_controllable_allied_soldier(id) {
-                self.replace_authored_allied_patrol(id);
+            if self.is_tactically_controllable(id) {
+                self.replace_authored_tactical_patrol(id);
             }
         }
         let slots =
-            self.move_allied_to_slots(sim, assets, soldiers, &[], destination, false, formation);
+            self.move_tactical_to_slots(sim, assets, soldiers, &[], destination, false, formation);
         for (id, slot) in slots {
             let origin = self
                 .get_entity(id)
                 .expect("patrolling allied soldier disappeared")
                 .element_data()
                 .position_map();
-            let stance = self
-                .players
-                .allied
-                .orders
-                .get(&id)
-                .map(|order| order.stance)
-                .unwrap_or_default();
-            self.players.allied.orders.insert(
+            let stance = self.initial_tactical_stance(id);
+            self.players.tactical.orders.insert(
                 id,
-                AlliedSoldierOrder {
+                TacticalUnitOrder {
                     stance,
                     formation,
-                    duty: AlliedDuty::Patrol {
+                    duty: TacticalDuty::Patrol {
                         points: [origin, slot],
                         // The initial movement is already heading to point 1.
                         // Once it arrives the tick flips back to point 0.
@@ -1464,12 +1582,12 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn set_allied_follow(
+    pub(crate) fn set_tactical_follow(
         &mut self,
         assets: &LevelAssets,
         soldiers: &[EntityId],
         hero: EntityId,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     ) {
         if self.get_entity(hero).and_then(Entity::pc_data).is_none() {
             panic!("allied follow target {hero:?} is not a PC");
@@ -1477,14 +1595,14 @@ impl EngineInner {
         let valid: Vec<_> = soldiers
             .iter()
             .copied()
-            .filter(|id| self.is_controllable_allied_soldier(*id))
+            .filter(|id| self.is_tactically_controllable(*id))
             .collect();
         let hero_position = self
             .get_entity(hero)
             .expect("validated allied follow hero disappeared")
             .element_data()
             .position_map();
-        let slots = self.allied_formation_slots(
+        let slots = self.tactical_formation_slots(
             assets,
             &valid,
             std::slice::from_ref(&hero),
@@ -1499,20 +1617,14 @@ impl EngineInner {
                 .expect("validated allied follower disappeared")
                 .element_data()
                 .position_map();
-            let stance = self
-                .players
-                .allied
-                .orders
-                .get(&id)
-                .map(|order| order.stance)
-                .unwrap_or_default();
-            self.set_allied_ai_locked(id, stance != AlliedStance::Aggressive);
-            self.players.allied.orders.insert(
+            let stance = self.initial_tactical_stance(id);
+            self.set_tactical_ai_locked(id, stance != CombatStance::Aggressive);
+            self.players.tactical.orders.insert(
                 id,
-                AlliedSoldierOrder {
+                TacticalUnitOrder {
                     stance,
                     formation,
-                    duty: AlliedDuty::Follow { hero, offset },
+                    duty: TacticalDuty::Follow { hero, offset },
                     // Causes the next allied-control tick to issue an initial
                     // route when this soldier is outside the follow radius.
                     last_destination: current_position,
@@ -1523,14 +1635,14 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn release_allied_control(&mut self) {
-        let controlled: Vec<_> = self.players.allied.orders.keys().copied().collect();
+    pub(crate) fn release_tactical_control(&mut self) {
+        let controlled: Vec<_> = self.players.tactical.orders.keys().copied().collect();
         for id in controlled {
             if self.get_entity(id).is_some() {
-                self.set_allied_ai_locked(id, false);
+                self.set_tactical_ai_locked(id, false);
             }
         }
-        self.players.allied = Default::default();
+        self.players.tactical = Default::default();
     }
 
     /// Consume the one-shot center fallback for a soldier with an active
@@ -1538,20 +1650,20 @@ impl EngineInner {
     /// `Some(None)` identifies an ordered ally with no fallback, which must
     /// still fail immediately instead of retaining the original 100-frame
     /// failed-path wait (`original-code/RHengine.cpp:8481-8503`).
-    pub(super) fn allied_path_failure_fallback(
+    pub(super) fn tactical_path_failure_fallback(
         &mut self,
         id: EntityId,
     ) -> Option<Option<MapPoint>> {
         // Eligibility for allied selection is deliberately broader than being
         // under direct control. Ordinary Royalist AI must keep the original
         // failed-request behavior unless the player actually issued an order.
-        let order = self.players.allied.orders.get_mut(&id)?;
+        let order = self.players.tactical.orders.get_mut(&id)?;
         let fallback = order.path_fallback.take();
         if let Some(point) = fallback {
             match &mut order.duty {
-                AlliedDuty::Hold { anchor } => *anchor = point,
-                AlliedDuty::Patrol { points, next } => points[usize::from(*next)] = point,
-                AlliedDuty::Follow { .. } => {
+                TacticalDuty::Hold { anchor } => *anchor = point,
+                TacticalDuty::Patrol { points, next } => points[usize::from(*next)] = point,
+                TacticalDuty::Follow { .. } => {
                     // Follow targets move continuously. Suppress an immediate
                     // retry loop; the next meaningful hero displacement will
                     // request a fresh path.
@@ -1562,7 +1674,7 @@ impl EngineInner {
         Some(fallback)
     }
 
-    pub(super) fn tick_allied_control(
+    pub(super) fn tick_tactical_control(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1572,44 +1684,45 @@ impl EngineInner {
         }
         let orders: Vec<_> = self
             .players
-            .allied
+            .tactical
             .orders
             .iter()
             .map(|(&id, order)| (id, order.clone()))
             .collect();
         let mut remove = Vec::new();
         for (id, mut order) in orders {
-            if !self.is_controllable_allied_soldier(id) {
+            if !self.is_tactically_controllable(id) {
                 remove.push(id);
                 continue;
             }
-            let (position, threatened) = match self.get_entity(id) {
-                Some(Entity::Soldier(s)) => (
-                    s.element.position_map(),
-                    s.npc.alerted || s.npc.maximal_detection_suspect > 0,
-                ),
-                _ => unreachable!("validated allied soldier changed entity kind"),
-            };
+            let entity = self
+                .get_entity(id)
+                .expect("validated tactical unit disappeared");
+            let ai_actor = entity
+                .ai_actor_data()
+                .expect("validated tactical unit lost its AI actor data");
+            let position = entity.element_data().position_map();
+            let threatened = ai_actor.alerted || ai_actor.maximal_detection_suspect > 0;
             let was_ai_locked = self
                 .get_entity(id)
                 .and_then(Entity::ai_controller)
                 .expect("controlled allied soldier has no AI controller")
                 .script_locked;
             let reached_hold_anchor = match &order.duty {
-                AlliedDuty::Hold { anchor } => {
+                TacticalDuty::Hold { anchor } => {
                     distance_squared(position, *anchor) <= ARRIVAL_DISTANCE * ARRIVAL_DISTANCE
                 }
-                AlliedDuty::Patrol { .. } | AlliedDuty::Follow { .. } => false,
+                TacticalDuty::Patrol { .. } | TacticalDuty::Follow { .. } => false,
             };
-            let ai_locked = allied_order_locks_ai(&order, threatened, reached_hold_anchor);
+            let ai_locked = tactical_order_locks_ai(&order, threatened, reached_hold_anchor);
             if was_ai_locked && !ai_locked && reached_hold_anchor {
-                self.store_allied_current_position_as_post(id);
+                self.store_tactical_current_position_as_post(id);
             }
-            self.set_allied_ai_locked(id, ai_locked);
+            self.set_tactical_ai_locked(id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
                     &order.duty,
-                    AlliedDuty::Hold { anchor }
+                    TacticalDuty::Hold { anchor }
                         if distance_squared(position, *anchor)
                             <= ARRIVAL_DISTANCE * ARRIVAL_DISTANCE
                 )
@@ -1628,22 +1741,22 @@ impl EngineInner {
                     &[],
                     &[],
                 );
-                order.duty = AlliedDuty::Hold {
+                order.duty = TacticalDuty::Hold {
                     anchor: destination,
                 };
                 order.last_destination = destination;
                 order.path_fallback = None;
                 order.deploy_destination = None;
-                self.players.allied.orders.insert(id, order);
+                self.players.tactical.orders.insert(id, order);
                 continue;
             }
-            if !ai_locked || order.stance == AlliedStance::Hold {
+            if !ai_locked || order.stance == CombatStance::Hold {
                 continue;
             }
 
             let destination = match &mut order.duty {
-                AlliedDuty::Hold { .. } => None,
-                AlliedDuty::Patrol { points, next } => {
+                TacticalDuty::Hold { .. } => None,
+                TacticalDuty::Patrol { points, next } => {
                     let target = points[usize::from(*next)];
                     if distance_squared(position, target) <= ARRIVAL_DISTANCE * ARRIVAL_DISTANCE {
                         *next = (*next + 1) % 2;
@@ -1657,13 +1770,13 @@ impl EngineInner {
                         None
                     }
                 }
-                AlliedDuty::Follow { hero, offset } => {
+                TacticalDuty::Follow { hero, offset } => {
                     let Some(hero_position) = self.get_entity(*hero).and_then(|hero| {
                         hero.pc_data().map(|_| hero.element_data().position_map())
                     }) else {
                         tracing::warn!(?id, ?hero, "allied follow target disappeared; holding");
-                        order.duty = AlliedDuty::Hold { anchor: position };
-                        self.players.allied.orders.insert(id, order);
+                        order.duty = TacticalDuty::Hold { anchor: position };
+                        self.players.tactical.orders.insert(id, order);
                         continue;
                     };
                     let target =
@@ -1691,11 +1804,11 @@ impl EngineInner {
                 );
                 order.last_destination = destination;
             }
-            self.players.allied.orders.insert(id, order);
+            self.players.tactical.orders.insert(id, order);
         }
         for id in remove {
-            self.players.allied.orders.remove(&id);
-            for seat in &mut self.players.allied.seats {
+            self.players.tactical.orders.remove(&id);
+            for seat in &mut self.players.tactical.seats {
                 seat.selection.retain(|member| *member != id);
                 for group in &mut seat.pinned_groups {
                     group.members.retain(|member| *member != id);

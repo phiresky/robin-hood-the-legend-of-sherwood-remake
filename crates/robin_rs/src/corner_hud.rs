@@ -96,7 +96,7 @@ impl CornerButtonEnable {
         //   - QuickStart dims when no PC has a macro recorded in any
         //     QA slot (nested `slot × PC` loop, enabled when *any* PC
         //     has a macro in *any* slot).
-        let any_pc_selected = !engine.selected_pc_ids().is_empty();
+        let any_pc_selected = !engine.selected_hero_ids().is_empty();
         let any_qa = (0..robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u8).any(|slot| {
             engine
                 .pc_ids()

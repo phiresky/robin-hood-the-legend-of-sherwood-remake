@@ -10,12 +10,12 @@
 //! and command types determined at resolution time.  During replay,
 //! the same commands are applied verbatim without re-resolving.
 
-use crate::allied_control::{AlliedFormation, AlliedStance};
 use crate::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
 use crate::profiles::Action;
 use crate::sequence::Field;
+use crate::tactical_control::{CombatStance, TacticalFormation};
 use serde::{Deserialize, Serialize};
 
 /// The deliberately restricted command payload accepted by
@@ -615,53 +615,66 @@ pub enum PlayerCommand {
         append: bool,
     },
 
-    // ── Optional allied-soldier control ─────────────────────────
-    SelectAlliedSoldiers {
+    // ── Optional tactical-unit control ──────────────────────────
+    // Serde names retain the pre-refactor replay vocabulary. Bitcode uses
+    // declaration order, which is unchanged.
+    #[serde(rename = "SelectAlliedSoldiers")]
+    SelectTacticalUnits {
         soldiers: Vec<EntityId>,
         append: bool,
     },
-    BoxSelectAlliedSoldiers {
+    #[serde(rename = "BoxSelectAlliedSoldiers")]
+    BoxSelectTacticalUnits {
         pt1: MapPoint,
         pt2: MapPoint,
         shift: bool,
     },
-    ClearAlliedSelection,
-    PinAlliedSelection,
-    UnpinAlliedGroup {
+    #[serde(rename = "ClearAlliedSelection")]
+    ClearTacticalSelection,
+    #[serde(rename = "PinAlliedSelection")]
+    PinTacticalSelection,
+    #[serde(rename = "UnpinAlliedGroup")]
+    UnpinTacticalGroup {
         group_id: u32,
     },
-    SelectAlliedGroup {
+    #[serde(rename = "SelectAlliedGroup")]
+    SelectTacticalGroup {
         group_id: u32,
         append: bool,
     },
-    PageAlliedPortraits {
+    #[serde(rename = "PageAlliedPortraits")]
+    PageTacticalPortraits {
         delta: i8,
     },
-    MoveAlliedSoldiers {
+    #[serde(rename = "MoveAlliedSoldiers")]
+    MoveTacticalUnits {
         soldiers: Vec<EntityId>,
         destination: MapPoint,
         running: bool,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     },
-    SetAlliedStance {
+    SetCombatStance {
         soldiers: Vec<EntityId>,
-        stance: AlliedStance,
+        stance: CombatStance,
     },
-    SetAlliedFormation {
+    SetTacticalFormation {
         soldiers: Vec<EntityId>,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     },
-    SetAlliedPatrol {
+    #[serde(rename = "SetAlliedPatrol")]
+    SetTacticalPatrol {
         soldiers: Vec<EntityId>,
         destination: MapPoint,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     },
-    SetAlliedFollow {
+    #[serde(rename = "SetAlliedFollow")]
+    SetTacticalFollow {
         soldiers: Vec<EntityId>,
         hero: EntityId,
-        formation: AlliedFormation,
+        formation: TacticalFormation,
     },
-    ReleaseAlliedControl,
+    #[serde(rename = "ReleaseAlliedControl")]
+    ReleaseTacticalControl,
 
     // ── Special ──────────────────────────────────────────────────
     ResetComa {
@@ -1103,6 +1116,16 @@ mod tests {
             serde_json::from_value::<PlayerCommand>(legacy).is_err(),
             "a Rust sword command without seek_distance must not enter the current schema"
         );
+    }
+
+    #[test]
+    fn tactical_command_rust_names_preserve_legacy_replay_tags() {
+        let command = PlayerCommand::ClearTacticalSelection;
+        let encoded = serde_json::to_string(&command).expect("serialize tactical command");
+        assert_eq!(encoded, "\"ClearAlliedSelection\"");
+        let decoded: PlayerCommand =
+            serde_json::from_str(&encoded).expect("deserialize legacy tactical tag");
+        assert!(matches!(decoded, PlayerCommand::ClearTacticalSelection));
     }
 }
 

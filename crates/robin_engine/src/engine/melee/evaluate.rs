@@ -384,8 +384,8 @@ impl EngineInner {
             // Controlled soldiers use stance policy instead: Hold and
             // Defensive remain at their assigned position, while Aggressive
             // retains the original soldier AI's pursuit/repositioning.
-            if entity.is_pc() && self.selected_pc_ids().contains(&entity_id)
-                || entity.is_soldier() && !self.allied_allows_combat_movement(entity_id)
+            if entity.is_pc() && self.selected_hero_ids().contains(&entity_id)
+                || entity.is_soldier() && !self.tactical_allows_combat_movement(entity_id)
             {
                 return false;
             }
@@ -1045,7 +1045,7 @@ impl EngineInner {
                             principal_id.index(),
                             roll,
                             is_pc,
-                            is_pc && self.selected_pc_ids().contains(&entity_id),
+                            is_pc && self.selected_hero_ids().contains(&entity_id),
                         );
                     }
                 }
@@ -1067,7 +1067,7 @@ impl EngineInner {
             (
                 entity.element_data().position(),
                 max,
-                entity.is_pc() && self.selected_pc_ids().contains(&entity_id),
+                entity.is_pc() && self.selected_hero_ids().contains(&entity_id),
             )
         };
         let principal_pos = self
@@ -1107,8 +1107,8 @@ impl EngineInner {
         }
 
         if is_pc && !selected_pc {
-            let autonomous = match self.get_entity(entity_id) {
-                Some(Entity::Pc(pc)) => pc.pc.autonomous,
+            let player_directed = match self.get_entity(entity_id) {
+                Some(entity @ Entity::Pc(_)) => entity.accepts_hero_commands(),
                 Some(_) => panic!(
                     "EvaluateSwordfight owner {entity_id:?} stopped being a PC before strike proposal"
                 ),
@@ -1116,7 +1116,7 @@ impl EngineInner {
                     panic!("EvaluateSwordfight owner {entity_id:?} vanished before strike proposal")
                 }
             };
-            if !autonomous {
+            if player_directed {
                 self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
             }
         }
@@ -1448,7 +1448,7 @@ impl EngineInner {
             panic!("EvaluateSwordfight step-back owner {entity_id:?} is missing")
         });
 
-        if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
+        if entity.is_pc() && self.selected_hero_ids().contains(&entity_id) {
             return None;
         }
         if entity.is_soldier() {
@@ -1669,7 +1669,7 @@ impl EngineInner {
                     None => continue,
                 };
                 let is_selected_pc =
-                    victim.kind().is_pc() && self.selected_pc_ids().contains(&victim_id);
+                    victim.kind().is_pc() && self.selected_hero_ids().contains(&victim_id);
                 let is_npc_soldier = matches!(victim, Entity::Soldier(_));
                 let npc_substate = if let Entity::Soldier(s) = victim {
                     Some(s.npc.ai_substate())

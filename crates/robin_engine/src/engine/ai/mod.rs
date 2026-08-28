@@ -701,7 +701,7 @@ mod panic_boundary_tests {
         })
     }
 
-    fn autonomous_enemy_pc() -> Entity {
+    fn enemy_ai_hero() -> Entity {
         let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
         enemy_ai.hth_weapon_id = 1;
         Entity::Pc(ActorPc {
@@ -714,8 +714,9 @@ mod panic_boundary_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData {
-                autonomous: true,
-                aggressive_combat: true,
+                command_interface: crate::human_control::CommandInterface::None,
+                mission_role: crate::human_control::MissionRole::Combatant,
+                combat_stance: crate::human_control::CombatStance::Aggressive,
                 ai: Some(Box::new(AiActorData {
                     ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
                     ..AiActorData::default()
@@ -726,9 +727,9 @@ mod panic_boundary_tests {
     }
 
     #[test]
-    fn panic_state_dispatch_accepts_autonomous_pc_enemy_ai() {
+    fn panic_state_dispatch_accepts_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let pc_id = engine.add_entity(enemy_ai_hero());
 
         engine.set_typed_npc_state(
             pc_id,
@@ -740,15 +741,15 @@ mod panic_boundary_tests {
         let ai = engine
             .get_entity(pc_id)
             .and_then(Entity::enemy_ai)
-            .expect("autonomous PC must retain its Enemy AI");
+            .expect("AI-controlled hero must retain its Enemy AI");
         assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingPanic);
     }
 
     #[test]
-    fn script_think_entry_dispatches_to_autonomous_pc_enemy_ai() {
+    fn script_think_entry_dispatches_to_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let pc_id = engine.add_entity(enemy_ai_hero());
 
         engine.start_script_ai_native_think_pre_filter(pc_id);
 
@@ -756,17 +757,17 @@ mod panic_boundary_tests {
             engine
                 .get_entity(pc_id)
                 .and_then(Entity::ai_controller)
-                .expect("autonomous PC retains its AI")
+                .expect("AI-controlled hero retains its AI")
                 .think_recursion_depth,
             1
         );
     }
 
     #[test]
-    fn autonomous_pc_completes_new_no_door_panic_boundary() {
+    fn enemy_ai_hero_completes_new_no_door_panic_boundary() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let pc_id = engine.add_entity(enemy_ai_hero());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -795,19 +796,19 @@ mod panic_boundary_tests {
         let ai = engine
             .get_entity(pc_id)
             .and_then(Entity::enemy_ai)
-            .expect("autonomous PC must retain its Enemy AI");
+            .expect("AI-controlled hero must retain its Enemy AI");
         assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingHiding);
     }
 
     #[test]
-    fn autonomous_pc_recovers_from_stuck_ladder_through_enemy_ai() {
+    fn enemy_ai_hero_recovers_from_stuck_ladder_through_enemy_ai() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let mut pc = autonomous_enemy_pc();
+        let mut pc = enemy_ai_hero();
         pc.set_posture(Posture::OnLadder);
         pc.ai_actor_data_mut()
-            .expect("autonomous PC has AI actor data")
+            .expect("AI-controlled hero has AI actor data")
             .stuck_on_ladder_emergency_counter = 25;
         let pc_id = engine.add_entity(pc);
         let mut assets = LevelAssets::default();
@@ -826,7 +827,7 @@ mod panic_boundary_tests {
             engine
                 .get_entity(pc_id)
                 .and_then(Entity::ai_actor_data)
-                .expect("autonomous PC retains its AI actor data")
+                .expect("AI-controlled hero retains its AI actor data")
                 .stuck_on_ladder_emergency_counter,
             0
         );

@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 22;
+pub const NET_PROTOCOL_VERSION: u32 = 23;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -360,7 +360,7 @@ mod tests {
         // the resolved-route and point-Seek provenance contract. Older peers
         // fail during the handshake before attempting to decode incompatible
         // snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 22);
+        assert_eq!(NET_PROTOCOL_VERSION, 23);
     }
 
     #[test]

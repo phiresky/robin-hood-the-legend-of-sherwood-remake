@@ -328,7 +328,7 @@ fn selected_surface(
     graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
     let pc_id = engine
-        .seat_selection(host.transport.local_seat)
+        .hero_selection(host.transport.local_seat)
         .first()
         .copied()?;
     let entity = engine.get_entity(pc_id)?;
@@ -408,7 +408,7 @@ pub(crate) fn render_debug_surfaces_outline(
     let move_layers = &graph.static_data.move_layers;
     let selected_layer_area = selected_surface(host, engine, graph);
     let selected_id = engine
-        .seat_selection(host.transport.local_seat)
+        .hero_selection(host.transport.local_seat)
         .first()
         .copied();
 

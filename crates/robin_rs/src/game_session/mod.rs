@@ -237,7 +237,7 @@ fn center_on_reselected_portrait_pc(
             area,
             PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
         )
-        || !engine.seat_selection(local_seat).contains(&pc_id)
+        || !engine.hero_selection(local_seat).contains(&pc_id)
     {
         return false;
     }
@@ -291,7 +291,7 @@ fn center_on_reselected_allied_portrait(
             area,
             PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
         )
-        || engine.allied_selection(local_seat) != members
+        || engine.tactical_selection(local_seat) != members
     {
         return false;
     }
@@ -420,7 +420,7 @@ pub(super) fn selected_pc_profile_indices(
     seat: engine_player_command::PlayerId,
 ) -> Vec<engine_profiles::CharacterProfileIdx> {
     engine
-        .seat_selection(seat)
+        .hero_selection(seat)
         .iter()
         .filter_map(|&id| match engine.get_entity(id)? {
             engine_element::Entity::Pc(pc) => Some(pc.pc.profile_index),

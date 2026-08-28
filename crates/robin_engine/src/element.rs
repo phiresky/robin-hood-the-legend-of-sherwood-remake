@@ -42,6 +42,10 @@ use crate::coordinates::{
     GroundPoint, MapBBox, MapPoint, MapVec, SpriteTopLeft, WorldPoint3D, WorldVec3D,
 };
 use crate::fast_find_grid::GRID_CELL_SIZE;
+use crate::human_control::{
+    CombatStance, CommandInterface, DecisionPolicy, HumanArchetype, HumanControlProfile,
+    MissionRole,
+};
 use crate::jump_line::JumpLineIndex;
 use crate::movement::{ActiveMovement, ActiveShot};
 use crate::order::OrderType;
@@ -1931,6 +1935,14 @@ fn default_pc_camp() -> Camp {
     Camp::Royalists
 }
 
+const fn default_hero_command_interface() -> CommandInterface {
+    CommandInterface::HeroActions
+}
+
+const fn default_hero_mission_role() -> MissionRole {
+    MissionRole::PlayerParty
+}
+
 /// PC-level data.
 #[derive(
     Debug,
@@ -1965,16 +1977,19 @@ pub struct PcData {
     /// Set/cleared by the `Activate` and `Deactivate` script natives,
     /// and by rescue-PC spawn logic.
     pub playable: bool,
-    /// Custom-mission control mode. Autonomous PCs participate in combat but
-    /// are excluded from player selection.
+    /// Player command surface exposed by this hero. This is independent from
+    /// the decision policy: a tactical unit can accept high-level player
+    /// orders while retaining EnemyAi for moment-to-moment decisions.
+    #[serde(default = "default_hero_command_interface")]
+    pub command_interface: CommandInterface,
+    /// Mission bookkeeping role, independent from allegiance and controller.
+    #[serde(default = "default_hero_mission_role")]
+    pub mission_role: MissionRole,
+    /// Engagement policy used by whichever controller owns combat decisions.
     #[serde(default)]
-    pub autonomous: bool,
-    /// Custom-mission combat tuning. This affects offensive decision cadence
-    /// only and is deliberately independent from autonomous control itself.
-    #[serde(default)]
-    pub aggressive_combat: bool,
-    /// Shared soldier AI runtime used by autonomous aggressive PCs. Ordinary
-    /// player-controlled PCs intentionally have no AI owner.
+    pub combat_stance: CombatStance,
+    /// Shared AI runtime used by AI-controlled heroes. Ordinary directly
+    /// controlled heroes intentionally have no AI owner.
     #[serde(default)]
     pub ai: Option<Box<AiActorData>>,
 
@@ -2115,8 +2130,9 @@ impl Default for PcData {
             cached_camp: Camp::Royalists,
             campaign_description_index: None,
             playable: true,
-            autonomous: false,
-            aggressive_combat: false,
+            command_interface: CommandInterface::HeroActions,
+            mission_role: MissionRole::PlayerParty,
+            combat_stance: CombatStance::Aggressive,
             ai: None,
             interface_hidden: false,
             current_action: Action::default(),
@@ -2355,7 +2371,7 @@ impl AiBrain {
 
 /// Per-actor state owned by the NPC AI runtime.
 ///
-/// This is separate from [`NpcData`] so an autonomous PC can run the same
+/// This is separate from [`NpcData`] so an AI-controlled hero can run the same
 /// perception and battle-decision machinery without masquerading as an NPC or
 /// carrying a second, potentially divergent copy of its body health.
 #[derive(
@@ -2859,6 +2875,16 @@ pub struct SoldierData {
     pub cached_camp: Camp,
     /// Whether this soldier is mounted on a horse.
     pub rider: bool,
+    /// Optional player-facing tactical order surface. EnemyAi remains the
+    /// decision policy even when this is enabled.
+    #[serde(default)]
+    pub command_interface: CommandInterface,
+    /// Mission bookkeeping role, independent from allegiance.
+    #[serde(default)]
+    pub mission_role: MissionRole,
+    /// Default stance before/without an explicit tactical order.
+    #[serde(default)]
+    pub combat_stance: CombatStance,
 }
 
 /// Civilian-specific data.
@@ -3874,6 +3900,99 @@ impl Entity {
         }
     }
 
+    /// Stable content/body archetype. This deliberately says nothing about
+    /// allegiance, player commandability, or who owns moment-to-moment
+    /// decisions.
+    pub fn human_archetype(&self) -> Option<HumanArchetype> {
+        match self {
+            Self::Pc(_) => Some(HumanArchetype::Hero),
+            Self::Soldier(_) => Some(HumanArchetype::Soldier),
+            Self::Civilian(_) => Some(HumanArchetype::Civilian),
+            _ => None,
+        }
+    }
+
+    pub fn decision_policy(&self) -> Option<DecisionPolicy> {
+        let from_brain = |brain: &AiBrain| match brain {
+            AiBrain::Enemy(_) => Some(DecisionPolicy::EnemyAi),
+            AiBrain::Friendly(_) => Some(DecisionPolicy::FriendlyAi),
+            AiBrain::None => None,
+        };
+        match self {
+            Self::Pc(hero) => hero
+                .pc
+                .ai
+                .as_deref()
+                .and_then(|ai| from_brain(&ai.ai_brain))
+                .or(Some(
+                    if hero.pc.command_interface == CommandInterface::HeroActions {
+                        DecisionPolicy::PlayerDirected
+                    } else {
+                        DecisionPolicy::Scripted
+                    },
+                )),
+            Self::Soldier(soldier) => {
+                from_brain(&soldier.npc.ai.ai_brain).or(Some(DecisionPolicy::Scripted))
+            }
+            Self::Civilian(civilian) => {
+                from_brain(&civilian.npc.ai.ai_brain).or(Some(DecisionPolicy::Scripted))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn command_interface(&self) -> Option<CommandInterface> {
+        match self {
+            Self::Pc(hero) => Some(hero.pc.command_interface),
+            Self::Soldier(soldier) => Some(soldier.soldier.command_interface),
+            Self::Civilian(_) => Some(CommandInterface::None),
+            _ => None,
+        }
+    }
+
+    pub fn mission_role(&self) -> Option<MissionRole> {
+        match self {
+            Self::Pc(hero) => Some(hero.pc.mission_role),
+            Self::Soldier(soldier) => Some(soldier.soldier.mission_role),
+            Self::Civilian(_) => Some(MissionRole::Civilian),
+            _ => None,
+        }
+    }
+
+    pub fn combat_stance(&self) -> Option<CombatStance> {
+        match self {
+            Self::Pc(hero) => Some(hero.pc.combat_stance),
+            Self::Soldier(soldier) => Some(soldier.soldier.combat_stance),
+            Self::Civilian(_) => Some(CombatStance::Defensive),
+            _ => None,
+        }
+    }
+
+    pub fn human_control_profile(&self) -> Option<HumanControlProfile> {
+        Some(HumanControlProfile {
+            archetype: self.human_archetype()?,
+            decision_policy: self.decision_policy()?,
+            command_interface: self.command_interface()?,
+            mission_role: self.mission_role()?,
+            combat_stance: self.combat_stance()?,
+        })
+    }
+
+    pub fn is_ai_controlled_human(&self) -> bool {
+        matches!(
+            self.decision_policy(),
+            Some(DecisionPolicy::EnemyAi | DecisionPolicy::FriendlyAi)
+        )
+    }
+
+    pub fn accepts_hero_commands(&self) -> bool {
+        self.command_interface() == Some(CommandInterface::HeroActions)
+    }
+
+    pub fn accepts_tactical_orders(&self) -> bool {
+        self.command_interface() == Some(CommandInterface::TacticalOrders)
+    }
+
     pub fn npc_data(&self) -> Option<&NpcData> {
         match self {
             Self::Soldier(e) => Some(&e.npc),
@@ -3883,7 +4002,7 @@ impl Entity {
     }
 
     /// Perception and decision state for every actor which owns an AI brain.
-    /// This includes ordinary NPCs and opt-in autonomous PCs.
+    /// This includes ordinary NPCs and opt-in AI-controlled heroes.
     pub fn ai_actor_data(&self) -> Option<&AiActorData> {
         match self {
             Self::Pc(e) => e.pc.ai.as_deref(),

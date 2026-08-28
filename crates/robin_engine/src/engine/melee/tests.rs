@@ -1661,7 +1661,7 @@ fn make_enemy_strike_pair(
     (attacker, target)
 }
 
-fn make_autonomous_pc_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
+fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
@@ -1689,8 +1689,9 @@ fn make_autonomous_pc_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         pc.actor.action_state = ActionState::WaitingSword;
         pc.human.opponents.push(opponent);
         pc.pc.cached_camp = camp;
-        pc.pc.autonomous = true;
-        pc.pc.aggressive_combat = true;
+        pc.pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+        pc.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
         let mut ai = crate::ai_enemy::EnemyAi::new(owner.index());
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
@@ -1718,9 +1719,9 @@ fn make_autonomous_pc_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
 }
 
 #[test]
-fn autonomous_pc_consumes_enemy_sword_strike_proposal() {
+fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
     let mut engine = make_engine();
-    let (attacker, _) = make_autonomous_pc_strike_pair(&mut engine);
+    let (attacker, _) = make_enemy_ai_hero_strike_pair(&mut engine);
     let mut assets = assets_with_sword_profile(7, 30);
     std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].fighting = 100;
     engine.control.rng = SimulationRng::with_original_replay(vec![0]);
@@ -1732,14 +1733,14 @@ fn autonomous_pc_consumes_enemy_sword_strike_proposal() {
     let ai = engine
         .get_entity(attacker)
         .and_then(Entity::enemy_ai)
-        .expect("autonomous PC must retain its Enemy AI");
+        .expect("AI-controlled hero must retain its Enemy AI");
     assert!(ai.pending_special_strike);
     assert!(
         engine
             .orders
             .sequence_manager
             .has_live_element_for_actor_matching(attacker, Command::is_swordstrike),
-        "the authorized autonomous PC proposal must launch a real strike"
+        "the authorized AI-controlled hero proposal must launch a real strike"
     );
     assert_eq!(
         engine
@@ -1748,14 +1749,14 @@ fn autonomous_pc_consumes_enemy_sword_strike_proposal() {
             .element_data()
             .current_outline,
         crate::element::OutlineColorName::Default,
-        "attacking another autonomous PC must not use the player-warning hulk delay"
+        "attacking another AI-controlled hero must not use the player-warning hulk delay"
     );
 }
 
 #[test]
-fn autonomous_pc_knockout_runs_shared_ai_cleanup() {
+fn enemy_ai_hero_knockout_runs_shared_ai_cleanup() {
     let mut engine = make_engine();
-    let (victim, _) = make_autonomous_pc_strike_pair(&mut engine);
+    let (victim, _) = make_enemy_ai_hero_strike_pair(&mut engine);
     {
         let entity = engine.get_entity_mut(victim).unwrap();
         let human = entity.human_data_mut().unwrap();
@@ -1778,7 +1779,7 @@ fn autonomous_pc_knockout_runs_shared_ai_cleanup() {
     let ai_actor = engine
         .get_entity(victim)
         .and_then(Entity::ai_actor_data)
-        .expect("autonomous PC retains AI actor data");
+        .expect("AI-controlled hero retains AI actor data");
     assert_eq!(ai_actor.maximal_detection_suspect, 0);
     assert_eq!(
         ai_actor.eye_status,
@@ -1788,13 +1789,13 @@ fn autonomous_pc_knockout_runs_shared_ai_cleanup() {
 }
 
 #[test]
-fn autonomous_pc_empty_opponent_evaluation_delivers_quit_event() {
+fn enemy_ai_hero_empty_opponent_evaluation_delivers_quit_event() {
     let mut engine = make_engine();
-    let (owner, _) = make_autonomous_pc_strike_pair(&mut engine);
+    let (owner, _) = make_enemy_ai_hero_strike_pair(&mut engine);
     engine
         .get_entity_mut(owner)
         .and_then(Entity::human_data_mut)
-        .expect("autonomous PC has HumanData")
+        .expect("AI-controlled hero has HumanData")
         .opponents
         .clear();
     let assets = assets_with_sword_profile(7, 30);
@@ -1804,7 +1805,7 @@ fn autonomous_pc_empty_opponent_evaluation_delivers_quit_event() {
     let ai = engine
         .get_entity(owner)
         .and_then(Entity::ai_controller)
-        .expect("autonomous PC retains its AI");
+        .expect("AI-controlled hero retains its AI");
     assert_eq!(
         ai.current_substate,
         crate::ai::Substate::AttackingQuittingSwordfight
@@ -10019,7 +10020,7 @@ fn deleting_final_opponent_synchronously_quits_soldier_ai() {
 }
 
 #[test]
-fn deleting_final_opponent_synchronously_quits_autonomous_pc_ai() {
+fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
     use crate::ai::{AiState, LogLineType, StimulusType, Substate};
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
 
@@ -10051,8 +10052,9 @@ fn deleting_final_opponent_synchronously_quits_autonomous_pc_ai() {
     enemy_ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
     enemy_ai.hth_weapon_id = 1;
     pc_entity.pc.life_points = 100;
-    pc_entity.pc.autonomous = true;
-    pc_entity.pc.aggressive_combat = true;
+    pc_entity.pc.command_interface = crate::human_control::CommandInterface::None;
+    pc_entity.pc.mission_role = crate::human_control::MissionRole::Combatant;
+    pc_entity.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
     pc_entity.pc.ai = Some(Box::new(crate::element::AiActorData {
         ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
         ..Default::default()
