@@ -84,7 +84,7 @@ saved vs v2 q80                                                 7,229,849 B
 ```
 
 The canonical browser converter path for the artifact named
-`v6-web-opus-q80.rhdata.zst` is the checked-in wrapper:
+`v8-web-opus-q80.rhdata.zst` is the checked-in wrapper:
 
 ```sh
 scripts/build_web_shipping_datadir.sh \
@@ -356,14 +356,15 @@ Extrapolating the `.bks` ratio to 565 MiB: ~141 MiB total for the full bank zstd
 
 ## Mission-selective shipping layout
 
-Shipping format v5 applies the trimming recommendation without breaking the
+Shipping format v8 applies the trimming recommendation without breaking the
 compression properties measured above. The converter now emits a file tree:
 
 ```
 Data/datadir.bin
 Data/missions/<mission>-w<window>-<content-hash>.rhmission.zst
 Data/rhs/<rhs>-w<window>-<content-hash>.rhmission.zst
-Data/audio/<group>-w<window>-<content-hash>.rhmission.zst
+Data/terrain/<content-hash>.rhmission.zst
+Data/audio/assets/<content-hash>.opus
 ```
 
 `datadir.bin` is the boot manifest: profiles, shared UI/text resources, level
@@ -383,6 +384,14 @@ effects to be shared by several mission dependency lists. Browser requests for
 a mission's files run concurrently. Decoded parts are move-merged into only the
 active mission and then released; ordinary HTTP caching avoids retransferring
 content-addressed files when a later mission reuses them.
+
+The Opus recipe stores only logical-path, encoded-size, and authoritative
+source-duration metadata in `datadir.bin`. Audio is not a mission dependency:
+the browser fetches a content-addressed `.opus` file at first playback and
+passes its JavaScript `ArrayBuffer` directly to `decodeAudioData`. Neither the
+encoded stream nor decoded PCM is copied into wasm memory. The converter's
+default `--audio-format source` remains the native/Android layout: it embeds
+source audio in the relevant shipping payloads instead of requiring Web Audio.
 
 A raw-map Leicester conversion (`--map-format raw --zstd-window-log 30`) gave
 this preliminary layout measurement:
