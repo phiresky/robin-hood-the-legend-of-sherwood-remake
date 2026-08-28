@@ -1737,6 +1737,79 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
 }
 
 #[test]
+fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
+    let sim = &crate::sim_rng::test_context();
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let victim_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let arrow = spawn_arrow(SpawnArrowParams {
+        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+        bow_point: WorldPoint3D {
+            x: 0.0,
+            y: 0.0,
+            z: 25.0,
+        },
+        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+        target: victim_id,
+        target_pos: MapPoint { x: 100.0, y: 0.0 },
+        trajectory: vec![TrajectoryPoint {
+            position: WorldPoint3D {
+                x: 100.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            time: 1,
+        }],
+        damage: 30,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        },
+    });
+    let mut entities = entity_table(vec![
+        Some(make_pc(0.0, 0.0)),
+        Some(make_soldier_with_camp(
+            80.0,
+            0.0,
+            crate::element::Camp::Lacklandists,
+        )),
+        Some(arrow),
+    ]);
+    let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+        true,
+        true,
+        Some(&crate::diplomacy::DiplomacyDefinition {
+            player_coalition: vec![0],
+            relationships: vec![crate::diplomacy::DiplomacyRule {
+                first: 0,
+                second: 1,
+                relationship: crate::diplomacy::Relationship::Neutral,
+            }],
+        }),
+    )
+    .unwrap();
+
+    let results = tick_arrow_in_actor_order_with_diplomacy(
+        sim,
+        &mut entities,
+        crate::sight_obstacle::ObstacleList::empty(),
+        None,
+        arrow_id,
+        &[EntityId::Pc(crate::entity_id::PcId(0)), victim_id],
+        &diplomacy,
+    );
+
+    assert!(
+        results
+            .iter()
+            .all(|result| result.hit_target != Some(victim_id)),
+        "neutral actors must be filtered before projectile hit selection"
+    );
+}
+
+#[test]
 fn tick_arrows_selects_last_eligible_human_in_actor_order() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

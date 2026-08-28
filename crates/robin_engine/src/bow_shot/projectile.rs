@@ -2009,6 +2009,8 @@ fn tick_arrows_matching(
                     },
                 )
             );
+            let diplomacy_protects =
+                diplomacy.is_some_and(|matrix| matrix.enabled()) && protected_relationship;
 
             // C++ filters these candidates inside `FindHumanVictim`
             // before geometric hit selection:
@@ -2017,7 +2019,11 @@ fn tick_arrows_matching(
             //   - PC projectiles do not hit shield-holding PCs
             // The separate forest GoodSoldier rule is covered by the
             // same-camp soldier branch for Royalist soldiers.
-            !(shooter.is_soldier && (victim.is_civilian || protected_relationship)
+            // Enabled mission diplomacy additionally protects every
+            // non-hostile relationship from PC projectiles. Disabling the
+            // extension retains Original's PC-friendly-fire behavior.
+            !(diplomacy_protects
+                || shooter.is_soldier && (victim.is_civilian || protected_relationship)
                 || shooter.is_pc && victim.is_pc && victim.holding_shield)
         }
 
