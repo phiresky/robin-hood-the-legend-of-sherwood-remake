@@ -1151,6 +1151,9 @@ Continued experiments on `sprite_codec` (all real coder, bit-exact roundtrips):
   Bucketing matters: level+distinct alone REGRESSED variants (+3.3%);
   adding the skew quartile fixed standalone; adding log2(sum) (context
   maturity) made it a win everywhere.
+  Corpus with SEE (--corpus, cm2 for the 39 family variants):
+      TOTAL  464,511,438 packed  161,241,542 zstd19  ->  68,957,409
+      (2.34x vs zstd-19; was 2.27x with PPMC escapes)
 
 ✗ Context mixing (PAQ-lite prototype, --mix in the probe): 12-bit indices
   binary-decomposed MSB-first; per-bit logistic mix of hashed order-2 /
