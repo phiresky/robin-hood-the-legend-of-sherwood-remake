@@ -1116,17 +1116,8 @@ impl EngineInner {
                     panic!("EvaluateSwordfight owner {entity_id:?} vanished before strike proposal")
                 }
             };
-            let launched = self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
-
-            // Normal deselected PCs retain the Original's passive smalltalk
-            // fallback below. Custom-mission autonomous PCs instead keep
-            // evaluating until a proper A-I strike is viable, making them
-            // full combatants rather than background sparring partners.
-            if autonomous {
-                if !launched {
-                    self.update_swordfight_distance(sim, assets, entity_id);
-                }
-                return;
+            if !autonomous {
+                self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
             }
         }
 

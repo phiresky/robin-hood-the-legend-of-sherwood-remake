@@ -5224,7 +5224,7 @@ impl Human for ActorPc {
         100
     }
     fn camp(&self) -> Camp {
-        Camp::Royalists
+        self.pc.cached_camp
     }
     fn is_robin(&self) -> bool {
         self.pc.robin
@@ -6211,6 +6211,26 @@ mod tests {
         assert_eq!(s.camp(), Camp::Lacklandists);
         assert!(s.is_enemy_of(Camp::Royalists));
         assert!(s.is_able_to_fight());
+    }
+
+    #[test]
+    fn trait_human_on_pc_uses_authored_camp() {
+        let pc = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                cached_camp: Camp::Custom(7),
+                ..PcData::default()
+            },
+        };
+
+        assert_eq!(Human::camp(&pc), Camp::Custom(7));
+        assert_eq!(Entity::Pc(pc).camp(), Camp::Custom(7));
     }
 
     #[test]

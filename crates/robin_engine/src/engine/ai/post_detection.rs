@@ -214,7 +214,7 @@ impl EngineInner {
         });
         assert!(
             entity.ai_actor_data().is_some(),
-            "post-detection owner {} has no NPC data",
+            "post-detection owner {} has no AI actor data",
             npc_id.index()
         );
         assert!(
@@ -414,7 +414,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.drain_pending_for_npc(sim, npc_id, assets);
         }
@@ -433,7 +433,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
         }
@@ -823,7 +823,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
         }

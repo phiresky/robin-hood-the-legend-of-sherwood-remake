@@ -822,10 +822,10 @@ impl EngineInner {
         // whose distance gate is the post-RefreshView real radius, not the
         // pre-factor base radius the growing cone animates towards.
         let chief_real_view_radius = chief_entity
-            .npc_data()
+            .ai_actor_data()
             .unwrap_or_else(|| {
                 panic!(
-                    "synchronous patrol initialization owner {} is not an NPC",
+                    "synchronous patrol initialization owner {} has no AI actor data",
                     chief_id.index()
                 )
             })
@@ -856,15 +856,15 @@ impl EngineInner {
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
                 ai_state: entity
-                    .npc_data()
+                    .ai_controller()
                     .unwrap_or_else(|| {
                         panic!(
-                            "patrol member {} referenced by owner {} is not an NPC",
+                            "patrol member {} referenced by owner {} has no AI controller",
                             id.index(),
                             chief_id.index()
                         )
                     })
-                    .ai_state(),
+                    .current_state,
                 is_alive: !entity.is_dead(),
                 is_active: entity.is_active(),
                 is_civilian: entity.is_civilian(),
@@ -1939,26 +1939,15 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        match entity {
-            Entity::Soldier(s) => {
-                s.npc
-                    .ai_brain
-                    .enemy_mut()
-                    .unwrap_or_else(|| {
-                        panic!("ladder-tail soldier {} has no enemy AI", npc_id.index())
-                    })
-                    .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
-            }
-            Entity::Civilian(c) => {
-                c.npc
-                    .ai_brain
-                    .friendly_mut()
-                    .unwrap_or_else(|| {
-                        panic!("ladder-tail civilian {} has no friendly AI", npc_id.index())
-                    })
-                    .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
-            }
-            _ => unreachable!("post-detection owner must remain an NPC"),
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+        } else if let Some(friendly) = entity.friendly_ai_mut() {
+            friendly.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
+        } else {
+            panic!(
+                "ladder-tail owner {} has neither enemy nor friendly AI",
+                npc_id.index()
+            );
         }
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }

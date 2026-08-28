@@ -183,6 +183,54 @@ fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiContro
 }
 
 #[test]
+fn autonomous_pc_speech_completion_clears_enemy_ai_latch() {
+    use crate::ai::Remark;
+    use crate::element::{ActorPc, AiActorData, AiBrain, ElementData, ElementKind, PcData};
+
+    let mut enemy = crate::ai_enemy::EnemyAi::default();
+    enemy.base.current_remark = Remark::Arrow;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(Entity::Pc(ActorPc {
+        element: ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            ..ElementData::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        pc: PcData {
+            autonomous: true,
+            aggressive_combat: true,
+            ai: Some(Box::new(AiActorData {
+                ai_brain: AiBrain::Enemy(Box::new(enemy)),
+                ..AiActorData::default()
+            })),
+            ..PcData::default()
+        },
+    }));
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    engine
+        .feedback
+        .sound_sim
+        .finished_exclamations
+        .push((owner.index(), Remark::Arrow as u32));
+
+    engine.settle_npc_speech_completions(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .and_then(Entity::ai_controller)
+            .expect("autonomous PC retains its AI")
+            .current_remark,
+        Remark::TheSoundOfSilence
+    );
+}
+
+#[test]
 fn mytalk_completion_obeys_exact_asset_duration_frame() {
     use crate::ai::{LogLineType, Remark, StimulusType};
 

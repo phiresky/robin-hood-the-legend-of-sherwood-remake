@@ -1753,6 +1753,69 @@ fn autonomous_pc_consumes_enemy_sword_strike_proposal() {
 }
 
 #[test]
+fn autonomous_pc_knockout_runs_shared_ai_cleanup() {
+    let mut engine = make_engine();
+    let (victim, _) = make_autonomous_pc_strike_pair(&mut engine);
+    {
+        let entity = engine.get_entity_mut(victim).unwrap();
+        let human = entity.human_data_mut().unwrap();
+        human.unconscious = true;
+        human.concussion_of_the_brain = 25;
+        let ai_actor = entity.ai_actor_data_mut().unwrap();
+        ai_actor.alerted = true;
+        ai_actor.maximal_detection_suspect = 40;
+    }
+    let assets = assets_with_sword_profile(7, 30);
+
+    engine.apply_knockout_side_effects(
+        &crate::sim_rng::test_context(),
+        &assets,
+        victim,
+        true,
+        true,
+    );
+
+    let ai_actor = engine
+        .get_entity(victim)
+        .and_then(Entity::ai_actor_data)
+        .expect("autonomous PC retains AI actor data");
+    assert_eq!(ai_actor.maximal_detection_suspect, 0);
+    assert_eq!(
+        ai_actor.eye_status,
+        crate::element::EyeStatus::DieOrGetUnconscious
+    );
+    assert!(ai_actor.inform_my_friends);
+}
+
+#[test]
+fn autonomous_pc_empty_opponent_evaluation_delivers_quit_event() {
+    let mut engine = make_engine();
+    let (owner, _) = make_autonomous_pc_strike_pair(&mut engine);
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::human_data_mut)
+        .expect("autonomous PC has HumanData")
+        .opponents
+        .clear();
+    let assets = assets_with_sword_profile(7, 30);
+
+    engine.evaluate_opponents(&crate::sim_rng::test_context(), &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("autonomous PC retains its AI");
+    assert_eq!(
+        ai.current_substate,
+        crate::ai::Substate::AttackingQuittingSwordfight
+    );
+    assert!(ai.ai_log.iter().any(|entry| {
+        entry.line_type == crate::ai::LogLineType::Event
+            && entry.info == crate::ai::StimulusType::EventQuitSwordfight as u16
+    }));
+}
+
+#[test]
 fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
     let mut engine = make_engine();
     let (attacker, _) = make_enemy_strike_pair(&mut engine, false);

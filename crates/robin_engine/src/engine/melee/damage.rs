@@ -2633,19 +2633,19 @@ impl EngineInner {
         kind: crate::element::DetectableType,
     ) {
         let det_idx = kind as usize;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             if npc_id == subject {
                 continue;
             }
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && det_idx < s.npc.detectable_lists.len()
+            if let Some(ai_actor) = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_actor_data_mut)
+                && det_idx < ai_actor.detectable_lists.len()
             {
-                s.npc.delete_detectable(subject, kind);
-            } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(npc_id)
-                && det_idx < c.npc.detectable_lists.len()
-            {
-                c.npc.delete_detectable(subject, kind);
+                ai_actor.delete_detectable(subject, kind);
             }
         }
     }
@@ -3202,7 +3202,7 @@ impl EngineInner {
             ai.clear_emoticon();
         }
 
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             if clear_beggar_detectables {
                 npc.detectable_lists[crate::element::DetectableType::Beggar as usize].clear();
             }
@@ -3410,7 +3410,7 @@ impl EngineInner {
         if human.concussion_healing_timeout == 0 {
             human.concussion_healing_timeout = healing_speed;
         }
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             // The NPC override performs this after the base-human
             // QuitSwordFight/titbit/healing work and before Think.
             npc.clear_all_suspects();
@@ -3418,10 +3418,12 @@ impl EngineInner {
 
         // RHElementActorNPC::SetConcussionOfTheBrain calls Think inline
         // after the base-human relationship/titbit work.
-        if matches!(
-            self.world.entities.get(victim_id),
-            Some(Entity::Soldier(_) | Entity::Civilian(_))
-        ) {
+        if self
+            .world
+            .entities
+            .get(victim_id)
+            .is_some_and(|entity| entity.ai_controller().is_some())
+        {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
                 victim_id,
@@ -3440,7 +3442,7 @@ impl EngineInner {
             .entities
             .get_mut(victim_id)
             .expect("knockout victim disappeared after AI callback");
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             // The Original assigns this only after EVENT_LOSE_CONSCIOUSNESS
             // returns.
             npc.inform_my_friends = attacker_is_pc;

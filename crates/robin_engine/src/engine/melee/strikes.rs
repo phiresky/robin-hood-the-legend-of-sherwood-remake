@@ -3727,18 +3727,23 @@ impl EngineInner {
                 });
         }
 
-        if naturally_woke && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        let owner_has_ai = self
+            .world
+            .entities
+            .get(owner)
+            .is_some_and(|entity| entity.ai_controller().is_some());
+        if naturally_woke && owner_has_ai {
             self.dispatch_ai_stimulus(
                 owner,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
         }
-        let dispatched_wake = if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        let dispatched_wake = if owner_has_ai {
             self.dispatch_pending_fit_again_for_npc(sim, owner, assets)
         } else {
             naturally_woke
         };
-        if dispatched_wake && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        if dispatched_wake && owner_has_ai {
             // EVENT_FITAGAIN's resurrection fan-out and eye reset are inline
             // consequences of Think in Original, including under FrozenAll.
             self.tick_ai_pending_resurrection_and_eyes_for_npc(owner);

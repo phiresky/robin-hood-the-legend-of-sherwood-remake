@@ -104,9 +104,9 @@ impl EngineInner {
                         member.index()
                     )
                 });
-                let npc = entity.npc_data_mut().unwrap_or_else(|| {
+                let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
                     panic!(
-                        "RemoveAllSubordinates member {} has no NPC data",
+                        "RemoveAllSubordinates member {} has no AI actor data",
                         member.index()
                     )
                 });
@@ -282,10 +282,10 @@ impl EngineInner {
             .world
             .entities
             .get_mut(npc_id)
-            .and_then(Entity::npc_data_mut)
+            .and_then(Entity::ai_actor_data_mut)
             .unwrap_or_else(|| {
                 panic!(
-                    "one-shot noise listener {} lost its required NPC state",
+                    "one-shot noise listener {} lost its required AI actor state",
                     npc_id.index()
                 )
             })

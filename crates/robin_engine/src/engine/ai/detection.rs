@@ -1433,9 +1433,9 @@ impl EngineInner {
                 .world
                 .entities
                 .get(npc_id)
-                .and_then(Entity::npc_data)
-                .expect("HEARINGGATE owner lost NPC data")
-                .ai_substate();
+                .and_then(Entity::ai_controller)
+                .expect("HEARINGGATE owner lost its AI controller")
+                .current_substate;
             let modified_frame = hearing_debug_modified_frame.expect("HEARINGGATE frame missing");
             eprintln!(
                 "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"pre_gate\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"modified_frame\":{},\"cadence_remainder\":{},\"state_pass\":{},\"cadence_pass\":{}}}",
@@ -1896,7 +1896,7 @@ impl EngineInner {
                         .entities
                         .get(npc_id)
                         .and_then(Entity::ai_actor_data)
-                        .expect("DETMUT owner lost NPC data before RefreshDetection");
+                        .expect("DETMUT owner lost AI actor data before RefreshDetection");
                     debug_detectable_mutation_snapshot(
                         "refresh_entry_snapshot",
                         "tick_enemy_ai_refresh_detection",
@@ -1932,7 +1932,7 @@ impl EngineInner {
                 .entities
                 .get(npc_id)
                 .and_then(Entity::ai_actor_data)
-                .expect("RefreshDetection owner lost NPC data before Enemy snapshot")
+                .expect("RefreshDetection owner lost AI actor data before Enemy snapshot")
                 .detectable_lists[DetectableType::Enemy as usize]
                 .iter()
                 .filter_map(|detectable| detectable.element)
@@ -2122,15 +2122,18 @@ impl EngineInner {
             .world
             .entities
             .get(npc_id)
-            .and_then(Entity::npc_data)
-            .map(|npc| {
-                npc.detectable_lists[crate::element::DetectableType::Enemy as usize]
-                    .iter()
-                    .filter_map(|detectable| detectable.element)
-                    .map(|entity_id| entity_id.index())
-                    .collect::<Vec<_>>()
+            .and_then(Entity::ai_actor_data)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Enemy tick-data owner {} lost its AI actor data",
+                    npc_id.index()
+                )
             })
-            .unwrap_or_default();
+            .detectable_lists[crate::element::DetectableType::Enemy as usize]
+            .iter()
+            .filter_map(|detectable| detectable.element)
+            .map(|entity_id| entity_id.index())
+            .collect::<Vec<_>>();
         for handle in enemy_handles {
             let target_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
                 panic!(
@@ -4458,7 +4461,7 @@ impl EngineInner {
             .world
             .entities
             .get_mut(npc_id)
-            .and_then(Entity::npc_data_mut)
+            .and_then(Entity::ai_actor_data_mut)
         else {
             return;
         };
@@ -4811,7 +4814,7 @@ impl EngineInner {
     /// three FRIEND-and-after buckets do not.
     #[allow(clippy::too_many_arguments)]
     fn run_human_detectable_pass<F>(
-        npc: &mut crate::element::NpcData,
+        npc: &mut crate::element::AiActorData,
         npc_id: EntityId,
         kind: DetectableType,
         frequency: u32,
@@ -5189,7 +5192,7 @@ impl EngineInner {
     /// objects.
     #[allow(clippy::too_many_arguments)]
     fn run_object_detectable_pass(
-        npc: &mut crate::element::NpcData,
+        npc: &mut crate::element::AiActorData,
         npc_id: EntityId,
         frequency: u32,
         instant_detection: bool,

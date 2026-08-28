@@ -534,7 +534,7 @@ impl EngineInner {
                     crate::position_interface::Direction::from_raw(new_goal as i32),
                 );
             }
-            if let Some(npc) = entity.npc_data_mut() {
+            if let Some(npc) = entity.ai_actor_data_mut() {
                 npc.wasp_victim = true;
             }
         }
@@ -857,7 +857,7 @@ impl EngineInner {
         // is set.
         if matches!(command, Command::ReceiveWaspSting)
             && let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(npc) = entity.npc_data_mut()
+            && let Some(npc) = entity.ai_actor_data_mut()
         {
             npc.wasp_victim = false;
         }

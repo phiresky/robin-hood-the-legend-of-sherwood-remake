@@ -134,7 +134,7 @@ impl EngineInner {
         );
 
         let frame = self.control.frame_counter;
-        let all_npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let all_npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         let npc_ids = [owner];
 
         // ── Phase 2: Snapshot NPC states ──
@@ -186,9 +186,9 @@ impl EngineInner {
             let position = view.position;
             let detection_position_world = view.detection_position_world;
             let dir = entity.element_data().direction();
-            let npc = entity.npc_data().unwrap_or_else(|| {
+            let npc = entity.ai_actor_data().unwrap_or_else(|| {
                 panic!(
-                    "patrol owner {} found NPC slot {} without NPC data",
+                    "patrol owner {} found AI-owner slot {} without AI actor data",
                     owner.index(),
                     npc_id.index()
                 )
