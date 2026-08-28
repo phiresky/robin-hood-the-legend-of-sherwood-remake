@@ -882,7 +882,7 @@ impl NativeContext<'_, '_> {
                     .weather
                     .expect("script native requires a live WeatherState query view")
                     .is_forest_level
-                    && npc_entity.camp() == Camp::Royalists;
+                    && self.is_player_aligned_camp(npc_entity.camp());
                 if forest_180_degree_view && !npc_entity.is_active() {
                     return 0;
                 }

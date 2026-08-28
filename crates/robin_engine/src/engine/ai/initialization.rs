@@ -337,7 +337,7 @@ impl EngineInner {
             };
             let is_archer = entity.enemy_ai().map(|e| e.is_archer()).unwrap_or(false);
             let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
-            self_camp == Camp::Royalists && is_forest_level && is_archer && !is_rider
+            self.is_player_aligned_camp(self_camp) && is_forest_level && is_archer && !is_rider
         } else {
             false
         };

@@ -123,7 +123,7 @@ impl Default for DiplomacyState {
         player_coalition.insert(Camp::ROYALIST_ID);
         Self {
             enabled: false,
-            npc_faction_wars: false,
+            npc_faction_wars: true,
             player_coalition,
             relationships: BTreeMap::new(),
             revision: 0,
@@ -231,7 +231,21 @@ impl DiplomacyState {
         self.relationship(first, second) == Relationship::Allied
     }
 
+    pub fn actors_may_fight(
+        &self,
+        first_camp: Camp,
+        first_is_pc: bool,
+        second_camp: Camp,
+        second_is_pc: bool,
+    ) -> bool {
+        self.is_hostile(first_camp, second_camp)
+            && (self.npc_faction_wars || first_is_pc || second_is_pc)
+    }
+
     pub fn is_player_aligned(&self, camp: Camp) -> bool {
+        if !self.enabled {
+            return Self::valid_id(camp) == Camp::ROYALIST_ID;
+        }
         self.player_coalition.contains(&Self::valid_id(camp))
     }
 
@@ -259,6 +273,14 @@ impl DiplomacyState {
                 return Err(format!("allegiance {first} must remain allied with itself"));
             }
             return Ok(());
+        }
+        if self.player_coalition.contains(&first)
+            && self.player_coalition.contains(&second)
+            && relationship != Relationship::Allied
+        {
+            return Err(format!(
+                "player-coalition allegiances {first} and {second} must remain allied"
+            ));
         }
         let key = Self::key(first, second);
         if self.relationships.insert(key, relationship) != Some(relationship) {
@@ -292,12 +314,12 @@ pub(crate) fn reconcile_entities(
         .iter()
         .map(|(id, camp, _, _)| (*id, *camp))
         .collect::<BTreeMap<_, _>>();
-    let camps_by_handle = humans
+    let actors_by_handle = humans
         .iter()
-        .map(|(id, camp, _, _)| (id.index(), *camp))
+        .map(|(id, camp, is_pc, _)| (id.index(), (*camp, *is_pc)))
         .collect::<BTreeMap<_, _>>();
 
-    for (id, own_camp, _, _) in &humans {
+    for (id, own_camp, own_is_pc, _) in &humans {
         let entity = entities
             .get_mut(*id)
             .unwrap_or_else(|| panic!("diplomacy reconciliation actor {id:?} disappeared"));
@@ -306,9 +328,12 @@ pub(crate) fn reconcile_entities(
                 .opponents
                 .iter_with_jump_lines()
                 .filter(|(opponent, _)| {
-                    camps
-                        .get(opponent)
-                        .is_some_and(|camp| diplomacy.is_hostile(*own_camp, *camp))
+                    humans
+                        .iter()
+                        .find(|(id, _, _, _)| id == opponent)
+                        .is_some_and(|(_, camp, is_pc, _)| {
+                            diplomacy.actors_may_fight(*own_camp, *own_is_pc, *camp, *is_pc)
+                        })
                 })
                 .collect::<Vec<_>>();
             human.opponents = crate::element::SwordfightOpponents::from_pairs(retained);
@@ -361,18 +386,31 @@ pub(crate) fn reconcile_entities(
                 last_visibility: 0.0,
             });
         }
+        for detectable_type in [DetectableType::Friend, DetectableType::MissedFriend] {
+            npc.detectable_lists[detectable_type as usize].retain(|detectable| {
+                detectable
+                    .element
+                    .and_then(|id| camps.get(&id).copied())
+                    .is_some_and(|camp| diplomacy.is_allied(npc_camp, camp))
+            });
+        }
         if let Some(enemy) = npc.ai_brain.enemy_mut() {
-            enemy.list_them.retain(|handle| {
-                camps_by_handle
+            enemy.base.list_us.retain(|handle| {
+                actors_by_handle
                     .get(handle)
-                    .copied()
-                    .is_some_and(|camp| diplomacy.is_hostile(npc_camp, camp))
+                    .is_some_and(|(camp, _)| diplomacy.is_allied(npc_camp, *camp))
+            });
+            enemy.list_them.retain(|handle| {
+                actors_by_handle.get(handle).is_some_and(|(camp, is_pc)| {
+                    diplomacy.actors_may_fight(npc_camp, false, *camp, *is_pc)
+                })
             });
             if enemy.base.primary_target != 0
-                && !camps_by_handle
+                && !actors_by_handle
                     .get(&enemy.base.primary_target)
-                    .copied()
-                    .is_some_and(|camp| diplomacy.is_hostile(npc_camp, camp))
+                    .is_some_and(|(camp, is_pc)| {
+                        diplomacy.actors_may_fight(npc_camp, false, *camp, *is_pc)
+                    })
             {
                 enemy.base.primary_target = 0;
                 enemy.base.outbox.actor.set_focus(0);
@@ -423,5 +461,50 @@ mod tests {
                 .set_relationship(Camp::Custom(9), Camp::Custom(9), Relationship::Hostile)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn player_coalition_cannot_be_split_by_authored_or_runtime_rule() {
+        let definition = DiplomacyDefinition {
+            player_coalition: vec![0, 4],
+            relationships: vec![DiplomacyRule {
+                first: 0,
+                second: 4,
+                relationship: Relationship::Neutral,
+            }],
+        };
+        assert!(DiplomacyState::from_definition(true, true, Some(&definition)).is_err());
+
+        let mut state = DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&DiplomacyDefinition {
+                player_coalition: vec![0, 4],
+                relationships: Vec::new(),
+            }),
+        )
+        .unwrap();
+        assert!(
+            state
+                .set_relationship_ids(0, 4, Relationship::Hostile)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn disabling_diplomacy_restores_legacy_player_alignment() {
+        let mut state = DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&DiplomacyDefinition {
+                player_coalition: vec![0, 4],
+                relationships: Vec::new(),
+            }),
+        )
+        .unwrap();
+        assert!(state.is_player_aligned(Camp::Custom(4)));
+        state.set_enabled(false);
+        assert!(!state.is_player_aligned(Camp::Custom(4)));
+        assert!(state.is_player_aligned(Camp::Royalists));
     }
 }

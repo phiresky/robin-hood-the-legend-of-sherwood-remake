@@ -1997,11 +1997,16 @@ fn tick_arrows_matching(
             let Some(shooter) = shooter else {
                 return true;
             };
-            let same_camp = matches!(
+            let protected_relationship = matches!(
                 (shooter.camp, victim.camp),
-                (Some(shooter_camp), Some(victim_camp)) if diplomacy.map_or(
-                    shooter_camp == victim_camp,
-                    |matrix| matrix.is_allied(shooter_camp, victim_camp),
+                (Some(shooter_camp), Some(victim_camp)) if diplomacy.map_or_else(
+                    || shooter_camp == victim_camp,
+                    |matrix| {
+                        !matrix.is_hostile(shooter_camp, victim_camp)
+                            || (!matrix.npc_faction_wars()
+                                && !shooter.is_pc
+                                && !victim.is_pc)
+                    },
                 )
             );
 
@@ -2012,7 +2017,8 @@ fn tick_arrows_matching(
             //   - PC projectiles do not hit shield-holding PCs
             // The separate forest GoodSoldier rule is covered by the
             // same-camp soldier branch for Royalist soldiers.
-            !(shooter.is_soldier && (victim.is_civilian || same_camp)
+            !(protected_relationship
+                || shooter.is_soldier && victim.is_civilian
                 || shooter.is_pc && victim.is_pc && victim.holding_shield)
         }
 

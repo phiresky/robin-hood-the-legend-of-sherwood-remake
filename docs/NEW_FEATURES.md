@@ -161,7 +161,10 @@ A list of which additional features we have added, which ones we might still wan
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
-  distinct valid allegiances are mutually hostile. Runtime target detection,
+  distinct valid allegiances are mutually hostile unless an optional
+  `diplomacy` block declares a symmetric `allied`, `neutral`, or `hostile`
+  relationship. The block can also declare a multi-allegiance
+  `player_coalition`; coalition members are always allied. Runtime target detection,
   combat, minimap classification, cursor actions, difficulty modifiers, and
   NPC-enemy availability use relationship queries instead of assuming one
   opposing camp. Legacy RHM actors without the optional field still derive
@@ -182,8 +185,17 @@ A list of which additional features we have added, which ones we might still wan
   all-hero ten-way circle free-for-all, four archer companies in crossfire,
   twenty Robins against twenty Black Knights, and four champions with mixed
   soldier retinues.
-  Diplomacy beyond the current
-  different-ID-is-hostile rule remains a future extension.
+  Relationships can change deterministically during play through
+  `GetDiplomacyRelationship` / `SetDiplomacyRelationship`, the
+  `DIPLOMACY <first> <second> <allied|neutral|hostile>` console command, or
+  serialized player commands. A change immediately reconciles perception,
+  AI targets, swordfights, projectile protection, cursors, and minimap colours;
+  neutral factions use amber. Options → Gameplay can disable authored
+  diplomacy or all NPC-vs-NPC faction wars, and Options → Graphics can disable
+  relationship-aware colours. Per-mission statistics retain deterministic
+  per-allegiance soldier encounters, survivors, deaths, and player-caused
+  deaths alongside the legacy aggregate rows. The three-way test arena is an
+  editable allied/neutral/hostile example.
 
 - **Orthogonal human-actor roles and control.** `Pc`, `Soldier`, and
   `Civilian` now describe body/profile archetypes only. Runtime and hackable

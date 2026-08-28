@@ -597,6 +597,13 @@ fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> b
     is_forest_level && viewer_camp == Camp::Royalists
 }
 
+fn forest_180_degree_view_enabled_with_relationship(
+    is_forest_level: bool,
+    viewer_player_aligned: bool,
+) -> bool {
+    is_forest_level && viewer_player_aligned
+}
+
 /// Original clears the remembered worst type only after every detectable
 /// bucket has contributed its persistent suspect value to the frame maximum.
 fn finalize_detection_summary(npc: &mut crate::element::AiActorData) {
@@ -2467,7 +2474,8 @@ impl EngineInner {
         // InstantDetection is camp-wide in the Original: Royalists always
         // commit Enemy sightings, while Lacklandists accumulate in the
         // sleeping/default/wondering states.
-        let instant_detection = viewer.camp == Camp::Royalists
+        let viewer_player_aligned = self.is_player_aligned_camp(viewer.camp);
+        let instant_detection = viewer_player_aligned
             || !matches!(
                 current_state,
                 AiState::Sleeping | AiState::Default | AiState::Wondering
@@ -2748,7 +2756,7 @@ impl EngineInner {
                     continue;
                 }
 
-                let frequency = if target.is_soldier || viewer.camp == Camp::Royalists {
+                let frequency = if target.is_soldier || viewer_player_aligned {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
                 } else {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_PC
@@ -2815,9 +2823,9 @@ impl EngineInner {
                         real_half_aperture,
                         viewer_in_building,
                         target_in_same_building,
-                        forest_180_degree_view: forest_180_degree_view_enabled(
+                        forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
                             is_forest_level,
-                            viewer.camp,
+                            viewer_player_aligned,
                         ),
                         golden_eye_mode: golden_eye,
                         // Resolved lazily below at Original's
@@ -3310,7 +3318,7 @@ impl EngineInner {
                 // side when the NPC is Royalist, but for Lacklandists
                 // PCs are enemies — skip). For now, only add NPCs.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || ss.camp != my_camp {
+                    if ss.id == npc_id || !self.camps_are_allied(ss.camp, my_camp) {
                         continue;
                     }
                     if !ss.able_to_fight {
@@ -3428,7 +3436,7 @@ impl EngineInner {
                     else {
                         continue;
                     };
-                    if claimant.camp != my_camp || !claimant.able_to_fight {
+                    if !self.camps_are_allied(claimant.camp, my_camp) || !claimant.able_to_fight {
                         continue;
                     }
                     if Some(crate::ai::AiEntityHandle::new(target)) == enemy_ai.base.primary_target
@@ -3445,7 +3453,7 @@ impl EngineInner {
                 tick_data.camp_soldiers.clear();
                 tick_data.camp_unconscious_soldiers.clear();
                 for (ko_id, ko_camp, knocked_out_in_money_fight) in unconscious_soldiers {
-                    if *ko_id == npc_id || *ko_camp != my_camp {
+                    if *ko_id == npc_id || !self.camps_are_allied(*ko_camp, my_camp) {
                         continue;
                     }
                     tick_data.camp_unconscious_soldiers.push(
@@ -3461,7 +3469,7 @@ impl EngineInner {
                 // and MaybeOfficerSeesMeFighting; eager LOS here would fire
                 // O(N²) raycasts and perturb the cache on idle ticks.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || ss.camp != my_camp {
+                    if ss.id == npc_id || !self.camps_are_allied(ss.camp, my_camp) {
                         continue;
                     }
                     let ss_position = crate::ai::Position {
@@ -3621,7 +3629,7 @@ impl EngineInner {
                     // walking / running / charging the same target.
                     for ss in soldier_snapshots {
                         if ss.id.index() == me_handle
-                            || ss.camp != my_camp
+                            || !self.camps_are_allied(ss.camp, my_camp)
                             || !ss.able_to_fight
                             || !ss.is_swordfighting
                         {
@@ -3951,7 +3959,7 @@ impl EngineInner {
                         crate::ai::StimulusType::EventView,
                         target_id.index(),
                     ));
-                    if viewer.camp == Camp::Royalists && target.is_soldier && target.blipped {
+                    if viewer_player_aligned && target.is_soldier && target.blipped {
                         reveal_targets.push(target_id);
                     }
                 }
@@ -4371,9 +4379,9 @@ impl EngineInner {
             real_half_aperture: viewer.real_half_aperture,
             viewer_in_building,
             target_in_same_building,
-            forest_180_degree_view: forest_180_degree_view_enabled(
+            forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
                 self.world.weather.is_forest_level,
-                viewer.camp,
+                self.is_player_aligned_camp(viewer.camp),
             ),
             golden_eye_mode: self.ai.global.golden_eye_mode,
             effective_view_radius: viewer.view_radius as f32,

@@ -58,7 +58,7 @@ pub struct SimConfig {
     /// hostility rule. Serialized because it affects simulation outcomes.
     #[serde(default)]
     pub diplomacy: bool,
-    #[serde(default)]
+    #[serde(default = "default_enabled")]
     pub npc_faction_wars: bool,
     pub script_enabled: bool,
     pub highlander: bool,
@@ -87,6 +87,10 @@ pub struct SimConfig {
 }
 
 fn default_enabled() -> bool {
+    true
+}
+
+const fn default_enabled() -> bool {
     true
 }
 

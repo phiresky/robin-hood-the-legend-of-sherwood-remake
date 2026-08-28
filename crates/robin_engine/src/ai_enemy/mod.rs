@@ -3140,7 +3140,6 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         let radius_sq = (radius as f32) * (radius as f32);
-        let my_camp = ctx.camp;
         let my_pos = ctx.self_body_position_world;
         // The engine performs the state-filtered registry walk against live
         // recipients. Use this snapshot only to avoid suspending the caller
@@ -3149,7 +3148,7 @@ impl EnemyAi {
             .entity_views
             .iter()
             .filter(|(handle, view)| {
-                **handle != self.base.me && view.is_soldier() && view.camp == my_camp
+                **handle != self.base.me && view.is_soldier() && ctx.is_allied_with(view.camp)
             })
             .any(|(_, view)| {
                 // Original subtracts each friend's raw

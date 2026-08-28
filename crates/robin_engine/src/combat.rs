@@ -1380,7 +1380,7 @@ fn estimate_damage_of_sword_strike(
         }
 
         // Friendly fire check.
-        if victim.camp == attacker_camp && !is_drunken {
+        if !ctx.diplomacy.is_hostile(attacker_camp, victim.camp) && !is_drunken {
             return (0, -1);
         }
 
@@ -1417,6 +1417,9 @@ pub struct StrikeSelectionContext<'a> {
     /// damage path.
     pub attacker_elevation: f32,
     pub attacker_camp: Camp,
+    /// Authoritative relationship table used to protect allied and neutral
+    /// bystanders during strike selection.
+    pub diplomacy: &'a crate::diplomacy::DiplomacyState,
     /// Whether the attacker is currently in a swordfight, i.e. holds a
     /// non-empty opponent list. False aborts the whole proposal (after the
     /// skill draw); when true it also narrows straight-strike targeting to
@@ -1911,6 +1914,7 @@ mod tests {
             attacker_direction: 0,
             attacker_elevation: 0.0,
             attacker_camp: Camp::Lacklandists,
+            diplomacy: &crate::diplomacy::DiplomacyState::default(),
             is_swordfighting: true,
             opponent_time_limit: None,
             strike_startup_frames: None,
@@ -2096,6 +2100,7 @@ mod tests {
             attacker_direction: 0,
             attacker_elevation: 0.0,
             attacker_camp: Camp::Royalists,
+            diplomacy: &crate::diplomacy::DiplomacyState::default(),
             is_swordfighting: true,
             opponent_time_limit: Some(1000),
             strike_startup_frames: None,

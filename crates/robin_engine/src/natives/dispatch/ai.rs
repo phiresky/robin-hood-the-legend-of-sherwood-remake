@@ -192,7 +192,7 @@ impl NativeContext<'_, '_> {
                         tracing::error!("Script Error: GetAIAttitude target {actor} is not an NPC");
                         0
                     }
-                    Some(e) => i32::from(e.camp().is_hostile_to(Camp::Royalists)),
+                    Some(e) => i32::from(self.is_hostile_to_player(e.camp())),
                 }
             }
             SetAILevel => {

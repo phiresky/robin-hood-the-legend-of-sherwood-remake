@@ -401,7 +401,7 @@ impl NativeContext<'_, '_> {
                         .any(|&handle| match self.get_entity(handle) {
                             Some(Entity::Soldier(s)) => {
                                 s.element.active
-                                    && s.soldier.cached_camp.is_hostile_to(Camp::Royalists)
+                                    && self.is_hostile_to_player(s.soldier.cached_camp)
                                     && s.npc.life_points > 0
                                     && !s.human.unconscious
                                     && s.element.posture != Posture::Tied

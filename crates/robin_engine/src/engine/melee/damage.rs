@@ -390,6 +390,21 @@ impl EngineInner {
                 return;
             }
         };
+        if let Some(attacker_id) = attacker_id {
+            let attacker = self.expect_entity(attacker_id, "sword-damage diplomacy attacker");
+            let victim = self.expect_entity(victim_id, "sword-damage diplomacy victim");
+            if !self.mission_domain.diplomacy.actors_may_fight(
+                attacker.camp(),
+                attacker.is_pc(),
+                victim.camp(),
+                victim.is_pc(),
+            ) {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(damage_element.0, damage_element.1);
+                return;
+            }
+        }
 
         // Ladder/wall victims are *not* short-circuited here: the
         // protection rolls happen first and only the hit-reaction
@@ -1913,6 +1928,20 @@ impl EngineInner {
         // an attached scroll suppresses the concussion primitive, but still
         // authors the falling-hit order (RHelementactorhuman.cpp:1745-1791;
         // rhelementactorcivilian.cpp:901-909).
+        if !self.mission_domain.diplomacy.npc_faction_wars()
+            && let Some(attacker_id) = attacker_id
+            && !self
+                .expect_entity(attacker_id, "hit-damage diplomacy attacker")
+                .is_pc()
+            && !self
+                .expect_entity(victim_id, "hit-damage diplomacy victim")
+                .is_pc()
+        {
+            self.orders
+                .sequence_manager
+                .element_terminated(damage_element.0, damage_element.1);
+            return;
+        }
         let victim = self.expect_entity(victim_id, "apply_hit_damage victim");
         let ctx = concussion_ctx_full(
             victim,

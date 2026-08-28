@@ -61,10 +61,7 @@ pub fn should_add_enemy_detectable_with(
             && (!matches!(npc_camp, Camp::Custom(_))
                 || diplomacy.is_hostile(npc_camp, target_camp));
     }
-    if target_is_soldier
-        && !diplomacy.npc_faction_wars()
-        && (matches!(npc_camp, Camp::Custom(_)) || matches!(target_camp, Camp::Custom(_)))
-    {
+    if target_is_soldier && !diplomacy.npc_faction_wars() {
         return false;
     }
     (target_is_soldier || target_is_pc) && diplomacy.is_hostile(npc_camp, target_camp)
@@ -175,6 +172,28 @@ mod tests {
             true,
             true,
             Camp::Royalists
+        ));
+    }
+
+    #[test]
+    fn npc_faction_wars_toggle_disables_soldier_on_soldier_detection() {
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(true, false, None)
+            .expect("empty definition");
+        assert!(!should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Royalists,
+            true,
+            false,
+            true,
+            Camp::Lacklandists,
+        ));
+        assert!(should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Lacklandists,
+            true,
+            true,
+            false,
+            Camp::Royalists,
         ));
     }
 

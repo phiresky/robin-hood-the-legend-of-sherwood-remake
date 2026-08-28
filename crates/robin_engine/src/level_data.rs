@@ -5047,6 +5047,12 @@ mod tests {
                 "map_filename": "Arena",
                 "spawn": [50, 50],
                 "spawn_player": false,
+                "diplomacy": {
+                    "player_coalition": [0, 7],
+                    "relationships": [
+                        {"first": 2, "second": 9, "relationship": "neutral"}
+                    ]
+                },
                 "walkable_polygon": [[0, 0], [100, 0], [100, 100]],
                 "soldiers": [
                     {"position": [20, 20], "profile": 0, "allegiance": 2, "command_interface": "tactical_orders", "mission_role": "tactical_ally", "combat_stance": "defensive"},
@@ -5083,6 +5089,13 @@ mod tests {
         assert_eq!(
             level.mission.pcs_to_rescue[0].combat_stance,
             CombatStance::Aggressive
+        );
+        let diplomacy = level.diplomacy.expect("authored diplomacy");
+        assert_eq!(diplomacy.player_coalition, vec![0, 7]);
+        assert_eq!(diplomacy.relationships.len(), 1);
+        assert_eq!(
+            diplomacy.relationships[0].relationship,
+            crate::diplomacy::Relationship::Neutral
         );
         assert_eq!(
             level.mission.pcs_to_rescue[0].ai_profile.as_deref(),

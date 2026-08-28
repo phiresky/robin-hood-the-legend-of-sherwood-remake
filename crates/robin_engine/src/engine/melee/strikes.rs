@@ -3165,6 +3165,7 @@ impl EngineInner {
                 attacker_direction: attack.attacker_direction,
                 attacker_elevation: attack.attacker_elevation,
                 attacker_camp: attack.attacker_camp,
+                diplomacy: &self.mission_domain.diplomacy,
                 is_swordfighting: attack.is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: attacker_sprite_frames,

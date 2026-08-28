@@ -450,6 +450,14 @@ impl AiContext {
         self.player_relationship() == crate::diplomacy::Relationship::Hostile
     }
 
+    pub fn is_allied_with(&self, camp: crate::element::Camp) -> bool {
+        self.entity_views.diplomacy.is_allied(self.camp, camp)
+    }
+
+    pub fn is_hostile_with(&self, camp: crate::element::Camp) -> bool {
+        self.entity_views.diplomacy.is_hostile(self.camp, camp)
+    }
+
     pub(crate) fn hiking_waypoint_sector(
         &self,
         path_index: usize,

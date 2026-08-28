@@ -1643,7 +1643,7 @@ impl FriendlyAi {
                             // report update uses the currently-
                             // spotted human's position instead.
                             if let Some(view) = ctx.entity_view(human_handle.get())
-                                && view.camp != ctx.camp
+                                && ctx.is_hostile_with(view.camp)
                             {
                                 self.base
                                     .my_reconnaissance_report
@@ -1658,7 +1658,7 @@ impl FriendlyAi {
                             let Some(v) = ctx.entity_view(human_handle.get()) else {
                                 return false;
                             };
-                            let different_camp = v.camp != ctx.camp;
+                            let different_camp = ctx.is_hostile_with(v.camp);
                             let is_swordfighting = v.is_swordfighting;
                             let human_pos = v.position;
                             if (different_camp || is_swordfighting)
@@ -1814,7 +1814,7 @@ impl FriendlyAi {
             return;
         }
 
-        let same_camp = antagonist.camp == ctx.camp;
+        let same_camp = ctx.is_allied_with(antagonist.camp);
 
         if same_camp {
             match self.base.current_state {
@@ -2006,7 +2006,6 @@ impl FriendlyAi {
         doors: Option<&[crate::gate::Door]>,
     ) -> bool {
         let my_pos = ctx.position;
-        let my_camp = ctx.camp;
         let my_layer = ctx.position.level;
         let my_sector = ctx.position.sector;
         let check_door_path = (flags & Self::ALERTFLAG_CHECK_DOOR_PATH) != 0;
@@ -2029,7 +2028,7 @@ impl FriendlyAi {
             if handle == self.base.me {
                 continue;
             }
-            if !view.is_soldier() || view.camp != my_camp {
+            if !view.is_soldier() || !ctx.is_allied_with(view.camp) {
                 continue;
             }
             if !view.is_able_to_fight {

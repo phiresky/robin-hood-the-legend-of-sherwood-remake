@@ -7,6 +7,13 @@
     1760
   ],
   "spawn_player": false,
+  "diplomacy": {
+    "player_coalition": [0],
+    "relationships": [
+      {"first": 2, "second": 3, "relationship": "allied"},
+      {"first": 3, "second": 4, "relationship": "neutral"}
+    ]
+  },
   "walkable_polygon": [
     [
       80,
