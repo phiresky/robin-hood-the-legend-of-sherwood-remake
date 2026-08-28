@@ -519,6 +519,7 @@ pub(super) fn run_forward_ticks(
         } else {
             timeline.advance_frame();
         }
+        refresh_authoritative_multiplayer_state(host, timeline.frame_number(), engine);
 
         // If the tick queued any modal, drop it silently and keep
         // going.  Without this the caller's `step N` would stop at
@@ -543,7 +544,6 @@ pub(super) fn rewind_to_frame(
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
 ) -> Result<u32, String> {
-    let _ = host; // reserved for future hooks (e.g. cursor reset on scrub)
     let Some(oldest) = timeline.rewind_buffer.oldest_reachable_frame() else {
         return Err("rewind buffer empty".into());
     };
@@ -563,7 +563,20 @@ pub(super) fn rewind_to_frame(
     if !restored {
         return Err("rewind_to failed (no matching snapshot)".into());
     }
+    refresh_authoritative_multiplayer_state(host, timeline.frame_number(), &manager.engine);
     Ok(from)
+}
+
+/// Keep reconnect admission and input stamping aligned with debugger-driven
+/// timeline movement. Manual HTTP steps bypass the normal outer-frame commit,
+/// which otherwise refreshes both pieces of host-authoritative network state.
+fn refresh_authoritative_multiplayer_state(host: &Host, frame: u32, engine: &engine_api::Engine) {
+    if let Some(net) = host.transport.net.as_ref()
+        && host.transport.local_seat == PlayerId::HOST
+    {
+        net.publish_frame(frame);
+        net.set_initial_snapshot(frame, engine);
+    }
 }
 
 /// True iff the engine has queued a modal dialog / debriefing / scroll
@@ -842,6 +855,52 @@ mod tests {
             .frame_for(0)
             .expect("live step recorded in rewind history");
         assert!(input.run_post_initialize);
+    }
+
+    #[test]
+    fn multiplayer_host_manual_steps_refresh_reconnect_state() {
+        let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(None);
+        let (net, _incoming, _outgoing, frame_cursor, initial_snapshot) =
+            crate::multiplayer::NetChannels::new();
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(net);
+        let mut modal_policy = crate::http_server::StepModalPolicy::default();
+
+        run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut timeline,
+            1,
+            &mut modal_policy,
+        )
+        .expect("multiplayer host forward step");
+
+        assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 1);
+        {
+            let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
+            let (frame, engine) = snapshot.as_ref().expect("forward-step snapshot");
+            assert_eq!(*frame, 1);
+            assert_eq!(
+                engine.encode_native_snapshot(),
+                manager.engine.encode_native_snapshot()
+            );
+        }
+
+        rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 0)
+            .expect("multiplayer host rewind");
+
+        assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
+        let (frame, engine) = snapshot.as_ref().expect("rewind snapshot");
+        assert_eq!(*frame, 0);
+        assert_eq!(
+            engine.encode_native_snapshot(),
+            manager.engine.encode_native_snapshot()
+        );
     }
 
     #[test]
