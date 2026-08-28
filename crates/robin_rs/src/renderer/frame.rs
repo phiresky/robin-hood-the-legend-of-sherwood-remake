@@ -3,6 +3,7 @@
 use crate::gfx_types::Rect;
 use crate::gpu_upscale::GpuUpscale;
 use crate::window::{GpuContext, SharedSurface};
+use robin_engine::graphic_config::{TextureEffect, TextureScaleMode};
 
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
@@ -10,6 +11,20 @@ use super::{
     QuadVertex, QueuedDraw, ScreenUniform, TextureRef, log_fps, make_alpha_source, make_tex_bg,
     present_time_record, upload_counter,
 };
+
+fn presentation_profile(
+    ui_only_frame: bool,
+    configured_mode: TextureScaleMode,
+    configured_effect: TextureEffect,
+) -> (TextureScaleMode, TextureEffect) {
+    if ui_only_frame {
+        // Match the sharp-bilinear UI composite. This is still valid at
+        // fractional window scales, unlike forcing raw nearest-neighbour.
+        (TextureScaleMode::PixelArt, TextureEffect::None)
+    } else {
+        (configured_mode, configured_effect)
+    }
+}
 
 pub(super) struct FrameState {
     pub(super) width: u16,
@@ -19,6 +34,12 @@ pub(super) struct FrameState {
     /// display effects deliberately advance here rather than on simulation
     /// ticks, so 90/120/144 Hz presentation remains smooth while paused.
     presentation_frame_count: usize,
+    /// Top-level screens such as the main menu have no separate world
+    /// layer, but still need to remain outside the configured gameplay
+    /// upscaler/effect chain. They render into the ordinary logical target
+    /// (so modal freezing keeps working) and request the same sharp
+    /// presentation profile used by the split UI layer.
+    ui_only_frame: bool,
     surface: SharedSurface,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     pub(super) render_target_texture: wgpu::Texture,
@@ -193,13 +214,17 @@ impl FrameState {
             bytemuck::bytes_of(&screen_swap),
         );
 
-        let multipass_upscale =
-            GpuUpscale::is_multipass_mode(pipelines.scale_mode, pipelines.texture_effect);
+        let (scale_mode, texture_effect) = presentation_profile(
+            self.ui_only_frame,
+            pipelines.scale_mode,
+            pipelines.texture_effect,
+        );
+        let multipass_upscale = GpuUpscale::is_multipass_mode(scale_mode, texture_effect);
         let multipass_rendered = if multipass_upscale {
             pipelines
                 .gpu_upscale
                 .render_multipass(
-                    pipelines.scale_mode,
+                    scale_mode,
                     &mut encoder,
                     &self.render_target_texture,
                     &swap_view,
@@ -207,7 +232,7 @@ impl FrameState {
                     [dx as f32, dy as f32, dst_w, dst_h],
                     Some(presentation_frame_count),
                     Some(pipelines.shader_preset.as_str()),
-                    pipelines.texture_effect,
+                    texture_effect,
                     pipelines.upscale_parameters,
                     pipelines.texture_effect_parameters,
                 )
@@ -224,8 +249,8 @@ impl FrameState {
             // CUT3, scale2x/3x, xBR) want their own pipeline + uniforms.
             // Build the per-frame source bind group + uniform write here
             // so the borrow on `gpu_upscale` doesn't outlive the pass.
-            let upscale_state = if pipelines.scale_mode.needs_shader() && !multipass_upscale {
-                let selected_mode = pipelines.scale_mode;
+            let upscale_state = if scale_mode.needs_shader() && !multipass_upscale {
+                let selected_mode = scale_mode;
                 let up = pipelines
                     .gpu_upscale
                     .pipeline_for(selected_mode)
@@ -351,6 +376,10 @@ impl FrameState {
         }
     }
 
+    pub(super) fn begin_ui_only_frame(&mut self) {
+        self.ui_only_frame = true;
+    }
+
     pub(super) fn freeze_scene(&mut self, gpu: &GpuContext, resources: &GpuResources) {
         if self.frozen_scene.is_some() {
             return;
@@ -452,6 +481,7 @@ impl FrameState {
             height,
             gpu_phase_active: false,
             presentation_frame_count: 0,
+            ui_only_frame: false,
             surface,
             surface_config,
             render_target_texture,
@@ -589,6 +619,7 @@ impl FrameState {
         self.frame_texture_bgs.clear();
         self.gpu_phase_active = false;
         self.ui_layer_start = None;
+        self.ui_only_frame = false;
     }
 
     fn reconfigure_surface(&self, gpu: &GpuContext) {
@@ -651,6 +682,27 @@ impl FrameState {
         self.alpha_source_view = view;
         self.alpha_source_bg = bind_group;
         self.frozen_scene = None;
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn ui_only_frames_bypass_gameplay_scaling_and_effects() {
+        assert_eq!(
+            presentation_profile(true, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::PixelArt, TextureEffect::None)
+        );
+    }
+
+    #[test]
+    fn gameplay_frames_keep_the_configured_profile() {
+        assert_eq!(
+            presentation_profile(false, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale)
+        );
     }
 }
 

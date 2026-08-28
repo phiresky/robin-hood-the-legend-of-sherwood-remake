@@ -897,6 +897,14 @@ impl Renderer {
         self.frame.begin_ui_layer();
     }
 
+    /// Present this whole logical frame with the sharp UI scaler, bypassing
+    /// gameplay upscalers and post-effects. Top-level menus use this instead
+    /// of splitting a transparent UI layer so their rendered frame remains
+    /// available to the modal-freeze path.
+    pub fn begin_ui_only_frame(&mut self) {
+        self.frame.begin_ui_only_frame();
+    }
+
     /// Snapshot the offscreen render target into a held texture so a
     /// modal menu can overlay dim/tint + widgets on top of the previous
     /// gameplay frame. Idempotent — subsequent calls while a freeze is

@@ -61,7 +61,11 @@ without perturbing deterministic gameplay.
 Gameplay draws mark the UI boundary before the HUD; modal menus mark it after
 freezing their world backdrop. The renderer first executes scaling/effects on
 the scene target and then alpha-composites the transparent UI target using
-sharp-bilinear sampling. Cutscene video uses the same scaling/effect config.
+sharp-bilinear sampling. Top-level UI-only screens use that same sharp profile
+for their entire logical frame (while retaining the ordinary target for modal
+snapshots). Loading artwork remains in the effected layer, with progress and
+version text split into the sharp UI layer. Cutscene video uses the same
+scaling/effect config.
 
 ### Original presentation parity
 

@@ -287,6 +287,7 @@ pub(crate) async fn show_main_menu(
     // user cancels the dialog) so the prompt never repeats.
     if let Some(bg) = bg {
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
         let bg_x = (MENU_W - bg.width) / 2;
         let bg_y = (MENU_H - bg.height) / 2;
         let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
@@ -449,6 +450,7 @@ pub(crate) async fn show_main_menu(
         // GPU queue; no menu frame mutates a retained software surface.
 
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
 
         if let Some(bg) = bg {
             let bg_x = (MENU_W - bg.width) / 2;

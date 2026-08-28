@@ -102,6 +102,7 @@ pub(crate) async fn show_credits(
         // ── Render ──
         // Background: fill with black, then blit the centered texture.
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
         if let Some(bg) = bg_surface {
             let (bw, bh) = bg_dims.unwrap();
             let bx = (screen_w - bw) / 2;
