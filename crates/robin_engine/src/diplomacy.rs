@@ -454,6 +454,26 @@ mod tests {
     }
 
     #[test]
+    fn an_external_ally_is_not_implicitly_player_controlled() {
+        let state = DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&DiplomacyDefinition {
+                player_coalition: vec![0],
+                relationships: vec![DiplomacyRule {
+                    first: 0,
+                    second: 7,
+                    relationship: Relationship::Allied,
+                }],
+            }),
+        )
+        .unwrap();
+
+        assert!(state.is_allied(Camp::Royalists, Camp::Custom(7)));
+        assert!(!state.is_player_aligned(Camp::Custom(7)));
+    }
+
+    #[test]
     fn same_allegiance_cannot_be_made_hostile() {
         let mut state = DiplomacyState::default();
         assert!(

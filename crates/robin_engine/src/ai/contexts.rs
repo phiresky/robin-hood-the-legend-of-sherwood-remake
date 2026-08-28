@@ -443,7 +443,7 @@ impl AiContext {
     }
 
     pub fn is_player_aligned(&self) -> bool {
-        self.player_relationship() == crate::diplomacy::Relationship::Allied
+        self.entity_views.diplomacy.is_player_aligned(self.camp)
     }
 
     pub fn is_hostile_to_player(&self) -> bool {

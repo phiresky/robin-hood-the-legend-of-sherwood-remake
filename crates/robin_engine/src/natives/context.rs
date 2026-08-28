@@ -373,8 +373,10 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
-        self.relationship(camp, crate::element::Camp::Royalists)
-            == crate::diplomacy::Relationship::Allied
+        self.diplomacy.as_deref().map_or_else(
+            || crate::diplomacy::DiplomacyState::default().is_player_aligned(camp),
+            |diplomacy| diplomacy.is_player_aligned(camp),
+        )
     }
 
     pub(crate) fn is_hostile_to_player(&self, camp: crate::element::Camp) -> bool {
