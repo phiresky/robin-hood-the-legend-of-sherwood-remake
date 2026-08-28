@@ -14,3 +14,4 @@ pub mod sb3d;
 pub mod scb;
 pub mod serialize;
 pub mod shipping_datadir;
+pub mod sprite_codec;
