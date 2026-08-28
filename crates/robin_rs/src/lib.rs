@@ -245,6 +245,8 @@ pub mod ui;
 pub mod ui_panel;
 pub mod ui_screens;
 pub mod video_player;
+#[cfg(all(feature = "audio", target_arch = "wasm32"))]
+mod web_audio_backend;
 pub mod widget;
 pub mod window;
 pub mod zoom_hud;

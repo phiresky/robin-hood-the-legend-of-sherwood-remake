@@ -61,12 +61,6 @@ gilrs = "0.11"
 wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 pollster = "1.0"
 
-# Audio
-# Spatial-audio coords for kira (kira's spatial API takes mint::Vector3 /
-# Quaternion; glam types convert via mint compat). We talk to it directly
-# in mint to avoid pulling glam in as a direct dep.
-mint = { version = "0.5", optional = true }
-
 # Async plumbing for the ApplicationHandler ↔ game-loop bridge.
 # The whole game loop is `async fn`; on native it runs on a dedicated
 # `std::thread` driven by `pollster::block_on`, on wasm it's a
@@ -83,10 +77,13 @@ web-time.workspace = true
 robin_lua.workspace = true
 mlua.workspace = true
 rayon = "1"
+ogg = "0.9.2"
 # Keep Kira's complete native decoder/backend feature set. Native installs can
 # point at user-supplied data directories, so restricting their accepted audio
 # formats would be an unnecessary compatibility regression.
 kira = { version = "0.12", optional = true }
+# Spatial-audio coordinates for Kira. Web Audio uses StereoPannerNode.
+mint = { version = "0.5", optional = true }
 fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
@@ -134,30 +131,30 @@ jni = "0.22.4"
 # Wasm-only: wasm-bindgen + web-sys glue, plus a JS-backed timer for
 # async pacing inside the game loop.  Single-threaded — no `wasm-bindgen-rayon`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# Shipping data contains PCM WAV effects and Ogg/Vorbis music. Limit the wasm
-# decoder graph to exactly those formats instead of Kira's defaults, which also
-# compile the unused MP3 and FLAC decoders into the browser module.
-kira = { version = "0.12", default-features = false, features = [
-    "cpal-realtime",
-    "ogg",
-    "vorbis",
-    "wav",
-    "pcm",
-], optional = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
     "Window",
     "Document",
     "Element",
+    "GainNode",
     "HtmlElement",
     "HtmlCanvasElement",
     "Location",
     "Performance",
     "Response",
     "Storage",
+    "StereoPannerNode",
     "Url",
     "UrlSearchParams",
 ] }

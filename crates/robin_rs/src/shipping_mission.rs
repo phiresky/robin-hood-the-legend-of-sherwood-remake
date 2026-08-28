@@ -44,13 +44,24 @@ where
         profiles,
         has_decoded_saved_world,
     )?;
-    let total = dependencies.files.len();
+    let total = dependencies.files.len()
+        + usize::from(cfg!(all(target_arch = "wasm32", feature = "audio")));
     progress(MissionLoadProgress {
         completed: 0,
         total,
         file: None,
     });
     if datadir.is_mission_loaded(mission) {
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        {
+            decode_mission_audio(datadir, mission).await?;
+            progress(MissionLoadProgress {
+                completed: total,
+                total,
+                file: Some("browser audio"),
+            });
+            crate::window::yield_to_runtime().await;
+        }
         datadir
             .activate_mission(mission)
             .with_context(|| format!("activate shipping mission {mission}"))?;
@@ -97,6 +108,16 @@ where
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    {
+        decode_mission_audio(datadir, mission).await?;
+        progress(MissionLoadProgress {
+            completed: total,
+            total,
+            file: Some("browser audio"),
+        });
+        crate::window::yield_to_runtime().await;
+    }
     datadir.set_active_exclamation_ids(exclamation_ids);
     let payload = datadir
         .loaded_mission(mission)
@@ -110,6 +131,27 @@ where
         "shipping mission payload loaded"
     );
     Ok(())
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "audio"))]
+async fn decode_mission_audio(datadir: &ShippingDatadir, mission: &str) -> Result<()> {
+    let payload = datadir
+        .loaded_mission(mission)
+        .ok_or_else(|| anyhow!("shipping mission {mission} disappeared before audio decode"))?;
+    let entries = payload
+        .audio_durations_ms
+        .keys()
+        .map(|path| {
+            let bytes = payload.raw_asset(path).ok_or_else(|| {
+                anyhow!("required mission audio {path} is absent from its installed bundle")
+            })?;
+            Ok::<_, anyhow::Error>((path.clone(), bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    crate::audio_backend::replace_mission(entries)
+        .await
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("decode required audio for shipping mission {mission}"))
 }
 
 struct RequiredMissionDependencies {
