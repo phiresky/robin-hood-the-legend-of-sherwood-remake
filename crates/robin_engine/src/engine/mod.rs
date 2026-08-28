@@ -1054,11 +1054,9 @@ impl EngineInner {
             .mission_stat
             .reset_faction_living_counts();
         for (camp, count) in living_by_camp {
-            for _ in 0..count {
-                self.mission_domain
-                    .mission_stat
-                    .record_living_soldier_at_end(camp);
-            }
+            self.mission_domain
+                .mission_stat
+                .set_faction_living_soldiers_at_end(camp, count);
         }
         // The living-soldier increment runs inside the per-soldier loop,
         // accumulating onto whatever was previously in the stat rather than

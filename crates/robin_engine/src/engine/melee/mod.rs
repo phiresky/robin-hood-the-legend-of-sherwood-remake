@@ -1124,7 +1124,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
-            if diplomacy.is_allied(entity.camp(), waker_camp) {
+            if !diplomacy.is_hostile(entity.camp(), waker_camp) {
                 continue;
             }
             let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {

@@ -507,4 +507,14 @@ mod tests {
         assert!(!state.is_player_aligned(Camp::Custom(4)));
         assert!(state.is_player_aligned(Camp::Royalists));
     }
+
+    #[test]
+    fn npc_faction_wars_only_gate_fights_without_a_player() {
+        let mut state = DiplomacyState::default();
+        state.set_npc_faction_wars(false);
+
+        assert!(!state.actors_may_fight(Camp::Lacklandists, false, Camp::Custom(7), false,));
+        assert!(state.actors_may_fight(Camp::Royalists, true, Camp::Lacklandists, false,));
+        assert!(!state.actors_may_fight(Camp::Royalists, true, Camp::Royalists, true,));
+    }
 }

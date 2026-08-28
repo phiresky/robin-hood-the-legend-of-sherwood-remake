@@ -165,14 +165,14 @@ impl MissionStat {
         }
     }
 
-    pub fn record_living_soldier_at_end(&mut self, camp: Camp) {
+    pub fn set_faction_living_soldiers_at_end(&mut self, camp: Camp, count: u32) {
         let allegiance = camp.allegiance_id().unwrap_or_else(|| {
             panic!("cannot record living soldier for invalid allegiance {camp:?}")
         });
         self.factions
             .entry(allegiance)
             .or_default()
-            .living_soldiers_at_end += 1;
+            .living_soldiers_at_end = count;
     }
 
     /// Add a new peasant to the recruited count.
@@ -377,7 +377,7 @@ mod tests {
         stat.record_soldier_encounter(neutral);
         stat.record_soldier_encounter(neutral);
         stat.record_soldier_death(neutral, true);
-        stat.record_living_soldier_at_end(neutral);
+        stat.set_faction_living_soldiers_at_end(neutral, 1);
 
         assert_eq!(
             stat.factions.get(&7),

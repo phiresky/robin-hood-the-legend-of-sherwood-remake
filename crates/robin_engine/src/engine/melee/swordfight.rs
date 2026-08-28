@@ -808,13 +808,36 @@ impl EngineInner {
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
         prepare_opponent: bool,
     ) -> bool {
+        let (initiator_camp, initiator_is_pc, opponent_camp, opponent_is_pc) = {
+            let initiator_entity = self.expect_entity(initiator, "enter_swordfight initiator");
+            let opponent_entity = self.expect_entity(opponent, "enter_swordfight opponent");
+            (
+                initiator_entity.camp(),
+                initiator_entity.is_pc(),
+                opponent_entity.camp(),
+                opponent_entity.is_pc(),
+            )
+        };
+        if !self.mission_domain.diplomacy.actors_may_fight(
+            initiator_camp,
+            initiator_is_pc,
+            opponent_camp,
+            opponent_is_pc,
+        ) {
+            tracing::debug!(
+                ?initiator,
+                ?opponent,
+                ?initiator_camp,
+                ?opponent_camp,
+                "enter_swordfight: rejected by diplomacy"
+            );
+            return false;
+        }
+
         let scratch = self.build_sim_scratch(sim, assets);
         // PC initiators clear shield-protection before entering the
         // fight to unlink any active shield-protection.  NPC
         // sword-fights don't carry the protection link.
-        let initiator_is_pc = self
-            .expect_entity(initiator, "enter_swordfight initiator")
-            .is_pc();
         if initiator_is_pc {
             self.set_shield_protected(initiator, None);
         }

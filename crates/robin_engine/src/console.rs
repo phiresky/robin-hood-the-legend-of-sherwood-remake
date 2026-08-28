@@ -278,7 +278,7 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
             "Verboten : Please enter a valid filename !".to_owned(),
         )),
         "DIES" if tokens.get(1) == Some(&"IRAE") => Some(ConsoleCommand::DiesIrae),
-        "DIPLOMACY" if tokens.len() == 4 => parse_diplomacy_args(tokens),
+        "DIPLOMACY" if tokens.len() == 4 => Some(parse_diplomacy_args(tokens)),
         "DIPLOMACY" => Some(ConsoleCommand::UsageError(
             "USAGE: DIPLOMACY <first> <second> <allied|neutral|hostile>".to_owned(),
         )),
@@ -352,20 +352,25 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
     }
 }
 
-fn parse_diplomacy_args(tokens: &[&str]) -> Option<ConsoleCommand> {
-    let first = tokens[1].parse::<u16>().ok()?;
-    let second = tokens[2].parse::<u16>().ok()?;
+fn parse_diplomacy_args(tokens: &[&str]) -> ConsoleCommand {
+    const USAGE: &str = "USAGE: DIPLOMACY <first> <second> <allied|neutral|hostile>";
+    let Ok(first) = tokens[1].parse::<u16>() else {
+        return ConsoleCommand::UsageError(USAGE.to_owned());
+    };
+    let Ok(second) = tokens[2].parse::<u16>() else {
+        return ConsoleCommand::UsageError(USAGE.to_owned());
+    };
     let relationship = match tokens[3] {
         "ALLIED" => crate::diplomacy::Relationship::Allied,
         "NEUTRAL" => crate::diplomacy::Relationship::Neutral,
         "HOSTILE" => crate::diplomacy::Relationship::Hostile,
-        _ => return None,
+        _ => return ConsoleCommand::UsageError(USAGE.to_owned()),
     };
-    Some(ConsoleCommand::SetDiplomacy {
+    ConsoleCommand::SetDiplomacy {
         first,
         second,
         relationship,
-    })
+    }
 }
 
 fn parse_money_args(args: &[&str]) -> ConsoleCommand {
@@ -476,6 +481,18 @@ mod tests {
         assert_eq!(parse("FREEZE"), Some(ConsoleCommand::Freeze));
         assert_eq!(parse("FULLHOUSE"), Some(ConsoleCommand::GiveAmmo));
         assert_eq!(parse("IDS"), Some(ConsoleCommand::BigBrother));
+        assert_eq!(
+            parse("DIPLOMACY 2 9 NEUTRAL"),
+            Some(ConsoleCommand::SetDiplomacy {
+                first: 2,
+                second: 9,
+                relationship: crate::diplomacy::Relationship::Neutral,
+            })
+        );
+        assert!(matches!(
+            parse("DIPLOMACY two 9 HOSTILE"),
+            Some(ConsoleCommand::UsageError(_))
+        ));
     }
 
     #[test]

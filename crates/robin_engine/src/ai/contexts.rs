@@ -1627,6 +1627,9 @@ impl Default for AiGlobalState {
 
 impl AiGlobalState {
     pub fn npcs_can_be_enemies(&self, diplomacy: &crate::diplomacy::DiplomacyState) -> bool {
+        if !diplomacy.npc_faction_wars() {
+            return false;
+        }
         self.soldier_camps.iter().enumerate().any(|(index, camp)| {
             self.soldier_camps
                 .iter()

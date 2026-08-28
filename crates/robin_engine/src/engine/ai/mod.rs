@@ -4746,15 +4746,31 @@ impl EngineInner {
             .entities
             .get(source)
             .map(Entity::camp)
-            .unwrap_or(crate::element::Camp::Error);
-        let Some(source_ids) = fighter_ids.get(&source_camp).cloned() else {
+            .unwrap_or_else(|| panic!("building alert source {source:?} disappeared"));
+        let source_ids = fighter_ids
+            .iter()
+            .filter(|(camp, _)| self.camps_are_allied(source_camp, **camp))
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect::<Vec<_>>();
+        if source_ids.is_empty() {
             return;
-        };
+        }
         let Some((opposing_camp, opposing_ids)) = fighter_ids
             .iter()
-            .filter(|(camp, ids)| self.camps_are_hostile(source_camp, **camp) && !ids.is_empty())
+            .filter(|(camp, _)| self.camps_are_hostile(source_camp, **camp))
+            .map(|(camp, _)| {
+                let coalition = fighter_ids
+                    .iter()
+                    .filter(|(ally, _)| {
+                        self.camps_are_allied(**camp, **ally)
+                            && self.camps_are_hostile(source_camp, **ally)
+                    })
+                    .flat_map(|(_, ids)| ids.iter().copied())
+                    .collect::<Vec<_>>();
+                (*camp, coalition)
+            })
+            .filter(|(_, ids)| !ids.is_empty())
             .max_by_key(|(_, ids)| ids.len())
-            .map(|(camp, ids)| (*camp, ids.clone()))
         else {
             return;
         };
