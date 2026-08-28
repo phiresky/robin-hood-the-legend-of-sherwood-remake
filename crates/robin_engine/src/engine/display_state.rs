@@ -807,6 +807,11 @@ impl EngineInner {
             crate::diplomacy::Relationship::Neutral => MmCamp::Neutral,
             crate::diplomacy::Relationship::Allied => MmCamp::Allied,
         };
+        let legacy_camp = if entity.camp() == crate::element::Camp::Royalists {
+            MmCamp::Allied
+        } else {
+            MmCamp::Hostile
+        };
 
         Some(ElementDotInfo {
             custom_dot: CustomDot::from_u16(elem.custom_minimap_dot),
@@ -825,6 +830,7 @@ impl EngineInner {
             is_unconscious: entity.human_data().is_some_and(|h| h.unconscious),
             posture_lying: elem.posture == Posture::Lying,
             camp,
+            legacy_camp,
         })
     }
 

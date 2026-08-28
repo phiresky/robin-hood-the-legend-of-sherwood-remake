@@ -977,7 +977,10 @@ pub struct ElementDotInfo {
     pub is_dead: bool,
     pub is_unconscious: bool,
     pub posture_lying: bool,
+    /// Current relationship-aware classification.
     pub camp: Camp,
+    /// Two-camp parity classification used when diplomacy visuals are off.
+    pub legacy_camp: Camp,
 }
 
 /// Determine the minimap dot type for an element.
@@ -1195,6 +1198,7 @@ mod tests {
             is_unconscious: false,
             posture_lying: false,
             camp: Camp::Allied,
+            legacy_camp: Camp::Allied,
         }
     }
 

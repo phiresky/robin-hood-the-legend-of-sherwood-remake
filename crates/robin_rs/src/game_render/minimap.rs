@@ -130,8 +130,8 @@ pub(crate) fn render_minimap(
             Some(i) => i,
             None => continue,
         };
-        if !host.diplomacy_visuals && info.camp == engine_minimap::Camp::Neutral {
-            info.camp = engine_minimap::Camp::Hostile;
+        if !host.diplomacy_visuals {
+            info.camp = info.legacy_camp;
         }
         if !info.is_active {
             continue;
