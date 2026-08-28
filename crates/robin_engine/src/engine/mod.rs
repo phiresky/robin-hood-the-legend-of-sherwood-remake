@@ -5939,6 +5939,8 @@ mod campaign_lifecycle_tests {
             &LevelAssets::default(),
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
+            None,
+            Some(1),
         );
         let campaign = engine.into_campaign();
 
@@ -5968,6 +5970,8 @@ mod campaign_lifecycle_tests {
             &assets,
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
+            None,
+            Some(1),
         );
 
         let campaign = engine.campaign();
@@ -5997,6 +6001,8 @@ mod campaign_lifecycle_tests {
             &assets,
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
+            None,
+            Some(1),
         );
         assert!(failed.mission_achievement_results().is_none());
 
@@ -6011,6 +6017,8 @@ mod campaign_lifecycle_tests {
             &assets,
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
+            None,
+            Some(1),
         );
         assert_eq!(
             succeeded
@@ -6042,6 +6050,8 @@ mod campaign_lifecycle_tests {
             &assets,
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
+            None,
+            Some(1),
         );
 
         let campaign = engine.campaign();
