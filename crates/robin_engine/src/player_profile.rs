@@ -298,10 +298,31 @@ impl PlayerProfileManager {
 
         if path.exists() {
             let data = fs::read_to_string(&path)?;
-            let mut mgr: PlayerProfileManager = serde_json::from_str(&data)
+            let document: serde_json::Value = serde_json::from_str(&data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            for profile in &mut mgr.profiles {
-                profile.migrate_legacy_campaign_aggregate();
+            let legacy_history = document
+                .get("profiles")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "player profile document is missing its profiles array",
+                    )
+                })?
+                .iter()
+                .map(|profile| profile.get("campaign_history").is_none())
+                .collect::<Vec<_>>();
+            let mut mgr: PlayerProfileManager = serde_json::from_value(document)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            assert_eq!(
+                mgr.profiles.len(),
+                legacy_history.len(),
+                "typed profile count changed while deserializing the inspected JSON document"
+            );
+            for (profile, legacy) in mgr.profiles.iter_mut().zip(legacy_history) {
+                if legacy {
+                    profile.migrate_legacy_campaign_aggregate();
+                }
             }
             mgr.save_directory = directory.to_owned();
             Ok(mgr)
@@ -726,6 +747,43 @@ mod tests {
         assert_eq!(mgr.profiles[0].name, "Alice");
         assert_eq!(mgr.profiles[0].difficulty, DifficultyLevel::Hard);
         assert_eq!(mgr.active_index, Some(0));
+        assert!(
+            mgr.profiles[0]
+                .campaign_history
+                .legacy_profile_aggregate()
+                .is_none(),
+            "a modern empty history must not be mislabeled as a legacy import"
+        );
+    }
+
+    #[test]
+    fn load_migrates_aggregate_only_profile_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = dir.path().to_str().unwrap();
+        let mut mgr = PlayerProfileManager::new(dir_str.into());
+        let idx = mgr.create_profile("Legacy Robin".into(), DifficultyLevel::Medium);
+        mgr.profiles[idx].score = 42;
+        mgr.profiles[idx].play_time = 99;
+        let mut document = serde_json::to_value(&mgr).unwrap();
+        document["profiles"][idx]
+            .as_object_mut()
+            .unwrap()
+            .remove("campaign_history");
+        fs::create_dir_all(dir_str).unwrap();
+        fs::write(
+            PlayerProfileManager::profiles_path(dir_str),
+            serde_json::to_vec_pretty(&document).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = PlayerProfileManager::load(dir_str).unwrap();
+        let aggregate = loaded.profiles[idx]
+            .campaign_history
+            .legacy_profile_aggregate()
+            .expect("aggregate-only profile should receive typed migration metadata");
+        assert_eq!(aggregate.score, 42);
+        assert_eq!(aggregate.play_time_seconds, 99);
+        assert!(loaded.profiles[idx].campaign_history.attempts().is_empty());
     }
 
     #[test]

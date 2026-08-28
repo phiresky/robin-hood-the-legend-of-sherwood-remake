@@ -620,6 +620,66 @@ mod tests {
     }
 
     #[test]
+    fn native_stats_preserve_every_mission_stat_field() {
+        let original = MissionStat {
+            collected_money: 101,
+            bonus_money: 202,
+            soldier_money: 303,
+            living_soldier_count: 4,
+            total_soldier_count: 5,
+            new_peasant_count: 6,
+            killed_peasant_count: 7,
+            killed_allied_count: 8,
+            added_score: 909,
+            pc_names: vec![crate::mission_stat::PcStatName::new(
+                "Rescued outlaw".into(),
+                Some(crate::pc_status::SpecialPeasantName::B),
+            )],
+        };
+        let frozen = MissionAttemptStats::from_native(&original);
+
+        assert_eq!(frozen.collected_money, Some(original.collected_money));
+        assert_eq!(frozen.bonus_money, Some(original.bonus_money));
+        assert_eq!(frozen.soldier_money, Some(original.soldier_money));
+        assert_eq!(frozen.living_soldiers, Some(original.living_soldier_count));
+        assert_eq!(frozen.total_soldiers, Some(original.total_soldier_count));
+        assert_eq!(frozen.recruited_peasants, Some(original.new_peasant_count));
+        assert_eq!(frozen.killed_peasants, Some(original.killed_peasant_count));
+        assert_eq!(frozen.killed_allies, Some(original.killed_allied_count));
+        assert_eq!(frozen.added_score, Some(original.added_score));
+        assert_eq!(frozen.recruited_characters, Some(original.pc_names));
+        assert!(frozen.is_complete());
+    }
+
+    #[test]
+    fn versioned_attempt_history_round_trips_losslessly() {
+        let mut history = MissionAttemptHistory::default();
+        history.append(MissionAttempt::native(
+            17,
+            MissionAttemptOutcome::Won,
+            MissionAttemptKind::HistoryReplay,
+            Some(1_700_000_000),
+            321,
+            SimConfig::default(),
+            &MissionStat {
+                collected_money: 111,
+                bonus_money: 222,
+                soldier_money: 333,
+                added_score: 444,
+                ..MissionStat::default()
+            },
+            None,
+        ));
+
+        let json = serde_json::to_string(&history).expect("serialize mission attempt history");
+        let restored: MissionAttemptHistory =
+            serde_json::from_str(&json).expect("deserialize mission attempt history");
+        assert_eq!(restored, history);
+        assert_eq!(restored.schema_version(), CAMPAIGN_HISTORY_SCHEMA_VERSION);
+        assert!(restored.attempts()[0].stats().is_complete());
+    }
+
+    #[test]
     fn legacy_profile_aggregate_is_not_misreported_as_an_attempt() {
         let mut history = ProfileCampaignHistory::default();
         assert!(

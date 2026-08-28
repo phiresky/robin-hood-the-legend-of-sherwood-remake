@@ -6,8 +6,9 @@ use robin_engine::campaign::Campaign;
 use robin_engine::campaign_history::{MissionAttempt, MissionAttemptOutcome};
 use robin_engine::mission::MissionStatus;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissionProgressState {
     Locked,
     Available,
@@ -16,7 +17,7 @@ pub enum MissionProgressState {
     Expired,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissionBestStats {
     pub fastest_win_seconds: Option<u32>,
     pub highest_score: Option<u32>,
@@ -54,7 +55,7 @@ impl MissionBestStats {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CampaignProgressNode {
     pub mission_idx: usize,
     pub mission_id: u32,
@@ -107,7 +108,7 @@ impl CampaignProgressNode {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CampaignProgressGraph {
     pub nodes: Vec<CampaignProgressNode>,
     pub completed_missions: usize,
@@ -294,7 +295,7 @@ impl CampaignProgressGraph {
 }
 
 /// Deterministic grid navigation used by the walkable museum presentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MuseumNavigator {
     pub selected: usize,
     columns: usize,
@@ -373,5 +374,64 @@ mod tests {
         assert_eq!(nav.selected, 5);
         nav.walk(-1, -1);
         assert_eq!(nav.selected, 0);
+    }
+
+    #[test]
+    fn graph_keeps_current_run_and_lifetime_attempt_counts_distinct() {
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 1,
+            mission_name: "Sherwood".into(),
+            location: MissionLocation::Sherwood,
+            ..Default::default()
+        });
+        profiles.missions.push(MissionProfile {
+            id: 10,
+            mission_name: "The Rescue".into(),
+            ..Default::default()
+        });
+        let campaign_with_attempt = |run_id| {
+            let mut campaign = Campaign::default();
+            for idx in 0..2 {
+                campaign.missions.push(Mission {
+                    profile_idx: Some(idx),
+                    ..Mission::new()
+                });
+            }
+            campaign.current_mission_idx = Some(1);
+            campaign.record_mission_attempt(
+                1,
+                MissionAttemptOutcome::Won,
+                Some(100),
+                Some(run_id),
+                60,
+                robin_engine::engine::SimConfig::default(),
+                &robin_engine::mission_stat::MissionStat::default(),
+                None,
+            );
+            campaign
+        };
+
+        let previous_campaign = campaign_with_attempt(1);
+        let current_campaign = campaign_with_attempt(2);
+        let mut lifetime = robin_engine::campaign_history::ProfileCampaignHistory::default();
+        assert_eq!(
+            lifetime
+                .promote_campaign(&previous_campaign, &profiles)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            lifetime
+                .promote_campaign(&current_campaign, &profiles)
+                .unwrap(),
+            1
+        );
+
+        let graph =
+            CampaignProgressGraph::build(&current_campaign, &profiles, true, Some(&lifetime));
+        assert_eq!(graph.nodes[0].attempt_count, 1);
+        assert_eq!(graph.nodes[0].lifetime_attempt_count, 2);
+        assert_eq!(graph.nodes[0].lifetime_win_count, 2);
     }
 }
