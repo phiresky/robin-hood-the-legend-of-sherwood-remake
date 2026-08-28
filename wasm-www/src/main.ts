@@ -22,7 +22,7 @@ type BuildManifest = {
 
 type RobinWasmModule = {
     readonly default: (init?: {
-        module_or_path?: string | URL | Request | ArrayBuffer;
+        module_or_path?: string | URL | Request | Response | ArrayBuffer;
     }) => Promise<unknown>;
     readonly wasm_boot: (datadir: Uint8Array, dataBaseUrl: string) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
@@ -251,11 +251,39 @@ async function loadWasmModule(
         }
     }
 
-    const wasmBytes = preferPrecompressed
-        ? await fetchPrecompressed(`${wasmUrl}.gz`, cache)
+    const wasmResponse = preferPrecompressed
+        ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache)
         : undefined;
-    await wasm.default({ module_or_path: wasmBytes ?? wasmUrl });
+    await wasm.default({ module_or_path: wasmResponse ?? wasmUrl });
     return wasm;
+}
+
+async function fetchPrecompressedWasm(
+    url: string,
+    cache: RequestCache,
+): Promise<Response | undefined> {
+    if (typeof DecompressionStream === 'undefined') {
+        return undefined;
+    }
+    const resp = await fetch(url, { cache });
+    if (resp.status === 404) {
+        return undefined;
+    }
+    if (!resp.ok) {
+        throw new Error(`fetch ${url}: HTTP ${resp.status}`);
+    }
+    if (resp.body === null) {
+        throw new Error(`fetch ${url}: response has no body`);
+    }
+    const body = resp.headers.get('Content-Encoding')?.toLowerCase().includes('gzip') === true
+        ? resp.body
+        : resp.body.pipeThrough(new DecompressionStream('gzip'));
+    // A Response lets wasm-bindgen retain instantiateStreaming. Static hosts
+    // generally label `.wasm.gz` as generic binary data, so provide the MIME
+    // type WebAssembly.instantiateStreaming requires.
+    return new Response(body, {
+        headers: { 'Content-Type': 'application/wasm' },
+    });
 }
 
 async function fetchPrecompressed(
