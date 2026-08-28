@@ -4,6 +4,19 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Bounded widescreen and native-resolution presentation.** The three
+  original logical scale presets remain 640x480, 800x600, and 1024x768, while
+  an enabled-by-default Graphics option adapts the logical canvas to window
+  aspect changes. High reaches 1280x720 at 16:9; wider displays are
+  letterboxed, portrait/narrow displays retain 4:3, and every preset is capped
+  inside the 1280x768 gameplay envelope. The physical swapchain remains
+  independent, including HiDPI browser canvases and fullscreen output. Resize
+  propagation updates pointer mapping, camera bounds, minimap, HUD, and modal
+  return paths without changing the three original camera zoom levels. Wider
+  portrait bars expose additional slots, fixed-width border art fills the
+  complete width, and Android uses a cutout-safe immersive content area.
+  Disabling Adaptive Widescreen restores fixed 4:3 parity presentation.
+
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
@@ -329,14 +342,6 @@ A list of which additional features we have added, which ones we might still wan
   - Render pacing should target 60 FPS or the device screen refresh rate instead
     of the current fixed game-loop cadence. Keep simulation at the existing
     fixed timestep, but present/interpolate at display cadence where possible.
-
-- **Widescreen and high resolutions**
-  - Fix the portrait bar being cut off at the bottom.
-  - At high resolution the game should force a minimum scale. Zoomed out too
-    much is kind of cheating and makes the game weird: enemies feel like they
-    cannot see far enough and sounds are localized too small. Basically,
-    1024x768 should be the max a player can see at 1x zoom.
-
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.

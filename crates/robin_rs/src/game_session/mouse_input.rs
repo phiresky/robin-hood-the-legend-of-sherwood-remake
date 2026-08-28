@@ -1547,22 +1547,25 @@ pub(super) async fn handle_pause_menu_events(
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
 
-                        let new_resolution = options_outcome
-                            .resolution_changed
-                            .then_some((graphic_config.resolution_x, graphic_config.resolution_y));
+                        let new_resolution = options_outcome.resolution_changed;
 
                         // On resolution change, switch the draw surface,
                         // update input clipping, and resize the engine.
-                        if let Some((w, h)) = new_resolution {
-                            let w_u16 = w.round() as u16;
-                            let h_u16 = h.round() as u16;
-                            event_pump.set_logical_size(w_u16 as u32, h_u16 as u32);
+                        if new_resolution {
+                            event_pump.set_logical_resolution_policy(&graphic_config);
+                            renderer.sync_window_size(event_pump);
+                            let (logical_w, logical_h) = event_pump.logical_size();
+                            let w_u16 = logical_w as u16;
+                            let h_u16 = logical_h as u16;
+                            let w = logical_w as f32;
+                            let h = logical_h as f32;
                             host.viewport.set_screen_size(w, h);
-                            renderer.resize(w_u16, h_u16);
+                            game.set_resolution(w_u16, h_u16);
                             threaded_input.set_clipping(
                                 robin_engine::coordinates::ScreenBBox::from_coords(0.0, 0.0, w, h),
                             );
                             *input_translator = InputTranslator::new(w, h);
+                            input_translator.load_bindings_from_keyconfig(&host.key_config);
                             input_translator.install_hud_dead_zones();
                             if host.minimap_corner_size.x > 0.0 {
                                 let cmd = PlayerCommand::MinimapResize {

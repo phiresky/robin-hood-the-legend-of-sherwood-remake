@@ -941,6 +941,14 @@ impl InteractiveMissionBuilder {
             "interactive builder cannot construct headless shims"
         );
 
+        let graphic_config = args
+            .global_options
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| {
+                panic!("mission display setup requires an active profile: {error}")
+            })
+            .graphic_config;
+        window.set_logical_resolution_policy(&graphic_config);
         let mut loading = MissionLoadingScreen::open(
             window,
             &campaign,

@@ -1904,32 +1904,58 @@ pub fn draw_panel(
     // Rendered BEFORE portrait widgets, in absolute screen coordinates.
     // Blit using source surface dimensions to avoid size mismatch issues.
     if let Some(sid) = portraits.border_top_left {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(0, 0, w, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
+    if let Some(sid) = portraits.border_top_right {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(sw - w, 0, sw, h);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
     if let Some(sid) = portraits.border_bottom_left {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(0, sh - h, w, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_right {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(sw - w, sh - h, sw, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
-    // Center border piece — only at 800+ width (disabled at 640).
+    // Center border piece — only at 800+ width (disabled at 640). The
+    // original supplied fixed 800/1024 strips; tile and crop the selected
+    // strip between the corners so adaptive widths never expose a gap.
     if sw > 640
         && let Some(sid) = portraits.border_middle
     {
         let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
-        let bx = renderer.surface_width(portraits.border_bottom_left.unwrap_or(0));
-        let dst = bbox(bx, sh - h, bx + w, sh);
-        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        let h = renderer.surface_height(sid).min(sh);
+        let mut x = renderer
+            .surface_width(portraits.border_bottom_left.unwrap_or(0))
+            .min(sw);
+        let right = sw.saturating_sub(
+            renderer
+                .surface_width(portraits.border_bottom_right.unwrap_or(0))
+                .min(sw),
+        );
+        while x < right && w > 0 {
+            let tile_width = w.min(right - x);
+            let src = bbox(0, 0, tile_width, h);
+            let dst = bbox(x, sh.saturating_sub(h), x + tile_width, sh);
+            blit_to_screen_widget(
+                renderer,
+                sid,
+                Some(&src),
+                Some(&dst),
+                BLIT_SOURCE_TRANSPARENT,
+            );
+            x += tile_width;
+        }
     }
 
     // ── Portrait slots (one per PC in the mission) ──
@@ -3460,6 +3486,7 @@ mod tests {
         assert_eq!(portrait_capacity(640), 5);
         assert_eq!(portrait_capacity(800), 6);
         assert_eq!(portrait_capacity(1024), 8);
+        assert_eq!(portrait_capacity(1280), 10);
     }
 
     #[test]
