@@ -5236,6 +5236,8 @@ pub trait Human: Actor {
     fn tiredness(&self) -> u16 {
         self.human_data().tiredness
     }
+    /// Legacy distinct-allegiance fallback for isolated entity tests. Runtime
+    /// combat and AI must query the mission `DiplomacyState` instead.
     fn is_enemy_of(&self, other_camp: Camp) -> bool {
         self.camp().is_hostile_to(other_camp)
     }
