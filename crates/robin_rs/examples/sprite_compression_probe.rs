@@ -1523,7 +1523,9 @@ fn decode_shipping_sprite(
 }
 
 fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
-    use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
+    use robin_assets::shipping_datadir::{
+        ShippingDatadir, ShippingMission, decode_mission_compressed,
+    };
     let dd = ShippingDatadir::load_from_file(&data_out.join("datadir.bin"))?;
     let bank = dd
         .sprite_bank
@@ -1534,37 +1536,54 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
         .filter(|p| p.extension().is_some_and(|e| e == "zst"))
         .collect();
     chunks.sort();
-    let (mut n_sprites, mut n_vq, mut n_px) = (0u64, 0u64, 0u64);
+    // Schema v9 chunks carry their VQ grids in per-chunk context-model blobs,
+    // family variants coded against their base chunk. Merge every chunk the
+    // way the runtime merges a mission closure, then materialize the blobs
+    // (order-independent; a variant with a missing base chunk is an error).
+    let mut merged = ShippingMission::default();
     for chunk in &chunks {
         let mission = decode_mission_compressed(&fs::read(chunk)?)
             .with_context(|| format!("decode {}", chunk.display()))?;
-        let Some(chunk_bank) = mission.sprite_bank.as_ref() else {
+        merged
+            .merge_part(mission)
+            .with_context(|| format!("merge {}", chunk.display()))?;
+    }
+    let Some(merged_bank) = merged.sprite_bank.as_mut() else {
+        bail!("rhs chunks contain no sprite bank");
+    };
+    let n_blobs = merged_bank.vq_chunks.len();
+    let blob_bytes: u64 = merged_bank
+        .vq_chunks
+        .iter()
+        .map(|c| c.blob.len() as u64)
+        .sum();
+    let t0 = std::time::Instant::now();
+    merged_bank
+        .materialize_vq_chunks()
+        .context("materialize VQ sprite chunks")?;
+    let t_dec = t0.elapsed();
+    let (mut n_sprites, mut n_vq, mut n_px) = (0u64, 0u64, 0u64);
+    for (id, sprite) in &merged_bank.sprites {
+        if sprite.width == 0 || sprite.height == 0 {
             continue;
-        };
-        for (id, sprite) in &chunk_bank.sprites {
-            if sprite.width == 0 || sprite.height == 0 {
-                continue;
-            }
-            let shipped = decode_shipping_sprite(sprite, &bank.dictionaries)?;
-            let source = decode_raw(holder, *id)
-                .ok_or_else(|| anyhow!("source bank cannot decode sprite {id}"))?;
-            if (source.0, source.1) != (sprite.width, sprite.height) || source.2 != shipped {
-                bail!(
-                    "sprite {id} in {} decodes differently from the source bank",
-                    chunk.display()
-                );
-            }
-            n_sprites += 1;
-            n_px += shipped.len() as u64;
-            if sprite.dictionary_index != UNMAPPED_DICT {
-                n_vq += 1;
-            }
+        }
+        let shipped = decode_shipping_sprite(sprite, &bank.dictionaries)?;
+        let source = decode_raw(holder, *id)
+            .ok_or_else(|| anyhow!("source bank cannot decode sprite {id}"))?;
+        if (source.0, source.1) != (sprite.width, sprite.height) || source.2 != shipped {
+            bail!("sprite {id} decodes differently from the source bank");
+        }
+        n_sprites += 1;
+        n_px += shipped.len() as u64;
+        if sprite.dictionary_index != UNMAPPED_DICT {
+            n_vq += 1;
         }
     }
     println!(
-        "## verify-shipping {}: {} chunks, {n_sprites} sprites ({n_vq} VQ), {n_px} pixels — all identical to source bank",
+        "## verify-shipping {}: {} chunks ({n_blobs} VQ blobs, {blob_bytes} blob bytes, decoded in {:.1}s), {n_sprites} sprites ({n_vq} VQ), {n_px} pixels — all identical to source bank",
         data_out.display(),
-        chunks.len()
+        chunks.len(),
+        t_dec.as_secs_f64(),
     );
     Ok(())
 }

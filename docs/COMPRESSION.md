@@ -1102,7 +1102,7 @@ against their family base):
 TOTAL                    464,511,438    161,241,542  ->  71,183,844   2.27x
 ```
 
-### Shipping integration design (schema v7, not yet wired)
+### Shipping integration design (shipped as schema v9 — see next section)
 
 - Chunk payload: per-RHS `ShippingSpriteBank.sprites` keeps `(bank_id, w, h,
   dictionary_index)` rows, but VQ `packed_data` moves into one
@@ -1188,3 +1188,58 @@ codec: eps=1 -0.003..0.031%, eps=2 -0.089..0.252% (11 KB across three
 characters), visually indistinguishable in side-by-side renders but noise at
 corpus scale. Not productionized; k-means dictionary re-quantization is
 capped by the same histogram at ~3% of entries and was not pursued.
+## Shipping integration: schema v9 (2026-08-29)
+
+The design above is wired into the shipping datadir format (v8 shipped audio
+splitting in the meantime, so this landed as **v9**: `RHDDNAT9`, mission
+chunks `RHMISN04`; either side mismatching fails loudly, bitcode is not
+self-describing).
+
+Format changes (`robin_assets::shipping_datadir`):
+
+- `ShippingSpriteBank` gains `vq_chunks: Vec<SpriteVqChunk>`. Each converted
+  RHS chunk stores its well-formed VQ sprites' index grids in one
+  `sprite_codec::encode_grids` blob (bank-id ascending order); those sprite
+  rows keep `(bank_id, w, h, dictionary_index)` but ship empty `packed_data`.
+  RLE sprites — and the rare VQ sprite whose packed length disagrees with its
+  `(w/4) x h` grid — keep raw packed words. `SpriteVqChunk` records the
+  encode order (`sprite_ids`), the codec `alphabet` (max `num_entries()` of
+  the dictionaries involved), per-sprite base bank ids for cross-variant
+  coding, and the source/base RHS rels for diagnostics.
+- Conversion (`convert_datadir --format shipping`) detects variant families
+  among `Characters/*.rhs` (trailing-two-digit stem, >1 member, base =
+  lexicographically first — the probe's corpus rule), pairs base/variant
+  sprites positionally over the full-profile script frame-id order, and codes
+  each variant chunk against its base's rank-permuted grids. Pairs whose
+  dims/lengths mismatch code standalone; a chunk that pairs poorly (>10%
+  unbased) falls back to standalone entirely. The base grids a variant needs
+  are added to the base chunk — synthesized as a sprite-only chunk when no
+  mission requires the base RHS itself — and every dependency list that names
+  a variant chunk (mission files, `character_rhs_files`,
+  `saved_world_rhs_files`) also names its base chunk.
+- Runtime: `ShippingSpriteBank::materialize_vq_chunks` decodes the blobs back
+  into per-sprite packed data at `install_mission` time, after all mission
+  parts merged (wasm fetches complete out of order, so materialization
+  iterates to a fixpoint instead of assuming an install order). A variant
+  chunk whose base sprites never materialize is a hard error naming the
+  missing base RHS. Downstream (`FrameHolder::load_from_shipping`, renderer,
+  savegames) is unchanged.
+
+Measured on `demo_leicester_ecoste` (`--map-format raw --zstd-window-log
+30`), against the schema-v8 ranked numbers above:
+
+```
+                        v8 (ranked)        v9        delta
+Data/ total             50,397,716    43,070,372    -14.5%
+Data/rhs bucket         25,943,258    18,617,203    -28.2%
+```
+
+`--verify-shipping` on the converted tree: 52 chunks (31 VQ blobs,
+16,796,145 blob bytes), 65,058 sprites (64,414 VQ), 146,584,025 pixels — all
+identical to the source bank. The demo has no complete variant families
+(`Archer01` without `Archer00`, …), so this is pure standalone context
+modeling; the 3.9x family-variant multiplier applies at fullgame scale, where
+the cross-variant path is exercised (unit tests cover the merge/materialize
+order and missing-base error paths). Decode of the whole demo corpus took
+~110 s single-threaded at this baseline — the decode-speed optimization
+listed in the design section remains the open item before wasm shipping.
