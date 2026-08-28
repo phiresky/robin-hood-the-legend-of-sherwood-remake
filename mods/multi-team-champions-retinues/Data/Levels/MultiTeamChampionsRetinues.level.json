@@ -30,7 +30,7 @@
     {
       "position": [
         1380,
-        1430
+        1520
       ],
       "profile": "guard_a03",
       "allegiance": 2,
@@ -39,7 +39,7 @@
     {
       "position": [
         1440,
-        1430
+        1520
       ],
       "profile": "soldier_a03",
       "allegiance": 2,
@@ -48,7 +48,7 @@
     {
       "position": [
         1500,
-        1430
+        1520
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -57,7 +57,7 @@
     {
       "position": [
         1560,
-        1430
+        1520
       ],
       "profile": "officier_b03",
       "allegiance": 2,
@@ -66,7 +66,7 @@
     {
       "position": [
         1380,
-        2090
+        2000
       ],
       "profile": "guard_a03",
       "allegiance": 3,
@@ -75,7 +75,7 @@
     {
       "position": [
         1440,
-        2090
+        2000
       ],
       "profile": "soldier_a03",
       "allegiance": 3,
@@ -84,7 +84,7 @@
     {
       "position": [
         1500,
-        2090
+        2000
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -93,7 +93,7 @@
     {
       "position": [
         1560,
-        2090
+        2000
       ],
       "profile": "officier_b03",
       "allegiance": 3,
@@ -101,7 +101,7 @@
     },
     {
       "position": [
-        1110,
+        1209,
         1640
       ],
       "profile": "guard_a03",
@@ -110,7 +110,7 @@
     },
     {
       "position": [
-        1110,
+        1209,
         1720
       ],
       "profile": "soldier_a03",
@@ -119,7 +119,7 @@
     },
     {
       "position": [
-        1110,
+        1209,
         1800
       ],
       "profile": "archer03",
@@ -128,7 +128,7 @@
     },
     {
       "position": [
-        1110,
+        1209,
         1880
       ],
       "profile": "officier_b03",
@@ -137,7 +137,7 @@
     },
     {
       "position": [
-        1830,
+        1731,
         1640
       ],
       "profile": "guard_a03",
@@ -146,7 +146,7 @@
     },
     {
       "position": [
-        1830,
+        1731,
         1720
       ],
       "profile": "soldier_a03",
@@ -155,7 +155,7 @@
     },
     {
       "position": [
-        1830,
+        1731,
         1800
       ],
       "profile": "archer03",
@@ -164,7 +164,7 @@
     },
     {
       "position": [
-        1830,
+        1731,
         1880
       ],
       "profile": "officier_b03",
@@ -176,7 +176,7 @@
     {
       "position": [
         1470,
-        1490
+        1580
       ],
       "profile": 0,
       "allegiance": 2,
@@ -188,7 +188,7 @@
     {
       "position": [
         1470,
-        2030
+        1940
       ],
       "profile": 2,
       "allegiance": 3,
@@ -199,7 +199,7 @@
     },
     {
       "position": [
-        1170,
+        1269,
         1760
       ],
       "profile": 3,
@@ -211,7 +211,7 @@
     },
     {
       "position": [
-        1770,
+        1671,
         1760
       ],
       "profile": 4,
