@@ -221,6 +221,10 @@ mod tests {
             .world
             .entities
             .push(Some(bonus(Action::Bow, 6, true)));
+        engine
+            .world
+            .entities
+            .push(Some(bonus(Action::Purse, 6, true)));
         let assets = LevelAssets {
             profile_manager: Arc::new(profiles),
             ..LevelAssets::default()
@@ -263,6 +267,47 @@ mod tests {
     }
 
     #[test]
+    fn purse_stock_supports_sell_one_and_sell_five() {
+        let (mut engine, assets) = sherwood_engine();
+        let ransom_before = engine
+            .mission_domain
+            .campaign
+            .get_value(CampaignValue::Ransom);
+
+        engine.sell_sherwood_production_item(&assets, 0, Type::MakePurse, TradeQuantity::One);
+        engine.sell_sherwood_production_item(&assets, 0, Type::MakePurse, TradeQuantity::Five);
+
+        assert_eq!(stored_stock(&engine.world.entities, Action::Purse), 0);
+        assert_eq!(
+            engine
+                .mission_domain
+                .campaign
+                .get_value(CampaignValue::Ransom),
+            ransom_before + 12
+        );
+        assert!(matches!(
+            engine.feedback.pending_side_effects.trade_receipts[0].outcome,
+            TradeOutcome::Sold {
+                units: 1,
+                unit_price: 2,
+                total_price: 2,
+                remaining_stock: 5,
+                ..
+            }
+        ));
+        assert!(matches!(
+            engine.feedback.pending_side_effects.trade_receipts[1].outcome,
+            TradeOutcome::Sold {
+                units: 5,
+                unit_price: 2,
+                total_price: 10,
+                remaining_stock: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn invalid_requests_reject_without_partial_mutation() {
         let (mut engine, assets) = sherwood_engine();
         let ransom_before = engine
@@ -271,7 +316,7 @@ mod tests {
             .get_value(CampaignValue::Ransom);
 
         engine.sell_sherwood_production_item(&assets, 1, Type::MakeArrow, TradeQuantity::One);
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakePurse, TradeQuantity::One);
+        engine.sell_sherwood_production_item(&assets, 0, Type::TrainBow, TradeQuantity::One);
         engine.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::Five);
         engine.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::Five);
 

@@ -16,6 +16,7 @@ returns a receipt.
 | Production item | Capacity in shipped Sherwood | Unit price |
 | --- | ---: | ---: |
 | Arrow | 50 | £1 |
+| Purse | 25 | £2 |
 | Stone | 25 | £2 |
 | Apple | 25 | £3 |
 | Lamb leg | 25 | £3 |
@@ -34,6 +35,12 @@ same base value. Prices then apply conservative whole-pound modifiers for:
   carrying it into a mission,
 - the stronger crowd-control value of nets and wasp nests.
 
+The £2 purse price values the produced, unfilled bag at the same conservative
+tier as stones: both have 25 shipped storage slots, while using a purse in a
+mission separately withdraws five £10 coins from campaign ransom. Selling purse
+stock therefore pays only for the produced item; it never credits the coins
+that would be placed in a thrown purse.
+
 The values are intentionally well below the equivalent value of mission ransom
 pickups, keeping production a supplementary income source rather than a way to
 skip campaign progression. There is no buy-back path and no dynamic price that
@@ -46,9 +53,8 @@ could be manipulated between save/reload or network peers.
 - A sale removes exact units from active production-point bonus stacks in
   deterministic entity-table order. Equipped hero ammunition and in-flight
   projectiles are not sold.
-- Purses are not sellable: their gameplay effect is already currency, so a
-  purse price would create a direct money conversion loop.
-- Training, healing, relic, unknown, and all non-item sector types are rejected.
+- Every true `MAKE_*` inventory item is sellable, including purses. Training,
+  healing, relic, unknown, and all non-item sector types are rejected.
 - Insufficient stock and ransom integer overflow reject the entire command;
   there is no clamping or partial success.
 - Proceeds update campaign ransom directly. They intentionally do not increment

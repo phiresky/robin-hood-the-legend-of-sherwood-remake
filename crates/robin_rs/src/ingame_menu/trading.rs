@@ -29,7 +29,9 @@ const ID_CLOSE: u32 = 402;
 const ROW_X: i32 = 72;
 const ROW_Y: i32 = 82;
 const ROW_W: i32 = 496;
-const ROW_H: i32 = 31;
+// Nine shipped MAKE_* inventory types fit above the status area at this
+// spacing. Keep selection hit-testing and rendering on the same constant.
+const ROW_H: i32 = 28;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TradingOutcome {
@@ -464,7 +466,8 @@ pub fn ransom_from_engine(engine: &robin_engine::engine::Engine) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::substitute;
+    use super::{ROW_H, ROW_Y, substitute};
+    use robin_engine::trading::TRADE_ITEMS;
 
     #[test]
     fn localized_trade_templates_replace_placeholders_in_order() {
@@ -472,5 +475,11 @@ mod tests {
             substitute("Sold %u %s for £%u", &["5", "nets", "35"]),
             "Sold 5 nets for £35"
         );
+    }
+
+    #[test]
+    fn every_inventory_row_fits_above_the_status_area() {
+        const STATUS_Y: i32 = 342;
+        assert!(ROW_Y + ROW_H * TRADE_ITEMS.len() as i32 <= STATUS_Y);
     }
 }

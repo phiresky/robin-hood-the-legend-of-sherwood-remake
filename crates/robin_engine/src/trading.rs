@@ -49,12 +49,16 @@ pub struct TradeItemDefinition {
 /// All shipped MAKE sectors have the same authored speed (5), so labor/time
 /// establishes a common floor.  Capacity scarcity and tactical utility then
 /// distinguish the prices; see `docs/SHERWOOD_TRADING.md` for the complete
-/// balance derivation.  Purses are excluded because their gameplay effect is
-/// currency and selling them would form a direct money loop.
-pub const TRADE_ITEMS: [TradeItemDefinition; 8] = [
+/// balance derivation.  This table deliberately covers every production type
+/// that maps to an inventory bonus, including the unfilled purse item.
+pub const TRADE_ITEMS: [TradeItemDefinition; 9] = [
     TradeItemDefinition {
         prod_type: Type::MakeArrow,
         unit_price: 1,
+    },
+    TradeItemDefinition {
+        prod_type: Type::MakePurse,
+        unit_price: 2,
     },
     TradeItemDefinition {
         prod_type: Type::MakeStone,
@@ -175,14 +179,30 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn price_table_is_positive_unique_and_excludes_money_loops() {
+    fn price_table_is_positive_and_unique() {
         let mut seen = HashSet::new();
         for item in TRADE_ITEMS {
             assert!(item.unit_price > 0);
             assert!(seen.insert(item.prod_type), "duplicate price entry");
         }
-        assert_eq!(seen.len(), 8);
-        assert!(trade_item(Type::MakePurse).is_none());
+        assert_eq!(seen.len(), 9);
+    }
+
+    #[test]
+    fn every_shipped_make_inventory_type_is_sellable() {
+        let inventory_types: Vec<_> = (0..=12)
+            .map(|raw| Type::from_script_i32(raw).expect("shipped production type ordinal"))
+            .filter(|prod_type| prod_type.bonus_raw_type().is_some())
+            .collect();
+
+        assert_eq!(inventory_types.len(), 9, "original MAKE_* inventory count");
+        assert_eq!(TRADE_ITEMS.len(), inventory_types.len());
+        for prod_type in inventory_types {
+            assert!(
+                trade_item(prod_type).is_some(),
+                "missing sell price for inventory production type {prod_type:?}"
+            );
+        }
     }
 
     #[test]
@@ -195,6 +215,7 @@ mod tests {
             actual,
             vec![
                 (Type::MakeArrow, 1),
+                (Type::MakePurse, 2),
                 (Type::MakeStone, 2),
                 (Type::MakeApple, 3),
                 (Type::MakeLamblegg, 3),
@@ -209,7 +230,6 @@ mod tests {
     #[test]
     fn non_inventory_sectors_are_rejected_explicitly() {
         for prod_type in [
-            Type::MakePurse,
             Type::TrainBow,
             Type::TrainHandToHand,
             Type::Heal,
