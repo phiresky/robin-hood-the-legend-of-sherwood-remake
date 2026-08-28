@@ -233,6 +233,52 @@ pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
 }
 
+/// Select the fleeing side for a two-allegiance doorway battle.
+///
+/// Original always puts Royalists in the fleeing list when the legacy camps
+/// are tied (`RHArtificialIntelligence::EnemyInHouseAlert`). Generalized
+/// allegiances retain that source-independent ordering by using their authored
+/// allegiance IDs as the tie-breaker.
+fn doorway_battle_source_side_flees(
+    source_camp: crate::element::Camp,
+    source_count: usize,
+    opposing_camp: crate::element::Camp,
+    opposing_count: usize,
+) -> bool {
+    if source_count != opposing_count {
+        return source_count < opposing_count;
+    }
+    let source_id = source_camp
+        .allegiance_id()
+        .expect("doorway battle source must have a valid allegiance");
+    let opposing_id = opposing_camp
+        .allegiance_id()
+        .expect("doorway battle opponent must have a valid allegiance");
+    source_id < opposing_id
+}
+
+#[cfg(test)]
+mod doorway_battle_side_tests {
+    use super::doorway_battle_source_side_flees;
+    use crate::element::Camp;
+
+    #[test]
+    fn tied_legacy_battle_always_makes_royalists_flee() {
+        assert!(doorway_battle_source_side_flees(
+            Camp::Royalists,
+            1,
+            Camp::Lacklandists,
+            1,
+        ));
+        assert!(!doorway_battle_source_side_flees(
+            Camp::Lacklandists,
+            1,
+            Camp::Royalists,
+            1,
+        ));
+    }
+}
+
 /// Original attaches both ordinary building doors and building-trap doors to
 /// `RHSectorBuilding::GetGates()`. AI house initialization must preserve that
 /// ownership because both rally-point creation and door-fight placement walk
@@ -4626,11 +4672,11 @@ impl EngineInner {
         let Some(source_ids) = fighter_ids.get(&source_camp).cloned() else {
             return;
         };
-        let Some(opposing_ids) = fighter_ids
+        let Some((opposing_camp, opposing_ids)) = fighter_ids
             .iter()
             .filter(|(camp, ids)| source_camp.is_hostile_to(**camp) && !ids.is_empty())
             .max_by_key(|(_, ids)| ids.len())
-            .map(|(_, ids)| ids.clone())
+            .map(|(camp, ids)| (*camp, ids.clone()))
         else {
             return;
         };
@@ -4647,10 +4693,15 @@ impl EngineInner {
         // independent combatants and can dispatch their own alerts.
         // TODO(multi-team-door-battles): schedule every hostile pair when the
         // door coordinator can own more than one simultaneous battle.
-        let (fleeing, pursuing) = if source_ids.len() > opposing_ids.len() {
-            (opposing_ids, source_ids)
-        } else {
+        let (fleeing, pursuing) = if doorway_battle_source_side_flees(
+            source_camp,
+            source_ids.len(),
+            opposing_camp,
+            opposing_ids.len(),
+        ) {
             (source_ids, opposing_ids)
+        } else {
+            (opposing_ids, source_ids)
         };
 
         self.init_battle_before_door(sim, assets, &door_indices, &fleeing, &pursuing);
