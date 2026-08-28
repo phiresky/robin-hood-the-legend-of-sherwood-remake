@@ -153,8 +153,8 @@ pub struct PlayerProfile {
     pub preserved_lives: u32,
     pub play_time: u32,
     pub progression: u32,
-    /// Global union of achievements earned by eligible campaign mission
-    /// attempts. Existing profile JSON starts with no unlocks.
+    /// Legacy compatibility union from profiles predating canonical lifetime
+    /// attempt attestations. New awards are derived from `campaign_history`.
     #[serde(default)]
     pub earned_achievements: crate::achievement::AchievementSet,
     /// Lossless all-time history, independent from replaceable campaign save
@@ -198,31 +198,10 @@ impl PlayerProfile {
         }
     }
 
-    pub const fn earned_achievements(&self) -> crate::achievement::AchievementSet {
-        self.earned_achievements
-    }
-
-    /// Unlock eligible achievements and return the subset newly earned by
-    /// this profile. Repeated calls are intentionally idempotent, allowing UI
-    /// notifications to be emitted exactly once per profile.
-    #[must_use]
-    pub fn unlock_achievements(
-        &mut self,
-        eligible: crate::achievement::AchievementSet,
-    ) -> crate::achievement::AchievementSet {
-        let newly_earned = eligible.difference(self.earned_achievements);
-        self.earned_achievements.union_with(eligible);
-        newly_earned
-    }
-
-    /// Union campaign unlocks into this profile and report only genuinely new
-    /// profile unlocks.
-    #[must_use]
-    pub fn synchronize_achievements(
-        &mut self,
-        campaign: &crate::campaign::Campaign,
-    ) -> crate::achievement::AchievementSet {
-        self.unlock_achievements(campaign.earned_achievements())
+    pub fn earned_achievements(&self) -> crate::achievement::AchievementSet {
+        let mut earned = self.earned_achievements;
+        earned.union_with(self.campaign_history.eligible_badges());
+        earned
     }
 
     pub fn promote_campaign_history(
@@ -538,7 +517,9 @@ pub fn synchronize_with_campaign(
     profile.ransom = campaign.get_value(CampaignValue::Ransom) as u32;
     profile.progression = campaign.get_progression(profiles);
     profile.play_time += mission_play_time_secs;
-    let _newly_earned = profile.synchronize_achievements(campaign);
+    profile
+        .promote_campaign_history(campaign, profiles)
+        .unwrap_or_else(|error| panic!("cannot promote campaign history into profile: {error}"));
 
     let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
     let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
@@ -695,22 +676,67 @@ mod tests {
     }
 
     #[test]
-    fn profile_synchronization_unions_campaign_unlocks() {
+    fn profile_unlock_union_is_derived_from_attested_lifetime_attempts() {
         let mut profile = PlayerProfile::new(0, "Robin".into(), DifficultyLevel::Medium);
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 42,
+            mission_name: "The Rescue".into(),
+            ..Default::default()
+        });
         let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..crate::mission::Mission::new()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
+        tracker
+            .record_evaluation(
+                crate::achievement::AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            )
+            .unwrap();
+        let results = *tracker.finalize_success();
+        campaign.record_mission_attempt(
+            0,
+            crate::campaign_history::MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xbeef),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(results),
+        );
         campaign
-            .earned_achievements
-            .insert(crate::achievement::AchievementId::Ghost);
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                crate::achievement::AchievementUnlockPolicy::default(),
+                crate::achievement::AchievementRunContext::default(),
+            )
+            .unwrap();
 
-        let first = profile.synchronize_achievements(&campaign);
-        let second = profile.synchronize_achievements(&campaign);
-        assert!(first.contains(crate::achievement::AchievementId::Ghost));
-        assert!(second.is_empty());
+        assert_eq!(
+            profile
+                .promote_campaign_history(&campaign, &profiles)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            profile
+                .promote_campaign_history(&campaign, &profiles)
+                .unwrap(),
+            0
+        );
         assert_eq!(profile.earned_achievements().len(), 1);
         assert!(
             profile
                 .earned_achievements()
                 .contains(crate::achievement::AchievementId::Ghost)
+        );
+        assert!(
+            profile.earned_achievements.is_empty(),
+            "legacy compatibility cache must not receive modern unlocks"
         );
     }
 

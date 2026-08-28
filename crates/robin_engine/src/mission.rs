@@ -91,11 +91,25 @@ impl Mission {
     }
 
     pub fn achievement_badges(&self) -> AchievementSet {
-        self.achievement_history.badges()
+        let mut badges = self.attempt_history.eligible_badges();
+        // Compatibility union for saves written by the short-lived
+        // achievement-only schema before general attempt history existed.
+        badges.union_with(self.achievement_history.badges());
+        badges
     }
 
     pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
-        self.achievement_history.best(id)
+        [
+            self.attempt_history.best_eligible_achievement(id),
+            self.achievement_history.best(id),
+        ]
+        .into_iter()
+        .flatten()
+        .max_by_key(|evaluation| match evaluation {
+            AchievementEvaluation::Unverifiable => 0,
+            AchievementEvaluation::Failed => 1,
+            AchievementEvaluation::Earned => 2,
+        })
     }
 
     pub const fn attempt_history(&self) -> &MissionAttemptHistory {

@@ -288,12 +288,15 @@ impl crate::game::GameCallbacks for RustCallbacks {
                         campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
                     profile.progression = campaign.get_progression(profiles);
                     profile.play_time += mission_secs;
-                    let _newly_earned = profile.synchronize_achievements(campaign);
+                    let achievements_before = profile.earned_achievements();
                     let added = profile
                         .promote_campaign_history(campaign, profiles)
                         .unwrap_or_else(|error| {
                             panic!("cannot promote campaign attempt into profile history: {error}")
                         });
+                    let _newly_earned = profile
+                        .earned_achievements()
+                        .difference(achievements_before);
 
                     let dead =
                         campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;

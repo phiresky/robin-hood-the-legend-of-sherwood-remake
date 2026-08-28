@@ -21,6 +21,15 @@ campaign progression or an isolated history replay. Derived totals and bests
 are calculated from the immutable records, never serialized as a second source
 of truth.
 
+Achievement calculations and awards deliberately remain distinct parts of the
+same canonical record. The deterministic terminal boundary freezes raw results;
+the host then attaches an exactly-once eligibility attestation addressed by
+campaign-run id and attempt sequence. Campaign, mission, and lifetime badge
+unions derive only from attested eligible attempts. Blocked replay playback,
+headless, custom, cheated, or disabled runs therefore remain auditable without
+awarding an icon. The older achievement-only vector/global fields are read only
+as migration compatibility for saves written before general attempt history.
+
 At synchronization, native records are also promoted into a versioned
 `ProfileCampaignHistory` owned by the player profile, outside replaceable save
 slots and campaign resets. Promotion is idempotent using the deterministic

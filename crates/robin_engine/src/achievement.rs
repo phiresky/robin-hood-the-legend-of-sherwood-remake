@@ -211,7 +211,7 @@ pub enum AchievementEvaluation {
 }
 
 impl AchievementEvaluation {
-    const fn history_rank(self) -> u8 {
+    pub(crate) const fn history_rank(self) -> u8 {
         match self {
             Self::Unverifiable => 0,
             Self::Failed => 1,
@@ -564,14 +564,27 @@ impl MissionAchievementHistory {
             .collect()
     }
 
-    pub fn record_success(&mut self, results: MissionAchievementResults) {
+    /// Compatibility writer for tests/import migration. Runtime achievement
+    /// promotion records eligibility on the canonical general attempt.
+    pub(crate) fn record_success(&mut self, results: MissionAchievementResults) {
         self.attempts.push(results);
     }
 }
 
 /// Broad mission source used by host-side unlock policy.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum AchievementRunKind {
     Campaign = 0,
@@ -598,7 +611,18 @@ impl TryFrom<u8> for AchievementRunKind {
 
 /// Host facts which may suppress persistence without changing calculated
 /// simulation results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AchievementRunContext {
     pub kind: AchievementRunKind,
     pub multiplayer: bool,
@@ -625,7 +649,18 @@ impl Default for AchievementRunContext {
 /// sessions. They deliberately cannot opt custom missions, replay playback,
 /// headless tools, or cheated runs into persistence: those run kinds may show
 /// calculated progress, but are never achievement-authoritative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AchievementUnlockPolicy {
     pub enabled: bool,
     pub allow_multiplayer: bool,
@@ -679,7 +714,18 @@ impl AchievementUnlockBlockers {
 }
 
 /// Pure result of applying host unlock policy to a calculated mission result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AchievementUnlockDecision {
     pub blockers: AchievementUnlockBlockers,
     pub eligible_earned: AchievementSet,

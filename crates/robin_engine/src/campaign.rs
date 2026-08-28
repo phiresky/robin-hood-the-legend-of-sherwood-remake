@@ -10,11 +10,12 @@ use enum_map::{Enum, EnumMap, enum_map};
 use serde::{Deserialize, Serialize};
 
 use crate::achievement::{
-    AchievementHistoryError, AchievementHistoryUpdate, AchievementId, AchievementRunContext,
-    AchievementSet, AchievementUnlockPolicy, MissionAchievementHistory, MissionAchievementResults,
+    AchievementHistoryUpdate, AchievementId, AchievementRunContext, AchievementSet,
+    AchievementUnlockPolicy, MissionAchievementHistory, MissionAchievementResults,
 };
 use crate::campaign_history::{
-    CampaignHistoryTotals, MissionAttempt, MissionAttemptKind, MissionAttemptOutcome,
+    CampaignHistoryTotals, MissionAchievementAttestationError, MissionAttempt, MissionAttemptKey,
+    MissionAttemptKind, MissionAttemptOutcome,
 };
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus, SkillName};
@@ -240,8 +241,8 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
     pub last_pseudo_mission_status: MissionStatus,
     pub last_pseudo_mission_id: u32,
 
-    /// Global union of achievement badges promoted from eligible successful
-    /// campaign mission attempts.
+    /// Legacy compatibility union from saves predating canonical general
+    /// attempt attestations. New awards are derived from `attempt_history`.
     #[serde(default)]
     pub earned_achievements: AchievementSet,
 
@@ -488,8 +489,13 @@ pub fn calculate_warcrime_recruitment(
 }
 
 impl Campaign {
-    pub const fn earned_achievements(&self) -> AchievementSet {
-        self.earned_achievements
+    pub fn earned_achievements(&self) -> AchievementSet {
+        self.missions
+            .iter()
+            .fold(self.earned_achievements, |mut earned, mission| {
+                earned.union_with(mission.attempt_history().eligible_badges());
+                earned
+            })
     }
 
     pub fn mission_attempts(
@@ -518,6 +524,49 @@ impl Campaign {
             .iter()
             .filter_map(|mission| mission.attempt_history().latest())
             .max_by_key(|attempt| attempt.sequence())
+    }
+
+    pub fn latest_mission_attempt_key(&self) -> Option<MissionAttemptKey> {
+        let campaign_run_id = self.campaign_history_run_id?;
+        self.latest_mission_attempt()
+            .map(|attempt| attempt.key(campaign_run_id))
+    }
+
+    /// Attach the host eligibility decision to one exact frozen attempt.
+    /// Identical repeats are idempotent; stale, foreign, or conflicting keys
+    /// are rejected. This is the canonical awarded-badge mutation path.
+    pub fn attest_mission_achievement_attempt(
+        &mut self,
+        key: MissionAttemptKey,
+        policy: AchievementUnlockPolicy,
+        context: AchievementRunContext,
+    ) -> Result<AchievementHistoryUpdate, MissionAchievementAttestationError> {
+        let expected_run_id = self
+            .campaign_history_run_id
+            .ok_or(MissionAchievementAttestationError::CampaignHasNoRunId)?;
+        if key.campaign_run_id != expected_run_id {
+            return Err(MissionAchievementAttestationError::CampaignRunMismatch {
+                expected: expected_run_id,
+                actual: key.campaign_run_id,
+            });
+        }
+
+        let previously_earned = self.earned_achievements();
+        for mission_index in 0..self.missions.len() {
+            let attestation = self.missions[mission_index]
+                .attempt_history
+                .attest_achievements(key.sequence, policy, context)?;
+            if let Some(attestation) = attestation {
+                let mission_badges = self.missions[mission_index].achievement_badges();
+                let now_earned = self.earned_achievements();
+                return Ok(AchievementHistoryUpdate {
+                    blockers: attestation.decision().blockers,
+                    newly_earned: now_earned.difference(previously_earned),
+                    mission_badges,
+                });
+            }
+        }
+        Err(MissionAchievementAttestationError::AttemptNotFound(key))
     }
 
     pub const fn history_replay_mission(&self) -> Option<usize> {
@@ -653,47 +702,6 @@ impl Campaign {
         self.missions
             .get(mission_index)
             .and_then(|mission| mission.best_achievement_result(achievement))
-    }
-
-    /// Merge one successful calculated result into eligible campaign history.
-    ///
-    /// Callers supply host facts explicitly. A blocked run remains fully
-    /// calculated for debriefing, but this method leaves both mission history
-    /// and the profile-facing campaign union unchanged.
-    pub fn record_mission_achievement_results(
-        &mut self,
-        mission_index: usize,
-        results: MissionAchievementResults,
-        policy: AchievementUnlockPolicy,
-        context: AchievementRunContext,
-    ) -> Result<AchievementHistoryUpdate, AchievementHistoryError> {
-        let mission_count = self.missions.len();
-        let mission = self
-            .missions
-            .get_mut(mission_index)
-            .ok_or(AchievementHistoryError {
-                mission_index,
-                mission_count,
-            })?;
-        let decision = policy.evaluate(context, results);
-        if !decision.may_persist() {
-            return Ok(AchievementHistoryUpdate {
-                blockers: decision.blockers,
-                newly_earned: AchievementSet::empty(),
-                mission_badges: mission.achievement_badges(),
-            });
-        }
-
-        let previously_earned = self.earned_achievements;
-        mission.achievement_history.record_success(results);
-        self.earned_achievements
-            .union_with(decision.eligible_earned);
-
-        Ok(AchievementHistoryUpdate {
-            blockers: decision.blockers,
-            newly_earned: self.earned_achievements.difference(previously_earned),
-            mission_badges: mission.achievement_badges(),
-        })
     }
 
     /// Create a new campaign from loaded profiles.
@@ -2817,6 +2825,31 @@ mod tests {
         *state.finalize_success()
     }
 
+    fn record_and_attest_achievement_attempt(
+        campaign: &mut Campaign,
+        results: MissionAchievementResults,
+        context: AchievementRunContext,
+    ) -> AchievementHistoryUpdate {
+        campaign.current_mission_idx = Some(0);
+        campaign.record_mission_attempt(
+            0,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xcafe),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(results),
+        );
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                context,
+            )
+            .unwrap()
+    }
+
     #[test]
     fn restart_snapshot_is_finite_and_native_bitcode_roundtrips() {
         let mut campaign = Campaign::default();
@@ -2835,37 +2868,30 @@ mod tests {
     fn eligible_replay_upgrades_per_mission_best_and_global_unlock() {
         let mut campaign = Campaign::default();
         campaign.missions.push(Mission::new());
-        let policy = AchievementUnlockPolicy::default();
         let context = AchievementRunContext::default();
 
-        let failed = campaign
-            .record_mission_achievement_results(
-                0,
-                achievement_results(
-                    AchievementId::CleanHands,
-                    crate::achievement::AchievementEvaluation::Failed,
-                ),
-                policy,
-                context,
-            )
-            .unwrap();
+        let failed = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::CleanHands,
+                crate::achievement::AchievementEvaluation::Failed,
+            ),
+            context,
+        );
         assert!(failed.newly_earned.is_empty());
         assert_eq!(
             campaign.mission_best_achievement_result(0, AchievementId::CleanHands),
             Some(crate::achievement::AchievementEvaluation::Failed)
         );
 
-        let earned = campaign
-            .record_mission_achievement_results(
-                0,
-                achievement_results(
-                    AchievementId::CleanHands,
-                    crate::achievement::AchievementEvaluation::Earned,
-                ),
-                policy,
-                context,
-            )
-            .unwrap();
+        let earned = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::CleanHands,
+                crate::achievement::AchievementEvaluation::Earned,
+            ),
+            context,
+        );
         assert!(earned.newly_earned.contains(AchievementId::CleanHands));
         assert!(earned.mission_badges.contains(AchievementId::CleanHands));
         assert!(
@@ -2873,13 +2899,84 @@ mod tests {
                 .earned_achievements()
                 .contains(AchievementId::CleanHands)
         );
+        assert_eq!(campaign.mission_attempts(0).unwrap().len(), 2);
         assert_eq!(
             campaign
                 .mission_achievement_history(0)
                 .unwrap()
                 .successful_attempts(),
-            2
+            0,
+            "legacy compatibility storage is not mutated by canonical attempts"
         );
+    }
+
+    #[test]
+    fn achievement_attestation_rejects_foreign_stale_and_conflicting_keys() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        campaign.current_mission_idx = Some(0);
+        campaign.record_mission_attempt(
+            0,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xcafe),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(achievement_results(
+                AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            )),
+        );
+        let key = campaign.latest_mission_attempt_key().unwrap();
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                crate::campaign_history::MissionAttemptKey {
+                    campaign_run_id: key.campaign_run_id + 1,
+                    sequence: key.sequence,
+                },
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::CampaignRunMismatch { .. })
+        ));
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                crate::campaign_history::MissionAttemptKey {
+                    campaign_run_id: key.campaign_run_id,
+                    sequence: key.sequence + 1,
+                },
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::AttemptNotFound(_))
+        ));
+        campaign
+            .attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        let duplicate = campaign
+            .attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        assert!(duplicate.newly_earned.is_empty());
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy {
+                    enabled: false,
+                    ..AchievementUnlockPolicy::default()
+                },
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::ConflictingAttestation { .. })
+        ));
     }
 
     #[test]
@@ -2947,20 +3044,17 @@ mod tests {
     fn replay_playback_result_does_not_mutate_history() {
         let mut campaign = Campaign::default();
         campaign.missions.push(Mission::new());
-        let update = campaign
-            .record_mission_achievement_results(
-                0,
-                achievement_results(
-                    AchievementId::Ghost,
-                    crate::achievement::AchievementEvaluation::Earned,
-                ),
-                AchievementUnlockPolicy::default(),
-                AchievementRunContext {
-                    replay_playback: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let update = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            ),
+            AchievementRunContext {
+                replay_playback: true,
+                ..Default::default()
+            },
+        );
 
         assert!(!update.persisted());
         assert!(update.newly_earned.is_empty());
@@ -2971,6 +3065,19 @@ mod tests {
                 .unwrap()
                 .successful_attempts(),
             0
+        );
+        let attempt = campaign.mission_attempts(0).unwrap().last().unwrap();
+        assert!(
+            attempt.achievements().is_some(),
+            "raw result remains auditable"
+        );
+        assert!(
+            attempt
+                .achievement_attestation()
+                .unwrap()
+                .decision()
+                .blockers
+                .contains(crate::achievement::AchievementUnlockBlockers::REPLAY_PLAYBACK)
         );
     }
 

@@ -10,7 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::achievement::MissionAchievementResults;
+use crate::achievement::{
+    AchievementRunContext, AchievementSet, AchievementUnlockDecision, AchievementUnlockPolicy,
+    MissionAchievementResults,
+};
 use crate::engine::SimConfig;
 use crate::mission_stat::MissionStat;
 use crate::player_profile::DifficultyLevel;
@@ -77,6 +80,63 @@ pub enum MissionAttemptKind {
     /// A completed mission launched from campaign history.  Progression and
     /// inventory changes are rolled back, while this record is retained.
     HistoryReplay = 1,
+}
+
+/// Durable identity of one attempt across campaign and profile storage.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct MissionAttemptKey {
+    pub campaign_run_id: u64,
+    pub sequence: u64,
+}
+
+/// Host-policy decision attached exactly once to a frozen raw result.
+///
+/// The deterministic terminal command freezes calculation first. The host
+/// then records the eligibility facts on that exact attempt key. Awarded
+/// badge unions use this attestation, never the untrusted raw calculation.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct MissionAchievementAttestation {
+    policy: AchievementUnlockPolicy,
+    context: AchievementRunContext,
+    decision: AchievementUnlockDecision,
+}
+
+impl MissionAchievementAttestation {
+    pub const fn policy(self) -> AchievementUnlockPolicy {
+        self.policy
+    }
+
+    pub const fn context(self) -> AchievementRunContext {
+        self.context
+    }
+
+    pub const fn decision(self) -> AchievementUnlockDecision {
+        self.decision
+    }
 }
 
 /// Frozen simulation rules relevant when comparing attempts.
@@ -195,6 +255,8 @@ pub struct MissionAttempt {
     rules: Option<MissionAttemptRules>,
     stats: MissionAttemptStats,
     achievements: Option<MissionAchievementResults>,
+    #[serde(default)]
+    achievement_attestation: Option<MissionAchievementAttestation>,
 }
 
 impl MissionAttempt {
@@ -219,6 +281,7 @@ impl MissionAttempt {
             rules: Some(config.into()),
             stats: MissionAttemptStats::from_native(stat),
             achievements,
+            achievement_attestation: None,
         }
     }
 
@@ -233,6 +296,7 @@ impl MissionAttempt {
             rules: None,
             stats: MissionAttemptStats::default(),
             achievements: None,
+            achievement_attestation: None,
         }
     }
 
@@ -271,7 +335,104 @@ impl MissionAttempt {
     pub const fn achievements(&self) -> Option<MissionAchievementResults> {
         self.achievements
     }
+
+    pub const fn achievement_attestation(&self) -> Option<MissionAchievementAttestation> {
+        self.achievement_attestation
+    }
+
+    pub const fn key(&self, campaign_run_id: u64) -> MissionAttemptKey {
+        MissionAttemptKey {
+            campaign_run_id,
+            sequence: self.sequence,
+        }
+    }
+
+    fn attest_achievements(
+        &mut self,
+        policy: AchievementUnlockPolicy,
+        context: AchievementRunContext,
+    ) -> Result<MissionAchievementAttestation, MissionAchievementAttestationError> {
+        let results = self.achievements.ok_or(
+            MissionAchievementAttestationError::AttemptHasNoCalculatedResults {
+                sequence: self.sequence,
+            },
+        )?;
+        let attestation = MissionAchievementAttestation {
+            policy,
+            context,
+            decision: policy.evaluate(context, results),
+        };
+        match self.achievement_attestation {
+            None => self.achievement_attestation = Some(attestation),
+            Some(existing) if existing == attestation => {}
+            Some(_) => {
+                return Err(MissionAchievementAttestationError::ConflictingAttestation {
+                    sequence: self.sequence,
+                });
+            }
+        }
+        Ok(attestation)
+    }
+
+    fn merge_attestation_from(&mut self, source: &Self) -> Result<bool, ()> {
+        let mut existing_raw = self.clone();
+        existing_raw.achievement_attestation = None;
+        let mut source_raw = source.clone();
+        source_raw.achievement_attestation = None;
+        if existing_raw != source_raw {
+            return Err(());
+        }
+        match (self.achievement_attestation, source.achievement_attestation) {
+            (None, Some(attestation)) => {
+                self.achievement_attestation = Some(attestation);
+                Ok(true)
+            }
+            (Some(existing), Some(source)) if existing != source => Err(()),
+            _ => Ok(false),
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MissionAchievementAttestationError {
+    CampaignHasNoRunId,
+    CampaignRunMismatch { expected: u64, actual: u64 },
+    AttemptNotFound(MissionAttemptKey),
+    AttemptHasNoCalculatedResults { sequence: u64 },
+    ConflictingAttestation { sequence: u64 },
+}
+
+impl std::fmt::Display for MissionAchievementAttestationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CampaignHasNoRunId => {
+                write!(
+                    formatter,
+                    "achievement attestation campaign has no run identity"
+                )
+            }
+            Self::CampaignRunMismatch { expected, actual } => write!(
+                formatter,
+                "achievement attestation campaign run mismatch: expected {expected}, got {actual}"
+            ),
+            Self::AttemptNotFound(key) => write!(
+                formatter,
+                "achievement attestation attempt {} was not found in campaign run {}",
+                key.sequence, key.campaign_run_id
+            ),
+            Self::AttemptHasNoCalculatedResults { sequence } => write!(
+                formatter,
+                "mission attempt {sequence} has no calculated achievement results"
+            ),
+            Self::ConflictingAttestation { sequence } => write!(
+                formatter,
+                "mission attempt {sequence} already has a different eligibility attestation"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MissionAchievementAttestationError {}
 
 /// Append-only history for one mission.
 #[derive(
@@ -316,6 +477,49 @@ impl MissionAttemptHistory {
         self.attempts
             .iter()
             .any(|attempt| attempt.outcome == MissionAttemptOutcome::Won)
+    }
+
+    pub fn eligible_badges(&self) -> AchievementSet {
+        self.attempts
+            .iter()
+            .fold(AchievementSet::empty(), |mut badges, attempt| {
+                if let Some(attestation) = attempt.achievement_attestation {
+                    badges.union_with(attestation.decision.eligible_earned);
+                }
+                badges
+            })
+    }
+
+    pub fn best_eligible_achievement(
+        &self,
+        id: crate::achievement::AchievementId,
+    ) -> Option<crate::achievement::AchievementEvaluation> {
+        self.attempts
+            .iter()
+            .filter(|attempt| {
+                attempt
+                    .achievement_attestation
+                    .is_some_and(|attestation| attestation.decision.may_persist())
+            })
+            .filter_map(|attempt| attempt.achievements)
+            .map(|results| results.evaluation(id))
+            .max_by_key(|evaluation| evaluation.history_rank())
+    }
+
+    pub(crate) fn attest_achievements(
+        &mut self,
+        sequence: u64,
+        policy: AchievementUnlockPolicy,
+        context: AchievementRunContext,
+    ) -> Result<Option<MissionAchievementAttestation>, MissionAchievementAttestationError> {
+        let Some(attempt) = self
+            .attempts
+            .iter_mut()
+            .find(|attempt| attempt.sequence == sequence)
+        else {
+            return Ok(None);
+        };
+        attempt.attest_achievements(policy, context).map(Some)
     }
 
     pub(crate) fn append(&mut self, attempt: MissionAttempt) {
@@ -440,6 +644,7 @@ pub enum ProfileHistoryPromotionError {
     UnsupportedSchema(u16),
     MissingCampaignRunId { native_attempts: usize },
     MissingMissionProfile { mission_index: usize },
+    ConflictingAttempt(MissionAttemptKey),
 }
 
 impl std::fmt::Display for ProfileHistoryPromotionError {
@@ -458,6 +663,11 @@ impl std::fmt::Display for ProfileHistoryPromotionError {
             Self::MissingMissionProfile { mission_index } => {
                 write!(formatter, "campaign mission {mission_index} has no profile")
             }
+            Self::ConflictingAttempt(key) => write!(
+                formatter,
+                "lifetime campaign attempt {} in run {} conflicts with its canonical campaign record",
+                key.sequence, key.campaign_run_id
+            ),
         }
     }
 }
@@ -485,6 +695,29 @@ impl ProfileCampaignHistory {
         totals
     }
 
+    pub fn eligible_badges(&self) -> AchievementSet {
+        self.attempts
+            .iter()
+            .fold(AchievementSet::empty(), |mut badges, entry| {
+                if let Some(attestation) = entry.attempt.achievement_attestation {
+                    badges.union_with(attestation.decision.eligible_earned);
+                }
+                badges
+            })
+    }
+
+    pub fn eligible_badges_for_mission(&self, mission_id: u32) -> AchievementSet {
+        self.attempts
+            .iter()
+            .filter(|entry| entry.mission_id == mission_id)
+            .fold(AchievementSet::empty(), |mut badges, entry| {
+                if let Some(attestation) = entry.attempt.achievement_attestation {
+                    badges.union_with(attestation.decision.eligible_earned);
+                }
+                badges
+            })
+    }
+
     pub fn migrate_legacy_profile_aggregate(&mut self, aggregate: LegacyProfileAggregate) -> bool {
         if self.legacy_profile_aggregate.is_some() || !self.attempts.is_empty() {
             return false;
@@ -495,6 +728,8 @@ impl ProfileCampaignHistory {
 
     /// Idempotently promote every native campaign attempt into lifetime
     /// storage. `(campaign_run_id, attempt.sequence)` is the durable key.
+    /// The returned count includes an existing raw entry refreshed with its
+    /// later exactly-once eligibility attestation.
     pub fn promote_campaign(
         &mut self,
         campaign: &crate::campaign::Campaign,
@@ -537,11 +772,29 @@ impl ProfileCampaignHistory {
                 .get(profile_index)
                 .ok_or(ProfileHistoryPromotionError::MissingMissionProfile { mission_index })?;
             for attempt in native_attempts {
-                let exists = self.attempts.iter().any(|entry| {
+                let existing = self.attempts.iter_mut().find(|entry| {
                     entry.campaign_run_id == campaign_run_id
                         && entry.attempt.sequence() == attempt.sequence()
                 });
-                if !exists {
+                if let Some(existing) = existing {
+                    if existing.mission_id != profile.id
+                        || existing.mission_name != profile.mission_name
+                    {
+                        return Err(ProfileHistoryPromotionError::ConflictingAttempt(
+                            attempt.key(campaign_run_id),
+                        ));
+                    }
+                    let refreshed =
+                        existing
+                            .attempt
+                            .merge_attestation_from(attempt)
+                            .map_err(|()| {
+                                ProfileHistoryPromotionError::ConflictingAttempt(
+                                    attempt.key(campaign_run_id),
+                                )
+                            })?;
+                    added += usize::from(refreshed);
+                } else {
                     self.attempts.push(LifetimeMissionAttempt {
                         campaign_run_id,
                         mission_id: profile.id,
@@ -724,5 +977,58 @@ mod tests {
         assert_eq!(lifetime.attempts().len(), 1);
         assert_eq!(lifetime.attempts()[0].mission_id(), 42);
         assert_eq!(lifetime.totals().wins, 1);
+    }
+
+    #[test]
+    fn lifetime_promotion_refreshes_a_later_attestation_by_attempt_key() {
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 42,
+            mission_name: "The Rescue".into(),
+            ..Default::default()
+        });
+        let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
+        tracker
+            .record_evaluation(
+                crate::achievement::AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            )
+            .unwrap();
+        let results = *tracker.finalize_success();
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..crate::mission::Mission::new()
+        });
+        campaign.current_mission_idx = Some(0);
+        campaign.record_mission_attempt(
+            0,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xfeed),
+            60,
+            SimConfig::default(),
+            &MissionStat::default(),
+            Some(results),
+        );
+
+        let mut lifetime = ProfileCampaignHistory::default();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 1);
+        assert!(lifetime.eligible_badges().is_empty());
+
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 1);
+        assert!(
+            lifetime
+                .eligible_badges()
+                .contains(crate::achievement::AchievementId::Ghost)
+        );
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 0);
     }
 }
