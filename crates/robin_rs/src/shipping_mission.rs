@@ -192,7 +192,11 @@ fn required_dependencies(
                 "mission-team character {character_index} has no profile while loading {mission}"
             )
         })?;
-        character_profiles.insert(profile.0);
+        character_profiles.insert(normalize_robin_profile(
+            profiles,
+            profile.0,
+            reference.forest_level,
+        )?);
     }
 
     // Reinforcement selection can instantiate any uninstanced, non-VIP gang
@@ -217,7 +221,11 @@ fn required_dependencies(
             )
         })?;
         if !profile.vip {
-            character_profiles.insert(profile_index.0);
+            character_profiles.insert(normalize_robin_profile(
+                profiles,
+                profile_index.0,
+                reference.forest_level,
+            )?);
         }
     }
 
@@ -253,6 +261,39 @@ fn required_dependencies(
         files: files.into_iter().collect(),
         exclamation_ids,
     })
+}
+
+/// Mirror `RHelementactorpc.cpp`: Robin's stored campaign profile may be
+/// either physical variant, but level construction always selects RobinHood
+/// for forests and RobinTown for towns.
+fn normalize_robin_profile(
+    profiles: &robin_engine::profiles::ProfileManager,
+    profile_index: u32,
+    forest_level: bool,
+) -> Result<u32> {
+    let profile = profiles
+        .characters
+        .get(profile_index as usize)
+        .ok_or_else(|| anyhow!("required character profile {profile_index} does not exist"))?;
+    if !matches!(profile.filename.as_str(), "RobinHood" | "RobinTown") {
+        return Ok(profile_index);
+    }
+    let wanted = if forest_level {
+        "RobinHood"
+    } else {
+        "RobinTown"
+    };
+    profiles
+        .characters
+        .iter()
+        .position(|candidate| candidate.filename == wanted)
+        .map(|index| index as u32)
+        .ok_or_else(|| {
+            anyhow!(
+                "required {wanted} profile is absent while normalizing Robin for a {} mission",
+                if forest_level { "forest" } else { "town" }
+            )
+        })
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
@@ -314,6 +355,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into(), "rhs/static".into()],
             },
         );
@@ -378,6 +420,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into()],
             },
         );
@@ -405,6 +448,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into()],
             },
         );
@@ -420,5 +464,68 @@ mod tests {
             .err()
             .expect("missing profile dependency must fail");
         assert!(error.to_string().contains("profile 0"));
+    }
+
+    #[test]
+    fn required_files_selects_only_the_mission_robin_variant() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.missions.insert(
+            "Forest".into(),
+            ShippingMissionRef {
+                forest_level: true,
+                files: vec!["missions/forest".into()],
+            },
+        );
+        datadir.missions.insert(
+            "Town".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["missions/town".into()],
+            },
+        );
+        datadir
+            .mission_exclamation_ids
+            .insert("Forest".into(), Vec::new());
+        datadir
+            .mission_exclamation_ids
+            .insert("Town".into(), Vec::new());
+        datadir
+            .character_rhs_files
+            .insert(0, vec!["rhs/robin-hood".into()]);
+        datadir
+            .character_rhs_files
+            .insert(1, vec!["rhs/robin-town".into()]);
+        datadir.character_audio_files.insert(0, Vec::new());
+        datadir.character_audio_files.insert(1, Vec::new());
+
+        let mut profiles = ProfileManager::new();
+        profiles.characters = vec![
+            CharacterProfile {
+                filename: "RobinHood".into(),
+                ..CharacterProfile::default()
+            },
+            CharacterProfile {
+                filename: "RobinTown".into(),
+                ..CharacterProfile::default()
+            },
+        ];
+        let mut campaign = Campaign::default();
+        campaign.characters.push(description(0, false));
+        campaign.mission_team_indices.push(0);
+
+        let forest = required_dependencies(&datadir, "Forest", &campaign, &profiles, false)
+            .unwrap()
+            .files;
+        let town = required_dependencies(&datadir, "Town", &campaign, &profiles, false)
+            .unwrap()
+            .files;
+        assert_eq!(
+            forest,
+            vec!["missions/forest".to_owned(), "rhs/robin-hood".to_owned()]
+        );
+        assert_eq!(
+            town,
+            vec!["missions/town".to_owned(), "rhs/robin-town".to_owned()]
+        );
     }
 }

@@ -48,8 +48,8 @@ pub struct ShippingDatadir {
     pub missions: BTreeMap<String, ShippingMissionRef>,
     /// Content-addressed RHS payloads required when a character profile can
     /// participate in the selected mission. Keys are stable CPF character
-    /// profile indices; values include the character's physical RHS variants
-    /// and the object/projectile RHS files enabled by its actions.
+    /// profile indices; values include that exact physical character RHS and
+    /// the object/projectile RHS files enabled by its actions.
     pub character_rhs_files: BTreeMap<u32, Vec<String>>,
     /// Content-addressed localized voice payloads for each CPF character
     /// profile. Runtime party/reinforcement selection uses the same profile
@@ -123,8 +123,13 @@ impl Default for ShippingDatadir {
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingMissionRef {
+    /// Proto-level forest flag used by the original PC constructor to select
+    /// RobinHood (forest) or RobinTown (non-forest) before RHS dependencies
+    /// are fetched.
+    pub forest_level: bool,
     /// Paths relative to the directory containing `datadir.bin`. Shared RHS
-    /// payloads can be named by several missions without being stored twice.
+    /// and terrain payloads can be named by several missions without being
+    /// stored twice.
     pub files: Vec<String>,
 }
 
@@ -595,9 +600,9 @@ where
     Ok(())
 }
 
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT6";
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT7";
 const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN03";
-pub const SHIPPING_DATADIR_VERSION: u32 = 6;
+pub const SHIPPING_DATADIR_VERSION: u32 = 7;
 pub const SHIPPING_MISSION_VERSION: u32 = 3;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
@@ -832,6 +837,7 @@ mod tests {
         datadir.missions.insert(
             "MissionOne".into(),
             ShippingMissionRef {
+                forest_level: true,
                 files: vec!["missions/mission-one.rhmission.zst".into()],
             },
         );
@@ -848,7 +854,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNAT6");
+        assert_eq!(&encoded[..8], b"RHDDNAT7");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -860,6 +866,7 @@ mod tests {
             decoded.mission_ref("MissionOne").unwrap().files,
             vec!["missions/mission-one.rhmission.zst"]
         );
+        assert!(decoded.mission_ref("MissionOne").unwrap().forest_level);
         assert_eq!(
             decoded.character_rhs_files.get(&7).unwrap(),
             &["rhs/character-seven.rhmission.zst"]
