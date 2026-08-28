@@ -79,6 +79,9 @@ pub enum InitError {
         source: robin_engine::legacy_io::LegacyIoError,
     },
 
+    #[error("Failed to apply soldier profile patch {path}: {message}")]
+    ContentSoldierProfilePatch { path: String, message: String },
+
     #[error("{message}")]
     PlayerProfileState {
         save_directory: std::path::PathBuf,
@@ -105,7 +108,8 @@ impl InitError {
             Self::ContentShippingDatadir { .. }
             | Self::ContentProfilesJson { .. }
             | Self::ContentProfilesOpen { .. }
-            | Self::ContentProfilesRead { .. } => InitErrorCategory::Content,
+            | Self::ContentProfilesRead { .. }
+            | Self::ContentSoldierProfilePatch { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
             Self::PlatformShippingDatadirInstall { .. } => InitErrorCategory::Platform,
         }
@@ -485,7 +489,7 @@ fn load_profiles(
         // `dd.profiles`), so the per-mission `number_of_beam_mes` /
         // `required_actions` fields are already populated — no
         // post-processing needed here.
-        return Ok(p.clone());
+        return apply_soldier_profile_patches(p.clone());
     }
     // Both the JSON and legacy-CPF paths skip the beam-me post-processing
     // step, so without this call every mission profile ends up with
@@ -508,7 +512,7 @@ fn load_profiles(
             }
         })?;
         mgr.import_beam_mes(level_dir);
-        return Ok(mgr);
+        return apply_soldier_profile_patches(mgr);
     }
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
@@ -526,7 +530,84 @@ fn load_profiles(
             source,
         })?;
     mgr.import_beam_mes(level_dir);
-    Ok(mgr)
+    apply_soldier_profile_patches(mgr)
+}
+
+const SOLDIER_PROFILE_PATCH_PATH: &str = "Data/Configuration/soldier-profiles.patch.json";
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SoldierProfilePatch {
+    soldiers: Vec<SoldierProfileAddition>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SoldierProfileAddition {
+    template: String,
+    filename: String,
+    display_name: String,
+    #[serde(default)]
+    hostile: Option<bool>,
+}
+
+fn apply_soldier_profile_patch(
+    profiles: &mut ProfileManager,
+    patch: SoldierProfilePatch,
+) -> Result<(), String> {
+    for addition in patch.soldiers {
+        if profiles
+            .soldiers
+            .iter()
+            .any(|profile| profile.filename == addition.filename)
+        {
+            return Err(format!(
+                "new soldier filename {:?} already exists",
+                addition.filename
+            ));
+        }
+        let mut templates = profiles
+            .soldiers
+            .iter()
+            .filter(|profile| profile.filename == addition.template);
+        let mut profile = templates
+            .next()
+            .cloned()
+            .ok_or_else(|| format!("template {:?} does not exist", addition.template))?;
+        if templates.next().is_some() {
+            return Err(format!("template {:?} is ambiguous", addition.template));
+        }
+        profile.filename = addition.filename;
+        profile.display_name = addition.display_name;
+        if let Some(hostile) = addition.hostile {
+            profile.hostile = hostile;
+        }
+        profiles.soldiers.push(profile);
+    }
+    Ok(())
+}
+
+fn apply_soldier_profile_patches(
+    mut profiles: ProfileManager,
+) -> Result<ProfileManager, InitError> {
+    for root in engine_sbfile::SbFile::overlay_paths() {
+        let path = Path::new(&root).join(SOLDIER_PROFILE_PATCH_PATH);
+        if !path.is_file() {
+            continue;
+        }
+        let result = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+            .and_then(|patch| apply_soldier_profile_patch(&mut profiles, patch));
+        if let Err(message) = result {
+            return Err(InitError::ContentSoldierProfilePatch {
+                path: path.display().to_string(),
+                message,
+            });
+        }
+        tracing::info!("Applied soldier profile patch {}", path.display());
+    }
+    Ok(profiles)
 }
 
 /// Load the player-profile service owned by [`ApplicationContext`].
@@ -695,6 +776,35 @@ mod tests {
             profile.to_string(),
             "Failed to open Data/Configuration/profile.cpf: error -7"
         );
+    }
+
+    #[test]
+    fn soldier_profile_patch_appends_without_mutating_the_template() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Knight03".to_owned(),
+            display_name: "Red Cavalier".to_owned(),
+            hostile: true,
+            ..Default::default()
+        });
+        let patch = SoldierProfilePatch {
+            soldiers: vec![SoldierProfileAddition {
+                template: "Knight03".to_owned(),
+                filename: "Knight00".to_owned(),
+                display_name: "Blue Cavalier".to_owned(),
+                hostile: Some(false),
+            }],
+        };
+
+        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
+
+        assert_eq!(profiles.soldiers.len(), 2);
+        assert_eq!(profiles.soldiers[0].filename, "Knight03");
+        assert_eq!(profiles.soldiers[0].display_name, "Red Cavalier");
+        assert!(profiles.soldiers[0].hostile);
+        assert_eq!(profiles.soldiers[1].filename, "Knight00");
+        assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
+        assert!(!profiles.soldiers[1].hostile);
     }
 
     #[test]

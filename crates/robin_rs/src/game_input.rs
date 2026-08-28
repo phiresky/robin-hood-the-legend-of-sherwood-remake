@@ -343,10 +343,24 @@ pub fn resolve_left_click(
     // recording arm honours the patch redirect.
     if is_double && !is_recording {
         if host.input.valid_position_for_move && host.input.selected_sector_idx.is_some() {
-            return selected
+            let mut commands: Vec<_> = selected
                 .iter()
                 .map(|&pc_id| PlayerCommand::MakePcFast { pc_id })
                 .collect();
+            // A box selection may contain both PCs and controllable allied
+            // soldiers. The original-PC acceleration return above used to
+            // discard the soldiers' half of that mixed selection, making the
+            // gallery troops appear unable to run whenever Robin was boxed
+            // with them.
+            if host.control_allied_soldiers && !allied_selected.is_empty() {
+                commands.push(PlayerCommand::MoveAlliedSoldiers {
+                    formation: selected_allied_formation(engine, &allied_selected),
+                    soldiers: allied_selected.clone(),
+                    destination: map_pt,
+                    running: true,
+                });
+            }
+            return commands;
         }
         return vec![];
     }
@@ -1378,7 +1392,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
                 });
             }
         }
-        return cmds;
+        return finish(cmds);
     }
 
     if engine.seat_selection(local_seat).is_empty() {
@@ -2375,6 +2389,43 @@ mod tests {
     }
 
     #[test]
+    fn double_click_ground_runs_allies_in_mixed_selection() {
+        let (mut engine, assets, mut host) = fixture();
+        host.control_allied_soldiers = true;
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select(&mut engine, &assets, pc);
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SelectAlliedSoldiers {
+                soldiers: vec![ally],
+                append: false,
+            },
+        );
+        host.input.valid_position_for_move = true;
+        host.input.selected_sector_idx =
+            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+
+        let destination = MapPoint::new(300.0, 300.0);
+        let commands =
+            resolve_left_click(&mut host, &engine, &assets, destination, false, false, true);
+
+        assert_cmds!(
+            commands,
+            vec![
+                PlayerCommand::MakePcFast { pc_id: pc },
+                PlayerCommand::MoveAlliedSoldiers {
+                    soldiers: vec![ally],
+                    destination,
+                    running: true,
+                    formation: AlliedFormation::Line,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn left_click_ground_without_valid_move_position_is_noop() {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
@@ -2857,10 +2908,13 @@ mod tests {
         assert!(is_selected_unit_swordfighting(&engine, PlayerId(0)));
         assert_cmds!(
             resolve_right_click(&engine, PlayerId(0)),
-            vec![PlayerCommand::LaunchSelfAbility {
-                actor: soldier,
-                command: Command::ParrySword,
-            }]
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: soldier,
+                    command: Command::ParrySword,
+                },
+                PlayerCommand::ClearAlliedSelection,
+            ]
         );
 
         // A full circle is the game's Thrust-H gesture. It exercises the

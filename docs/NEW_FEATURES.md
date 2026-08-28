@@ -119,8 +119,11 @@ A list of which additional features we have added, which ones we might still wan
   central positions. When heroes move with the selection, soldiers deploy
   behind them instead of overlapping their formation. Long moves automatically
   narrow to a two-wide marching column before deploying at the destination.
+  Double-click runs allied soldiers even when a drag selection also contains a
+  hero.
   Controlled soldiers can enter swordfights, execute the normal drawn strike
-  gestures, and parry with right-click. Combat autonomy follows stance: Hold
+  gestures, and parry once while releasing the allied selection with
+  right-click. Combat autonomy follows stance: Hold
   permits only explicit gestures, smalltalk, and reactive parries; Defensive
   returns attacks without AI pursuit; Aggressive retains full combat AI.
   Explicit gestures supersede combat work the soldier AI had already queued. Hover
@@ -352,12 +355,20 @@ A list of which additional features we have added, which ones we might still wan
 - Overlay mods can append soldier profiles through
   `Data/Configuration/soldier-profiles.patch.json` without replacing the
   retail CPF profile table.
+- Readable soldier identifiers use normalized CPF filenames. When the retail
+  CPF repeats a filename, hackable levels retain the original numeric identity
+  with `<name>__<cpf-index>` (for example `archer05__47`) instead of silently
+  choosing one record.
 - Hackable RHS manifests explicitly select `rgba` or `legacy_color_keys` PNG
   semantics. Legacy green transparency and blue cast-shadow masks remain
   available to ambience-aware rendering instead of being baked into alpha.
 - One overlay mod may expose multiple hackable missions through the
   `hackable_missions` array, and large character packs may opt into
   mission-scoped sprite loading.
+- Native builds compile each hackable `.rhs.d` PNG tree into an atomic,
+  zstd-compressed runtime cache beside its manifest. Cache hits reuse packed
+  engine sprites and animation tables; manifest hashes and source file
+  metadata invalidate stale caches automatically.
 
 ### Code Quality
 

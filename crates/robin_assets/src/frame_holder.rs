@@ -101,6 +101,19 @@ pub struct PackedSprite {
     pub dictionary_index: u16,
 }
 
+/// Portable payload for a sprite compiled from a runtime PNG overlay.
+///
+/// Unlike [`PackedSprite`], this contains no bank offsets or renderer state,
+/// so hackable-asset caches can serialize it directly and append it to any
+/// freshly loaded [`FrameHolder`].
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct RuntimeSprite {
+    pub width: u16,
+    pub height: u16,
+    pub packed_data: Vec<u16>,
+    pub rgba_data: Option<Vec<u8>>,
+}
+
 /// Sentinel: no dictionary (run-length encoded sprite).
 pub const UNMAPPED_DICT: u16 = 0xFFFF;
 
@@ -608,6 +621,29 @@ impl FrameHolder {
     /// character PNGs. The source RGBA is retained so the renderer can upload
     /// PNG overlay frames without losing semi-transparent pixels.
     pub fn append_rgba_sprite(&mut self, width: u16, height: u16, rgba: &[u8]) -> u32 {
+        let sprite = Self::pack_runtime_rgba_sprite(width, height, rgba, false);
+        self.append_runtime_sprite(sprite)
+    }
+
+    /// Append an RGB PNG exported from the legacy sprite bank.
+    ///
+    /// RGB565 green `0x07C0` remains transparent and blue `0x001F` remains a
+    /// semantic shadow key. Unlike ordinary RGBA overlays, keyed frames do
+    /// not retain a source-RGBA bypass: rendering must run them through the
+    /// ambience-aware legacy decompression path.
+    pub fn append_legacy_keyed_rgba_sprite(&mut self, width: u16, height: u16, rgba: &[u8]) -> u32 {
+        let sprite = Self::pack_runtime_rgba_sprite(width, height, rgba, true);
+        self.append_runtime_sprite(sprite)
+    }
+
+    /// Convert a PNG's RGBA pixels into the engine's runtime sprite payload.
+    /// The result is independent of a frame holder and may be serialized.
+    pub fn pack_runtime_rgba_sprite(
+        width: u16,
+        height: u16,
+        rgba: &[u8],
+        legacy_color_keys: bool,
+    ) -> RuntimeSprite {
         assert_eq!(rgba.len(), width as usize * height as usize * 4);
         let mut packed = Vec::new();
         let w = width as usize;
@@ -616,7 +652,9 @@ impl FrameHolder {
             let mut first = None;
             let mut last = None;
             for x in 0..w {
-                if row[x * 4 + 3] >= 128 {
+                let i = x * 4;
+                let color = pack_rgb8_to_rgb565(row[i], row[i + 1], row[i + 2]);
+                if row[i + 3] >= 128 && (!legacy_color_keys || color != TRANSPARENT_COLOR_16) {
                     first.get_or_insert(x);
                     last = Some(x);
                 }
@@ -633,13 +671,12 @@ impl FrameHolder {
                 let i = x * 4;
                 let color = if row[i + 3] < 128 {
                     TRANSPARENT_COLOR_16
+                } else if legacy_color_keys {
+                    pack_rgb8_to_rgb565(row[i], row[i + 1], row[i + 2])
                 } else if row[i] == 0 && row[i + 1] == 0 && row[i + 2] == 255 {
                     SHADOW_KEY
                 } else {
-                    let r = (row[i] as u16 >> 3) & 0x1F;
-                    let g = (row[i + 1] as u16 >> 2) & 0x3F;
-                    let b = (row[i + 2] as u16 >> 3) & 0x1F;
-                    let mut c = (r << 11) | (g << 5) | b;
+                    let mut c = pack_rgb8_to_rgb565(row[i], row[i + 1], row[i + 2]);
                     if c == TRANSPARENT_COLOR_16 || c == SHADOW_KEY {
                         c = c.saturating_add(1);
                     }
@@ -648,14 +685,24 @@ impl FrameHolder {
                 packed.push(color);
             }
         }
-        let index = self.sprites.len() as u32;
-        self.sprites.push(PackedSprite {
+        RuntimeSprite {
             width,
             height,
-            packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: packed,
+            rgba_data: (!legacy_color_keys).then(|| rgba.to_vec()),
+        }
+    }
+
+    /// Append a previously packed runtime sprite, returning its global bank ID.
+    pub fn append_runtime_sprite(&mut self, sprite: RuntimeSprite) -> u32 {
+        let index = self.sprites.len() as u32;
+        self.sprites.push(PackedSprite {
+            width: sprite.width,
+            height: sprite.height,
+            packed_size: (sprite.packed_data.len() * 2) as u32,
+            packed_data: Some(sprite.packed_data),
             bank_span: None,
-            rgba_data: Some(rgba.to_vec()),
+            rgba_data: sprite.rgba_data,
             dictionary_index: UNMAPPED_DICT,
         });
         index
@@ -1587,6 +1634,11 @@ pub fn pack_rgb565(r: u16, g: u16, b: u16) -> u16 {
     ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F)
 }
 
+#[inline]
+fn pack_rgb8_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
+    pack_rgb565(u16::from(r) >> 3, u16::from(g) >> 2, u16::from(b) >> 3)
+}
+
 /// Unpack RGB565 into (R, G, B) components.
 pub fn unpack_rgb565(color: u16) -> (u16, u16, u16) {
     let r = (color & 0xF800) >> 11;
@@ -1761,6 +1813,22 @@ mod tests {
         assert!(holder.packed_data(id).is_some());
         assert_eq!(holder.sprite_width(id), 2);
         assert_eq!(holder.sprite_height(id), 1);
+    }
+
+    #[test]
+    fn append_legacy_keyed_rgba_sprite_preserves_transparency_and_shadow_keys() {
+        let mut holder = FrameHolder::default();
+        let rgba = [
+            0, 250, 0, 255, // RGB565 0x07c0: transparent
+            0, 0, 255, 255, // RGB565 0x001f: semantic shadow
+            255, 0, 0, 255, // ordinary opaque colour
+        ];
+
+        let id = holder.append_legacy_keyed_rgba_sprite(3, 1, &rgba);
+
+        assert_eq!(holder.rgba_data(id), None);
+        let packed = holder.packed_data(id).unwrap();
+        assert_eq!(packed, &[1, 2, SHADOW_KEY, 0xF800]);
     }
 
     #[test]

@@ -792,6 +792,7 @@ impl Converter {
 
         let manifest = serde_json::json!({
             "signature": signature,
+            "pixel_format": "legacy_color_keys",
             "profiles": manifest_profiles,
         });
         fs::write(

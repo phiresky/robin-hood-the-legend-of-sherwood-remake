@@ -7,5 +7,5 @@
   "uploaded": "Aug 27, 2026",
   "tags": ["Hackable", "Test"],
   "description": "Every playable-character profile begins in an autonomous ten-way free-for-all around a compact circle.",
-  "hackable_mission": "MultiTeamAllPcsCircle"
+  "hackable_missions": ["MultiTeamAllPcsCircle"]
 }

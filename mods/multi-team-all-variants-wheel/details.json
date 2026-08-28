@@ -10,5 +10,5 @@
     "Test"
   ],
   "description": "Every soldier profile arranged in a large circle, with each NPC assigned a unique allegiance.",
-  "hackable_mission": "MultiTeamAllVariantsWheel"
+  "hackable_missions": ["MultiTeamAllVariantsWheel"]
 }
