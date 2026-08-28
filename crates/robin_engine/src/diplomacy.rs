@@ -377,6 +377,10 @@ pub(crate) fn reconcile_entities(
             ))
         })
         .collect::<Vec<_>>();
+    let actors_by_id = humans
+        .iter()
+        .map(|(id, camp, is_pc, is_soldier)| (*id, (*camp, *is_pc, *is_soldier)))
+        .collect::<BTreeMap<_, _>>();
     let actors_by_handle = humans
         .iter()
         .map(|(id, camp, is_pc, _)| (id.index(), (*camp, *is_pc)))
@@ -391,12 +395,9 @@ pub(crate) fn reconcile_entities(
                 .opponents
                 .iter_with_jump_lines()
                 .filter(|(opponent, _)| {
-                    humans
-                        .iter()
-                        .find(|(id, _, _, _)| id == opponent)
-                        .is_some_and(|(_, camp, is_pc, _)| {
-                            diplomacy.actors_may_fight(*own_camp, *own_is_pc, *camp, *is_pc)
-                        })
+                    actors_by_id.get(opponent).is_some_and(|(camp, is_pc, _)| {
+                        diplomacy.actors_may_fight(*own_camp, *own_is_pc, *camp, *is_pc)
+                    })
                 })
                 .collect::<Vec<_>>();
             human.opponents = crate::element::SwordfightOpponents::from_pairs(retained);
@@ -418,10 +419,8 @@ pub(crate) fn reconcile_entities(
         let enemies = &mut npc.detectable_lists[DetectableType::Enemy as usize];
         enemies.retain(|detectable| {
             detectable.element.is_some_and(|id| {
-                humans
-                    .iter()
-                    .find(|(target_id, _, _, _)| *target_id == id)
-                    .is_some_and(|(_, target_camp, target_is_pc, target_is_soldier)| {
+                actors_by_id.get(&id).is_some_and(
+                    |(target_camp, target_is_pc, target_is_soldier)| {
                         crate::ai_detectable_filter::should_add_enemy_detectable_with(
                             diplomacy,
                             npc_camp,
@@ -430,7 +429,8 @@ pub(crate) fn reconcile_entities(
                             *target_is_soldier,
                             *target_camp,
                         )
-                    })
+                    },
+                )
             })
         });
         for (target_id, target_camp, target_is_pc, target_is_soldier) in &humans {
@@ -463,10 +463,9 @@ pub(crate) fn reconcile_entities(
         for detectable_type in [DetectableType::Friend, DetectableType::MissedFriend] {
             npc.detectable_lists[detectable_type as usize].retain(|detectable| {
                 detectable.element.is_some_and(|id| {
-                    humans
-                        .iter()
-                        .find(|(target_id, _, _, _)| *target_id == id)
-                        .is_some_and(|(_, camp, _, _)| diplomacy.is_allied(npc_camp, *camp))
+                    actors_by_id
+                        .get(&id)
+                        .is_some_and(|(camp, _, _)| diplomacy.is_allied(npc_camp, *camp))
                 })
             });
         }
