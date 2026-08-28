@@ -2862,11 +2862,15 @@ impl Engine {
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let original_parity = args.original_rng_replay.is_some();
-        let sim_config = if original_parity {
+        let mut sim_config = if original_parity {
             super::cloak::preserve_original_cloak_behavior(args.sim_config)
         } else {
             args.sim_config
         };
+        if original_parity {
+            sim_config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+            sim_config.noise_distraction_feedback = false;
+        }
         let mut inner = EngineInner::new_with_campaign(args.campaign);
         inner.control.sim_config = sim_config;
         inner.control.mission_start_rng_seed = args.rng_seed;

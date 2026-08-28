@@ -6,6 +6,152 @@ const fn enabled_by_default() -> bool {
     true
 }
 
+/// Detection radius used by the original wasp victim-selection routine.
+pub const CLASSIC_WASP_ACQUISITION_RADIUS: f32 = 50.0;
+/// Rebalanced initial wasp acquisition radius. Chase, sting, and forget
+/// distances deliberately retain their shipped values.
+pub const REBALANCED_WASP_ACQUISITION_RADIUS: f32 = 75.0;
+/// Radius of the deterministic ground-stone noise stimulus.
+pub const STONE_DISTRACTION_RADIUS: f32 = 240.0;
+/// Shipped base throw distance for Will Scarlet's stone.
+pub const CLASSIC_STONE_BASE_THROW_RANGE: f32 = 200.0;
+/// Rebalanced stone base distance, matching comparable throwables.
+pub const REBALANCED_STONE_BASE_THROW_RANGE: f32 = 300.0;
+/// Minimum blood-alcohol increment for newly ale-interested soldiers.
+pub const REBALANCED_ALE_MIN_POTENCY: u16 = 20;
+
+pub const fn effective_ale_potency(authored_beer: u16, is_vip: bool, reliable_ale: bool) -> u16 {
+    if reliable_ale && !is_vip && authored_beer == 0 {
+        REBALANCED_ALE_MIN_POTENCY
+    } else {
+        authored_beer
+    }
+}
+
+/// Independently switchable deterministic item rules.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ItemGameplayConfig {
+    #[serde(default)]
+    pub apple_combat_interrupt: bool,
+    #[serde(default)]
+    pub wasp_reliable_acquisition: bool,
+    #[serde(default)]
+    pub stone_ground_distraction: bool,
+    #[serde(default)]
+    pub stone_longer_range: bool,
+    #[serde(default)]
+    pub net_selective_immunity: bool,
+    #[serde(default)]
+    pub ale_reliable_distraction: bool,
+}
+
+impl ItemGameplayConfig {
+    pub const fn classic() -> Self {
+        Self {
+            apple_combat_interrupt: false,
+            wasp_reliable_acquisition: false,
+            stone_ground_distraction: false,
+            stone_longer_range: false,
+            net_selective_immunity: false,
+            ale_reliable_distraction: false,
+        }
+    }
+
+    pub const fn effective_for_original_parity(self, original_parity: bool) -> Self {
+        if original_parity { Self::classic() } else { self }
+    }
+}
+
+impl Default for ItemGameplayConfig {
+    fn default() -> Self {
+        Self {
+            apple_combat_interrupt: true,
+            wasp_reliable_acquisition: true,
+            stone_ground_distraction: true,
+            stone_longer_range: true,
+            net_selective_immunity: true,
+            ale_reliable_distraction: true,
+        }
+    }
+}
+
+/// Host-side targeting explanations; these never author simulation outcomes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ItemPreviewConfig {
+    #[serde(default)]
+    pub apple_effect: bool,
+    #[serde(default)]
+    pub stone_direct_effect: bool,
+    #[serde(default)]
+    pub stone_distraction_area: bool,
+    #[serde(default)]
+    pub net_capture_area: bool,
+    #[serde(default)]
+    pub net_crumple_prediction: bool,
+    #[serde(default)]
+    pub ale_effect: bool,
+    #[serde(default)]
+    pub purse_effect: bool,
+    #[serde(default)]
+    pub wasp_area: bool,
+}
+
+impl ItemPreviewConfig {
+    pub const fn classic() -> Self {
+        Self {
+            apple_effect: false,
+            stone_direct_effect: false,
+            stone_distraction_area: false,
+            net_capture_area: false,
+            net_crumple_prediction: false,
+            ale_effect: false,
+            purse_effect: false,
+            wasp_area: false,
+        }
+    }
+
+    pub const fn effective_for_original_parity(self, original_parity: bool) -> Self {
+        if original_parity { Self::classic() } else { self }
+    }
+}
+
+impl Default for ItemPreviewConfig {
+    fn default() -> Self {
+        Self {
+            apple_effect: true,
+            stone_direct_effect: true,
+            stone_distraction_area: true,
+            net_capture_area: true,
+            net_crumple_prediction: true,
+            ale_effect: true,
+            purse_effect: true,
+            wasp_area: true,
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(
     Debug,
@@ -100,6 +246,18 @@ pub struct GameplayConfig {
     #[serde(default)]
     pub reusable_cloaks: bool,
 
+    /// Deterministic item rebalances. Missing data preserves shipped behavior.
+    #[serde(default = "ItemGameplayConfig::classic")]
+    pub item_gameplay: ItemGameplayConfig,
+
+    /// Independently switchable, presentation-only item targeting aids.
+    #[serde(default = "ItemPreviewConfig::classic")]
+    pub item_previews: ItemPreviewConfig,
+
+    /// Play the optional impact cue for a ground-stone distraction.
+    #[serde(default)]
+    pub noise_distraction_feedback: bool,
+
     /// Campaign-selection presentation. This affects visuals only; complete
     /// attempt details and completed-mission practice remain available in all
     /// modes.
@@ -119,6 +277,9 @@ impl Default for GameplayConfig {
             enable_unbinding: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
+            item_gameplay: ItemGameplayConfig::default(),
+            item_previews: ItemPreviewConfig::default(),
+            noise_distraction_feedback: true,
             campaign_presentation: CampaignPresentationMode::ProgressTree,
         }
     }
@@ -126,7 +287,7 @@ impl Default for GameplayConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::GameplayConfig;
+    use super::{GameplayConfig, ItemGameplayConfig, ItemPreviewConfig};
 
     #[test]
     fn hard_reaction_time_fix_is_the_default() {
@@ -142,6 +303,9 @@ mod tests {
         assert!(config.enable_unbinding);
         assert!(config.show_production_forecast);
         assert!(!config.reusable_cloaks);
+        assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
+        assert_eq!(config.item_previews, ItemPreviewConfig::classic());
+        assert!(!config.noise_distraction_feedback);
         assert_eq!(
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree
@@ -170,5 +334,38 @@ mod tests {
     #[test]
     fn fresh_profiles_enable_reusable_cloaks() {
         assert!(GameplayConfig::default().reusable_cloaks);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_each_item_rule_and_preview() {
+        let config = GameplayConfig::default();
+        assert!(config.item_gameplay.apple_combat_interrupt);
+        assert!(config.item_gameplay.wasp_reliable_acquisition);
+        assert!(config.item_gameplay.stone_ground_distraction);
+        assert!(config.item_gameplay.stone_longer_range);
+        assert!(config.item_gameplay.net_selective_immunity);
+        assert!(config.item_gameplay.ale_reliable_distraction);
+        assert!(config.item_previews.apple_effect);
+        assert!(config.item_previews.stone_direct_effect);
+        assert!(config.item_previews.stone_distraction_area);
+        assert!(config.item_previews.net_capture_area);
+        assert!(config.item_previews.net_crumple_prediction);
+        assert!(config.item_previews.ale_effect);
+        assert!(config.item_previews.purse_effect);
+        assert!(config.item_previews.wasp_area);
+        assert!(config.noise_distraction_feedback);
+    }
+
+    #[test]
+    fn partial_item_objects_leave_unmentioned_rules_off() {
+        let config: GameplayConfig = serde_json::from_str(
+            r#"{"item_gameplay":{"apple_combat_interrupt":true},"item_previews":{"net_capture_area":true}}"#,
+        )
+        .expect("gameplay config");
+        assert!(config.item_gameplay.apple_combat_interrupt);
+        assert!(!config.item_gameplay.wasp_reliable_acquisition);
+        assert!(!config.item_gameplay.stone_longer_range);
+        assert!(config.item_previews.net_capture_area);
+        assert!(!config.item_previews.net_crumple_prediction);
     }
 }

@@ -7,7 +7,7 @@
 //! such as patch door highlights; sim-visible mouse commands are dispatched
 //! earlier in the frame so replay / rollback can record them.
 
-use crate::host::Host;
+use crate::host::{Host, ItemEffectPreview};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
@@ -50,6 +50,34 @@ fn apply_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
             host.net_crumpled = crumpled;
         }
     }
+}
+
+fn set_item_effect_preview(
+    host: &mut Host,
+    center: MapPoint,
+    radius: Option<u16>,
+    localization_key: &'static str,
+    fallback_text: &'static str,
+    blocked: bool,
+) {
+    host.item_effect_preview = Some(ItemEffectPreview {
+        center,
+        radius,
+        localization_key,
+        fallback_text,
+        blocked,
+    });
+}
+
+fn trajectory_landing(host: &Host, fallback: MapPoint) -> MapPoint {
+    host.trajectory_preview_points
+        .last()
+        .map(|point| point.position.to_map())
+        .unwrap_or(fallback)
+}
+
+fn item_preview_enabled(engine: &Engine, profile_setting: bool) -> bool {
+    profile_setting && engine.original_rng_replay_cursor().is_none()
 }
 
 fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
@@ -715,6 +743,7 @@ pub fn update_mouse(
     host.input.mouse_shadow_color = 0;
     host.input.increment_cursor_animation = true;
     host.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
+    host.item_effect_preview = None;
 
     let mouse_map_pt = mouse_map;
 
@@ -1156,6 +1185,26 @@ fn cursor_for_apple(
                         };
                         apply_trajectory_preview(host, preview);
                     }
+                    if item_preview_enabled(engine, host.item_previews.apple_effect)
+                        && let Some(center) = target_pos
+                    {
+                        let (key, text) = if engine
+                            .sim_config()
+                            .item_gameplay
+                            .apple_combat_interrupt
+                        {
+                            (
+                                "item_preview.apple.interrupt",
+                                "Apple: 60-frame daze; 1500-frame scent; interrupts combat",
+                            )
+                        } else {
+                            (
+                                "item_preview.apple.classic",
+                                "Apple: 60-frame daze; 1500-frame scent; fighting target immune",
+                            )
+                        };
+                        set_item_effect_preview(host, center, None, key, text, false);
+                    }
                 } else {
                     host.valid_trajectory = false;
                 }
@@ -1243,6 +1292,18 @@ fn cursor_for_stone(
                         };
                         apply_trajectory_preview(host, preview);
                     }
+                    if item_preview_enabled(engine, host.item_previews.stone_effect)
+                        && let Some(center) = target_pos
+                    {
+                        set_item_effect_preview(
+                            host,
+                            center,
+                            None,
+                            "item_preview.stone.direct",
+                            "Stone hit: 10 damage and strong concussion",
+                            false,
+                        );
+                    }
                 } else {
                     host.valid_trajectory = false;
                 }
@@ -1300,6 +1361,18 @@ fn cursor_for_purse(
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
                     apply_trajectory_preview(host, preview);
+                }
+                if item_preview_enabled(engine, host.item_previews.purse_effect)
+                    && host.valid_trajectory
+                {
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        None,
+                        "item_preview.purse.effect",
+                        "Purse: 5 coins (£50); visible outdoor enemies need money interest",
+                        host.net_crumpled,
+                    );
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1379,6 +1452,28 @@ fn cursor_for_wasp_nest(
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
                     apply_trajectory_preview(host, preview);
+                }
+                if item_preview_enabled(engine, host.item_previews.wasp_area)
+                    && host.valid_trajectory
+                {
+                    let radius = if engine.sim_config().item_gameplay.wasp_reliable_acquisition {
+                        robin_engine::gameplay_config::REBALANCED_WASP_ACQUISITION_RADIUS
+                    } else {
+                        robin_engine::gameplay_config::CLASSIC_WASP_ACQUISITION_RADIUS
+                    } as u16;
+                    let text = if radius == 75 {
+                        "Wasps: acquire within 75 (225 scented); VIP/fighting targets immune"
+                    } else {
+                        "Wasps: acquire within 50 (150 scented); VIP/fighting targets immune"
+                    };
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        Some(radius),
+                        "item_preview.wasp.area",
+                        text,
+                        host.net_crumpled,
+                    );
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1511,6 +1606,31 @@ fn cursor_for_net(
                     };
                     apply_trajectory_preview(host, preview);
                 }
+                if item_preview_enabled(engine, host.item_previews.net_area)
+                    && host.valid_trajectory
+                {
+                    let landing = host
+                        .trajectory_preview_points
+                        .last()
+                        .map(|point| point.position);
+                    let crumpled = landing.is_some_and(|point| {
+                        engine.predict_net_crumple_at(assets, point, host.trajectory_preview_layer)
+                    });
+                    host.net_crumpled = crumpled;
+                    let text = if crumpled {
+                        "Net: will crumple here; captures people within 40 when clear"
+                    } else {
+                        "Net: captures active people within 40 (including allies)"
+                    };
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        Some(40),
+                        "item_preview.net.area",
+                        text,
+                        crumpled,
+                    );
+                }
             } else {
                 host.valid_trajectory = false;
             }
@@ -1545,7 +1665,7 @@ fn cursor_for_lever(
 /// Ale cursor arm.
 fn cursor_for_ale(
     engine: &mut Engine,
-    _host: &mut Host,
+    host: &mut Host,
     _assets: &LevelAssets,
     mouse_map_pt: MapPoint,
     _shift_held: bool,
@@ -1554,6 +1674,16 @@ fn cursor_for_ale(
     {
         // Validate mouse sector (no door, no wall/ladder).
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
+            if item_preview_enabled(engine, host.item_previews.ale_effect) {
+                set_item_effect_preview(
+                    host,
+                    mouse_map_pt,
+                    None,
+                    "item_preview.ale.effect",
+                    "Ale: visible outdoor enemies need beer interest; drunk enemies accept",
+                    false,
+                );
+            }
             RHMOUSE_ALE_YES
         } else {
             RHMOUSE_ALE_NO

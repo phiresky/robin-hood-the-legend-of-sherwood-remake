@@ -2816,6 +2816,65 @@ pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Op
     })
 }
 
+/// Optional post-port detail appended to the localized Original tooltip.
+/// The stable key is exposed with the English fallback so a future extension
+/// catalog can translate these strings independently of `MenuText` ids.
+pub fn item_action_tooltip_extension(
+    action: robin_engine::profiles::Action,
+    rules: robin_engine::gameplay_config::ItemGameplayConfig,
+    previews: robin_engine::gameplay_config::ItemPreviewConfig,
+) -> Option<(&'static str, &'static str)> {
+    use robin_engine::profiles::Action;
+    match action {
+        Action::Apple if previews.apple_effect => Some(if rules.apple_combat_interrupt {
+            (
+                "item_tooltip.apple.interrupt",
+                "60-frame daze; 1500-frame scent; interrupts active combat.",
+            )
+        } else {
+            (
+                "item_tooltip.apple.classic",
+                "60-frame daze; 1500-frame scent; fighting targets are immune.",
+            )
+        }),
+        Action::Stone if previews.stone_effect => Some(if rules.stone_ground_distraction {
+            (
+                "item_tooltip.stone.distraction",
+                "Direct hit: 10 damage + strong concussion. Ground noise radius: 240.",
+            )
+        } else {
+            (
+                "item_tooltip.stone.classic",
+                "Direct hit: 10 damage + strong concussion.",
+            )
+        }),
+        Action::Net if previews.net_area => Some((
+            "item_tooltip.net.area",
+            "Captures active people within 40, including allies; terrain or people can crumple it.",
+        )),
+        Action::Ale if previews.ale_effect => Some((
+            "item_tooltip.ale.effect",
+            "Visible outdoor enemies need beer interest; drunk enemies accept.",
+        )),
+        Action::Purse if previews.purse_effect => Some((
+            "item_tooltip.purse.effect",
+            "Scatters 5 coins worth £50; visible outdoor enemies need money interest.",
+        )),
+        Action::WaspNest if previews.wasp_area => Some(if rules.wasp_reliable_acquisition {
+            (
+                "item_tooltip.wasp.reliable",
+                "Acquires within 75 (225 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        } else {
+            (
+                "item_tooltip.wasp.classic",
+                "Acquires within 50 (150 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        }),
+        _ => None,
+    }
+}
+
 /// Hover-idle tracker for portrait action buttons. These compact controls
 /// need much quicker feedback than the large requirements-bar widgets.
 #[derive(Default, Clone)]

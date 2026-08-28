@@ -1964,10 +1964,19 @@ impl EnemyAi {
             }
 
             StimulusType::EventApple => {
-                if !self.base.current_substate.is_any_swordfight()
+                let in_swordfight_state = self.base.current_substate.is_any_swordfight();
+                let may_interrupt = sim.config().item_gameplay.apple_combat_interrupt;
+                if (!in_swordfight_state || may_interrupt)
                     && let StimulusInfo::Position(ref pos) = stimulus.info
                 {
                     self.base.stop_all();
+                    // Original `RHSoldierIA::ThinkAlertingEvent(EVENT_APPLE)`
+                    // rejects every swordfight substate. The optional rule
+                    // deliberately breaks the reciprocal fight before the
+                    // apple daze takes ownership of the actor.
+                    if may_interrupt && ctx.is_swordfighting {
+                        self.base.outbox.actor.quit_swordfight = true;
+                    }
                     self.base.seek_position = *pos;
                     self.set_state(AiState::Wondering, Substate::WonderingAppleSauceInTheVisor);
                     // Spawn a
@@ -3708,6 +3717,65 @@ mod tests {
                 crate::element::EyeStatus::DieOrGetUnconscious
             ))
         ));
+    }
+
+    #[test]
+    fn classic_apple_rule_keeps_a_swordfighter_engaged() {
+        let mut config = crate::engine::SimConfig::default();
+        config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+        let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        let ctx = AiContext {
+            is_swordfighting: true,
+            frame: 50,
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_position(StimulusType::EventApple, Position::default()),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert!(!ai.base.outbox.actor.quit_swordfight);
+    }
+
+    #[test]
+    fn rebalanced_apple_interrupts_then_owns_the_fighter_state() {
+        let mut config = crate::engine::SimConfig::default();
+        config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+        config.item_gameplay.apple_combat_interrupt = true;
+        let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        let ctx = AiContext {
+            is_swordfighting: true,
+            frame: 50,
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_position(StimulusType::EventApple, Position::default()),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Wondering);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::WonderingAppleSauceInTheVisor
+        );
+        assert!(ai.base.outbox.actor.quit_swordfight);
+        assert!(ai.base.outbox.actor.slowly_open_eyes);
+        assert_eq!(ai.base.when_does_timer_ring, 110);
     }
 
     #[test]

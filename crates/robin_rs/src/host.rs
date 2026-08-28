@@ -81,6 +81,7 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    item_previews: robin_engine::gameplay_config::ItemPreviewConfig,
 }
 
 impl ApplicationContext {
@@ -110,9 +111,7 @@ impl ApplicationContext {
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
         let amount_of_speaking = active.sound_config.amount_of_speaking;
-        let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-        let enable_unbinding = active.gameplay_config.enable_unbinding;
-        let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+        let gameplay_config = active.gameplay_config;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -126,9 +125,11 @@ impl ApplicationContext {
 
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -147,6 +148,8 @@ impl ApplicationContext {
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.item_gameplay = existing.item_gameplay;
+        sim_config.noise_distraction_feedback = existing.noise_distraction_feedback;
         *self
             .sim_config
             .lock()
@@ -199,14 +202,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (
-            result,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            reusable_cloaks,
-        ) = {
+        let (result, difficulty, amount_of_speaking, gameplay_config) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -220,18 +216,10 @@ impl ApplicationContext {
                 result,
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
-                active.gameplay_config.fix_hard_reaction_times,
-                active.gameplay_config.enable_unbinding,
-                active.gameplay_config.reusable_cloaks,
+                active.gameplay_config,
             )
         };
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            reusable_cloaks,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(result)
     }
 
@@ -245,14 +233,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (
-            profile_id,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            reusable_cloaks,
-        ) = {
+        let (profile_id, difficulty, amount_of_speaking, gameplay_config) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -299,9 +280,7 @@ impl ApplicationContext {
             let profile_id = active.id;
             let difficulty = active.difficulty;
             let amount_of_speaking = active.sound_config.amount_of_speaking;
-            let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-            let enable_unbinding = active.gameplay_config.enable_unbinding;
-            let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+            let gameplay_config = active.gameplay_config;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -329,19 +308,11 @@ impl ApplicationContext {
                 profile_id,
                 difficulty,
                 amount_of_speaking,
-                fix_hard_reaction_times,
-                enable_unbinding,
-                reusable_cloaks,
+                gameplay_config,
             )
         };
 
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            reusable_cloaks,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(profile_id)
     }
 
@@ -395,14 +366,13 @@ impl ApplicationContext {
     fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
         let services = self.required_services()?;
         let (key_config, custom_key_config) = self.active_key_configs()?;
+        let gameplay_config = self.active_profile_snapshot()?.gameplay_config;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
             key_config,
             custom_key_config,
-            control_tactical_units: self
-                .active_profile_snapshot()?
-                .gameplay_config
-                .control_tactical_units,
+            control_tactical_units: gameplay_config.control_tactical_units,
+            item_previews: gameplay_config.item_previews,
         })
     }
 
@@ -416,15 +386,15 @@ impl ApplicationContext {
         &self,
         difficulty: robin_engine::player_profile::DifficultyLevel,
         amount_of_speaking: u16,
-        fix_hard_reaction_times: bool,
-        enable_unbinding: bool,
-        reusable_cloaks: bool,
+        gameplay_config: robin_engine::gameplay_config::GameplayConfig,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
         *self
             .sim_config
             .lock()
@@ -662,6 +632,9 @@ pub struct HostFrontend {
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
+
+    /// Active profile's host-only item targeting explanations.
+    pub item_previews: robin_engine::gameplay_config::ItemPreviewConfig,
 
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
@@ -1065,6 +1038,7 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                item_previews: snapshot.item_previews,
                 ..Default::default()
             },
             ..Default::default()

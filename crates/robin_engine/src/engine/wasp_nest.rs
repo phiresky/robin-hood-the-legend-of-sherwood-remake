@@ -50,7 +50,7 @@ const STINGING_MIN_TIMEOUT: u16 = 10;
 const STINGING_MAX_TIMEOUT: u16 = 60;
 /// Starting range for victim search.  Multiplied by `APPLE_ATTRACTION`
 /// for apple-smelling soldiers.
-const VICTIM_DETECTION_DISTANCE: f32 = 50.0;
+const VICTIM_DETECTION_DISTANCE: f32 = crate::gameplay_config::CLASSIC_WASP_ACQUISITION_RADIUS;
 /// Above this range the wasp drops its current victim.
 const VICTIM_FORGET_DISTANCE: f32 = 70.0;
 /// Inside this range the wasp goes straight-line at the victim
@@ -63,6 +63,19 @@ const STING_DISTANCE: f32 = 10.0;
 /// Number of `ChangeDirection` retries before the wasp gives up and
 /// kills itself.
 const CHANGE_DIRECTION_TRIES: u32 = 10;
+
+fn victim_detection_distance(
+    config: crate::gameplay_config::ItemGameplayConfig,
+    smelling_apple: bool,
+) -> u32 {
+    let baseline = if config.wasp_reliable_acquisition {
+        crate::gameplay_config::REBALANCED_WASP_ACQUISITION_RADIUS
+    } else {
+        VICTIM_DETECTION_DISTANCE
+    };
+    let attraction = if smelling_apple { APPLE_ATTRACTION } else { 1 };
+    (baseline * attraction as f32) as u32
+}
 
 impl EngineInner {
     /// Per-frame tick for wasp nests and their spawned wasps.
@@ -433,11 +446,7 @@ impl EngineInner {
                 .soldier_data()
                 .map(|s| s.apple_smell > 0)
                 .unwrap_or(false);
-            let detect = if smelling_apple {
-                (VICTIM_DETECTION_DISTANCE * APPLE_ATTRACTION as f32) as u32
-            } else {
-                VICTIM_DETECTION_DISTANCE as u32
-            };
+            let detect = victim_detection_distance(sim.config().item_gameplay, smelling_apple);
             if dist > detect {
                 continue;
             }
@@ -948,5 +957,20 @@ mod tests {
                 "at least one wasp should have the soldier selected as its victim"
             );
         });
+    }
+
+    #[test]
+    fn reliable_acquisition_changes_only_the_documented_radius() {
+        let classic = crate::gameplay_config::ItemGameplayConfig::classic();
+        let mut reliable = classic;
+        reliable.wasp_reliable_acquisition = true;
+
+        assert_eq!(victim_detection_distance(classic, false), 50);
+        assert_eq!(victim_detection_distance(reliable, false), 75);
+        assert_eq!(victim_detection_distance(classic, true), 150);
+        assert_eq!(victim_detection_distance(reliable, true), 225);
+        assert_eq!(VICTIM_FORGET_DISTANCE, 70.0);
+        assert_eq!(VICTIM_CHARGE_DISTANCE, 25.0);
+        assert_eq!(STING_DISTANCE, 10.0);
     }
 }

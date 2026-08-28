@@ -1451,6 +1451,20 @@ impl EngineInner {
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(*enabled);
             }
+            SetItemGameplayConfig { config } => {
+                if self.control.rng.original_replay_cursor().is_some() {
+                    tracing::warn!(
+                        "ignoring item-rebalance command during Original-parity replay"
+                    );
+                    self.control.sim_config.item_gameplay =
+                        crate::gameplay_config::ItemGameplayConfig::classic();
+                } else {
+                    self.control.sim_config.item_gameplay = *config;
+                }
+            }
+            SetNoiseDistractionFeedback { enabled } => {
+                self.control.sim_config.noise_distraction_feedback = *enabled;
+            }
 
             HeroSpeak { pc_id, expression } => {
                 self.hero_speaking(assets, *pc_id, *expression);

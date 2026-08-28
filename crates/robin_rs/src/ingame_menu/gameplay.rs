@@ -34,6 +34,21 @@ const OPTION_LABELS: &[&str] = &[
     "Sherwood Production Forecast",
     "Reusable Cloaks",
     "Campaign Presentation",
+    "Apple Combat Interrupt",
+    "Reliable Wasp Acquisition",
+    "Stone Ground Distraction",
+    "Longer Stone Range",
+    "Selective Net Immunity",
+    "Reliable Ale Distraction",
+    "Stone Distraction Feedback",
+    "Preview Apple Effect",
+    "Preview Stone Direct Hit",
+    "Preview Stone Noise Area",
+    "Preview Net Capture Area",
+    "Predict Net Crumpling",
+    "Preview Ale Effect",
+    "Preview Purse Effect",
+    "Preview Wasp Area",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -225,6 +240,44 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         3 => config.show_production_forecast = !config.show_production_forecast,
         4 => config.reusable_cloaks = !config.reusable_cloaks,
         5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => {
+            config.item_gameplay.apple_combat_interrupt =
+                !config.item_gameplay.apple_combat_interrupt
+        }
+        7 => {
+            config.item_gameplay.wasp_reliable_acquisition =
+                !config.item_gameplay.wasp_reliable_acquisition
+        }
+        8 => {
+            config.item_gameplay.stone_ground_distraction =
+                !config.item_gameplay.stone_ground_distraction
+        }
+        9 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        10 => {
+            config.item_gameplay.net_selective_immunity =
+                !config.item_gameplay.net_selective_immunity
+        }
+        11 => {
+            config.item_gameplay.ale_reliable_distraction =
+                !config.item_gameplay.ale_reliable_distraction
+        }
+        12 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        13 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        14 => {
+            config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect
+        }
+        15 => {
+            config.item_previews.stone_distraction_area =
+                !config.item_previews.stone_distraction_area
+        }
+        16 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        17 => {
+            config.item_previews.net_crumple_prediction =
+                !config.item_previews.net_crumple_prediction
+        }
+        18 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        19 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        20 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -240,6 +293,21 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
             config.campaign_presentation
                 != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
         }
+        6 => config.item_gameplay.apple_combat_interrupt,
+        7 => config.item_gameplay.wasp_reliable_acquisition,
+        8 => config.item_gameplay.stone_ground_distraction,
+        9 => config.item_gameplay.stone_longer_range,
+        10 => config.item_gameplay.net_selective_immunity,
+        11 => config.item_gameplay.ale_reliable_distraction,
+        12 => config.noise_distraction_feedback,
+        13 => config.item_previews.apple_effect,
+        14 => config.item_previews.stone_direct_effect,
+        15 => config.item_previews.stone_distraction_area,
+        16 => config.item_previews.net_capture_area,
+        17 => config.item_previews.net_crumple_prediction,
+        18 => config.item_previews.ale_effect,
+        19 => config.item_previews.purse_effect,
+        20 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -259,6 +327,21 @@ mod tests {
                 "Sherwood Production Forecast",
                 "Reusable Cloaks",
                 "Campaign Presentation",
+                "Apple Combat Interrupt",
+                "Reliable Wasp Acquisition",
+                "Stone Ground Distraction",
+                "Longer Stone Range",
+                "Selective Net Immunity",
+                "Reliable Ale Distraction",
+                "Stone Distraction Feedback",
+                "Preview Apple Effect",
+                "Preview Stone Direct Hit",
+                "Preview Stone Noise Area",
+                "Preview Net Capture Area",
+                "Predict Net Crumpling",
+                "Preview Ale Effect",
+                "Preview Purse Effect",
+                "Preview Wasp Area",
             ]
         );
 
@@ -268,6 +351,8 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
+        assert!(is_option_selected(&config, 6));
+        assert!(is_option_selected(&config, 20));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -292,5 +377,13 @@ mod tests {
             config.campaign_presentation,
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
+
+        apply_option_toggle(&mut config, 9);
+        assert!(!config.item_gameplay.stone_longer_range);
+        assert!(config.item_gameplay.net_selective_immunity);
+        apply_option_toggle(&mut config, 10);
+        assert!(!config.item_gameplay.stone_longer_range);
+        assert!(!config.item_gameplay.net_selective_immunity);
+        assert!(config.item_gameplay.ale_reliable_distraction);
     }
 }

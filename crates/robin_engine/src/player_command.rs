@@ -971,6 +971,14 @@ pub enum PlayerCommand {
     SetUnbindingEnabled {
         enabled: bool,
     },
+    /// Replace the complete deterministic item-rule set on this frame.
+    SetItemGameplayConfig {
+        config: crate::gameplay_config::ItemGameplayConfig,
+    },
+    /// Toggle the optional distraction-impact cue independently.
+    SetNoiseDistractionFeedback {
+        enabled: bool,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
