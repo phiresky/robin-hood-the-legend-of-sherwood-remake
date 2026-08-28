@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::achievement::{
+    AchievementEvaluation, AchievementId, AchievementSet, MissionAchievementHistory,
+};
+
 /// Mission completion status.
 #[repr(u32)]
 #[derive(
@@ -47,6 +51,10 @@ pub struct Mission {
     /// `WINCAMPAIGN` cheat (sets `ares_state_succeeded = 9`) stores its
     /// override here and readers must prefer this value when set.
     pub ares_state_override: Option<i8>,
+    /// Lossless achievement results from every eligible successful replay of
+    /// this mission. The original game has no corresponding field.
+    #[serde(default)]
+    pub achievement_history: MissionAchievementHistory,
 }
 
 impl Default for Mission {
@@ -63,11 +71,25 @@ impl Mission {
             status: MissionStatus::Available,
             profile_idx: None,
             ares_state_override: None,
+            achievement_history: MissionAchievementHistory::default(),
         }
     }
 
     pub fn is_done(&self) -> bool {
         self.status != MissionStatus::Available
+    }
+
+    /// Read-only history used by campaign-map badges and mission history UI.
+    pub const fn achievement_history(&self) -> &MissionAchievementHistory {
+        &self.achievement_history
+    }
+
+    pub fn achievement_badges(&self) -> AchievementSet {
+        self.achievement_history.badges()
+    }
+
+    pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
+        self.achievement_history.best(id)
     }
 
     /// Get the profile for this mission.

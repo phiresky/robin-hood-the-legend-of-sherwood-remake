@@ -9,6 +9,7 @@
 #![deny(unused_must_use)]
 
 pub mod abilities;
+pub mod achievement;
 pub mod actor_state;
 pub mod ai;
 pub mod ai_detectable_filter;

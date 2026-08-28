@@ -153,6 +153,10 @@ pub struct PlayerProfile {
     pub preserved_lives: u32,
     pub play_time: u32,
     pub progression: u32,
+    /// Global union of achievements earned by eligible campaign mission
+    /// attempts. Existing profile JSON starts with no unlocks.
+    #[serde(default)]
+    pub earned_achievements: crate::achievement::AchievementSet,
     pub minimap_x: f32,
     pub minimap_y: f32,
     pub graphic_config: GraphicConfig,
@@ -179,6 +183,7 @@ impl PlayerProfile {
             preserved_lives: 0,
             play_time: 0,
             progression: 0,
+            earned_achievements: crate::achievement::AchievementSet::empty(),
             minimap_x: 65536.0,
             minimap_y: 65536.0,
             graphic_config: GraphicConfig::default(),
@@ -186,6 +191,33 @@ impl PlayerProfile {
             sound_config: SoundConfig::default(),
             active: false,
         }
+    }
+
+    pub const fn earned_achievements(&self) -> crate::achievement::AchievementSet {
+        self.earned_achievements
+    }
+
+    /// Unlock eligible achievements and return the subset newly earned by
+    /// this profile. Repeated calls are intentionally idempotent, allowing UI
+    /// notifications to be emitted exactly once per profile.
+    #[must_use]
+    pub fn unlock_achievements(
+        &mut self,
+        eligible: crate::achievement::AchievementSet,
+    ) -> crate::achievement::AchievementSet {
+        let newly_earned = eligible.difference(self.earned_achievements);
+        self.earned_achievements.union_with(eligible);
+        newly_earned
+    }
+
+    /// Union campaign unlocks into this profile and report only genuinely new
+    /// profile unlocks.
+    #[must_use]
+    pub fn synchronize_achievements(
+        &mut self,
+        campaign: &crate::campaign::Campaign,
+    ) -> crate::achievement::AchievementSet {
+        self.unlock_achievements(campaign.earned_achievements())
     }
 }
 
@@ -453,6 +485,7 @@ pub fn synchronize_with_campaign(
     profile.ransom = campaign.get_value(CampaignValue::Ransom) as u32;
     profile.progression = campaign.get_progression(profiles);
     profile.play_time += mission_play_time_secs;
+    let _newly_earned = profile.synchronize_achievements(campaign);
 
     let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
     let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
@@ -592,6 +625,40 @@ mod tests {
         assert_eq!(restored.profiles[1].sound_config.music_volume, 5);
         assert!(restored.profiles[1].active);
         assert!(!restored.profiles[0].active);
+    }
+
+    #[test]
+    fn profile_json_without_achievement_field_starts_empty() {
+        let mut mgr = PlayerProfileManager::new("/tmp/test_profiles".into());
+        mgr.create_profile("Robin".into(), DifficultyLevel::Medium);
+        let mut json = serde_json::to_value(&mgr).unwrap();
+        json["profiles"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("earned_achievements");
+
+        let restored: PlayerProfileManager = serde_json::from_value(json).unwrap();
+        assert!(restored.profiles[0].earned_achievements().is_empty());
+    }
+
+    #[test]
+    fn profile_synchronization_unions_campaign_unlocks() {
+        let mut profile = PlayerProfile::new(0, "Robin".into(), DifficultyLevel::Medium);
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign
+            .earned_achievements
+            .insert(crate::achievement::AchievementId::Ghost);
+
+        let first = profile.synchronize_achievements(&campaign);
+        let second = profile.synchronize_achievements(&campaign);
+        assert!(first.contains(crate::achievement::AchievementId::Ghost));
+        assert!(second.is_empty());
+        assert_eq!(profile.earned_achievements().len(), 1);
+        assert!(
+            profile
+                .earned_achievements()
+                .contains(crate::achievement::AchievementId::Ghost)
+        );
     }
 
     #[test]

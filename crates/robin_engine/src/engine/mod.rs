@@ -871,6 +871,14 @@ impl EngineInner {
     ) {
         let won = exit_code == crate::game_operation::GameCode::LevelSucceeded;
 
+        // Calculating results is deterministic and independent from host
+        // persistence policy. Only a successful terminal boundary freezes a
+        // result; replay/headless/custom/cheat filtering happens later when a
+        // caller elects to promote it into campaign/profile history.
+        if won {
+            self.mission_domain.achievements.finalize_success();
+        }
+
         let profiles = &assets.profile_manager;
         let campaign = self
             .mission_domain
@@ -4722,6 +4730,19 @@ impl EngineInner {
         &self.mission_domain.mission_stat
     }
 
+    /// Live deterministic achievement evidence for debriefing/tracker UI.
+    pub fn mission_achievement_state(&self) -> &crate::achievement::MissionAchievementState {
+        &self.mission_domain.achievements
+    }
+
+    /// Frozen successful-run results, if the mission crossed its successful
+    /// terminal update boundary.
+    pub fn mission_achievement_results(
+        &self,
+    ) -> Option<&crate::achievement::MissionAchievementResults> {
+        self.mission_domain.achievements.finalized_results()
+    }
+
     /// Whether the camera is locked to follow an entity.
     pub fn locker_active(&self) -> bool {
         self.players.seats[0].locker_active
@@ -5811,6 +5832,7 @@ mod campaign_lifecycle_tests {
     use std::sync::Arc;
 
     use super::{EngineInner, LevelAssets};
+    use crate::achievement::{AchievementEvaluation, AchievementId};
     use crate::campaign::{Campaign, CampaignValue};
     use crate::game_operation::GameCode;
     use crate::mission::{Mission, MissionStatus};
@@ -5918,6 +5940,46 @@ mod campaign_lifecycle_tests {
         assert_eq!(engine.mission_domain.mission_stat.new_peasant_count, 0);
         assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 2);
         assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 5);
+        assert!(engine.mission_achievement_results().is_some());
+    }
+
+    #[test]
+    fn only_successful_quit_freezes_achievement_results() {
+        let sim = crate::sim_rng::test_context();
+        let (campaign, assets) = active_historical_mission();
+        let mut failed = EngineInner::new_with_campaign(campaign.clone());
+        failed
+            .mission_domain
+            .achievements
+            .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned)
+            .unwrap();
+        failed.apply_quit_mission_updates(
+            &sim,
+            &assets,
+            GameCode::LevelFailed,
+            DifficultyLevel::Medium,
+        );
+        assert!(failed.mission_achievement_results().is_none());
+
+        let mut succeeded = EngineInner::new_with_campaign(campaign);
+        succeeded
+            .mission_domain
+            .achievements
+            .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned)
+            .unwrap();
+        succeeded.apply_quit_mission_updates(
+            &sim,
+            &assets,
+            GameCode::LevelSucceeded,
+            DifficultyLevel::Medium,
+        );
+        assert_eq!(
+            succeeded
+                .mission_achievement_results()
+                .unwrap()
+                .evaluation(AchievementId::Ghost),
+            AchievementEvaluation::Earned
+        );
     }
 
     #[test]

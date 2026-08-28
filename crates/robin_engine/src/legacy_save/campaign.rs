@@ -368,6 +368,7 @@ impl LegacyCampaign {
                 "last_pseudo_mission_status",
             )?,
             last_pseudo_mission_id: self.last_pseudo_mission_id,
+            earned_achievements: crate::achievement::AchievementSet::empty(),
             characters,
             gang_indices,
             reservist_indices,
@@ -438,6 +439,7 @@ impl LegacyMission {
             status: map_mission_status(self.status, format!("missions[{mission_index}].status"))?,
             profile_idx: Some(profile_idx as u32),
             ares_state_override: None,
+            achievement_history: crate::achievement::MissionAchievementHistory::default(),
         })
     }
 }

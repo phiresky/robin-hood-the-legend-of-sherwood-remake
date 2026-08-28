@@ -9,6 +9,10 @@
 use enum_map::{Enum, EnumMap, enum_map};
 use serde::{Deserialize, Serialize};
 
+use crate::achievement::{
+    AchievementHistoryError, AchievementHistoryUpdate, AchievementId, AchievementRunContext,
+    AchievementSet, AchievementUnlockPolicy, MissionAchievementHistory, MissionAchievementResults,
+};
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus, SkillName};
 use crate::player_profile::DifficultyLevel;
@@ -233,6 +237,11 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
     pub last_pseudo_mission_status: MissionStatus,
     pub last_pseudo_mission_id: u32,
 
+    /// Global union of achievement badges promoted from eligible successful
+    /// campaign mission attempts.
+    #[serde(default)]
+    pub earned_achievements: AchievementSet,
+
     // ── Characters / gang ──
     pub characters: Vec<PcDescription>,
     /// Indices into `characters` for active gang members.
@@ -293,6 +302,7 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             last_played_mission_indices,
             last_pseudo_mission_status,
             last_pseudo_mission_id,
+            earned_achievements,
             characters,
             gang_indices,
             reservist_indices,
@@ -319,6 +329,7 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             last_played_mission_indices,
             last_pseudo_mission_status,
             last_pseudo_mission_id,
+            earned_achievements,
             characters,
             gang_indices,
             reservist_indices,
@@ -364,6 +375,7 @@ impl Default for Campaign {
             last_played_mission_indices: Vec::new(),
             last_pseudo_mission_status: MissionStatus::Available,
             last_pseudo_mission_id: 0,
+            earned_achievements: AchievementSet::default(),
             characters: Vec::new(),
             gang_indices: Vec::new(),
             reservist_indices: Vec::new(),
@@ -450,6 +462,85 @@ pub fn calculate_warcrime_recruitment(
 }
 
 impl Campaign {
+    pub const fn earned_achievements(&self) -> AchievementSet {
+        self.earned_achievements
+    }
+
+    pub fn mission_achievement_history(
+        &self,
+        mission_index: usize,
+    ) -> Option<&MissionAchievementHistory> {
+        self.missions
+            .get(mission_index)
+            .map(Mission::achievement_history)
+    }
+
+    pub fn mission_achievement_badges(&self, mission_index: usize) -> Option<AchievementSet> {
+        self.missions
+            .get(mission_index)
+            .map(Mission::achievement_badges)
+    }
+
+    pub fn mission_achievement_attempts(
+        &self,
+        mission_index: usize,
+    ) -> Option<&[MissionAchievementResults]> {
+        self.missions
+            .get(mission_index)
+            .map(|mission| mission.achievement_history().attempts())
+    }
+
+    pub fn mission_best_achievement_result(
+        &self,
+        mission_index: usize,
+        achievement: AchievementId,
+    ) -> Option<crate::achievement::AchievementEvaluation> {
+        self.missions
+            .get(mission_index)
+            .and_then(|mission| mission.best_achievement_result(achievement))
+    }
+
+    /// Merge one successful calculated result into eligible campaign history.
+    ///
+    /// Callers supply host facts explicitly. A blocked run remains fully
+    /// calculated for debriefing, but this method leaves both mission history
+    /// and the profile-facing campaign union unchanged.
+    pub fn record_mission_achievement_results(
+        &mut self,
+        mission_index: usize,
+        results: MissionAchievementResults,
+        policy: AchievementUnlockPolicy,
+        context: AchievementRunContext,
+    ) -> Result<AchievementHistoryUpdate, AchievementHistoryError> {
+        let mission_count = self.missions.len();
+        let mission = self
+            .missions
+            .get_mut(mission_index)
+            .ok_or(AchievementHistoryError {
+                mission_index,
+                mission_count,
+            })?;
+        let decision = policy.evaluate(context, results);
+        if !decision.may_persist() {
+            return Ok(AchievementHistoryUpdate {
+                blockers: decision.blockers,
+                newly_earned: AchievementSet::empty(),
+                mission_badges: mission.achievement_badges(),
+            });
+        }
+
+        let previously_earned = self.earned_achievements;
+        mission.achievement_history.record_success(results);
+        self.earned_achievements
+            .union_with(decision.eligible_earned);
+
+        Ok(AchievementHistoryUpdate {
+            blockers: decision.blockers,
+            newly_earned: self.earned_achievements.difference(previously_earned),
+            mission_badges: mission.achievement_badges(),
+        })
+    }
+
     /// Create a new campaign from loaded profiles.
     pub fn from_profiles(profiles: &ProfileManager, difficulty: DifficultyLevel) -> Campaign {
         let mut campaign = Campaign {
@@ -1948,6 +2039,7 @@ impl Campaign {
         self.pre_mission_rng_seed = None;
         self.pre_mission_sim_config = None;
         self.pre_mission_was_preselected = false;
+        self.earned_achievements = AchievementSet::empty();
 
         // Reset values, set initial ransom
         self.values = enum_map! { _ => 0 }.into();
@@ -2541,6 +2633,15 @@ impl Campaign {
 mod tests {
     use super::*;
 
+    fn achievement_results(
+        id: AchievementId,
+        evaluation: crate::achievement::AchievementEvaluation,
+    ) -> MissionAchievementResults {
+        let mut state = crate::achievement::MissionAchievementState::from_mission_start();
+        state.record_evaluation(id, evaluation).unwrap();
+        *state.finalize_success()
+    }
+
     #[test]
     fn restart_snapshot_is_finite_and_native_bitcode_roundtrips() {
         let mut campaign = Campaign::default();
@@ -2553,6 +2654,88 @@ mod tests {
         assert!(restored.restore_snapshot());
         assert_eq!(restored.get_value(CampaignValue::Score), 17);
         assert!(restored.pre_mission_snapshot.is_none());
+    }
+
+    #[test]
+    fn eligible_replay_upgrades_per_mission_best_and_global_unlock() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let policy = AchievementUnlockPolicy::default();
+        let context = AchievementRunContext::default();
+
+        let failed = campaign
+            .record_mission_achievement_results(
+                0,
+                achievement_results(
+                    AchievementId::CleanHands,
+                    crate::achievement::AchievementEvaluation::Failed,
+                ),
+                policy,
+                context,
+            )
+            .unwrap();
+        assert!(failed.newly_earned.is_empty());
+        assert_eq!(
+            campaign.mission_best_achievement_result(0, AchievementId::CleanHands),
+            Some(crate::achievement::AchievementEvaluation::Failed)
+        );
+
+        let earned = campaign
+            .record_mission_achievement_results(
+                0,
+                achievement_results(
+                    AchievementId::CleanHands,
+                    crate::achievement::AchievementEvaluation::Earned,
+                ),
+                policy,
+                context,
+            )
+            .unwrap();
+        assert!(earned.newly_earned.contains(AchievementId::CleanHands));
+        assert!(earned.mission_badges.contains(AchievementId::CleanHands));
+        assert!(
+            campaign
+                .earned_achievements()
+                .contains(AchievementId::CleanHands)
+        );
+        assert_eq!(
+            campaign
+                .mission_achievement_history(0)
+                .unwrap()
+                .successful_attempts(),
+            2
+        );
+    }
+
+    #[test]
+    fn replay_playback_result_does_not_mutate_history() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let update = campaign
+            .record_mission_achievement_results(
+                0,
+                achievement_results(
+                    AchievementId::Ghost,
+                    crate::achievement::AchievementEvaluation::Earned,
+                ),
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext {
+                    replay_playback: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        assert!(!update.persisted());
+        assert!(update.newly_earned.is_empty());
+        assert!(campaign.earned_achievements().is_empty());
+        assert_eq!(
+            campaign
+                .mission_achievement_history(0)
+                .unwrap()
+                .successful_attempts(),
+            0
+        );
     }
 
     fn profile_manager_with_robin_party() -> ProfileManager {

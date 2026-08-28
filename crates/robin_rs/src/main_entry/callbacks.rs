@@ -278,6 +278,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
                 profile.ransom = campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
                 profile.progression = campaign.get_progression(profiles);
                 profile.play_time += mission_secs;
+                let _newly_earned = profile.synchronize_achievements(campaign);
 
                 let dead = campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;
                 let alive =
