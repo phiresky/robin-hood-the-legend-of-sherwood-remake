@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
+use crate::save_file::{self, GameSaveFile, SaveHeader, SaveProvenance, Thumbnail};
 
 /// Metadata for a single save game slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,13 +36,21 @@ pub struct SaveGame {
     pub mission_id: u32,
     /// Save file version.
     pub version: u32,
-    /// Timestamp (ISO 8601 string).
+    /// Wall-clock timestamp as decimal Unix seconds.
     pub timestamp: String,
     /// Whether this is a special slot (continue, quicksave, restart, sherwood).
     pub special: Option<SpecialSlot>,
     /// Localized/static mission name at time of save, when profile data was available.
     #[serde(default)]
     pub mission_name: String,
+    /// Stable profile identity at save time. Missing only on legacy v55
+    /// entries created before save provenance was added.
+    #[serde(default)]
+    pub player_profile_id: Option<u32>,
+    /// Player name frozen at save time, so later profile renames do not alter
+    /// the meaning of existing saves.
+    #[serde(default)]
+    pub player_name: String,
     /// Campaign progression percentage at time of save.
     #[serde(default)]
     pub campaign_progress: Option<u32>,
@@ -118,6 +126,8 @@ impl SaveGame {
             timestamp: String::new(),
             special,
             mission_name: String::new(),
+            player_profile_id: None,
+            player_name: String::new(),
             campaign_progress: None,
             missions_done: None,
             missions_total: None,
@@ -148,6 +158,45 @@ impl SaveGame {
         self.special == Some(SpecialSlot::Autosave)
             || is_generated_autosave_filename(&self.filename)
     }
+}
+
+fn required_save_provenance(
+    host: &Host,
+    engine: &Engine,
+    mission_id: u32,
+    profiles: Option<&ProfileManager>,
+) -> Result<SaveProvenance> {
+    let profiles = profiles.context("save requires the active mission profile table")?;
+    let mission = engine
+        .campaign()
+        .get_mission(mission_id, profiles)
+        .with_context(|| format!("save mission ID {mission_id} is absent from the campaign"))?;
+    let profile_idx = mission
+        .profile_idx
+        .context("save mission has no profile index")? as usize;
+    let mission_profile = profiles.missions.get(profile_idx).with_context(|| {
+        format!(
+            "save mission profile index {profile_idx} is out of range (have {})",
+            profiles.missions.len()
+        )
+    })?;
+    let mission_name = if mission_profile.mission_name.trim().is_empty() {
+        if mission_profile.mission_filename.trim().is_empty() {
+            anyhow::bail!("save mission ID {mission_id} has neither a display name nor a filename");
+        }
+        // A custom mission need not ship a localized display title. Its
+        // canonical filename is still authoritative provenance, not a made-up
+        // placeholder.
+        mission_profile.mission_filename.clone()
+    } else {
+        mission_profile.mission_name.clone()
+    };
+    let player = host
+        .application_context
+        .active_profile_snapshot()
+        .map_err(anyhow::Error::msg)
+        .context("save requires an active player profile")?;
+    SaveProvenance::new(mission_name, player.id, player.name)
 }
 
 /// Manages a collection of save games for a player profile.
@@ -239,7 +288,7 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) {
+    ) -> Result<()> {
         self.write_special_save_background(
             save_file::special_slots::CONTINUE,
             "Continue",
@@ -251,7 +300,7 @@ impl SaveGameManager {
             mission_id,
             profiles,
             thumbnail,
-        );
+        )
     }
 
     /// Save the current engine state to the "QuickSave" slot.
@@ -311,7 +360,7 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) {
+    ) -> Result<()> {
         self.write_special_save_background(
             save_file::special_slots::RESTART,
             "Restart Point",
@@ -323,7 +372,7 @@ impl SaveGameManager {
             mission_id,
             profiles,
             thumbnail,
-        );
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -339,20 +388,30 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) {
+    ) -> Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        let _ = thread_name;
+
         let idx = self.ensure_special_slot(filename, display_text);
         let display_text = self.saves[idx].text.clone();
+        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
         // Capture (clone) on the main thread — fast.
-        let save = GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
+        let save = GameSaveFile::capture_with_game(
+            engine,
+            host,
+            game,
+            mission_id,
+            display_text,
+            provenance,
+        )?;
         let path = self.save_path(idx);
         let thumb_data = thumbnail.cloned();
         let thumb_path = self.thumb_path(idx);
 
         // Eagerly update slot metadata so it's available immediately.
-        self.sync_slot_metadata_from_save(idx, &save, profiles);
-        if let Err(e) = self.save_index_anyhow() {
-            tracing::warn!("Failed to save index for restart slot: {e:#}");
-        }
+        self.sync_slot_metadata_from_save(idx, &save, profiles)?;
+        self.save_index_anyhow()
+            .with_context(|| format!("failed to index background {filename} save"))?;
 
         // Spawn the slow serialization + write on a background thread.
         // Wasm doesn't support threads; defer it to a queued task on the
@@ -377,12 +436,13 @@ impl SaveGameManager {
             std::thread::Builder::new()
                 .name(thread_name.into())
                 .spawn(do_write)
-                .expect("failed to spawn background save thread");
+                .with_context(|| format!("failed to spawn {thread_name} thread"))?;
         }
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
             do_write();
         });
+        Ok(())
     }
 
     /// Whether a "Restart" auto-save snapshot exists on disk.  The
@@ -553,6 +613,21 @@ impl SaveGameManager {
                 header.timestamp_unix.to_string(),
             );
         }
+        if let Some(provenance) = &header.provenance
+            && (slot.mission_name != provenance.mission_name
+                || slot.player_profile_id != Some(provenance.player_profile_id)
+                || slot.player_name != provenance.player_name)
+        {
+            anyhow::bail!(
+                "save slot {index} provenance does not match decoded payload: cached mission/player={:?}/{:?}/{:?}, decoded={:?}/{:?}/{:?}",
+                slot.mission_name,
+                slot.player_profile_id,
+                slot.player_name,
+                provenance.mission_name,
+                provenance.player_profile_id,
+                provenance.player_name,
+            );
+        }
         Ok(())
     }
 
@@ -607,7 +682,16 @@ impl SaveGameManager {
     /// Sort saves by timestamp (oldest first).  The load/save menu
     /// iterates this list forward to populate its entries.
     pub fn sort_by_time(&mut self) {
-        self.saves.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        self.saves.sort_by(|a, b| {
+            let a_timestamp = a.timestamp.parse::<u64>().ok();
+            let b_timestamp = b.timestamp.parse::<u64>().ok();
+            match (a_timestamp, b_timestamp) {
+                (Some(a), Some(b)) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.filename.cmp(&b.filename),
+            }
+        });
     }
 
     /// Thumbnail file path.
@@ -660,6 +744,8 @@ impl SaveGameManager {
         dst.version = src.version;
         dst.timestamp = src.timestamp;
         dst.mission_name = src.mission_name;
+        dst.player_profile_id = src.player_profile_id;
+        dst.player_name = src.player_name;
         dst.campaign_progress = src.campaign_progress;
         dst.missions_done = src.missions_done;
         dst.missions_total = src.missions_total;
@@ -685,8 +771,21 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let display_text = self.saves[index].text.clone();
-        let save = GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
+        let display_text = self
+            .saves
+            .get(index)
+            .with_context(|| format!("cannot write missing save slot {index}"))?
+            .text
+            .clone();
+        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
+        let save = GameSaveFile::capture_with_game(
+            engine,
+            host,
+            game,
+            mission_id,
+            display_text,
+            provenance,
+        )?;
         let path = self.save_path(index);
         save.write_to(&path)?;
 
@@ -700,7 +799,7 @@ impl SaveGameManager {
         }
 
         // Sync slot metadata from the save we just wrote.
-        self.sync_slot_metadata_from_save(index, &save, profiles);
+        self.sync_slot_metadata_from_save(index, &save, profiles)?;
         Ok(())
     }
 
@@ -709,28 +808,35 @@ impl SaveGameManager {
         index: usize,
         save: &GameSaveFile,
         profiles: Option<&ProfileManager>,
-    ) {
-        let slot = &mut self.saves[index];
-        Self::sync_slot_metadata_from_header(slot, &save.header);
-        Self::sync_slot_campaign_metadata(
-            slot,
-            save.engine.campaign(),
-            save.header.mission_id,
-            profiles,
-        );
+    ) -> Result<()> {
+        let slot = self
+            .saves
+            .get_mut(index)
+            .with_context(|| format!("cannot synchronize missing save slot {index}"))?;
+        Self::sync_slot_metadata_from_header(slot, &save.header)?;
+        let profiles = profiles.context("save metadata requires mission profiles")?;
+        Self::sync_slot_campaign_metadata(slot, save.engine.campaign(), profiles);
+        Ok(())
     }
 
-    fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) {
+    fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) -> Result<()> {
+        let provenance = header
+            .provenance
+            .as_ref()
+            .context("new save header is missing required provenance")?;
         slot.mission_id = header.mission_id;
         slot.version = header.version;
         slot.timestamp = header.timestamp_unix.to_string();
+        slot.mission_name = provenance.mission_name.clone();
+        slot.player_profile_id = Some(provenance.player_profile_id);
+        slot.player_name = provenance.player_name.clone();
+        Ok(())
     }
 
     fn sync_slot_campaign_metadata(
         slot: &mut SaveGame,
         campaign: &engine_campaign::Campaign,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
+        profiles: &ProfileManager,
     ) {
         slot.missions_done = Some(campaign.get_number_of_missions_done());
         slot.missions_total = Some(campaign.missions.len());
@@ -739,12 +845,7 @@ impl SaveGameManager {
         slot.blazons = Some(campaign.values[CampaignValue::Blazon]);
         slot.amulets = Some(campaign.values[CampaignValue::Amulets]);
 
-        if let Some(profiles) = profiles {
-            slot.campaign_progress = Some(campaign.get_progression(profiles));
-            if let Some(mission) = campaign.get_mission(mission_id, profiles) {
-                slot.mission_name = mission.profile(profiles).mission_name.clone();
-            }
-        }
+        slot.campaign_progress = Some(campaign.get_progression(profiles));
     }
 
     /// Load the thumbnail for a slot if one exists on disk.
@@ -852,14 +953,55 @@ impl SaveGameManager {
 mod tests {
     use super::*;
     use crate::game::Game;
+    use crate::host::ApplicationContext;
+    use crate::key_config_store::KeyConfigStore;
     use crate::save_file::special_slots;
     use robin_engine::campaign::Campaign;
+    use robin_engine::mission::Mission;
+    use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+    use robin_engine::profiles::{MissionProfile, ProfileManager};
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
         let mut assets = engine_api::LevelAssets::new();
         let engine =
             Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
         (engine, assets)
+    }
+
+    fn fresh_save_session(
+        player_name: &str,
+    ) -> (Engine, engine_api::LevelAssets, ProfileManager, Host) {
+        let mut profiles = ProfileManager::default();
+        let mut campaign = Campaign::default();
+        for mission_id in [1, 3, 17] {
+            let profile_idx = profiles.missions.len() as u32;
+            profiles.missions.push(MissionProfile {
+                id: mission_id,
+                mission_filename: format!("Mission_{mission_id}"),
+                mission_name: format!("Mission {mission_id}"),
+                ..MissionProfile::default()
+            });
+            campaign.missions.push(Mission {
+                profile_idx: Some(profile_idx),
+                ..Mission::default()
+            });
+        }
+        let mut assets = engine_api::LevelAssets::new();
+        let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).expect("engine");
+
+        let save_root = format!("/tmp/save-metadata-{player_name}");
+        let mut players = PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(player_name.to_string(), DifficultyLevel::Medium);
+        players.set_active(player);
+        let application_context = ApplicationContext::complete(
+            engine_api::GlobalOptions::default(),
+            players,
+            KeyConfigStore::new(save_root),
+            None,
+        )
+        .expect("complete test application context");
+        let host = Host::new(application_context, 800.0, 600.0);
+        (engine, assets, profiles, host)
     }
 
     #[test]
@@ -981,20 +1123,37 @@ mod tests {
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
         // Build a live engine with some distinctive state.
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
+        let (mut engine, assets, mut profiles, mut host) = fresh_save_session("Alice");
         let game = Game::default();
         engine.test_set_frame_counter(42);
         engine.test_set_engine_scalars(0xAA55_AA55, 2.0, 0, false, false, Vec::new());
 
         // Write to a manual slot.
         let idx = mgr.create("Slot A".into(), 17);
-        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None, None)
+        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, Some(&profiles), None)
             .unwrap();
         assert!(mgr.slot_file_exists(idx));
         assert_eq!(mgr.slot_mission_id(idx), Some(17));
         let decoded = mgr.preflight_exact_slot(idx).unwrap();
         mgr.validate_slot_identity(idx, &decoded).unwrap();
+        assert_eq!(
+            decoded.header.provenance,
+            Some(SaveProvenance::new("Mission 17".into(), 0, "Alice".into()).unwrap())
+        );
+        assert_eq!(mgr.saves[idx].mission_name, "Mission 17");
+        assert_eq!(mgr.saves[idx].player_profile_id, Some(0));
+        assert_eq!(mgr.saves[idx].player_name, "Alice");
+        profiles.missions[2].mission_name = "Mission 17 (renamed)".into();
+        assert_eq!(mgr.saves[idx].mission_name, "Mission 17");
+        assert_eq!(
+            decoded
+                .header
+                .provenance
+                .as_ref()
+                .expect("new save provenance")
+                .mission_name,
+            "Mission 17"
+        );
         mgr.saves[idx].mission_id = 99;
         assert!(
             mgr.validate_slot_identity(idx, &decoded)
@@ -1003,14 +1162,31 @@ mod tests {
                 .contains("metadata does not match decoded payload")
         );
         mgr.saves[idx].mission_id = 17;
+        mgr.saves[idx].player_name = "Mallory".into();
+        assert!(
+            mgr.validate_slot_identity(idx, &decoded)
+                .unwrap_err()
+                .to_string()
+                .contains("provenance does not match")
+        );
+        mgr.saves[idx].player_name = "Alice".into();
+
+        host.application_context
+            .with_player_profiles_mut(|players| {
+                players.get_active_mut().unwrap().name = "Renamed Alice".into();
+            })
+            .unwrap();
 
         // Write a Continue auto-save.
-        mgr.write_continue_save(&mut host, &game, &engine, 17, None, None)
+        mgr.write_continue_save(&mut host, &game, &engine, 17, Some(&profiles), None)
             .unwrap();
         let continue_idx = mgr
             .find_by_filename(special_slots::CONTINUE)
             .expect("continue slot should exist");
         assert!(mgr.slot_file_exists(continue_idx));
+        assert_eq!(mgr.saves[idx].player_name, "Alice");
+        assert_eq!(mgr.saves[continue_idx].player_name, "Renamed Alice");
+        assert_eq!(mgr.saves[continue_idx].mission_name, "Mission 17 (renamed)");
 
         // find_load_target should prefer the explicit slot when supplied,
         // otherwise fall back to Continue.
@@ -1030,10 +1206,9 @@ mod tests {
     fn missing_explicit_slot_never_falls_back_to_continue() {
         let tmp = tempfile::tempdir().unwrap();
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-        let (engine, _assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
+        let (engine, _assets, profiles, mut host) = fresh_save_session("Alice");
         let game = Game::default();
-        mgr.write_continue_save(&mut host, &game, &engine, 1, None, None)
+        mgr.write_continue_save(&mut host, &game, &engine, 1, Some(&profiles), None)
             .unwrap();
         let missing = mgr.create("Missing explicit slot".into(), 1);
 
@@ -1052,15 +1227,14 @@ mod tests {
         let tmp = tempdir().unwrap();
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
+        let (mut engine, assets, profiles, mut host) = fresh_save_session("Alice");
         let game = Game::default();
 
         engine.test_set_frame_counter(1);
-        mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
+        mgr.write_quick_save(&mut host, &game, &engine, 3, Some(&profiles), None)
             .unwrap();
         engine.test_set_frame_counter(2);
-        mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
+        mgr.write_quick_save(&mut host, &game, &engine, 3, Some(&profiles), None)
             .unwrap();
 
         let quick_idx = mgr.find_by_filename(special_slots::QUICK).unwrap();
@@ -1081,6 +1255,96 @@ mod tests {
         mgr.load_save_into_engine(ex_idx, &mut engine_e, &mut host_e, &mut game_e, &assets)
             .unwrap();
         assert_eq!(engine_e.frame_counter(), 1);
+        assert_eq!(mgr.saves[quick_idx].player_name, "Alice");
+        assert_eq!(mgr.saves[ex_idx].player_name, "Alice");
+    }
+
+    #[test]
+    fn save_write_rejects_missing_profiles_or_active_player() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
+        let (engine, _assets, profiles, _host) = fresh_save_session("Alice");
+        let mut scratch_host = Host::scratch(800.0, 600.0);
+        let game = Game::default();
+        let slot = mgr.create("Strict metadata".into(), 1);
+
+        let missing_profiles = mgr
+            .write_save_from_engine(&mut scratch_host, &game, slot, &engine, 1, None, None)
+            .unwrap_err();
+        assert!(
+            format!("{missing_profiles:#}").contains("active mission profile table"),
+            "{missing_profiles:#}"
+        );
+
+        let missing_player = mgr
+            .write_save_from_engine(
+                &mut scratch_host,
+                &game,
+                slot,
+                &engine,
+                1,
+                Some(&profiles),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            format!("{missing_player:#}").contains("active player profile"),
+            "{missing_player:#}"
+        );
+
+        let (_engine, _assets, profiles, mut host) = fresh_save_session("Alice");
+        let missing_slot = mgr
+            .write_save_from_engine(
+                &mut host,
+                &game,
+                usize::MAX,
+                &engine,
+                1,
+                Some(&profiles),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            format!("{missing_slot:#}").contains("missing save slot"),
+            "{missing_slot:#}"
+        );
+    }
+
+    #[test]
+    fn timestamp_sort_is_numeric_and_puts_invalid_legacy_values_last() {
+        let mut mgr = SaveGameManager::new("/tmp/test_saves".into());
+        for (name, timestamp) in [("Ten", "10"), ("Two", "2"), ("Legacy", "")] {
+            let slot = mgr.create(name.into(), 1);
+            mgr.saves[slot].timestamp = timestamp.into();
+        }
+        mgr.sort_by_time();
+        assert_eq!(
+            mgr.saves
+                .iter()
+                .map(|save| save.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Two", "Ten", "Legacy"]
+        );
+    }
+
+    #[test]
+    fn legacy_index_without_player_metadata_remains_readable() {
+        let json = serde_json::json!({
+            "saves": [{
+                "text": "Legacy",
+                "filename": "Savegame_000",
+                "mission_id": 1,
+                "version": save_file::SAVE_FORMAT_VERSION,
+                "timestamp": "123",
+                "special": null,
+                "mission_name": "Mission 1"
+            }],
+            "save_directory": "/tmp/test_saves",
+            "next_id": 1
+        });
+        let manager: SaveGameManager = serde_json::from_value(json).unwrap();
+        assert_eq!(manager.saves[0].player_profile_id, None);
+        assert!(manager.saves[0].player_name.is_empty());
     }
 
     #[test]
@@ -1104,13 +1368,12 @@ mod tests {
         let mut mgr0 = SaveGameManager::new(p0_dir.to_string_lossy().into_owned());
         let mut mgr1 = SaveGameManager::new(p1_dir.to_string_lossy().into_owned());
 
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
+        let (mut engine, assets, profiles, mut host) = fresh_save_session("Alice");
         let game = Game::default();
 
         // Profile 0 saves frame=100 into QuickSave.
         engine.test_set_frame_counter(100);
-        mgr0.write_quick_save(&mut host, &game, &engine, 1, None, None)
+        mgr0.write_quick_save(&mut host, &game, &engine, 1, Some(&profiles), None)
             .unwrap();
         let q0 = mgr0.find_by_filename(special_slots::QUICK).unwrap();
         let path0 = mgr0.save_path(q0);
@@ -1121,7 +1384,7 @@ mod tests {
 
         // Profile 1 saves frame=200 into its own QuickSave.
         engine.test_set_frame_counter(200);
-        mgr1.write_quick_save(&mut host, &game, &engine, 1, None, None)
+        mgr1.write_quick_save(&mut host, &game, &engine, 1, Some(&profiles), None)
             .unwrap();
         let q1 = mgr1.find_by_filename(special_slots::QUICK).unwrap();
         let path1 = mgr1.save_path(q1);

@@ -836,14 +836,20 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror the load into the Continue slot,
                             // guarded by IsContinue/IsRestart so we
                             // don't clobber the slot we just loaded.
-                            if !is_continue && !is_restart {
-                                callbacks.save_manager.write_continue_save_background(
-                                    host,
-                                    game,
-                                    engine,
-                                    validated_mission_id,
-                                    Some(profiles),
-                                    thumb_ref,
+                            if !is_continue
+                                && !is_restart
+                                && let Err(error) =
+                                    callbacks.save_manager.write_continue_save_background(
+                                        host,
+                                        game,
+                                        engine,
+                                        validated_mission_id,
+                                        Some(profiles),
+                                        thumb_ref,
+                                    )
+                            {
+                                tracing::warn!(
+                                    "Continue-mirror after load could not start: {error:#}"
                                 );
                             }
                             // Show "Game loaded." banner unless the slot
@@ -1021,14 +1027,20 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror into the Continue slot — QuickSave is
                             // neither Continue nor Restart so it always
                             // mirrors.
-                            callbacks.save_manager.write_continue_save_background(
-                                host,
-                                game,
-                                engine,
-                                validated_mission_id,
-                                Some(profiles),
-                                thumb_ref,
-                            );
+                            if let Err(error) =
+                                callbacks.save_manager.write_continue_save_background(
+                                    host,
+                                    game,
+                                    engine,
+                                    validated_mission_id,
+                                    Some(profiles),
+                                    thumb_ref,
+                                )
+                            {
+                                tracing::warn!(
+                                    "Continue-mirror after quick-load could not start: {error:#}"
+                                );
+                            }
                             callbacks.pending_save_banner = Some(SaveBannerKind::Loaded);
                             tracing::info!("Quick save loaded from {slot_name}");
                             event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {

@@ -1788,7 +1788,10 @@ mod tests {
             &game,
             1,
             "timeline".into(),
-        );
+            crate::save_file::SaveProvenance::new("Timeline Test".into(), 0, "Test Player".into())
+                .expect("valid test save provenance"),
+        )
+        .expect("capture timeline save");
         let identity = save.replay_identity().expect("save identity");
 
         // ── Live side: save at frame 0, diverge, load back at frame 5. ──

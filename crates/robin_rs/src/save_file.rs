@@ -518,6 +518,40 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   distance, cone-width, and hearing modifiers.
 pub const SAVE_FORMAT_VERSION: u32 = 61;
 
+/// Human-facing provenance captured when a save is written.
+///
+/// Mission and player names are snapshots, rather than live lookups. This
+/// keeps an exported save self-describing if the active profile is renamed or
+/// the game is later started with a different localization or mod set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveProvenance {
+    pub mission_name: String,
+    pub player_profile_id: u32,
+    pub player_name: String,
+}
+
+impl SaveProvenance {
+    pub fn new(mission_name: String, player_profile_id: u32, player_name: String) -> Result<Self> {
+        let provenance = Self {
+            mission_name,
+            player_profile_id,
+            player_name,
+        };
+        provenance.validate()?;
+        Ok(provenance)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.mission_name.trim().is_empty() {
+            bail!("save provenance requires a non-empty mission name");
+        }
+        if self.player_name.trim().is_empty() {
+            bail!("save provenance requires a non-empty player name");
+        }
+        Ok(())
+    }
+}
+
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveHeader {
@@ -532,21 +566,24 @@ pub struct SaveHeader {
     pub timestamp_unix: u64,
     /// Human-readable label chosen by the player (empty for auto saves).
     pub display_text: String,
+    /// Mission and player identity frozen at save time. `None` is accepted
+    /// only for v55 saves written before provenance metadata was introduced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<SaveProvenance>,
 }
 
 impl SaveHeader {
-    pub fn new(mission_id: u32, display_text: String) -> Self {
-        let timestamp_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        Self {
+    pub fn new(mission_id: u32, display_text: String, provenance: SaveProvenance) -> Result<Self> {
+        let timestamp_unix = unix_timestamp_now()?;
+        provenance.validate()?;
+        Ok(Self {
             magic: SAVE_MAGIC.to_string(),
             version: SAVE_FORMAT_VERSION,
             mission_id,
             timestamp_unix,
             display_text,
-        }
+            provenance: Some(provenance),
+        })
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -565,8 +602,22 @@ impl SaveHeader {
         if self.mission_id == 0 {
             bail!("invalid save mission ID: zero is not a valid mission");
         }
+        if let Some(provenance) = &self.provenance {
+            provenance.validate()?;
+        }
         Ok(())
     }
+}
+
+/// Current wall-clock time as Unix seconds on native and browser builds.
+///
+/// A broken/pre-epoch clock is an error. Callers must not substitute epoch
+/// zero because it would turn corrupted metadata into a plausible date.
+pub fn unix_timestamp_now() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")
+        .map(|duration| duration.as_secs())
 }
 
 // ─── Full save file ──────────────────────────────────────────────────
@@ -602,8 +653,15 @@ impl GameSaveFile {
     /// payload can never silently substitute default persistent state.
     #[cfg(test)]
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
+        let provenance = SaveProvenance::new(
+            format!("Test Mission {mission_id}"),
+            0,
+            "Test Player".to_string(),
+        )
+        .expect("valid test save provenance");
         Self {
-            header: SaveHeader::new(mission_id, display_text),
+            header: SaveHeader::new(mission_id, display_text, provenance)
+                .expect("test clock must produce a Unix timestamp"),
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
             game_persistent: GamePersistentState::default(),
@@ -618,14 +676,15 @@ impl GameSaveFile {
         game: &crate::game::Game,
         mission_id: u32,
         display_text: String,
-    ) -> Self {
+        provenance: SaveProvenance,
+    ) -> Result<Self> {
         let snapshot = GameRuntimeSnapshot::capture(engine, host, game);
-        Self {
-            header: SaveHeader::new(mission_id, display_text),
+        Ok(Self {
+            header: SaveHeader::new(mission_id, display_text, provenance)?,
             engine: snapshot.engine,
             sound: snapshot.sound,
             game_persistent: snapshot.game_persistent,
-        }
+        })
     }
 
     /// Identity of the serialized runtime payload, excluding header metadata.
@@ -772,6 +831,10 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn test_provenance() -> SaveProvenance {
+        SaveProvenance::new("Test Mission".into(), 7, "Alice".into()).unwrap()
+    }
+
     #[test]
     fn save_format_version_requires_items_trading_and_resolved_difficulty() {
         assert_eq!(SAVE_FORMAT_VERSION, 61);
@@ -787,12 +850,37 @@ mod tests {
 
     #[test]
     fn header_validate_ok() {
-        let header = SaveHeader::new(42, "My Save".into());
+        let header = SaveHeader::new(42, "My Save".into(), test_provenance()).unwrap();
         assert_eq!(header.magic, SAVE_MAGIC);
         assert_eq!(header.version, SAVE_FORMAT_VERSION);
         assert_eq!(header.mission_id, 42);
         assert_eq!(header.display_text, "My Save");
+        assert_eq!(header.provenance, Some(test_provenance()));
         header.validate().unwrap();
+    }
+
+    #[test]
+    fn current_v55_header_without_provenance_remains_readable() {
+        let mut value = serde_json::to_value(
+            SaveHeader::new(42, "Legacy v55".into(), test_provenance()).unwrap(),
+        )
+        .unwrap();
+        value
+            .as_object_mut()
+            .expect("header JSON object")
+            .remove("provenance");
+
+        let header: SaveHeader = serde_json::from_value(value).unwrap();
+        assert_eq!(header.version, SAVE_FORMAT_VERSION);
+        assert_eq!(header.provenance, None);
+        header.validate().unwrap();
+    }
+
+    #[test]
+    fn provenance_rejects_missing_real_names() {
+        assert!(SaveProvenance::new("".into(), 7, "Alice".into()).is_err());
+        assert!(SaveProvenance::new("Mission".into(), 7, "".into()).is_err());
+        assert!(SaveProvenance::new("Mission".into(), 7, "   ".into()).is_err());
     }
 
     #[test]
@@ -807,21 +895,21 @@ mod tests {
 
     #[test]
     fn header_rejects_bad_magic() {
-        let mut header = SaveHeader::new(0, String::new());
+        let mut header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         header.magic = "XXXX".into();
         assert!(header.validate().is_err());
     }
 
     #[test]
     fn header_rejects_bad_version() {
-        let mut header = SaveHeader::new(0, String::new());
+        let mut header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         header.version = SAVE_FORMAT_VERSION + 999;
         assert!(header.validate().is_err());
     }
 
     #[test]
     fn header_rejects_zero_mission_id() {
-        let header = SaveHeader::new(0, String::new());
+        let header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         assert_eq!(
             header.validate().unwrap_err().to_string(),
             "invalid save mission ID: zero is not a valid mission"

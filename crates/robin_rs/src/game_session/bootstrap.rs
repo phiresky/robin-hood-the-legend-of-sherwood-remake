@@ -244,14 +244,16 @@ impl MissionBootstrap {
         if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            callbacks.save_manager.write_restart_save_background(
+            if let Err(error) = callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
                 mission_id,
                 Some(&self.loaded.assets.profile_manager),
                 None,
-            );
+            ) {
+                tracing::error!("Restart save could not start: {error:#}");
+            }
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,
