@@ -340,7 +340,6 @@ pub struct GameplayConfig {
     /// distinct valid allegiance is hostile, preserving legacy behavior.
     #[serde(default)]
     pub diplomacy: bool,
-
     /// Let hostile NPC soldiers perceive and fight one another. Turning this
     /// off leaves conflicts involving a player active.
     #[serde(default = "enabled_by_default")]
