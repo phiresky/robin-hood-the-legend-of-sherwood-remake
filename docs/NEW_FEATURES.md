@@ -137,8 +137,9 @@ A list of which additional features we have added, which ones we might still wan
   overlays for native, Android, and browser packages while still reading v4
   manifests. Generated character names and persisted save labels remain
   frozen, multiplayer mission text and playback are client-local, and logical
-  speech timing comes from a stable canonical voice pack rather than the
-  client's active presentation language.
+  speech timing comes from either a stable canonical voice pack or the host's
+  explicit base `Data/Sounds` selection rather than the client's active
+  presentation language.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable

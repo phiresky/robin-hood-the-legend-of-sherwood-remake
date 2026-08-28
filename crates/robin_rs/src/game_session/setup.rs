@@ -706,25 +706,12 @@ pub(super) fn setup_mission_audio(
         .application_context
         .installed_languages()
         .unwrap_or_else(|error| panic!("speech timing lost localization service: {error}"));
-    let canonical_voice_pack = if let Some(authoritative_locale) =
-        host.transport.speech_timing_locale.as_deref()
-    {
-        Some(
-            installed_languages
-                .into_iter()
-                .find(|pack| pack.has_voice && pack.locale == authoritative_locale)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "authoritative multiplayer speech timing pack `{authoritative_locale}` is not installed or has no voice data"
-                    )
-                }),
-        )
-    } else {
-        installed_languages
-            .into_iter()
-            .filter(|pack| pack.has_voice)
-            .min_by_key(|pack| (pack.locale != "en-US", pack.locale.clone()))
-    };
+    let canonical_voice_pack = select_canonical_voice_pack(
+        installed_languages,
+        host.transport.speech_timing_locale.as_deref(),
+        host.transport.net.is_some(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
     let (canonical_base, canonical_loader, canonical_speech_cache) = match canonical_voice_pack {
         Some(pack) => {
             let base = if pack.data_root.is_empty() {
@@ -759,9 +746,13 @@ pub(super) fn setup_mission_audio(
             (base, loader, cache.speech_cache)
         }
         None => {
-            tracing::warn!(
-                "No validated voice pack is installed; speech timing uses the active/base audio data"
-            );
+            if host.transport.net.is_some() {
+                tracing::info!("authoritative multiplayer speech timing uses base Data/Sounds");
+            } else {
+                tracing::warn!(
+                    "No validated voice pack is installed; speech timing uses the active/base audio data"
+                );
+            }
             (
                 std::path::PathBuf::from(sound_dir),
                 crate::audio_backend::create_sample_loader(std::path::PathBuf::from(sound_dir)),
@@ -805,6 +796,33 @@ pub(super) fn setup_mission_audio(
         timer.step("mixer activation");
     }
     timer.total();
+}
+
+fn select_canonical_voice_pack(
+    installed_languages: Vec<crate::localization::LanguagePack>,
+    authoritative_locale: Option<&str>,
+    multiplayer: bool,
+) -> Result<Option<crate::localization::LanguagePack>, String> {
+    if let Some(authoritative_locale) = authoritative_locale {
+        return installed_languages
+            .into_iter()
+            .find(|pack| pack.has_voice && pack.locale == authoritative_locale)
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "authoritative multiplayer speech timing pack `{authoritative_locale}` is not installed or has no voice data"
+                )
+            });
+    }
+    if multiplayer {
+        // Welcome explicitly selected the base installation's Data/Sounds.
+        // Do not auto-select a presentation language independently per peer.
+        return Ok(None);
+    }
+    Ok(installed_languages
+        .into_iter()
+        .filter(|pack| pack.has_voice)
+        .min_by_key(|pack| (pack.locale != "en-US", pack.locale.clone())))
 }
 
 fn populate_sound_duration_tables(
@@ -2386,10 +2404,55 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAud
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::localization::LanguagePack;
     use robin_engine::replay::{ReplayData, ReplayFile, ReplayHeader};
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    fn language_pack(locale: &str, has_voice: bool) -> LanguagePack {
+        LanguagePack {
+            locale: locale.to_owned(),
+            native_name: locale.to_owned(),
+            data_root: locale.to_owned(),
+            has_voice,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn multiplayer_explicit_base_timing_never_auto_selects_a_locale_pack() {
+        let installed = vec![language_pack("de-DE", true), language_pack("en-US", true)];
+        assert_eq!(
+            select_canonical_voice_pack(installed, None, true).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_locale_timing_is_strict_and_single_player_still_prefers_english() {
+        let installed = vec![language_pack("de-DE", true), language_pack("en-US", true)];
+        assert_eq!(
+            select_canonical_voice_pack(installed.clone(), Some("de-DE"), true)
+                .unwrap()
+                .map(|pack| pack.locale),
+            Some("de-DE".to_owned())
+        );
+        assert!(
+            select_canonical_voice_pack(installed.clone(), Some("fr-FR"), true)
+                .unwrap_err()
+                .contains("not installed")
+        );
+        assert_eq!(
+            select_canonical_voice_pack(installed, None, false)
+                .unwrap()
+                .map(|pack| pack.locale),
+            Some("en-US".to_owned())
+        );
+    }
 
     #[test]
     fn png_decoder_expands_indexed_pixels_and_palette_transparency() {

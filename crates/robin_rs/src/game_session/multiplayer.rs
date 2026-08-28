@@ -724,10 +724,6 @@ pub(super) async fn setup_multiplayer_session(
                 .canonical_speech_timing_locale()
                 .map_err(|error| {
                     format!("multiplayer: cannot select authoritative speech timing: {error}")
-                })?
-                .ok_or_else(|| {
-                    "multiplayer: no validated voice pack is installed for authoritative speech timing"
-                        .to_string()
                 })?;
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
             match start_server(
@@ -735,7 +731,7 @@ pub(super) async fn setup_multiplayer_session(
                 authoritative_mission_id.to_string(),
                 authoritative_rng_seed,
                 authoritative_sim_config,
-                Some(speech_timing_locale.clone()),
+                speech_timing_locale.clone(),
                 in_tx,
                 out_rx,
                 frame_cursor,
@@ -755,7 +751,7 @@ pub(super) async fn setup_multiplayer_session(
                     host.transport.net = Some(channels);
                     host.transport.mission_seed = Some(authoritative_rng_seed);
                     host.transport.mission_sim_config = Some(authoritative_sim_config);
-                    host.transport.speech_timing_locale = Some(speech_timing_locale);
+                    host.transport.speech_timing_locale = speech_timing_locale;
                     host.transport.mission_id = Some(authoritative_mission_id.to_string());
                 }
                 Err(e) => {
@@ -774,7 +770,8 @@ pub(super) async fn setup_multiplayer_session(
                     while (handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.speech_timing_locale().is_none())
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none())
                         && web_time::Instant::now() < deadline
                     {
                         crate::window::sleep_ms(10).await;
@@ -782,7 +779,8 @@ pub(super) async fn setup_multiplayer_session(
                     if handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.speech_timing_locale().is_none()
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none()
                     {
                         return Err(
                             "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
@@ -798,28 +796,33 @@ pub(super) async fn setup_multiplayer_session(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
                     ));
                 }
-                let speech_timing_locale = handle.speech_timing_locale().ok_or_else(|| {
-                    "multiplayer: host Welcome omitted authoritative speech timing".to_string()
-                })?;
-                let has_timing_pack = host
-                    .application_context
-                    .installed_languages()
-                    .map_err(|error| {
-                        format!("multiplayer: cannot inspect installed voice packs: {error}")
-                    })?
-                    .into_iter()
-                    .any(|pack| pack.locale == speech_timing_locale && pack.has_voice);
-                if !has_timing_pack {
-                    return Err(format!(
-                        "multiplayer: host requires voice pack `{speech_timing_locale}` for deterministic speech timing, but that validated pack is not installed"
-                    ));
+                #[cfg(target_arch = "wasm32")]
+                let speech_timing_locale = handle
+                    .speech_timing_authority()
+                    .expect("successful browser Welcome must publish speech timing authority");
+                #[cfg(not(target_arch = "wasm32"))]
+                let speech_timing_locale = handle.speech_timing_locale();
+                if let Some(authoritative_locale) = speech_timing_locale.as_deref() {
+                    let has_timing_pack = host
+                        .application_context
+                        .installed_languages()
+                        .map_err(|error| {
+                            format!("multiplayer: cannot inspect installed voice packs: {error}")
+                        })?
+                        .into_iter()
+                        .any(|pack| pack.locale == authoritative_locale && pack.has_voice);
+                    if !has_timing_pack {
+                        return Err(format!(
+                            "multiplayer: host requires voice pack `{authoritative_locale}` for deterministic speech timing, but that validated pack is not installed"
+                        ));
+                    }
                 }
                 host.transport.mission_id = Some(welcomed_mission.to_string());
                 if let Some(seed) = handle.mission_seed() {
                     host.transport.mission_seed = Some(seed);
                 }
                 host.transport.mission_sim_config = handle.mission_sim_config();
-                host.transport.speech_timing_locale = Some(speech_timing_locale);
+                host.transport.speech_timing_locale = speech_timing_locale;
                 tracing::info!(
                     server = %addr,
                     nickname = %nickname,
