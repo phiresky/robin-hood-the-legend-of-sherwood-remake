@@ -353,9 +353,31 @@ A list of which additional features we have added, which ones we might still wan
   joiners, and client reconnect are implemented. Matchmaking is fully
   serverless: the multiplayer menu joins a well-known iroh-gossip topic
   bootstrapped through the BitTorrent Mainline DHT, so games are discovered
-  with no broker, master server, or configuration. The current design is
-  predictive rollback netcode rather than strict "wait for every peer before
-  ticking" lockstep. Browser clients are pending iroh wasm support.
+  with no broker, master server, or configuration. Matchmaking `/1` host
+  announcements are signed by the persistent game identity, expire after a
+  short validity window, bind the advertised endpoint to the signer, and use
+  per-host issuance watermarks so captured older lobby state cannot roll a
+  listing backward. The current design is predictive rollback netcode rather
+  than strict "wait for every peer before ticking" lockstep. Inputs older than
+  the retained correction horizon now force a complete transport reconnect
+  and fresh authoritative snapshot instead of being applied at the wrong
+  frame. Browser clients are pending iroh wasm support.
+
+- **Unified mission timeline and non-blocking multiplayer UI**. Rewind,
+  multiplayer correction, and rollback verification share one mission-owned
+  command journal with dense recent and exponentially retained checkpoint
+  tiers. Snapshot/load adoption seeds an explicit checkpoint at its exact
+  frame, including between normal sparse boundaries. Blocking gameplay modal
+  traffic uses client proposals and host-only decisions; remote peers cannot
+  choose the host's restart or load outcome. Campaign map/description and
+  launch confirmations, cross-mission QuickLoad confirmation, pseudo-mission
+  debrief, lost-Sherwood, and terminal mission-state/debrief/load flows retain
+  state across outer frames so networking and replay services keep draining
+  while simulation is paused. A player's pause menu is a local overlay in
+  multiplayer and does not stop the shared simulation. HTTP timeline stepping
+  accepts typed modal outcomes, defaults to automation-friendly auto-dismiss,
+  validates each result against its modal kind, and reports or blocks unresolved
+  UI explicitly.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its

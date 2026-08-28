@@ -16,6 +16,7 @@
 //! is available.
 
 use crate::host::Host;
+use crate::rewind::RewindBuffer;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -25,7 +26,6 @@ use web_time::Instant;
 
 use crate::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_frames_to_frame};
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::PlayerInput;
 
 /// Number of frames to rewind and replay each check.  5 ticks = 0.2s
 /// at the game's fixed 25 fps simulation rate.
@@ -42,15 +42,9 @@ pub const ROLLBACK_CHECK_INTERVAL: u32 = ROLLBACK_WINDOW as u32;
 
 const PERF_LOG_INTERVAL: u32 = 25;
 
-/// Ring buffer of frame commands used to replay and verify one window.
+/// Scheduler for verification jobs copied from the mission-owned timeline.
 pub struct RollbackChecker {
-    history: CommandJournal,
-    window_start: Option<Snapshot>,
     assets: Arc<LevelAssets>,
-    /// Pending pre-tick snapshot for the frame currently in progress.
-    /// Only populated for the first frame in each check window; the rest
-    /// of the frames retain their complete authoritative transactions.
-    pending_start: Option<Snapshot>,
     /// Frames recorded since the last replay check.  Gates
     /// `check_and_trim` to every `ROLLBACK_CHECK_INTERVAL` live frames.
     frames_since_check: u32,
@@ -67,10 +61,7 @@ pub struct RollbackChecker {
 impl RollbackChecker {
     pub fn new(assets: Arc<LevelAssets>, replay_path: Option<String>) -> Self {
         Self {
-            history: CommandJournal::default(),
-            window_start: None,
             assets,
-            pending_start: None,
             frames_since_check: 0,
             desync_dumped: Arc::new(AtomicBool::new(false)),
             replay_path,
@@ -79,86 +70,32 @@ impl RollbackChecker {
         }
     }
 
-    /// Discard all buffered history and any pending pre-tick snapshot.
-    /// Used when the live engine jumps non-chronologically (e.g. the
-    /// [`crate::rewind`] debug feature swaps in an older state); the
-    /// retained history would otherwise be compared against an engine
-    /// that's no longer its future, producing spurious desyncs on the
-    /// first post-rewind frame.
+    /// Reset check cadence after a non-chronological engine jump. The
+    /// canonical timeline itself is reset by its owner; an already-running
+    /// immutable job may finish safely against the old branch.
     pub fn reset(&mut self) {
-        self.history.clear();
-        self.window_start = None;
-        self.pending_start = None;
         self.frames_since_check = 0;
         self.reap_worker();
         self.perf = PerfStats::default();
     }
 
-    /// Capture pre-tick state.  Call before `apply_commands` + tick.
-    pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
-        if !self.history.is_empty() {
-            self.pending_start = None;
-            return;
-        }
-        let start = Instant::now();
-        self.pending_start = Some(Snapshot::new(frame, engine));
-        self.perf.begin_clone_us += start.elapsed().as_micros();
-    }
-
-    /// Finalize a frame.  Pushes the snapshot that was taken in
-    /// `begin_frame` together with `cmds` (the commands that were
-    /// applied this frame), then — if the history is full — replays
-    /// the window and compares against `current_engine`.
-    pub fn end_frame(&mut self, host: &mut Host, cmds: Vec<PlayerInput>, current_engine: &Engine) {
-        self.end_frame_input(
-            host,
-            robin_engine::engine::SimulationFrameInput::from_player_inputs(cmds),
-            current_engine,
-        );
-    }
-
-    pub fn end_frame_input(
+    /// Verify a window copied from the mission's one canonical timeline.
+    /// The checker owns no live journal or checkpoint ring; its background job
+    /// receives an immutable five-frame slice after the canonical commit.
+    pub fn check_after_commit(
         &mut self,
         host: &mut Host,
-        input: robin_engine::engine::SimulationFrameInput,
+        history: &RewindBuffer,
         current_engine: &Engine,
     ) {
         let end_start = Instant::now();
-        let frame = if self.history.is_empty() {
-            let Some(snapshot) = self.pending_start.take() else {
-                // begin_frame was not called (e.g. pause / dialogue frames
-                // that skip the sim). Nothing to record.
-                return;
-            };
-            let frame = snapshot.frame;
-            self.window_start = Some(snapshot);
-            frame
-        } else {
-            self.history.next_frame()
-        };
-        self.history.record_frame(frame, input);
         self.frames_since_check += 1;
         self.perf.end_bookkeeping_us += end_start.elapsed().as_micros();
-
-        // Only verify every ROLLBACK_CHECK_INTERVAL frames. Between
-        // checks, cap history growth so the buffer doesn't bloat —
-        // oldest entries are dropped unverified.
-        while self.history.len() > ROLLBACK_WINDOW {
-            let oldest = self
-                .history
-                .oldest_frame()
-                .expect("non-empty rollback command history");
-            self.history.discard_before(oldest + 1);
+        if self.frames_since_check < ROLLBACK_CHECK_INTERVAL {
+            return;
         }
-        if self.history.len() >= ROLLBACK_WINDOW
-            && self.frames_since_check >= ROLLBACK_CHECK_INTERVAL
-        {
-            self.frames_since_check = 0;
-            self.check_and_trim(host, current_engine);
-        }
-    }
+        self.frames_since_check = 0;
 
-    fn check_and_trim(&mut self, host: &mut Host, current_engine: &Engine) {
         let check_start = Instant::now();
         self.reap_worker();
         // Replay starts from the oldest snapshot. The live `host` remains in
@@ -171,8 +108,6 @@ impl RollbackChecker {
                 target: "robin_rs::rollback_checker::perf",
                 "rollback checker worker still busy; skipping this window"
             );
-            self.history.clear();
-            self.window_start = None;
             self.perf.check_total_us += check_start.elapsed().as_micros();
             self.perf.checks += 1;
             if self.perf.checks >= PERF_LOG_INTERVAL {
@@ -181,13 +116,38 @@ impl RollbackChecker {
             return;
         }
 
+        let end_frame_exclusive = history.next_record_frame();
+        let Some(start_frame) = end_frame_exclusive.checked_sub(ROLLBACK_WINDOW as u32) else {
+            return;
+        };
+        let Some(start) =
+            history.restore_recent(start_frame, crate::sim_timeline::RestorePolicy::Exact)
+        else {
+            tracing::warn!(
+                start_frame,
+                end_frame_exclusive,
+                "rollback checker skipped: canonical recent checkpoint is unavailable"
+            );
+            return;
+        };
+        let mut window = CommandJournal::default();
+        for frame in start_frame..end_frame_exclusive {
+            let Some(input) = history.frame_for(frame).cloned() else {
+                tracing::warn!(
+                    frame,
+                    start_frame,
+                    end_frame_exclusive,
+                    "rollback checker skipped: canonical command journal has a gap"
+                );
+                return;
+            };
+            window.record_frame(frame, input);
+        }
+
         let clone_start = Instant::now();
         let job = RollbackCheckJob {
-            start: self
-                .window_start
-                .take()
-                .expect("rollback window has start snapshot"),
-            history: std::mem::take(&mut self.history),
+            start,
+            history: window,
             assets: Arc::clone(&self.assets),
             current_engine: current_engine.clone(),
             desync_dumped: Arc::clone(&self.desync_dumped),
@@ -343,7 +303,6 @@ impl RollbackCheckJob {
 #[derive(Default)]
 struct PerfStats {
     checks: u32,
-    begin_clone_us: u128,
     end_bookkeeping_us: u128,
     check_clone_us: u128,
     replay_us: u128,
@@ -360,7 +319,6 @@ impl PerfStats {
         tracing::info!(
             target: "robin_rs::rollback_checker::perf",
             checks = self.checks,
-            begin_clone_avg_us = self.begin_clone_us / checks,
             end_bookkeeping_avg_us = self.end_bookkeeping_us / checks,
             check_clone_avg_us = self.check_clone_us / checks,
             replay_avg_us = self.replay_us / checks,

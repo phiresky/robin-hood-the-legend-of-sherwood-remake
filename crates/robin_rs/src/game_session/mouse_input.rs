@@ -5,6 +5,7 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
+use super::sherwood_flow::{SherwoodCampaignFlow, SherwoodConfirmationAction};
 use super::ui_task_state::{ActiveUiTask, OptionsTaskState, SaveLoadTaskState};
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
@@ -1614,7 +1615,7 @@ pub(super) fn choose_recording_place(
 /// (StartMission), or `Proceed` to continue with the rest of the
 /// frame.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_sherwood_hud_buttons(
+pub(super) fn handle_sherwood_hud_buttons(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
@@ -1623,9 +1624,8 @@ pub(super) async fn handle_sherwood_hud_buttons(
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
+    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     events: &[GameEvent],
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
@@ -1723,30 +1723,27 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     // QuitMission in Sherwood mode prompts
                     // REALLY_RETURN_TO_MAP, then on Yes re-raises the
                     // campaign map without leaving Sherwood.
-                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
+                    if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources
                             .menu_text
                             .get(resources::MT_MSG_REALLY_RETURN_TO_MAP);
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
-                    } else {
-                        true
-                    };
-                    if confirmed {
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            frame_cmds,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
-                        // See the `ShowCampaignMap` note elsewhere: only
-                        // the active flag gets set here; the displayed
-                        // flag flips when the overlay opens.
-                        game.show_campaign_map();
+                        *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation {
+                            state: ingame_menu::YesNoModalState::new(
+                                event_pump, renderer, resources, msg,
+                            ),
+                            action: SherwoodConfirmationAction::ReturnToMap,
+                        });
+                        return HandlerAction::Continue;
                     }
+                    dispatch_local_command(
+                        host,
+                        engine,
+                        frame_cmds,
+                        assets,
+                        &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
+                    );
+                    *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                    game.show_campaign_map();
                     return HandlerAction::Continue;
                 }
                 SherwoodButton::StartMission => {
@@ -1759,15 +1756,16 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     } else {
                         resources::MT_MSG_REALLY_START_MISSION
                     };
-                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
+                    if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources.menu_text.get(prompt_id);
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
-                    } else {
-                        true
-                    };
-                    if !confirmed {
+                        *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation {
+                            state: ingame_menu::YesNoModalState::new(
+                                event_pump, renderer, resources, msg,
+                            ),
+                            action: SherwoodConfirmationAction::StartMission {
+                                men_to_blazon: game.is_men_to_blazon_conversion(),
+                            },
+                        });
                         return HandlerAction::Continue;
                     }
                     if game.is_men_to_blazon_conversion() {
@@ -1859,10 +1857,11 @@ pub(super) async fn handle_sherwood_hud_buttons(
 /// escapes out of the map (emergency quit-game path).  Returns
 /// `Proceed` otherwise.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_sherwood_campaign_map_overlay(
+pub(super) fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
+    callbacks: &mut RustCallbacks,
     frame: &mut MissionFrame,
     assets: &engine_api::LevelAssets,
     event_pump: &mut GameWindow,
@@ -1871,16 +1870,197 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     cursor_renderer: &mut CursorRenderer,
     text_res: &mut ResourceManager,
     sherwood_campaign_map: &mut CampaignMapState,
+    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     menu_resources: &mut Option<IngameMenuResources>,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
+    if let Some(active_flow) = sherwood_flow.take() {
+        match active_flow {
+            SherwoodCampaignFlow::Map(state) => {
+                *sherwood_flow = Some(SherwoodCampaignFlow::Map(state));
+            }
+            SherwoodCampaignFlow::PseudoDebrief { mut state } => {
+                let outcome = if let Some(resources) = menu_resources.as_ref() {
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    state.tick(event_pump, renderer, resources, cursor)
+                } else {
+                    tracing::warn!(
+                        "Pseudo-mission debriefing resources disappeared — acknowledging it"
+                    );
+                    Some(ingame_menu::DebriefingOutcome::Ok {
+                        text_remaining: String::new(),
+                    })
+                };
+                if outcome.is_none() {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief { state });
+                    return Ok(HandlerAction::Proceed);
+                }
+
+                let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
+                let result = mission_description::admit_paused_campaign_action(
+                    engine,
+                    assets,
+                    action.clone(),
+                );
+                assert!(matches!(
+                    result,
+                    engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
+                ));
+                frame.record_applied_external_action(action);
+                if engine.campaign().get_ares() == 0 {
+                    return Ok(HandlerAction::Exit(GameCode::Quit));
+                }
+                game.show_campaign_map();
+                return Ok(HandlerAction::Proceed);
+            }
+            SherwoodCampaignFlow::MissionDescription {
+                mission_index,
+                mut state,
+                mut admitted_actions,
+            } => {
+                let Some(resources) = menu_resources.as_mut() else {
+                    panic!("mission-description resources disappeared while the modal was open")
+                };
+                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let mut frame_actions = Vec::new();
+                let outcome = state.tick(
+                    event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                    engine,
+                    assets,
+                    &mut frame_actions,
+                    &assets.profile_manager,
+                );
+                admitted_actions.extend(frame_actions);
+                let Some((choice, men_to_blazon)) = outcome else {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
+                        mission_index,
+                        state,
+                        admitted_actions,
+                    });
+                    return Ok(HandlerAction::Proceed);
+                };
+                for action in admitted_actions {
+                    frame.record_applied_external_action(action);
+                }
+                match choice {
+                    MissionChoice::StartMission => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSelectNextMission {
+                                mission_idx: Some(mission_index),
+                            },
+                        );
+                        game.set_men_to_blazon_conversion(men_to_blazon);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::post_commit();
+                    }
+                    MissionChoice::ShowPendingMissions => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
+                        );
+                        game.show_campaign_map();
+                    }
+                    MissionChoice::None => game.show_campaign_map(),
+                }
+                game.persistent.campaign_map_displayed = false;
+                return Ok(HandlerAction::Proceed);
+            }
+            SherwoodCampaignFlow::Confirmation { mut state, action } => {
+                let resources =
+                    required_menu_resources(menu_resources, "Sherwood mission confirmation");
+                let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+                let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(&cursor))
+                else {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation { state, action });
+                    return Ok(HandlerAction::Proceed);
+                };
+                if !confirmed {
+                    return Ok(HandlerAction::Proceed);
+                }
+                match action {
+                    SherwoodConfirmationAction::ReturnToMap => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                        game.show_campaign_map();
+                        return Ok(HandlerAction::Proceed);
+                    }
+                    SherwoodConfirmationAction::StartMission {
+                        men_to_blazon: true,
+                    } => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::UnselectAllPcs,
+                        );
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
+                        );
+                        game.persistent.campaign_map_active = true;
+                        game.persistent.campaign_map_displayed = true;
+                        game.set_men_to_blazon_conversion(false);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::SetMenToBlazonConversionMode { on: false },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                        return Ok(HandlerAction::Proceed);
+                    }
+                    SherwoodConfirmationAction::StartMission {
+                        men_to_blazon: false,
+                    } => {
+                        let mission_id =
+                            current_mission_id(engine.campaign(), &assets.profile_manager);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignHarvestProductionSectorState,
+                        );
+                        callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
+                        return Ok(HandlerAction::Exit(GameCode::LevelInterrupted));
+                    }
+                }
+            }
+        }
+    }
     // ── Sherwood campaign-map overlay ──
     // Open the campaign-map overlay whenever `campaign_map_active`
     // is set (player entered Sherwood, or the DisplayCampaignMap
-    // widget fired).  It's a blocking modal — `show_campaign_map`
-    // polls events inline until the player selects a mission or
-    // dismisses the map.
+    // widget fired). The persistent modal below advances exactly one
+    // presentation frame per outer mission iteration.
     if game.persistent.campaign_map_active {
         // The `campaign_map_displayed` flag flips here, once the
         // overlay is actually about to open — NOT
@@ -1888,54 +2068,55 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // The split keeps the save/load invariant: a save taken in the
         // "requested but not yet opened" window reloads without the
         // overlay flagged as displayed.
-        game.mark_campaign_map_displayed();
-
-        // Clear any prior `ReshowCampaignMap` request so a stale flag
-        // from a previous frame doesn't trick us into looping forever.
-        game.take_campaign_map_redisplay();
-
         // Pseudo-mission debriefing is triggered from inside the map
         // modal after its 500 ms timer.
         let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
-        let campaign_profile = host
-            .application_context
-            .active_profile_snapshot()
-            .unwrap_or_else(|error| {
-                panic!("campaign presentation requires an active profile: {error}")
-            });
-        let campaign_view_config = campaign_profile.gameplay_config;
-
-        let campaign = engine.campaign();
-        sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
-        // `menu_resources` is `None` only if `DEFAULT.RES` failed to
-        // load — rare dev-only case.  Default `MenuText` returns an
-        // empty string for every id, so the status bar just shows
-        // the raw numbers.
-        let default_menu_text = resources::MenuText::default();
-        let menu_text: &dyn engine_sherwood_stat::MenuTextLookup = match menu_resources.as_ref() {
-            Some(r) => &r.menu_text,
-            None => &default_menu_text,
-        };
-        sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
+        if sherwood_flow.is_none() {
+            game.mark_campaign_map_displayed();
+            game.take_campaign_map_redisplay();
+            let campaign = engine.campaign();
+            sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
+            let default_menu_text = resources::MenuText::default();
+            let menu_text: &dyn engine_sherwood_stat::MenuTextLookup = match menu_resources.as_ref()
+            {
+                Some(resources) => &resources.menu_text,
+                None => &default_menu_text,
+            };
+            sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
+            *sherwood_flow = Some(SherwoodCampaignFlow::Map(
+                campaign_map::CampaignMapModalState::new(
+                    renderer,
+                    campaign,
+                    &assets.profile_manager,
+                    sherwood_campaign_map,
+                    menu_resources.as_mut(),
+                    text_res,
+                    host.shipping.as_deref(),
+                    pseudo_debrief_pending,
+                ),
+            ));
+        }
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-        let choice = campaign_map::show_campaign_map(
-            event_pump,
-            renderer,
-            game,
-            campaign,
-            &assets.profile_manager,
-            sherwood_campaign_map,
-            menu_resources.as_mut(),
-            text_res,
-            host.shipping.as_deref(),
-            cursor,
-            pseudo_debrief_pending,
-            campaign_view_config.campaign_presentation,
-            &campaign_profile.campaign_history,
-        )
-        .await?;
+        let choice = match sherwood_flow.as_mut() {
+            Some(SherwoodCampaignFlow::Map(state)) => state.tick(
+                event_pump,
+                renderer,
+                game,
+                engine.campaign(),
+                &assets.profile_manager,
+                sherwood_campaign_map,
+                menu_resources.as_ref(),
+                cursor,
+            ),
+            Some(_) => unreachable!("non-map Sherwood flow reached campaign-map driver"),
+            None => unreachable!("campaign-map state was not initialized"),
+        };
+        let Some(choice) = choice else {
+            return Ok(HandlerAction::Proceed);
+        };
+        *sherwood_flow = None;
 
         // Handle the redisplay re-entry path before clearing
         // `campaign_map_active`.  `show_campaign_map` returns
@@ -2025,12 +2206,12 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         };
                         resources.menu_text.get(id)
                     });
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let _outcome = ingame_menu::show_debriefing(
-                        event_pump, renderer, resources, cursor, &text, None, 0, won, false, None,
-                        false, false,
-                    )
-                    .await;
+                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
+                        state: ingame_menu::DebriefingModalState::new(
+                            resources, text, None, 0, won, false, None, false, false,
+                        ),
+                    });
+                    return Ok(HandlerAction::Proceed);
                 } else {
                     tracing::warn!(
                         "Pseudo-mission debriefing: menu resources unavailable — dropping dialog"
@@ -2062,7 +2243,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 // `ShowPendingMissions` the accessible list is rebuilt
                 // from the pending list; otherwise the campaign map
                 // is re-shown.
-                let desc_outcome = if let Some(resources) = menu_resources.as_mut() {
+                if let Some(resources) = menu_resources.as_mut() {
                     let mission_descriptors = {
                         let campaign = engine.campaign();
                         let mission = &campaign.missions[idx];
@@ -2076,100 +2257,37 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                                 assets_res_descr::load(&path).ok()
                             })
                     };
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let mut admitted_campaign_actions = Vec::new();
-                    let (choice, men_to_blazon) = mission_description::show_mission_description(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor,
-                        idx,
-                        engine,
-                        assets,
-                        &mut admitted_campaign_actions,
-                        &assets.profile_manager,
-                        mission_descriptors.as_ref(),
-                        text_res,
-                    )
-                    .await;
-                    for action in admitted_campaign_actions {
-                        frame.record_applied_external_action(action);
-                    }
-                    Some((choice, men_to_blazon))
-                } else {
-                    tracing::warn!(
-                        "menu_resources unavailable — skipping mission description dialog \
-                         and auto-committing mission {idx}"
-                    );
-                    None
-                };
-
-                match desc_outcome {
-                    // Menu resources missing (dev path without
-                    // DEFAULT.RES) — preserve the old direct-commit
-                    // behaviour so the game still progresses.
-                    None => {
-                        dispatch_local_command(
-                            host,
+                    *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
+                        mission_index: idx,
+                        state: mission_description::MissionDescriptionModalState::new(
+                            event_pump,
+                            renderer,
+                            resources,
+                            idx,
                             engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission {
-                                mission_idx: Some(idx),
-                            },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::post_commit();
-                    }
-                    Some((MissionChoice::StartMission, men_to_blazon)) => {
-                        // Set the next mission + toggle the
-                        // men-to-blazon conversion flag, then close.
-                        // The HUD commit path (StartMission button)
-                        // runs afterwards.
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission {
-                                mission_idx: Some(idx),
-                            },
-                        );
-                        game.set_men_to_blazon_conversion(men_to_blazon);
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::post_commit();
-                    }
-                    Some((MissionChoice::ShowPendingMissions, _)) => {
-                        // Swap pending missions into the accessible
-                        // list and re-open the campaign map next
-                        // frame.
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
-                        );
-                        // See the `ShowCampaignMap` note elsewhere: only
-                        // the active flag gets set here; the displayed
-                        // flag flips when the overlay opens.
-                        game.show_campaign_map();
-                    }
-                    Some((MissionChoice::None, _)) => {
-                        // Cancel from the description dialog —
-                        // restore the campaign-map overlay so the
-                        // player can pick a different mission.
-                        // Only the active flag is set here; the
-                        // displayed flag flips when the overlay
-                        // opens.
-                        game.show_campaign_map();
-                    }
+                            &assets.profile_manager,
+                            mission_descriptors.as_ref(),
+                            text_res,
+                        ),
+                        admitted_actions: Vec::new(),
+                    });
+                    return Ok(HandlerAction::Proceed);
                 }
+
+                tracing::warn!(
+                    "menu_resources unavailable — skipping mission description dialog \
+                     and auto-committing mission {idx}"
+                );
+                dispatch_local_command(
+                    host,
+                    engine,
+                    &mut frame.commands,
+                    assets,
+                    &PlayerCommand::CampaignSelectNextMission {
+                        mission_idx: Some(idx),
+                    },
+                );
+                *sherwood_enable = SherwoodButtonEnable::post_commit();
             }
             CampaignMapChoice::Quit => {
                 // Escape / window close from the overlay with no

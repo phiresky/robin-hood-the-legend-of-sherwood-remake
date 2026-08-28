@@ -5,7 +5,8 @@
 //! escapes the phase or crosses into simulation.
 
 use super::event_hud::{
-    CollectedFrameInput, EventHudContext, EventHudOutcome, collect_event_and_hud_input,
+    CollectedFrameInput, EventHudContext, EventHudOutcome, InputModifiers,
+    collect_event_and_hud_input,
 };
 use super::flow::{FrameControl, MissionExit, MissionServices};
 use super::interactive::MissionInput;
@@ -512,7 +513,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             mut frame,
             mp_clock_pause,
         } = begin_interactive_frame(mission);
-        let modal_rendered_this_frame = false;
+        let mut modal_rendered_this_frame = false;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
         // state copies.
@@ -542,10 +543,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
 
+        let campaign_ui_presented =
+            game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some();
         match handle_sherwood_campaign_map_overlay(
             game,
             manager,
             host,
+            callbacks,
             &mut frame,
             assets,
             &mut *window,
@@ -554,11 +558,10 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             &mut presentation.sprites.cursor_renderer,
             &mut resources.text,
             &mut ui.campaign_map,
+            &mut ui.sherwood_campaign_flow,
             &mut resources.menu,
             &mut hud.sherwood_enable,
-        )
-        .await?
-        {
+        )? {
             HandlerAction::Continue => {
                 runtime.trace(FrameContractStage::EarlyRestart);
                 return Ok(Some(FrameControl::RestartIteration));
@@ -569,27 +572,52 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             }
             HandlerAction::Proceed => {}
         }
+        modal_rendered_this_frame |= campaign_ui_presented;
 
-        let collected = collect_event_and_hud_input(EventHudContext {
-            host,
-            manager,
-            game,
-            assets: assets.as_ref(),
-            dev,
-            callbacks,
-            window,
-            presentation,
-            resources,
-            input,
-            ui,
-            hud,
-            runtime,
-            frame: &mut frame,
-            manual_pause,
-            step_forward_repeat_at_ms,
-            step_back_repeat_at_ms,
-        })
-        .await;
+        let mission_ui_owns_input = ui.terminal_debriefing.is_some()
+            || ui.sherwood_campaign_flow.is_some()
+            || ui.active_ui_task.is_some()
+            || ui.quickload_confirmation.is_some()
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
+        let collected = if mission_ui_owns_input {
+            EventHudOutcome::Ready(CollectedFrameInput {
+                events: Vec::new(),
+                keyboard_actions: Vec::new(),
+                mouse_actions: Vec::new(),
+                modifiers: InputModifiers {
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                },
+                minimap_toggle_pressed: false,
+                pause_closed_this_frame: false,
+                rewind_active: false,
+                step_forward_pressed: false,
+                step_back_pressed: false,
+            })
+        } else {
+            collect_event_and_hud_input(EventHudContext {
+                host,
+                manager,
+                game,
+                assets: assets.as_ref(),
+                dev,
+                callbacks,
+                window,
+                presentation,
+                resources,
+                input,
+                ui,
+                hud,
+                runtime,
+                frame: &mut frame,
+                manual_pause,
+                step_forward_repeat_at_ms,
+                step_back_repeat_at_ms,
+            })
+        };
         let CollectedFrameInput {
             events,
             keyboard_actions: kb_actions,
@@ -967,7 +995,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let modal_pause = ui
             .active_modal
             .as_ref()
-            .is_some_and(|modal| !modal.is_empty());
+            .is_some_and(|modal| !modal.is_empty())
+            || ui.terminal_debriefing.is_some()
+            || ui.sherwood_campaign_flow.is_some()
+            || ui.quickload_confirmation.is_some()
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
 
         // Drain once more at the last deterministic pre-tick boundary.
         // Packets can arrive after the top-of-loop drain while this

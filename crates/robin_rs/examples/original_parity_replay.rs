@@ -4882,7 +4882,7 @@ fn drain_headless_http(
     );
     for request in robin_rs::http_server::take_pending_steps() {
         match request.kind {
-            robin_rs::http_server::StepKind::Forward { n } => {
+            robin_rs::http_server::StepKind::Forward { n, .. } => {
                 if n == 0 {
                     request.respond_ok(serde_json::json!({
                         "direction": "forward",
@@ -4908,7 +4908,7 @@ fn drain_headless_http(
                     "step-back is unavailable for Original parity traces; restart and go-to-frame",
                 );
             }
-            robin_rs::http_server::StepKind::GoToFrame { target } => {
+            robin_rs::http_server::StepKind::GoToFrame { target, .. } => {
                 let current = engine.frame_counter();
                 if target < current {
                     request.respond_err(

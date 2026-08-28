@@ -4,14 +4,18 @@
 //! order from command recording through simulation history, stepping, scripted
 //! modals, and the handoff to presentation.
 
+use super::debriefing::{LostSherwoodGateProgress, drive_lost_sherwood_gate};
 use super::flow::{FrameControl, MissionServices};
 use super::interactive::{MissionPresentation, MissionResources};
 use super::runtime::FrameContractStage;
-use super::terminal_debriefing::{TerminalDebriefingContext, drive_tick_exit_modals};
+use super::terminal_debriefing::{
+    TerminalDebriefingContext, TerminalDebriefingProgress, drive_tick_exit_modals,
+};
 use super::ui_task_state::UiTaskOutcome;
 use super::*;
 use crate::game::Game;
 use crate::host::HostSignal;
+use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct FramePresentationHandoff {
@@ -346,6 +350,7 @@ fn drive_leave_mission_prompt(
                     None,
                 ),
                 replay_result,
+                awaiting_authority: false,
             });
         }
     }
@@ -523,7 +528,8 @@ impl InteractiveFrameSimulation {
             assets,
             dev,
             manual_pause,
-            &mut ui.active_modal,
+            ui,
+            tick_exit_code.is_some(),
             step_forward_pressed,
             step_back_pressed,
         );
@@ -928,7 +934,26 @@ impl InteractiveFrameSimulation {
             }
         }
 
-        if auto_dismiss_modals {
+        let lost_sherwood_progress = drive_lost_sherwood_gate(
+            &mut ui.lost_sherwood_gate,
+            window,
+            host,
+            &manager.engine,
+            game.is_sherwood,
+            resources,
+            presentation,
+        );
+        let lost_sherwood_modal_active = matches!(
+            lost_sherwood_progress,
+            LostSherwoodGateProgress::Pending | LostSherwoodGateProgress::Exit
+        );
+        let terminal_modal_active = ui.terminal_debriefing.is_some();
+        if terminal_modal_active || lost_sherwood_modal_active {
+            // The terminal sequence owns presentation until its typed outcome
+            // settles. Network/HTTP/replay still drain through the surrounding
+            // outer frame; only competing scripted surfaces are deferred.
+            modal_rendered_this_frame = true;
+        } else if auto_dismiss_modals {
             let dismissed = dismiss_pending_modals(host);
             let active_dismissed = usize::from(ui.active_modal.take().is_some());
             if dismissed + active_dismissed > 0 {
@@ -957,22 +982,26 @@ impl InteractiveFrameSimulation {
             .await;
         }
 
-        drain_pending_console_display(host, &mut ui.console_overlay);
+        if !terminal_modal_active && !lost_sherwood_modal_active {
+            drain_pending_console_display(host, &mut ui.console_overlay);
+        }
 
-        modal_rendered_this_frame = drive_leave_mission_prompt(
-            host,
-            manager,
-            assets.as_ref(),
-            window,
-            audio,
-            resources,
-            ui,
-            presentation,
-            runtime,
-            &mut frame,
-            modal_mode,
-            modal_rendered_this_frame,
-        );
+        if !terminal_modal_active && !lost_sherwood_modal_active {
+            modal_rendered_this_frame = drive_leave_mission_prompt(
+                host,
+                manager,
+                assets.as_ref(),
+                window,
+                audio,
+                resources,
+                ui,
+                presentation,
+                runtime,
+                &mut frame,
+                modal_mode,
+                modal_rendered_this_frame,
+            );
+        }
 
         drain_deferred_save_load_after_zoom(
             host,
@@ -1017,7 +1046,7 @@ impl InteractiveFrameSimulation {
             )));
         }
 
-        if drive_tick_exit_modals(TerminalDebriefingContext {
+        let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
             host,
             game,
@@ -1031,8 +1060,12 @@ impl InteractiveFrameSimulation {
             ui,
             presentation,
             frame: &mut frame,
-        })
-        .await
+        });
+        if terminal_progress == TerminalDebriefingProgress::Pending {
+            modal_rendered_this_frame = true;
+        }
+        if terminal_progress == TerminalDebriefingProgress::EmergencyExit
+            || lost_sherwood_progress == LostSherwoodGateProgress::Exit
         {
             let mut display = std::mem::take(&mut host.engine_display);
             let post_initialized = runtime.cross_post_initialize(|| {
@@ -1197,7 +1230,8 @@ impl InteractiveFrameSimulation {
         assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
         dev: &mut robin_engine::engine::DevState,
         manual_pause: &mut bool,
-        active_modal: &mut Option<ActiveModal>,
+        ui: &mut super::interactive::MissionUi,
+        terminal_exit_pending: bool,
         step_forward_pressed: bool,
         step_back_pressed: bool,
     ) {
@@ -1208,6 +1242,18 @@ impl InteractiveFrameSimulation {
         // purpose is to drive the sim from a paused state — but still
         // refuse if a modal dialog is queued so the user doesn't step
         // past it.
+        let campaign_ui_blocked = ui.sherwood_campaign_flow.is_some()
+            || ui.quickload_confirmation.is_some()
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
+        let mission_ui_block_reason = if terminal_exit_pending {
+            Some("terminal mission transition")
+        } else if campaign_ui_blocked {
+            Some("campaign UI")
+        } else {
+            None
+        };
         drain_steps(
             manager,
             host,
@@ -1216,7 +1262,9 @@ impl InteractiveFrameSimulation {
             game,
             runtime,
             manual_pause,
-            active_modal,
+            &mut ui.active_modal,
+            ui.terminal_debriefing.as_mut(),
+            mission_ui_block_reason,
         );
 
         // Publish replay-playback status for the script-RPC `state`
@@ -1243,7 +1291,14 @@ impl InteractiveFrameSimulation {
         // cursor themselves: forward pulls the next recorded commands
         // and applies them before the tick; back seeks the cursor to
         // the rewound frame so playback resumes from there.
-        if step_forward_pressed && !modal_state_pending(host) {
+        let mission_ui_modal_pending = terminal_exit_pending
+            || campaign_ui_blocked
+            || ui.terminal_debriefing.is_some()
+            || ui
+                .active_modal
+                .as_ref()
+                .is_some_and(|modal| !modal.is_empty());
+        if step_forward_pressed && !modal_state_pending(&host) && !mission_ui_modal_pending {
             // Stepping into a save-marker / load-back frame must pin or
             // swap state exactly like the normal playback admission path.
             runtime
@@ -1329,7 +1384,7 @@ impl InteractiveFrameSimulation {
                     "step-forward: frame lies inside recorded history but its commands are missing"
                 );
             }
-        } else if step_back_pressed && !modal_state_pending(host) {
+        } else if step_back_pressed && !modal_state_pending(&host) && !mission_ui_modal_pending {
             if let Some(target) = runtime.current_frame().previous()
                 && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
                 && target.number() >= oldest

@@ -182,75 +182,82 @@ impl CampaignMapAssets {
     }
 }
 
-/// Display the campaign map with available missions and wait for selection.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn show_campaign_map(
-    window: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    game: &mut crate::game::Game,
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    campaign_map: &CampaignMapState,
-    menu_resources: Option<&mut IngameMenuResources>,
-    text_resources: &mut ResourceManager,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-    cursor: Option<ModalCursor<'_>>,
-    pseudo_debrief_pending: bool,
-    presentation: CampaignPresentationMode,
-    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
-) -> Result<CampaignMapChoice, String> {
-    let mut menu_resources = menu_resources;
-    if presentation != CampaignPresentationMode::ClassicMap {
-        let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
-        return show_campaign_progress(
-            window,
-            renderer,
-            game,
-            campaign,
-            profiles,
-            &assets,
-            cursor.as_ref(),
-            pseudo_debrief_pending,
-            presentation,
-            lifetime_history,
-        )
-        .await;
-    }
-    let items = campaign_map_items(campaign, profiles, campaign_map, text_resources, shipping);
-    if items.is_empty() {
-        tracing::warn!("No missions on campaign map — this shouldn't happen");
+/// Persistent campaign-map presentation state.
+///
+/// The mission driver owns this value and advances it once per outer frame.
+/// Keeping the event loop outside the modal lets network ingress, replay, and
+/// HTTP automation continue to run while the map is open.
+pub(crate) struct CampaignMapModalState {
+    items: Vec<CampaignMapItem>,
+    assets: CampaignMapAssets,
+    frame: FrameWnd,
+    input: ModalInputState,
+    pseudo_debrief_at_ms: Option<u32>,
+    selected: usize,
+}
+
+impl CampaignMapModalState {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        renderer: &mut Renderer,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        campaign_map: &CampaignMapState,
+        menu_resources: Option<&mut IngameMenuResources>,
+        text_resources: &mut ResourceManager,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+        pseudo_debrief_pending: bool,
+    ) -> Self {
+        let items = campaign_map_items(campaign, profiles, campaign_map, text_resources, shipping);
+        if items.is_empty() {
+            tracing::warn!("No missions on campaign map — this shouldn't happen");
+        }
+
+        tracing::info!("Campaign map open ({} missions)", items.len());
+        for (i, item) in items.iter().enumerate() {
+            tracing::info!("  [{i}] {:?}: {}", item.location, item.name);
+        }
+
+        let assets = CampaignMapAssets::load(renderer, menu_resources);
+        let frame = build_campaign_frame(&items, campaign_map, &assets);
+        let pseudo_debrief_at_ms =
+            pseudo_debrief_pending.then(|| crate::window::process_uptime_ms().saturating_add(500));
+        Self {
+            items,
+            assets,
+            frame,
+            input: ModalInputState::new(),
+            pseudo_debrief_at_ms,
+            selected: 0,
+        }
     }
 
-    tracing::info!("Campaign map open ({} missions)", items.len());
-    for (i, item) in items.iter().enumerate() {
-        tracing::info!("  [{i}] {:?}: {}", item.location, item.name);
-    }
-
-    let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
-    let mut frame = build_campaign_frame(&items, campaign_map, &assets);
-    let mut input = ModalInputState::new();
-    let pseudo_debrief_at = pseudo_debrief_pending
-        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
-    let mut selected = 0usize;
-    loop {
-        // If a reshow was queued during the previous frame (e.g. due
-        // to a resolution change), break out with `Redisplay` so the
-        // caller in `handle_sherwood_campaign_map_overlay` can re-enter
-        // `show_campaign_map` next frame at the new size.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tick(
+        &mut self,
+        window: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        game: &mut crate::game::Game,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        campaign_map: &CampaignMapState,
+        menu_resources: Option<&IngameMenuResources>,
+        cursor: Option<ModalCursor<'_>>,
+    ) -> Option<CampaignMapChoice> {
         if game.take_campaign_map_redisplay() {
-            return Ok(CampaignMapChoice::Redisplay);
+            return Some(CampaignMapChoice::Redisplay);
         }
 
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
         let mut final_choice = None;
-
-        let input_enabled = pseudo_debrief_at
-            .map(|at| std::time::Instant::now() >= at)
+        let input_enabled = self
+            .pseudo_debrief_at_ms
+            .map(|at| crate::window::process_uptime_ms() >= at)
             .unwrap_or(true);
 
         for event in events {
             if !input_enabled {
-                input.update_from_event(&event, transform);
+                self.input.update_from_event(&event, transform);
                 continue;
             }
             match event {
@@ -263,31 +270,13 @@ pub(crate) async fn show_campaign_map(
                     break;
                 }
                 GameEvent::KeyDown {
-                    keycode: Keycode::Tab,
-                    ..
-                } => {
-                    return show_campaign_progress(
-                        window,
-                        renderer,
-                        game,
-                        campaign,
-                        profiles,
-                        &assets,
-                        cursor.as_ref(),
-                        pseudo_debrief_pending,
-                        CampaignPresentationMode::ProgressTree,
-                        lifetime_history,
-                    )
-                    .await;
-                }
-                GameEvent::KeyDown {
                     keycode: Keycode::Up,
                     ..
-                } if !items.is_empty() => selected = selected.saturating_sub(1),
+                } if !self.items.is_empty() => self.selected = self.selected.saturating_sub(1),
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
                     ..
-                } if selected + 1 < items.len() => selected += 1,
+                } if self.selected + 1 < self.items.len() => self.selected += 1,
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -295,9 +284,9 @@ pub(crate) async fn show_campaign_map(
                 | GameEvent::KeyDown {
                     keycode: Keycode::Space,
                     ..
-                } if !items.is_empty() => {
+                } if !self.items.is_empty() => {
                     final_choice = Some(CampaignMapChoice::SelectMission(
-                        items[selected].mission_idx,
+                        self.items[self.selected].mission_idx,
                     ));
                     break;
                 }
@@ -308,33 +297,34 @@ pub(crate) async fn show_campaign_map(
                 | GameEvent::KeyDown {
                     keycode: Keycode::Space,
                     ..
-                } if items.is_empty() => {
+                } if self.items.is_empty() => {
                     final_choice = Some(CampaignMapChoice::Quit);
                     break;
                 }
                 GameEvent::MouseMove { x, y, .. } => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
+                    self.input.virt_x = vx as f32;
+                    self.input.virt_y = vy as f32;
                 }
                 GameEvent::MouseDown(x, y, 1, _) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
+                    self.input.virt_x = vx as f32;
+                    self.input.virt_y = vy as f32;
                 }
                 _ => {}
             }
-            input.update_from_event(&event, transform);
-            let widget_input = input.as_widget_input();
-            let events = frame.process_input(&widget_input);
-            input.end_frame();
+            self.input.update_from_event(&event, transform);
+            let widget_input = self.input.as_widget_input();
+            let events = self.frame.process_input(&widget_input);
+            self.input.end_frame();
 
-            for (idx, item) in items.iter().enumerate() {
-                if frame
+            for (idx, item) in self.items.iter().enumerate() {
+                if self
+                    .frame
                     .widget(item.loc_idx as u32)
                     .is_some_and(|w| w.base().state != UiState::Default)
                 {
-                    selected = idx;
+                    self.selected = idx;
                 }
             }
 
@@ -343,7 +333,7 @@ pub(crate) async fn show_campaign_map(
                     final_choice = Some(CampaignMapChoice::Quit);
                     break;
                 }
-                if let Some(item) = items.iter().find(|item| item.loc_idx as u32 == id) {
+                if let Some(item) = self.items.iter().find(|item| item.loc_idx as u32 == id) {
                     final_choice = Some(CampaignMapChoice::SelectMission(item.mission_idx));
                     break;
                 }
@@ -357,27 +347,24 @@ pub(crate) async fn show_campaign_map(
             campaign,
             profiles,
             campaign_map,
-            &items,
-            selected,
-            &assets,
-            menu_resources.as_deref(),
-            &input,
-            &frame,
+            &self.items,
+            self.selected,
+            &self.assets,
+            menu_resources,
+            &self.input,
+            &self.frame,
         );
         if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &input);
+            cursor.draw(renderer, transform, &self.input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
 
-        if let Some(choice) = final_choice {
-            return Ok(choice);
+        if final_choice.is_some() {
+            return final_choice;
         }
-        if let Some(at) = pseudo_debrief_at
-            && std::time::Instant::now() >= at
-        {
-            return Ok(CampaignMapChoice::PseudoDebriefTimer);
-        }
+        self.pseudo_debrief_at_ms
+            .is_some_and(|at| crate::window::process_uptime_ms() >= at)
+            .then_some(CampaignMapChoice::PseudoDebriefTimer)
     }
 }
 

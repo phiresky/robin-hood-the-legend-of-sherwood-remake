@@ -189,7 +189,7 @@ fn apply_frame_resizes(
 
 /// Poll process events and immediately dispatch HUD controls in the historical
 /// order. General keyboard/mouse actions are returned for the next phase.
-pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) -> EventHudOutcome {
+pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> EventHudOutcome {
     let EventHudContext {
         host,
         manager,
@@ -269,15 +269,12 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
         callbacks,
         window,
         &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
         &resources.menu,
+        &mut ui.sherwood_campaign_flow,
         &events,
         &hud.sherwood_layout,
         &mut hud.sherwood_enable,
-    )
-    .await
-    {
+    ) {
         HandlerAction::Proceed => {}
         control => return EventHudOutcome::Control(control),
     }

@@ -5,12 +5,16 @@
 //! interactive process session; deterministic persistence remains in the
 //! engine snapshot owned by [`super::runtime::MissionWorld`].
 
+use super::debriefing::LostSherwoodGateState;
 use super::modal_state::ActiveModal;
+use super::quickload_flow::QuickLoadConfirmationFlow;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
     LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
+use super::sherwood_flow::SherwoodCampaignFlow;
+use super::terminal_debriefing::TerminalDebriefingState;
 use super::tick::tick_audio;
 use super::ui_task_state::ActiveUiTask;
 use crate::audio_backend::KiraAudioBackend;
@@ -132,6 +136,10 @@ pub(super) struct MissionUi {
     pub(super) active_modal: Option<ActiveModal>,
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
+    pub(super) sherwood_campaign_flow: Option<SherwoodCampaignFlow>,
+    pub(super) quickload_confirmation: Option<QuickLoadConfirmationFlow>,
+    pub(super) terminal_debriefing: Option<TerminalDebriefingState>,
+    pub(super) lost_sherwood_gate: LostSherwoodGateState,
     pub(super) restart_allowed: bool,
 }
 
@@ -146,6 +154,10 @@ impl MissionUi {
             // first raised, so this empty state always reflects live campaign
             // data rather than mission-bootstrap data.
             campaign_map: CampaignMapState::new(),
+            sherwood_campaign_flow: None,
+            quickload_confirmation: None,
+            terminal_debriefing: None,
+            lost_sherwood_gate: LostSherwoodGateState::new(),
             restart_allowed,
         }
     }
@@ -348,7 +360,6 @@ impl InteractiveRendererAssembly {
             ui: MissionUi::new(location != MissionLocation::Sherwood),
             renderer: self.renderer,
             sprites,
-            is_sherwood: game.is_sherwood,
         }
     }
 }
@@ -362,7 +373,6 @@ pub(super) struct InteractiveFrontendAssembly {
     ui: MissionUi,
     pub(super) renderer: Renderer,
     pub(super) sprites: MissionSprites,
-    pub(super) is_sherwood: bool,
 }
 
 impl InteractiveFrontendAssembly {

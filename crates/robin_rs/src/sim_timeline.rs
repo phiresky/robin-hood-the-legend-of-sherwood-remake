@@ -357,6 +357,23 @@ impl SnapshotHistory {
         );
     }
 
+    /// Install the first replay anchor even when its frame is not selected by
+    /// the periodic checkpoint policy. Whole-state adoption can occur at any
+    /// frame; waiting for the next periodic boundary would leave the command
+    /// journal temporarily unreplayable.
+    fn remember_initial_anchor(&mut self, snapshot: SimSnapshot) {
+        assert!(
+            self.snapshots.is_empty(),
+            "initial timeline anchor requires an empty checkpoint history"
+        );
+        self.snapshots.push_back(snapshot);
+        prune_by_policy(
+            &mut self.snapshots,
+            |snapshot| snapshot.frame,
+            self.retention_policy,
+        );
+    }
+
     pub fn restore(
         &self,
         target_frame: u32,
@@ -430,6 +447,20 @@ impl TimelineHistory {
             .should_checkpoint(frame)
             .then(|| SimSnapshot::new(frame, engine));
         self.pending = Some(PendingFrame { frame, checkpoint });
+    }
+
+    /// Seed an empty history at an externally adopted pre-tick state.
+    /// Subsequent `begin_frame`/`commit_frame` calls journal immediately even
+    /// if `frame` is between normal periodic checkpoint boundaries.
+    pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
+        assert!(
+            self.checkpoints.oldest_frame().is_none()
+                && self.commands.is_empty()
+                && self.pending.is_none(),
+            "initial timeline anchor can only seed an empty history"
+        );
+        self.checkpoints
+            .remember_initial_anchor(SimSnapshot::new(frame, engine));
     }
 
     /// Commit the open frame. Returns `false` only while the history has no

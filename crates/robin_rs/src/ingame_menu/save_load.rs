@@ -40,7 +40,7 @@ use super::resources::{
     MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
-use super::yesno::show_yesno;
+use super::yesno::{YesNoModalState, show_yesno};
 
 /// Which flavour of slot picker to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -57,6 +57,337 @@ pub enum SaveLoadOutcome {
     /// User accepted the save or load, referring to `saves[slot]` on the
     /// save manager at the time the outcome was produced.
     Slot(usize),
+}
+
+/// One-frame load-slot picker used by terminal mission debriefing.
+///
+/// Save-mode editing keeps its existing standalone wrapper, while the
+/// mission-time load flow uses this persistent state so the outer driver can
+/// continue servicing networking and automation.
+pub struct LoadPickerModalState {
+    selected: Option<ListRow>,
+    visible: Vec<usize>,
+    visible_rows: usize,
+    scroll_offset: usize,
+    thumb_widget: WidgetPicture,
+    thumb_cache: Option<ThumbnailCache>,
+    input_state: ModalInputState,
+    delete_confirmation: Option<(usize, YesNoModalState)>,
+}
+
+impl LoadPickerModalState {
+    pub fn new(
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        save_manager: &mut SaveGameManager,
+    ) -> Self {
+        save_manager.sort_by_time();
+        let visible = collect_visible_slots(save_manager, SaveLoadMode::Load);
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let mut input_state = ModalInputState::new();
+        input_state.seed_mouse_from_window(event_pump, transform);
+        Self {
+            selected: None,
+            visible,
+            visible_rows: (LOAD_LIST_RECT.h / DETAIL_ROW_HEIGHT).max(1) as usize,
+            scroll_offset: 0,
+            thumb_widget: WidgetPicture::new(u32::MAX),
+            thumb_cache: None,
+            input_state,
+            delete_confirmation: None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn tick(
+        &mut self,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        cursor: Option<ModalCursor<'_>>,
+        save_manager: &mut SaveGameManager,
+        sound: Option<&mut SoundManager>,
+        audio_backend: Option<&mut dyn AudioBackend>,
+        sample_loader: Option<&SampleLoader>,
+    ) -> Option<SaveLoadOutcome> {
+        if let Some((slot, confirmation)) = self.delete_confirmation.as_mut() {
+            let outcome = confirmation.tick(event_pump, renderer, resources, cursor.as_ref());
+            let Some(confirmed) = outcome else {
+                return None;
+            };
+            let slot = *slot;
+            self.delete_confirmation = None;
+            if confirmed {
+                save_manager.remove(slot);
+                save_manager.sort_by_time();
+                self.visible = collect_visible_slots(save_manager, SaveLoadMode::Load);
+                self.selected = None;
+                self.scroll_offset = 0;
+                if let Some(old) = self.thumb_cache.take() {
+                    renderer.delete_surface(old.surface_id);
+                    self.thumb_widget.reset_alternate_picture();
+                }
+            }
+            return None;
+        }
+
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let load_label = resources.menu_text.get(MT_BTN_LOAD);
+        let delete_label = resources.menu_text.get(MT_BTN_DELETE);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let bottom_buttons = align_bottom_right(
+            &[
+                (&load_label, false),
+                (&delete_label, false),
+                (&cancel_label, true),
+            ],
+            btn_w,
+            btn_h,
+        );
+        let btn_positions = [
+            (
+                ID_LOAD_SAVE,
+                load_label.as_str(),
+                bottom_buttons[0].x,
+                bottom_buttons[0].y,
+            ),
+            (
+                ID_DELETE,
+                delete_label.as_str(),
+                bottom_buttons[1].x,
+                bottom_buttons[1].y,
+            ),
+            (
+                ID_CANCEL,
+                cancel_label.as_str(),
+                bottom_buttons[2].x,
+                bottom_buttons[2].y,
+            ),
+        ];
+        let action_enabled = matches!(self.selected, Some(ListRow::Existing(_)));
+        let delete_enabled = action_enabled;
+        let mut frame = FrameWnd::default();
+        frame.enabled = true;
+        frame.input_enabled = true;
+        for (id, label, x, y) in &btn_positions {
+            let enabled = match *id {
+                ID_LOAD_SAVE => action_enabled,
+                ID_DELETE => delete_enabled,
+                _ => true,
+            };
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                *id, label, enabled, *x, *y, btn_w, btn_h,
+            ));
+        }
+
+        let mut activated = None;
+        for event in event_pump.poll_events() {
+            self.input_state.update_from_event(&event, transform);
+            match event {
+                GameEvent::Quit
+                | GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => activated = Some(ID_CANCEL),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } => {
+                    self.selected =
+                        previous_row(self.selected, SaveLoadMode::Load, self.visible.len());
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } => {
+                    self.selected = next_row(self.selected, SaveLoadMode::Load, self.visible.len());
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter,
+                    ..
+                } if action_enabled => activated = Some(ID_LOAD_SAVE),
+                GameEvent::MouseUp(x, y, 1) => {
+                    let (vx, vy) = transform.from_screen(x, y);
+                    if LOAD_LIST_RECT.contains_virt(vx, vy) {
+                        let row_offset =
+                            ((vy - LOAD_LIST_RECT.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
+                        self.selected = row_at(
+                            SaveLoadMode::Load,
+                            self.scroll_offset + row_offset,
+                            self.visible.len(),
+                        );
+                        if self
+                            .input_state
+                            .buttons
+                            .contains(MouseButtons::LEFT_DOUBLE_CLICK)
+                            && self.selected.is_some()
+                        {
+                            activated = Some(ID_LOAD_SAVE);
+                        }
+                    } else if let Some(id) = hit_button(
+                        vx,
+                        vy,
+                        &btn_positions,
+                        btn_w,
+                        btn_h,
+                        action_enabled,
+                        delete_enabled,
+                    ) {
+                        activated = Some(id);
+                    }
+                }
+                GameEvent::MouseWheel(dy) => {
+                    let max_scroll = self.visible.len().saturating_sub(self.visible_rows);
+                    if dy > 0 {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    } else if dy < 0 {
+                        self.scroll_offset = (self.scroll_offset + 1).min(max_scroll);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let widget_input = self.input_state.as_widget_input();
+        let mouse_virt = widget_input.mouse_position;
+        let widget_events = frame.process_input(&widget_input);
+        self.input_state.end_frame();
+        if let (Some(sound), Some(loader)) = (sound, sample_loader) {
+            widget_bridge::play_widget_noise(
+                &widget_events,
+                widget_bridge::WIDGET_NOISY_BUTTON,
+                sound,
+                audio_backend,
+                loader,
+            );
+        }
+        if let Some(id) = widget_bridge::find_activated(&widget_events) {
+            activated = Some(id);
+        }
+
+        match activated {
+            Some(ID_CANCEL) => return Some(SaveLoadOutcome::Cancel),
+            Some(ID_LOAD_SAVE) => {
+                if let Some(ListRow::Existing(visible_index)) = self.selected {
+                    return Some(SaveLoadOutcome::Slot(self.visible[visible_index]));
+                }
+            }
+            Some(ID_DELETE) => {
+                if let Some(ListRow::Existing(visible_index)) = self.selected {
+                    let slot = self.visible[visible_index];
+                    let message = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
+                    self.delete_confirmation = Some((
+                        slot,
+                        YesNoModalState::new(event_pump, renderer, resources, message),
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        sync_thumbnail_cache(
+            &mut self.thumb_cache,
+            &mut self.thumb_widget,
+            self.selected,
+            &self.visible,
+            save_manager,
+            renderer,
+            SaveLoadMode::Load,
+        );
+        enter_modal_gpu_phase(renderer);
+        dim_screen(renderer);
+        if let Some(background) = resources.menu_bg[3] {
+            draw_screen_background(renderer, &background);
+        }
+        let total = self.visible.len();
+        let scrollbar_w = list_scrollbar_width(resources);
+        let needs_scrollbar = total > self.visible_rows && scrollbar_w > 0;
+        let row_area_x = LOAD_LIST_RECT.x + 10;
+        let row_area_w = LOAD_LIST_RECT.w - 20 - if needs_scrollbar { scrollbar_w } else { 0 };
+        let hovered_row = if LOAD_LIST_RECT.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32)
+        {
+            let row_offset =
+                ((mouse_virt.y as i32 - LOAD_LIST_RECT.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
+            row_at(
+                SaveLoadMode::Load,
+                self.scroll_offset + row_offset,
+                self.visible.len(),
+            )
+        } else {
+            None
+        };
+        for row_offset in 0..self.visible_rows {
+            let row_index = self.scroll_offset + row_offset;
+            if row_index >= total {
+                break;
+            }
+            let row = ListRow::Existing(row_index);
+            let row_y = LOAD_LIST_RECT.y + 4 + row_offset as i32 * DETAIL_ROW_HEIGHT;
+            let Some(font) =
+                resources.list_font(hovered_row == Some(row), self.selected == Some(row))
+            else {
+                continue;
+            };
+            let label = truncate_to_pixel_width(
+                font,
+                &row_label(row, save_manager, &self.visible),
+                row_area_w,
+            );
+            if !label.is_empty() {
+                render_text_virt_font(renderer, font, transform, &label, row_area_x, row_y);
+            }
+            let detail = truncate_to_pixel_width(
+                font,
+                &row_detail(row, save_manager, &self.visible),
+                row_area_w,
+            );
+            if !detail.is_empty() {
+                render_text_virt_font(renderer, font, transform, &detail, row_area_x, row_y + 16);
+            }
+        }
+        if needs_scrollbar {
+            widget_bridge::draw_listbox_scrollbar(
+                renderer,
+                transform,
+                resources,
+                LOAD_LIST_RECT.x + LOAD_LIST_RECT.w - scrollbar_w,
+                LOAD_LIST_RECT.y,
+                scrollbar_w,
+                LOAD_LIST_RECT.h,
+                self.scroll_offset,
+                self.visible_rows,
+                total,
+            );
+        }
+        draw_preview(
+            renderer,
+            transform,
+            self.selected,
+            &self.visible,
+            self.thumb_cache.as_ref(),
+            &self.thumb_widget,
+        );
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        if let Some(cursor) = &cursor {
+            cursor.draw(renderer, transform, &self.input_state);
+        }
+        renderer.present();
+        None
+    }
+
+    pub fn close(&mut self, renderer: &mut Renderer) {
+        if let Some(cache) = self.thumb_cache.take() {
+            renderer.delete_surface(cache.surface_id);
+            self.thumb_widget.reset_alternate_picture();
+        }
+    }
 }
 
 const INPUT_RECT: MenuRect = MenuRect {

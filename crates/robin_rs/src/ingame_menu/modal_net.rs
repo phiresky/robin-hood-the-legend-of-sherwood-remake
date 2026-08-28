@@ -39,6 +39,10 @@ impl<'a> ModalNet<'a> {
         self.instance
     }
 
+    pub fn is_authority(&self) -> bool {
+        self.is_host
+    }
+
     /// Returns true only when an authoritative host decision was queued.
     /// Client choices are visible requests and leave local modal state open.
     pub fn publish(&self, result: DialogResult) -> bool {
@@ -166,5 +170,82 @@ impl<'a> ModalNet<'a> {
             .into_iter()
             .map(|request| (request.from, request.result))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::multiplayer::{NetChannels, NetEvent, NetOutbound};
+
+    fn kind() -> ModalKind {
+        ModalKind::PopupText { text_id: 7 }
+    }
+
+    fn fixture() -> (
+        NetChannels,
+        std::sync::mpsc::Sender<NetEvent>,
+        std::sync::mpsc::Receiver<NetOutbound>,
+    ) {
+        let (net, incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
+        net.install_session_id(engine_multiplayer::MultiplayerSessionId([4; 16]))
+            .unwrap();
+        (net, incoming, outgoing)
+    }
+
+    #[test]
+    fn client_proposal_does_not_become_a_decision_locally() {
+        let (net, _incoming, outgoing) = fixture();
+        let modal = ModalNet::new(&net, kind(), false);
+        assert!(!modal.publish(DialogResult::Completed));
+        assert!(matches!(
+            outgoing.try_recv().expect("proposal"),
+            NetOutbound::ModalProposal { instance, kind: observed, result: DialogResult::Completed, requested_frame: 0 }
+                if instance == modal.instance() && observed == kind()
+        ));
+        assert!(modal.poll_remote_dismissal().is_none());
+    }
+
+    #[test]
+    fn host_proposal_is_advisory_until_host_ui_decides() {
+        let (net, incoming, outgoing) = fixture();
+        let modal = ModalNet::new(&net, kind(), true);
+        incoming
+            .send(NetEvent::ModalProposal {
+                from: PlayerId(2),
+                instance: modal.instance(),
+                kind: kind(),
+                result: DialogResult::Aborted,
+                requested_frame: 0,
+            })
+            .unwrap();
+        assert_eq!(modal.poll_remote_dismissal(), None);
+        assert!(outgoing.try_recv().is_err());
+        assert_eq!(
+            modal.take_visible_requests(),
+            vec![(PlayerId(2), DialogResult::Aborted)]
+        );
+
+        assert!(modal.publish(DialogResult::Completed));
+        assert!(matches!(
+            outgoing.try_recv().expect("decision"),
+            NetOutbound::ModalDecision { kind: observed, result: DialogResult::Completed, .. }
+                if observed == kind()
+        ));
+    }
+
+    #[test]
+    fn client_only_closes_on_host_decision() {
+        let (net, incoming, _outgoing) = fixture();
+        let modal = ModalNet::new(&net, kind(), false);
+        incoming
+            .send(NetEvent::ModalDecision {
+                instance: modal.instance(),
+                kind: kind(),
+                result: DialogResult::Completed,
+                decision_frame: 0,
+            })
+            .unwrap();
+        assert_eq!(modal.poll_remote_dismissal(), Some(DialogResult::Completed));
     }
 }

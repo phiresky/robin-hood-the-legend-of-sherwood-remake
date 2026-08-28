@@ -29,8 +29,8 @@
 use std::collections::BTreeMap;
 
 use crate::sim_timeline::{
-    CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, TimelineHistory,
-    replay_authoritative_frame,
+    CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
+    TimelineHistory, replay_authoritative_frame,
 };
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerInput;
@@ -50,14 +50,21 @@ pub const SNAPSHOT_INTERVAL: u32 = 25;
 /// (still ~log1.3(span) snapshots total).
 const BUCKET_GROWTH: f32 = 1.3;
 
-/// Ring buffer of sim snapshots plus a per-frame command log, used to
-/// reconstruct any recent frame by replaying forward from the nearest
-/// snapshot.
+/// Mission-owned canonical in-memory timeline: one per-frame command journal
+/// plus dense multiplayer/checker and exponential interactive-rewind
+/// checkpoint tiers. The historical type name is retained because most of
+/// its public operations are rewind-oriented, but no other live subsystem may
+/// own a parallel command history.
 pub struct RewindBuffer {
     /// Shared checkpoint + command-journal lifecycle. Rewind adds only its
     /// interactive seek cache and exponential-retention policy around this
     /// reusable timeline primitive.
     history: TimelineHistory,
+    /// Dense short-horizon checkpoint tier used by multiplayer correction
+    /// and rollback verification. It shares `history`'s one canonical command
+    /// journal instead of maintaining a parallel timeline store.
+    recent_checkpoints: SnapshotHistory,
+    pending_recent: Option<Snapshot>,
     /// Active rewind session cache — populated while BACKSPACE is
     /// held so consecutive rewind-steps reuse earlier replay work
     /// instead of re-cloning a snapshot and ticking forward from
@@ -83,6 +90,13 @@ impl RewindBuffer {
                     growth: BUCKET_GROWTH,
                 },
             ),
+            recent_checkpoints: SnapshotHistory::new(
+                CheckpointPolicy::EveryFrame,
+                RetentionPolicy::Latest {
+                    capacity: crate::sim_timeline::RECENT_TIMELINE_HISTORY_FRAMES,
+                },
+            ),
+            pending_recent: None,
             session: None,
         }
     }
@@ -113,17 +127,34 @@ impl RewindBuffer {
     /// register their commands but don't add to the snapshot ring.
     pub fn begin_frame(&mut self, frame: u32, engine: &Engine, _assets: &LevelAssets) {
         self.history.begin_frame(frame, engine);
+        self.pending_recent = Some(Snapshot::new(frame, engine));
+    }
+
+    /// Anchor a freshly reset timeline at a whole-state adoption boundary.
+    /// Snapshot joins and save/load can land between the sparse tier's normal
+    /// periodic frames, but their very next command must still be journaled.
+    pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.history.seed_initial_anchor(frame, engine);
+        self.recent_checkpoints.checkpoint(frame, engine);
     }
 
     /// Finalize the frame: commit the pending snapshot (if any), push
     /// the frame's commands onto the log, and prune the snapshot ring
     /// to exponential spacing.
     pub fn end_frame(&mut self, cmds: Vec<PlayerInput>) {
-        self.history.commit_frame(cmds);
+        if self.history.commit_frame(cmds)
+            && let Some(snapshot) = self.pending_recent.take()
+        {
+            self.recent_checkpoints.remember(snapshot);
+        }
     }
 
     pub fn end_frame_input(&mut self, input: robin_engine::engine::SimulationFrameInput) {
-        self.history.commit_frame_input(input);
+        if self.history.commit_frame_input(input)
+            && let Some(snapshot) = self.pending_recent.take()
+        {
+            self.recent_checkpoints.remember(snapshot);
+        }
     }
 
     /// Reconstruct the pre-tick sim state at `target_frame` by
@@ -218,6 +249,31 @@ impl RewindBuffer {
         self.history.frame_for(frame)
     }
 
+    pub fn checkpoint_recent(&mut self, frame: u32, engine: &Engine) {
+        self.recent_checkpoints.checkpoint(frame, engine);
+    }
+
+    pub fn restore_recent(&self, frame: u32, policy: RestorePolicy) -> Option<Snapshot> {
+        self.recent_checkpoints.restore(frame, policy).ok()
+    }
+
+    pub fn recent_checkpoints(&self) -> &SnapshotHistory {
+        &self.recent_checkpoints
+    }
+
+    pub fn replace_recent_checkpoints(&mut self, checkpoints: SnapshotHistory) {
+        self.recent_checkpoints = checkpoints;
+    }
+
+    pub fn clear_recent_checkpoints(&mut self) {
+        self.recent_checkpoints.clear();
+        self.pending_recent = None;
+    }
+
+    pub fn truncate_recent_after(&mut self, frame: u32) {
+        self.recent_checkpoints.truncate_after(frame);
+    }
+
     /// Append a late-arriving input into the buffer's command log at
     /// `frame`.  Used by the multiplayer rollback path: when a peer
     /// input arrives stamped with a `target_frame` already in the
@@ -228,13 +284,19 @@ impl RewindBuffer {
     /// Returns `true` when the input landed.  `false` means `frame` is
     /// outside the buffered range — either older than
     /// [`Self::oldest_cmd_frame`] (snapshot rolled off — input is
-    /// permanently lost, the only safe response is a desync alarm) or
+    /// permanently lost, so the caller must request a full authoritative
+    /// snapshot) or
     /// past [`Self::next_record_frame`] (caller should queue it as a
     /// future input instead of trying to splice).
     pub fn splice_late_input(&mut self, frame: u32, input: PlayerInput) -> bool {
         if !self.history.append_input(frame, input) {
             return false;
         }
+        // Both checkpoint tiers are derived from the edited command stream.
+        // The pre-tick checkpoint at `frame` remains valid; every later dense
+        // checkpoint must be reconstructed before it can be published again.
+        self.recent_checkpoints.truncate_after(frame);
+        self.pending_recent = None;
         // Interactive seek caches are also derived state. Reusing one after
         // editing an earlier command would bypass the late input just like a
         // stale retained checkpoint would.
@@ -252,6 +314,14 @@ impl RewindBuffer {
     /// rewind target.
     pub fn truncate_future(&mut self, frame: u32) {
         self.history.truncate_future(frame);
+        self.recent_checkpoints.truncate_after(frame);
+        if self
+            .pending_recent
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.frame != frame)
+        {
+            self.pending_recent = None;
+        }
     }
 }
 
@@ -264,6 +334,29 @@ impl Default for RewindBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adopted_state_between_sparse_boundaries_journals_immediately() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        let frame = SNAPSHOT_INTERVAL + 7;
+        let mut buffer = RewindBuffer::new();
+
+        buffer.seed_initial_anchor(frame, &engine);
+        buffer.begin_frame(frame, &engine, &assets);
+        buffer.end_frame(Vec::new());
+
+        assert!(buffer.frame_for(frame).is_some());
+        assert_eq!(buffer.oldest_cmd_frame(), frame);
+        assert!(buffer.rewind_to(&assets, frame).is_some());
+        assert!(buffer.restore_recent(frame, RestorePolicy::Exact).is_some());
+    }
 
     #[test]
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
@@ -391,6 +484,10 @@ mod tests {
                 .restore(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
                 .is_ok()
         );
+        assert!(
+            buf.restore_recent(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+                .is_some()
+        );
         buf.begin_session();
         let input = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
 
@@ -401,6 +498,12 @@ mod tests {
             Err(RestoreError::CheckpointUnavailable { .. })
         ));
         assert!(buf.history.restore(0, RestorePolicy::Exact).is_ok());
+        assert!(buf.restore_recent(1, RestorePolicy::Exact).is_some());
+        assert!(
+            buf.restore_recent(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+                .is_none(),
+            "dense checkpoints derived after the edit must be reconstructed"
+        );
         assert!(buf.commands_for(SNAPSHOT_INTERVAL).is_some());
     }
 }

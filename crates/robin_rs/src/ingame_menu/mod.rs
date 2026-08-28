@@ -59,7 +59,7 @@ pub use pause::{PauseMenu, PauseMenuOutcome};
 pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
-pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
+pub use save_load::{LoadPickerModalState, SaveLoadMode, SaveLoadOutcome, show_save_load};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
 
 /// Terminal result from a one-frame menu state.

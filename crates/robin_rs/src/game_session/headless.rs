@@ -348,6 +348,8 @@ impl HeadlessMission {
             timeline,
             &mut control.manual_pause,
             &mut active_modal,
+            None,
+            None,
         );
     }
 
@@ -527,8 +529,16 @@ mod tests {
                 assets,
                 dev,
             } = world.simulation_phase();
+            let mut modal_policy = crate::http_server::StepModalPolicy::default();
             crate::game_session::tick::run_forward_ticks(
-                manager, host, assets, dev, game, timeline, 1,
+                manager,
+                host,
+                assets,
+                dev,
+                game,
+                timeline,
+                1,
+                &mut modal_policy,
             )
             .expect("forward step after outer commit")
             .0

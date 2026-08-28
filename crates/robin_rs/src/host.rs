@@ -890,6 +890,26 @@ pub struct HostEffectBatches {
 }
 
 impl HostEffectBatches {
+    pub fn pending_modal_kinds(&self) -> Vec<engine_player_command::ModalKind> {
+        self.modals
+            .iter()
+            .map(|request| match *request {
+                HostModalRequest::Dialogue(dialog_id) => {
+                    engine_player_command::ModalKind::Dialog { dialog_id }
+                }
+                HostModalRequest::PopupText(text_id) => {
+                    engine_player_command::ModalKind::PopupText { text_id }
+                }
+                HostModalRequest::Debriefing(text_id) => {
+                    engine_player_command::ModalKind::Debriefing { text_id }
+                }
+                HostModalRequest::SherwoodReport => {
+                    engine_player_command::ModalKind::SherwoodReport
+                }
+            })
+            .collect()
+    }
+
     pub fn extend_dialogues(&mut self, ids: impl IntoIterator<Item = i32>) {
         self.modals
             .extend(ids.into_iter().map(HostModalRequest::Dialogue));

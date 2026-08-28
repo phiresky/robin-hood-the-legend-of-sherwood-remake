@@ -76,7 +76,7 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::natives as engine_natives;
-use robin_engine::player_command::{FrameCommands, PlayerCommand};
+use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::replay as engine_replay;
@@ -98,6 +98,53 @@ use robin_engine::engine::{Engine, LevelAssets};
 /// Default port. Reasonably uncommon and easy to remember; change with
 /// `--http-server <port>` or set 0 to disable.
 pub const DEFAULT_PORT: u16 = 17640;
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HttpModalDismissal {
+    pub kind: ModalKind,
+    pub result: DialogResult,
+}
+
+/// Modal behavior attached to an HTTP step. Automation keeps the historical
+/// auto-dismiss default, while deterministic drivers can set
+/// `auto_dismiss=false` and supply exact typed outcomes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StepModalPolicy {
+    #[serde(default = "default_true")]
+    pub auto_dismiss: bool,
+    pub dismissals: Vec<HttpModalDismissal>,
+}
+
+impl Default for StepModalPolicy {
+    fn default() -> Self {
+        Self {
+            auto_dismiss: true,
+            dismissals: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StepRequest {
+    pub n: u32,
+    #[serde(flatten)]
+    pub modal_policy: StepModalPolicy,
+}
+
+impl Default for StepRequest {
+    fn default() -> Self {
+        Self {
+            n: 1,
+            modal_policy: StepModalPolicy::default(),
+        }
+    }
+}
 
 /// One pending request waiting for the game tick.
 pub struct HttpRequest {
@@ -137,13 +184,16 @@ pub enum HttpPayload {
     /// `GET /screenshot` — PNG capture of the next rendered frame.
     Screenshot(ScreenshotRequest),
     /// `POST /step-forward` — run `n` engine ticks synchronously.
-    StepForward { n: u32 },
+    StepForward { request: StepRequest },
     /// `POST /step-back` — rewind `n` frames synchronously.
-    StepBack { n: u32 },
+    StepBack { request: StepRequest },
     /// `POST /go-to-frame` — absolute seek to `target` frame.
     /// Internally decomposes into a forward or backward step
     /// depending on the current frame.  Replay scrubbing uses this.
-    GoToFrame { target: u32 },
+    GoToFrame {
+        target: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// `POST /set-paused` / `robin.call("set-paused", {paused})` —
     /// toggle the mission loop's manual pause flag.
     SetPaused { paused: bool },
@@ -482,20 +532,28 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/step-forward") => match parse_step_body(&mut req) {
-                Ok(n) => relay(&queue, HttpPayload::StepForward { n }),
+                Ok(request) => relay(&queue, HttpPayload::StepForward { request }),
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/step-back") => match parse_step_body(&mut req) {
-                Ok(n) => relay(&queue, HttpPayload::StepBack { n }),
+                Ok(request) => relay(&queue, HttpPayload::StepBack { request }),
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/go-to-frame") => {
                 #[derive(serde::Deserialize)]
                 struct GoToBody {
                     frame: u32,
+                    #[serde(flatten)]
+                    modal_policy: StepModalPolicy,
                 }
                 match read_json::<GoToBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::GoToFrame { target: b.frame }),
+                    Ok(b) => relay(
+                        &queue,
+                        HttpPayload::GoToFrame {
+                            target: b.frame,
+                            modal_policy: b.modal_policy,
+                        },
+                    ),
                     Err(e) => (400, serde_json::json!({"error": e}).into()),
                 }
             }
@@ -555,26 +613,18 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
 /// Accepts either a JSON object `{"n": N}` or an empty body (defaults
 /// to `1`).  `N` must be a positive integer.
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_step_body(req: &mut tiny_http::Request) -> Result<u32, String> {
+fn parse_step_body(req: &mut tiny_http::Request) -> Result<StepRequest, String> {
     let mut body = String::new();
     std::io::Read::read_to_string(req.as_reader(), &mut body)
         .map_err(|e| format!("body read: {e}"))?;
     if body.trim().is_empty() {
-        return Ok(1);
+        return Ok(StepRequest::default());
     }
-    #[derive(serde::Deserialize)]
-    struct StepBody {
-        #[serde(default = "default_one")]
-        n: u32,
-    }
-    fn default_one() -> u32 {
-        1
-    }
-    let body: StepBody = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
+    let body: StepRequest = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
     if body.n == 0 {
         return Err("n must be >= 1".into());
     }
-    Ok(body.n)
+    Ok(body)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -693,8 +743,9 @@ fn info_json() -> serde_json::Value {
             {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
             {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
             {"method": "GET",  "path": "/screenshot",         "desc": "PNG at the requested frame. Query: frame (absolute sim frame), full_map, w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
-            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N} (default 1). Any modal dialog / popup / debriefing / sherwood report / pause-all queued before or during the step is dismissed silently; the reply includes `modals_dismissed`."},
-            {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N} (default 1). Fails if target frame is older than the oldest retained snapshot."},
+            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N, auto_dismiss: bool, dismissals: [{kind, result}]}; auto_dismiss defaults true. With false, an unmatched modal returns `blocked by modal`. The reply reports typed accepted dismissals."},
+            {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N, auto_dismiss, dismissals}; the modal policy matches step-forward. Fails if target frame is older than the oldest retained snapshot."},
+            {"method": "POST", "path": "/go-to-frame",        "desc": "Seek to an absolute frame. Body {frame: N, auto_dismiss, dismissals}; forward seeks tick and backward seeks restore canonical timeline history."},
         ],
     })
 }
@@ -820,31 +871,43 @@ pub fn drain_global(
                         request,
                     });
             }
-            HttpPayload::StepForward { n } => {
+            HttpPayload::StepForward { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Forward { n },
+                        kind: StepKind::Forward {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::StepBack { n } => {
+            HttpPayload::StepBack { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Back { n },
+                        kind: StepKind::Back {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::GoToFrame { target } => {
+            HttpPayload::GoToFrame {
+                target,
+                modal_policy,
+            } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame { target },
+                        kind: StepKind::GoToFrame {
+                            target,
+                            modal_policy,
+                        },
                     });
             }
             HttpPayload::SetPaused { paused } => {
@@ -904,31 +967,43 @@ pub fn drain_global_headless(
     };
     for req in pending {
         match req.payload {
-            HttpPayload::StepForward { n } => {
+            HttpPayload::StepForward { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Forward { n },
+                        kind: StepKind::Forward {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::StepBack { n } => {
+            HttpPayload::StepBack { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Back { n },
+                        kind: StepKind::Back {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::GoToFrame { target } => {
+            HttpPayload::GoToFrame {
+                target,
+                modal_policy,
+            } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame { target },
+                        kind: StepKind::GoToFrame {
+                            target,
+                            modal_policy,
+                        },
                     });
             }
             HttpPayload::SetPaused { paused } => {
@@ -1864,15 +1939,24 @@ fn pending_screenshots() -> &'static Mutex<Vec<PendingScreenshot>> {
 // Step-forward / step-back pipeline
 // ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
     /// Run `n` ticks forward from the current frame.
-    Forward { n: u32 },
+    Forward {
+        n: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// Rewind `n` frames from the current frame.
-    Back { n: u32 },
+    Back {
+        n: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// Absolute seek — no-op if `target == sim_frame`, decomposes into
     /// a forward or back step otherwise.  Replay scrubbing uses this.
-    GoToFrame { target: u32 },
+    GoToFrame {
+        target: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// Toggle the mission loop's manual pause flag. Queued with
     /// scrubbing so pause/play and seek requests apply in caller order.
     SetPaused { paused: bool },
@@ -2093,6 +2177,32 @@ fn screenshot_target_dimensions(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_request_defaults_to_one_tick_and_auto_dismiss() {
+        let request: StepRequest = serde_json::from_value(serde_json::json!({}))
+            .expect("empty step request uses documented defaults");
+        assert_eq!(request, StepRequest::default());
+        assert_eq!(request.n, 1);
+        assert!(request.modal_policy.auto_dismiss);
+    }
+
+    #[test]
+    fn step_request_decodes_typed_modal_outcomes() {
+        let dismissal = HttpModalDismissal {
+            kind: ModalKind::Dialog { dialog_id: 17 },
+            result: DialogResult::Aborted,
+        };
+        let request: StepRequest = serde_json::from_value(serde_json::json!({
+            "n": 4,
+            "auto_dismiss": false,
+            "dismissals": [serde_json::to_value(&dismissal).expect("dismissal JSON")],
+        }))
+        .expect("typed step request");
+        assert_eq!(request.n, 4);
+        assert!(!request.modal_policy.auto_dismiss);
+        assert_eq!(request.modal_policy.dismissals, vec![dismissal]);
+    }
 
     #[test]
     fn browser_guard_rejects_any_origin_header() {
@@ -2397,15 +2507,6 @@ pub mod wasm_rpc {
     }
 
     fn decode_request(method: &str, params: serde_json::Value) -> Result<HttpPayload, String> {
-        #[derive(serde::Deserialize, Default)]
-        struct StepBody {
-            #[serde(default = "one")]
-            n: u32,
-        }
-        fn one() -> u32 {
-            1
-        }
-
         match method {
             "script" => Ok(HttpPayload::Script),
             "state" => Ok(HttpPayload::State),
@@ -2465,8 +2566,8 @@ pub mod wasm_rpc {
                 Ok(HttpPayload::Screenshot(ss))
             }
             "step-forward" => {
-                let s: StepBody = if params.is_null() {
-                    StepBody::default()
+                let s: StepRequest = if params.is_null() {
+                    StepRequest::default()
                 } else {
                     serde_json::from_value(params)
                         .map_err(|e| format!("step-forward params: {e}"))?
@@ -2474,27 +2575,32 @@ pub mod wasm_rpc {
                 if s.n == 0 {
                     return Err("n must be >= 1".into());
                 }
-                Ok(HttpPayload::StepForward { n: s.n })
+                Ok(HttpPayload::StepForward { request: s })
             }
             "step-back" => {
-                let s: StepBody = if params.is_null() {
-                    StepBody::default()
+                let s: StepRequest = if params.is_null() {
+                    StepRequest::default()
                 } else {
                     serde_json::from_value(params).map_err(|e| format!("step-back params: {e}"))?
                 };
                 if s.n == 0 {
                     return Err("n must be >= 1".into());
                 }
-                Ok(HttpPayload::StepBack { n: s.n })
+                Ok(HttpPayload::StepBack { request: s })
             }
             "go-to-frame" => {
                 #[derive(serde::Deserialize)]
                 struct G {
                     frame: u32,
+                    #[serde(flatten)]
+                    modal_policy: StepModalPolicy,
                 }
                 let g: G = serde_json::from_value(params)
                     .map_err(|e| format!("go-to-frame params: {e}"))?;
-                Ok(HttpPayload::GoToFrame { target: g.frame })
+                Ok(HttpPayload::GoToFrame {
+                    target: g.frame,
+                    modal_policy: g.modal_policy,
+                })
             }
             "set-paused" => {
                 #[derive(serde::Deserialize)]

@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 25;
+pub const NET_PROTOCOL_VERSION: u32 = 26;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -184,6 +184,10 @@ pub enum NetMsg {
         result: DialogResult,
         decision_frame: u32,
     },
+    /// Server → peer: abandon the current prediction future and perform a
+    /// complete transport handshake. The next session starts from the host's
+    /// latest authoritative full snapshot.
+    ReconnectRequired { reason: String },
 }
 
 /// One incoming wire event ready for the game loop.
@@ -275,6 +279,19 @@ pub enum NetOutbound {
         kind: ModalKind,
         result: DialogResult,
         decision_frame: u32,
+    },
+    /// The retained rollback horizon cannot incorporate an input from this
+    /// seat. A client drops its whole live QUIC session and re-handshakes; the
+    /// host drops the named peer so that peer follows the same reconnect path.
+    /// The fresh handshake always carries the host's latest full snapshot.
+    ReconnectForSnapshot {
+        player_id: PlayerId,
+        reason: String,
+    },
+    /// Host-only escalation: every connected client must discard its local
+    /// future and rejoin from the same current authoritative snapshot.
+    ReconnectAllForSnapshot {
+        reason: String,
     },
 }
 
@@ -605,6 +622,22 @@ impl NetChannels {
             })
             .map_err(|_| "multiplayer modal decision channel is closed".to_string())
     }
+
+    pub fn reconnect_for_snapshot(
+        &self,
+        player_id: PlayerId,
+        reason: String,
+    ) -> Result<(), String> {
+        self.outgoing
+            .send(NetOutbound::ReconnectForSnapshot { player_id, reason })
+            .map_err(|_| "multiplayer snapshot reconnect channel is closed".to_string())
+    }
+
+    pub fn reconnect_all_for_snapshot(&self, reason: String) -> Result<(), String> {
+        self.outgoing
+            .send(NetOutbound::ReconnectAllForSnapshot { reason })
+            .map_err(|_| "multiplayer snapshot reconnect channel is closed".to_string())
+    }
 }
 
 /// Encode a [`NetMsg`] as a binary WebSocket payload.
@@ -623,9 +656,9 @@ mod tests {
 
     #[test]
     fn protocol_version_includes_identified_host_modal_decisions() {
-        // Version 25 replaces the bidirectional unkeyed ModalDismiss with
-        // session/instance/frame-tagged proposal and decision messages.
-        assert_eq!(NET_PROTOCOL_VERSION, 25);
+        // Version 26 adds identified host-only modal decisions and explicit
+        // full-snapshot reconnect directives.
+        assert_eq!(NET_PROTOCOL_VERSION, 26);
     }
 
     #[test]
@@ -767,6 +800,18 @@ mod tests {
                 .install_session_id(MultiplayerSessionId([4; 16]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn snapshot_reconnect_directive_roundtrips() {
+        let reconnect = decode_msg(&encode_msg(&NetMsg::ReconnectRequired {
+            reason: "rollback horizon".to_string(),
+        }))
+        .expect("decode reconnect directive");
+        assert!(matches!(
+            reconnect,
+            NetMsg::ReconnectRequired { reason } if reason == "rollback horizon"
+        ));
     }
 
     #[test]

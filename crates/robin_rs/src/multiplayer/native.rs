@@ -525,6 +525,48 @@ async fn run_server_outgoing_pump(
                     let _ = context.incoming_tx.send(NetEvent::Fatal(error));
                 }
             }
+            NetOutbound::ReconnectForSnapshot { player_id, reason } => {
+                assert_ne!(
+                    player_id,
+                    PlayerId::HOST,
+                    "authoritative host cannot reconnect itself for a stale input"
+                );
+                let sender = context.peers.lock().senders.remove(&player_id.0);
+                if let Some(sender) = sender {
+                    tracing::warn!(
+                        ?player_id,
+                        %reason,
+                        "multiplayer: dropping peer for full-snapshot resynchronization"
+                    );
+                    // Tell the peer why this otherwise-graceful stream close
+                    // requires reconnecting. The queue drains this message
+                    // before observing that its last sender was dropped.
+                    let _ = sender.send(NetMsg::ReconnectRequired {
+                        reason: reason.clone(),
+                    });
+                    drop(sender);
+                } else {
+                    tracing::warn!(
+                        ?player_id,
+                        %reason,
+                        "multiplayer: stale-input peer was already disconnected"
+                    );
+                }
+            }
+            NetOutbound::ReconnectAllForSnapshot { reason } => {
+                let senders = std::mem::take(&mut context.peers.lock().senders);
+                tracing::warn!(
+                    peers = senders.len(),
+                    %reason,
+                    "multiplayer: dropping every peer for full-snapshot resynchronization"
+                );
+                for sender in senders.values() {
+                    let _ = sender.send(NetMsg::ReconnectRequired {
+                        reason: reason.clone(),
+                    });
+                }
+                drop(senders);
+            }
         }
     }
     tracing::info!("server outgoing pump stopped");
@@ -1269,7 +1311,14 @@ async fn run_client_io_inner(
         match run_session_async(session, &incoming_tx, outgoing_async_rx, &cancellation).await {
             SessionEnd::Graceful => break,
             SessionEnd::Drop(reason) => {
+                let discarded = discard_session_outbound(outgoing_async_rx);
                 tracing::warn!("client session ended: {reason}; reconnecting...");
+                if discarded != 0 {
+                    tracing::warn!(
+                        discarded,
+                        "multiplayer: discarded outbound commands from abandoned prediction session"
+                    );
+                }
                 let _ = incoming_tx.send(NetEvent::Note(format!(
                     "disconnected: {reason}; reconnecting..."
                 )));
@@ -1328,6 +1377,13 @@ async fn run_client_io_inner(
                         rng_seed: new_seed,
                         sim_config: new_config,
                     });
+                    let discarded = discard_session_outbound(outgoing_async_rx);
+                    if discarded != 0 {
+                        tracing::warn!(
+                            discarded,
+                            "multiplayer: discarded commands queued while transport was reconnecting"
+                        );
+                    }
                     backoff = std::time::Duration::from_millis(500);
                     break new_session;
                 }
@@ -1356,6 +1412,18 @@ enum SessionEnd {
     OutgoingClosed,
 }
 
+/// Throw away commands queued for a transport session whose prediction
+/// future has been abandoned. Replaying them after the next handshake would
+/// apply pre-disconnect input on top of the authoritative replacement
+/// snapshot.
+fn discard_session_outbound(outgoing_rx: &mut UnboundedReceiver<NetOutbound>) -> usize {
+    let mut discarded = 0;
+    while outgoing_rx.try_recv().is_ok() {
+        discarded += 1;
+    }
+    discarded
+}
+
 /// Run one client session by racing a whole-session reader loop
 /// against a whole-session writer loop, so local inputs are sent as
 /// soon as the game loop queues them.  The reader and writer each own
@@ -1378,7 +1446,9 @@ async fn run_session_async(
             match read_frame(&mut recv).await {
                 Ok(Some(msg)) => {
                     if let Err(error) = handle_client_wire_msg(incoming_tx, msg) {
-                        let _ = incoming_tx.send(NetEvent::Fatal(error.clone()));
+                        if !error.starts_with("host requires a full-snapshot reconnect:") {
+                            let _ = incoming_tx.send(NetEvent::Fatal(error.clone()));
+                        }
                         return SessionEnd::Drop(error);
                     }
                 }
@@ -1487,6 +1557,9 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) -> Result
         NetMsg::ModalProposal { .. } => {
             return Err("server sent a client-only modal proposal".to_string());
         }
+        NetMsg::ReconnectRequired { reason } => {
+            return Err(format!("host requires a full-snapshot reconnect: {reason}"));
+        }
         other => {
             tracing::debug!(?other, "ignoring unexpected wire message");
         }
@@ -1538,13 +1611,23 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
         NetOutbound::ModalDecision { .. } => {
             return Err("client attempted an authoritative modal decision".to_string());
         }
+        NetOutbound::ReconnectForSnapshot { reason, .. } => {
+            return Err(format!(
+                "full-snapshot resynchronization requested: {reason}"
+            ));
+        }
+        NetOutbound::ReconnectAllForSnapshot { reason } => {
+            return Err(format!(
+                "full-snapshot resynchronization requested: {reason}"
+            ));
+        }
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::validate_reconnect_state;
+    use super::{discard_session_outbound, handle_client_wire_msg, validate_reconnect_state};
 
     #[test]
     fn reconnect_rejects_wrong_mission_or_config() {
@@ -1557,5 +1640,36 @@ mod tests {
         changed.amount_of_speaking = 9;
         assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, changed).is_err());
         assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, expected).is_ok());
+    }
+
+    #[test]
+    fn host_reconnect_directive_ends_the_complete_client_session() {
+        let (incoming_tx, _incoming_rx) = std::sync::mpsc::channel();
+        let error = handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::ReconnectRequired {
+                reason: "late input predates rollback horizon".to_string(),
+            },
+        )
+        .expect_err("directive must unwind the session into the reconnect loop");
+        assert!(error.contains("full-snapshot reconnect"));
+        assert!(error.contains("rollback horizon"));
+    }
+
+    #[test]
+    fn reconnect_discards_commands_queued_for_abandoned_session() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        sender
+            .send(robin_engine::multiplayer::NetOutbound::Input {
+                origin_frame: 41,
+                command: robin_engine::player_command::PlayerCommand::CrouchDown,
+            })
+            .expect("queue old-session command");
+        sender
+            .send(robin_engine::multiplayer::NetOutbound::ReadyToSim { frame: 40 })
+            .expect("queue old-session readiness");
+
+        assert_eq!(discard_session_outbound(&mut receiver), 2);
+        assert!(receiver.try_recv().is_err());
     }
 }
