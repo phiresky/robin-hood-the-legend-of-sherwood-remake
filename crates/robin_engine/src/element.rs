@@ -4140,10 +4140,9 @@ impl Entity {
         }
     }
 
-    /// Camp allegiance for fighter-camp-keyed iteration.  PCs are
-    /// always `Royalists`; Soldiers/Civilians read from their cached
-    /// camp.  Non-actor entities have no camp and return
-    /// `Camp::Error`.
+    /// Camp allegiance for fighter-camp-keyed iteration. PCs, soldiers, and
+    /// civilians read their authored cached camp. Non-actor entities have no
+    /// camp and return `Camp::Error`.
     pub fn camp(&self) -> Camp {
         match self {
             Self::Pc(pc) => pc.pc.cached_camp,
@@ -6064,6 +6063,10 @@ mod tests {
                 assert_eq!(left.is_hostile_to(*right), left_index != right_index);
             }
         }
+    }
+
+    #[test]
+    fn invalid_camp_hostility_remains_nonhostile_after_warning() {
         assert!(!Camp::Error.is_hostile_to(Camp::Royalists));
     }
 

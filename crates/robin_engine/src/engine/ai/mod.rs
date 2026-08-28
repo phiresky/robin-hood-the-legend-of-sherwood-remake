@@ -1156,7 +1156,7 @@ pub(super) fn build_detectable_enemies_for(
             // Bonhomie considers Royalist soldiers for Lacklandist
             // civilians in its outer loop, but AddDetectable's civilian arm
             // rejects them. Both civilian camps therefore retain PCs only.
-            pd.is_pc
+            pd.is_pc && (!matches!(self_camp, Camp::Custom(_)) || self_camp.is_hostile_to(pd.camp))
         } else {
             // Malignity (enemy soldier) AddDetectable cases:
             // - Royalist (Good) soldier → detects enemy (Lacklandist) soldiers.
@@ -2487,6 +2487,37 @@ mod parity_tests {
         ];
 
         let detectables = build_detectable_enemies_for(Camp::Custom(2), false, self_id, &snapshot);
+
+        assert_eq!(
+            detectables
+                .iter()
+                .map(|detectable| detectable.element)
+                .collect::<Vec<_>>(),
+            vec![Some(hostile_champion)]
+        );
+    }
+
+    #[test]
+    fn custom_civilian_detects_hostile_champion_but_not_allied_champion() {
+        let self_id = EntityId::Civilian(crate::entity_id::CivilianId(5));
+        let allied_champion = EntityId::Pc(crate::entity_id::PcId(1));
+        let hostile_champion = EntityId::Pc(crate::entity_id::PcId(2));
+        let snapshot = vec![
+            PotentialDetectable {
+                id: allied_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(2),
+            },
+            PotentialDetectable {
+                id: hostile_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(3),
+            },
+        ];
+
+        let detectables = build_detectable_enemies_for(Camp::Custom(2), true, self_id, &snapshot);
 
         assert_eq!(
             detectables

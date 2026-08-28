@@ -692,7 +692,14 @@ impl Camp {
     pub fn is_hostile_to(self, other: Self) -> bool {
         match (self.allegiance_id(), other.allegiance_id()) {
             (Some(left), Some(right)) => left != right,
-            _ => false,
+            _ => {
+                tracing::warn!(
+                    left = ?self,
+                    right = ?other,
+                    "cannot compare hostility for invalid camp; treating pair as non-hostile"
+                );
+                false
+            }
         }
     }
 

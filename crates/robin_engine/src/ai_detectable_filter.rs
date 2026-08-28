@@ -23,13 +23,23 @@ pub fn should_add_enemy_detectable(
     target_camp: Camp,
 ) -> bool {
     if npc_camp == Camp::Error || target_camp == Camp::Error {
+        tracing::warn!(
+            ?npc_camp,
+            ?target_camp,
+            npc_is_soldier,
+            target_is_pc,
+            target_is_soldier,
+            "rejecting enemy detectable with invalid allegiance"
+        );
         return false;
     }
     if !npc_is_soldier {
         // Preserve Original's unusual legacy behavior for both built-in
-        // civilian camps. Custom civilians use allegiance-based hostility.
+        // civilian camps. Custom civilians compare the target PC's authored
+        // allegiance instead of inheriting Original's all-PCs-are-Royalist
+        // assumption.
         return target_is_pc
-            && (!matches!(npc_camp, Camp::Custom(_)) || npc_camp.is_hostile_to(Camp::Royalists));
+            && (!matches!(npc_camp, Camp::Custom(_)) || npc_camp.is_hostile_to(target_camp));
     }
     (target_is_soldier || target_is_pc) && npc_camp.is_hostile_to(target_camp)
 }
@@ -163,5 +173,23 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn custom_civilian_rejects_allied_pc_and_accepts_hostile_pc() {
+        assert!(!should_add_enemy_detectable(
+            Camp::Custom(7),
+            false,
+            true,
+            false,
+            Camp::Custom(7),
+        ));
+        assert!(should_add_enemy_detectable(
+            Camp::Custom(7),
+            false,
+            true,
+            false,
+            Camp::Custom(8),
+        ));
     }
 }

@@ -15,9 +15,7 @@ use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
-use robin_engine::element::{
-    ActionState, Camp, Command, Entity, EntityId, Focus, ListenPhase, Posture,
-};
+use robin_engine::element::{ActionState, Command, Entity, EntityId, Focus, ListenPhase, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::{PlayerCommand, PlayerId, QueuedQuickActionCommand};
@@ -1904,12 +1902,11 @@ fn determine_use_command(
             engine_profiles::Action::Resuscitate,
         )
     {
-        let target_pc_or_same_camp = match entity {
-            Entity::Pc(_) => true,
-            Entity::Soldier(s) => s.soldier.cached_camp == Camp::Royalists,
-            _ => false,
-        };
-        if target_pc_or_same_camp {
+        let selector_camp = engine
+            .get_entity(pc_id)
+            .unwrap_or_else(|| panic!("selected PC {pc_id:?} disappeared during WakeUp dispatch"))
+            .camp();
+        if entity.is_human() && entity.camp() == selector_camp {
             return Some(Command::WakeUp);
         }
     }
