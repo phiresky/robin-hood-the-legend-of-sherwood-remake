@@ -1618,6 +1618,7 @@ mod application_context_tests {
                     packed_data: std::sync::Arc::new(vec![0]),
                 },
             )],
+            vq_chunks: Vec::new(),
         });
 
         let mut holder = FrameHolder::new();

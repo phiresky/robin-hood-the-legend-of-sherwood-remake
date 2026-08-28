@@ -1510,7 +1510,7 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 
 use robin_assets::shipping_datadir::{
     RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
-    ShippingSprite, ShippingSpriteBank,
+    ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1526,6 +1526,204 @@ struct ShippingMissionBuild {
     proto_filename: String,
     forest_level: bool,
     ambiance: u32,
+}
+
+/// One shared RHS chunk between requirement resolution and payload assembly.
+struct RhsChunkPrep {
+    /// Filtered profile metadata for the chunk, or `None` for a synthesized
+    /// sprite-only family-base chunk no mission requires directly.
+    rhs_data: Option<RhsData>,
+    matched_profiles: usize,
+    /// Frame ids of *all* profiles in RHS load order. Cross-variant pairing
+    /// is positional over this order (a variant's frame tables mirror its
+    /// family base's 1:1), so it includes unmatched profiles too.
+    script_order: Vec<u32>,
+    used_sprite_ids: BTreeSet<u32>,
+    /// Family-base RHS rel when this chunk is coded cross-variant.
+    base_rel: Option<String>,
+    /// Variant bank id -> base bank id for the sprites coded against a base.
+    base_ids: std::collections::BTreeMap<u32, u32>,
+}
+
+/// Expected packed word count of a VQ sprite's `(width/4) x height` index
+/// grid, or `None` when the dims cannot form one (zero-sized or ragged).
+fn vq_grid_words(width: u16, height: u16) -> Option<usize> {
+    (width > 0 && height > 0 && width % 4 == 0).then(|| (width as usize / 4) * height as usize)
+}
+
+/// A sprite's packed words after the dictionary rank permutation (identity
+/// when ranking is disabled). `None` when the bank holds no data for it.
+fn remapped_packed(
+    holder: &FrameHolder,
+    dict_remaps: Option<&[Vec<u16>]>,
+    idx: u32,
+) -> Result<Option<Vec<u16>>> {
+    let sprite = holder
+        .sprites()
+        .get(idx as usize)
+        .ok_or_else(|| anyhow!("sprite {idx} beyond the shipping bank"))?;
+    let Some(packed) = holder.packed_data(idx) else {
+        return Ok(None);
+    };
+    Ok(Some(match dict_remaps {
+        Some(remaps) if sprite.dictionary_index != UNMAPPED_DICT => {
+            let remap = remaps
+                .get(sprite.dictionary_index as usize)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "sprite {idx} references dictionary {} without a rank remap",
+                        sprite.dictionary_index
+                    )
+                })?;
+            packed
+                .iter()
+                .map(|&i| {
+                    remap.get(i as usize).copied().ok_or_else(|| {
+                        anyhow!(
+                            "sprite {idx} index {i} out of range for dictionary {}",
+                            sprite.dictionary_index
+                        )
+                    })
+                })
+                .collect::<Result<Vec<u16>>>()?
+        }
+        _ => packed.to_vec(),
+    }))
+}
+
+/// Assemble one shared RHS chunk: sprite rows for every reachable bank slot,
+/// with all well-formed VQ grids coded into a single `sprite_codec` blob
+/// (cross-variant against `prep.base_ids` where present) and RLE/ragged
+/// sprites keeping raw packed words.
+fn build_rhs_chunk_payload(
+    holder: &FrameHolder,
+    dict_remaps: Option<&[Vec<u16>]>,
+    rel: &str,
+    prep: &RhsChunkPrep,
+) -> Result<ShippingMission> {
+    let mut payload = ShippingMission::default();
+    if let Some(rhs_data) = &prep.rhs_data {
+        payload.rhs_files.insert(rel.to_owned(), rhs_data.clone());
+    }
+    let mut sprites = Vec::with_capacity(prep.used_sprite_ids.len());
+    let mut blob_ids = Vec::new();
+    let mut blob_dims = Vec::new();
+    let mut blob_grids: Vec<Vec<u16>> = Vec::new();
+    let mut blob_bases: Vec<Option<Vec<u16>>> = Vec::new();
+    let mut blob_base_ids: Vec<Option<u32>> = Vec::new();
+    let mut alphabet: u16 = 0;
+    for &idx in &prep.used_sprite_ids {
+        let sprite = holder
+            .sprites()
+            .get(idx as usize)
+            .ok_or_else(|| anyhow!("RHS {rel} references sprite {idx} beyond the shipping bank"))?;
+        let row_packed = match remapped_packed(holder, dict_remaps, idx)? {
+            Some(packed)
+                if sprite.dictionary_index != UNMAPPED_DICT
+                    && vq_grid_words(sprite.width, sprite.height) == Some(packed.len()) =>
+            {
+                let dict = holder.dictionary(sprite.dictionary_index).ok_or_else(|| {
+                    anyhow!(
+                        "sprite {idx} references missing dictionary {}",
+                        sprite.dictionary_index
+                    )
+                })?;
+                alphabet = alphabet.max(dict.num_entries());
+                match prep.base_ids.get(&idx) {
+                    Some(&base_id) => {
+                        let base =
+                            remapped_packed(holder, dict_remaps, base_id)?.ok_or_else(|| {
+                                anyhow!(
+                                    "family base sprite {base_id} for RHS {rel} has no packed data"
+                                )
+                            })?;
+                        blob_bases.push(Some(base));
+                        blob_base_ids.push(Some(base_id));
+                    }
+                    None => {
+                        blob_bases.push(None);
+                        blob_base_ids.push(None);
+                    }
+                }
+                blob_ids.push(idx);
+                blob_dims.push((sprite.width / 4, sprite.height));
+                blob_grids.push(packed);
+                Vec::new()
+            }
+            Some(packed) => {
+                if sprite.dictionary_index != UNMAPPED_DICT {
+                    // VQ words that disagree with the sprite's grid shape
+                    // cannot ride the codec blob; ship them raw rather than
+                    // guessing at dimensions.
+                    tracing::warn!(
+                        rhs = rel,
+                        sprite = idx,
+                        words = packed.len(),
+                        width = sprite.width,
+                        height = sprite.height,
+                        "VQ sprite length does not match its grid; keeping raw indices"
+                    );
+                }
+                packed
+            }
+            None if sprite.width == 0 || sprite.height == 0 => Vec::new(),
+            None => bail!("RHS {rel} references non-empty sprite {idx} with no packed bank data"),
+        };
+        sprites.push((
+            idx,
+            ShippingSprite {
+                width: sprite.width,
+                height: sprite.height,
+                dictionary_index: sprite.dictionary_index,
+                packed_data: Arc::new(row_packed),
+            },
+        ));
+    }
+    let coded_sprites = blob_ids.len();
+    let mut vq_chunks = Vec::new();
+    let mut blob_bytes = 0usize;
+    if !blob_ids.is_empty() {
+        let grids: Vec<robin_assets::sprite_codec::SpriteGrid> = blob_dims
+            .iter()
+            .zip(&blob_grids)
+            .map(
+                |(&(cols, rows), grid)| robin_assets::sprite_codec::SpriteGrid {
+                    cols,
+                    rows,
+                    indices: grid,
+                },
+            )
+            .collect();
+        let bases: Vec<Option<&[u16]>> = blob_bases.iter().map(|base| base.as_deref()).collect();
+        let blob = robin_assets::sprite_codec::encode_grids(alphabet, &grids, Some(&bases))
+            .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
+        blob_bytes = blob.len();
+        vq_chunks.push(SpriteVqChunk {
+            rhs: rel.to_owned(),
+            base_rhs: prep.base_rel.clone(),
+            alphabet,
+            sprite_ids: blob_ids,
+            base_ids: blob_base_ids,
+            blob,
+        });
+    }
+    payload.sprite_bank = Some(ShippingSpriteBank {
+        signature: holder.signature(),
+        dictionaries: Vec::new(),
+        sprite_count: holder.sprites().len() as u32,
+        sprites,
+        vq_chunks,
+    });
+    tracing::info!(
+        rhs = rel,
+        sprites = prep.used_sprite_ids.len(),
+        required_rhs_profiles = prep.matched_profiles,
+        vq_sprites = coded_sprites,
+        vq_blob_bytes = blob_bytes,
+        base = prep.base_rel.as_deref().unwrap_or(""),
+        "built shared RHS sprite payload"
+    );
+    Ok(payload)
 }
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
@@ -2004,6 +2202,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         dictionaries: shipping_dictionaries,
         sprite_count: holder.sprites().len() as u32,
         sprites: Vec::new(),
+        vq_chunks: Vec::new(),
     });
     let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     for build in mission_builds.values() {
@@ -2028,7 +2227,24 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .or_default()
             .extend(profiles.iter().cloned());
     }
-    let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    // Max-level zstd and the VQ context-model encoder are deliberately
+    // expensive and memory hungry. Bound the worker count; each completed
+    // chunk is written in its worker so the result vectors retain only small
+    // manifest metadata, not every compressed RHS.
+    let compression_workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(4);
+    let compression_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(compression_workers)
+        .thread_name(|index| format!("shipping-zstd-{index}"))
+        .build()
+        .context("create bounded shipping compression pool")?;
+
+    // Phase A: load each required RHS and resolve which bank sprites its
+    // matched profiles reach. Payload assembly happens after the family pass
+    // below so variant chunks can be coded against their family base.
+    let mut rhs_preps = std::collections::BTreeMap::<String, RhsChunkPrep>::new();
     for (rel, required_profiles) in &rhs_requirements {
         if rel.is_empty() {
             continue;
@@ -2039,6 +2255,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let (signature, profiles) =
             sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
                 .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+        let mut script_order = Vec::new();
+        for (_, info) in &profiles {
+            for script in info.scripts.iter() {
+                script_order.extend_from_slice(&script.frame_ids);
+            }
+        }
         let all_profiles_required = required_profiles.contains("");
         let mut matched_profiles = BTreeSet::new();
         for (profile_name, info) in &profiles {
@@ -2058,67 +2280,242 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .into_iter()
             .filter(|(name, _)| all_profiles_required || matched_profiles.contains(name))
             .collect();
-        let mut payload = ShippingMission::default();
-        payload.rhs_files.insert(
+        rhs_preps.insert(
             rel.clone(),
-            RhsData {
-                signature,
-                profiles,
+            RhsChunkPrep {
+                rhs_data: Some(RhsData {
+                    signature,
+                    profiles,
+                }),
+                matched_profiles: matched_profiles.len(),
+                script_order,
+                used_sprite_ids,
+                base_rel: None,
+                base_ids: std::collections::BTreeMap::new(),
             },
         );
-        let sprites = used_sprite_ids
+    }
+
+    // Phase B: variant families among Characters/*.rhs (the probe's corpus
+    // rule: trailing-two-digit stem shared by more than one file; base = the
+    // lexicographically first member). Variant chunks are coded against the
+    // base's positionally aligned grids — measured 3.9x smaller than zstd on
+    // that half of the character corpus (docs/COMPRESSION.md, 2026-08-28).
+    let mut disk_character_names: Vec<String> = Vec::new();
+    if let Some(dir) = resolve_case_insensitive(&data_in.join("Characters")).filter(|p| p.is_dir())
+    {
+        for entry in fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("rhs"))
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                disk_character_names.push(stem.to_owned());
+            }
+        }
+    }
+    disk_character_names.sort();
+    let family_key = |name: &str| -> Option<String> {
+        let stripped = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        (stripped.len() + 2 == name.len() && !stripped.is_empty()).then(|| stripped.to_owned())
+    };
+    let mut families = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for name in &disk_character_names {
+        if let Some(key) = family_key(name) {
+            families.entry(key).or_default().push(name.clone());
+        }
+    }
+    families.retain(|_, members| members.len() > 1);
+    // Lowercased variant name -> disk-cased base name. CPF-derived rels and
+    // on-disk filenames can disagree in case, so matching is case-blind.
+    let variant_base_names: std::collections::BTreeMap<String, String> = families
+        .values()
+        .flat_map(|members| {
+            let base = members[0].clone();
+            members
+                .iter()
+                .skip(1)
+                .map(move |name| (name.to_ascii_lowercase(), base.clone()))
+        })
+        .collect();
+
+    let prep_rels: Vec<String> = rhs_preps.keys().cloned().collect();
+    let mut loaded_base_script_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    let mut planned_variants = Vec::<(String, String, std::collections::BTreeMap<u32, u32>)>::new();
+    let mut base_extra_ids = std::collections::BTreeMap::<String, BTreeSet<u32>>::new();
+    for rel in &prep_rels {
+        let Some(name) = rel
+            .strip_prefix("Characters/")
+            .and_then(|n| n.strip_suffix(".rhs"))
+        else {
+            continue;
+        };
+        let Some(base_name) = variant_base_names.get(&name.to_ascii_lowercase()) else {
+            continue;
+        };
+        // Reuse an existing prep's rel spelling for the base when one exists.
+        let disk_base_rel = format!("Characters/{base_name}.rhs");
+        let base_rel = prep_rels
             .iter()
-            .map(|&idx| {
-                let sprite = holder.sprites().get(idx as usize).ok_or_else(|| {
-                    anyhow!("RHS {rel} references sprite {idx} beyond the shipping bank")
-                })?;
-                let packed_data = match holder.packed_data(idx) {
-                    Some(packed) => match &dict_remaps {
-                        Some(remaps) if sprite.dictionary_index != UNMAPPED_DICT => {
-                            let remap = &remaps[sprite.dictionary_index as usize];
-                            packed
-                                .iter()
-                                .map(|&i| {
-                                    remap.get(i as usize).copied().ok_or_else(|| {
-                                        anyhow!(
-                                            "sprite {idx} index {i} out of range for dictionary {}",
-                                            sprite.dictionary_index
-                                        )
-                                    })
-                                })
-                                .collect::<Result<Vec<u16>>>()?
-                        }
-                        _ => packed.to_vec(),
-                    },
-                    None if sprite.width == 0 || sprite.height == 0 => Vec::new(),
-                    None => bail!(
-                        "RHS {rel} references non-empty sprite {idx} with no packed bank data"
-                    ),
+            .find(|r| r.eq_ignore_ascii_case(&disk_base_rel))
+            .cloned()
+            .unwrap_or(disk_base_rel);
+        if !rhs_preps.contains_key(&base_rel) && !loaded_base_script_orders.contains_key(&base_rel)
+        {
+            let path = in_path(&base_rel).ok_or_else(|| {
+                anyhow!(
+                    "family base RHS {base_rel} (for variant {rel}) is missing from the datadir"
+                )
+            })?;
+            let (_, profiles) =
+                sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                    .map_err(|error| anyhow!("rhs {base_rel}: {error}"))?;
+            let mut order = Vec::new();
+            for (_, info) in &profiles {
+                for script in info.scripts.iter() {
+                    order.extend_from_slice(&script.frame_ids);
+                }
+            }
+            loaded_base_script_orders.insert(base_rel.clone(), order);
+        }
+        let base_script: &[u32] = rhs_preps
+            .get(&base_rel)
+            .map(|prep| prep.script_order.as_slice())
+            .or_else(|| loaded_base_script_orders.get(&base_rel).map(Vec::as_slice))
+            .expect("base script order resolved above");
+        let variant_prep = rhs_preps.get(rel).expect("prep listed in prep_rels");
+        // Positional pairing over the script frame-id tables (the variant's
+        // tables mirror the base's 1:1); duplicated variant frames that pair
+        // with conflicting base frames fall back to standalone coding.
+        let mut pairs: Vec<(u32, u32)> = variant_prep
+            .script_order
+            .iter()
+            .copied()
+            .zip(base_script.iter().copied())
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let mut pair_base = std::collections::BTreeMap::<u32, u32>::new();
+        let mut conflicted = BTreeSet::<u32>::new();
+        for (vid, bid) in pairs {
+            match pair_base.get(&vid) {
+                Some(&existing) if existing != bid => {
+                    conflicted.insert(vid);
+                }
+                Some(_) => {}
+                None => {
+                    pair_base.insert(vid, bid);
+                }
+            }
+        }
+        for vid in &conflicted {
+            pair_base.remove(vid);
+        }
+        let mut base_ids = std::collections::BTreeMap::<u32, u32>::new();
+        let (mut vq_total, mut unbased) = (0usize, 0usize);
+        for &vid in &variant_prep.used_sprite_ids {
+            let sprite = holder.sprites().get(vid as usize).ok_or_else(|| {
+                anyhow!("RHS {rel} references sprite {vid} beyond the shipping bank")
+            })?;
+            let Some(packed) = holder.packed_data(vid) else {
+                continue;
+            };
+            if sprite.dictionary_index == UNMAPPED_DICT
+                || vq_grid_words(sprite.width, sprite.height) != Some(packed.len())
+            {
+                continue;
+            }
+            vq_total += 1;
+            let base = pair_base.get(&vid).copied().filter(|&bid| {
+                let Some(base_sprite) = holder.sprites().get(bid as usize) else {
+                    return false;
                 };
-                Ok((
-                    idx,
-                    ShippingSprite {
-                        width: sprite.width,
-                        height: sprite.height,
-                        dictionary_index: sprite.dictionary_index,
-                        packed_data: Arc::new(packed_data),
+                let Some(base_packed) = holder.packed_data(bid) else {
+                    return false;
+                };
+                base_sprite.dictionary_index != UNMAPPED_DICT
+                    && (base_sprite.width, base_sprite.height) == (sprite.width, sprite.height)
+                    && base_packed.len() == packed.len()
+            });
+            match base {
+                Some(bid) => {
+                    base_ids.insert(vid, bid);
+                }
+                None => unbased += 1,
+            }
+        }
+        if base_ids.is_empty() || unbased * 10 > vq_total {
+            tracing::info!(
+                rhs = rel.as_str(),
+                base = base_rel.as_str(),
+                vq = vq_total,
+                unbased,
+                "family variant pairs poorly with its base; coding standalone"
+            );
+            continue;
+        }
+        base_extra_ids
+            .entry(base_rel.clone())
+            .or_default()
+            .extend(base_ids.values().copied());
+        planned_variants.push((rel.clone(), base_rel, base_ids));
+    }
+    for (rel, base_rel, base_ids) in planned_variants {
+        let prep = rhs_preps.get_mut(&rel).expect("variant prep exists");
+        prep.base_rel = Some(base_rel);
+        prep.base_ids = base_ids;
+    }
+    // The base grids a variant decodes against must ship in the base chunk
+    // even when no mission profile reaches them (or the whole base RHS).
+    for (base_rel, extra) in base_extra_ids {
+        match rhs_preps.get_mut(&base_rel) {
+            Some(prep) => prep.used_sprite_ids.extend(extra),
+            None => {
+                tracing::info!(
+                    rhs = base_rel.as_str(),
+                    sprites = extra.len(),
+                    "synthesizing sprite-only family-base chunk"
+                );
+                rhs_preps.insert(
+                    base_rel.clone(),
+                    RhsChunkPrep {
+                        rhs_data: None,
+                        matched_profiles: 0,
+                        script_order: Vec::new(),
+                        used_sprite_ids: extra,
+                        base_rel: None,
+                        base_ids: std::collections::BTreeMap::new(),
                     },
+                );
+            }
+        }
+    }
+    // Variant chunk -> family-base chunk. Every dependency list that names a
+    // variant chunk must also name its base chunk: the runtime decodes the
+    // variant grids against the base's materialized grids at install time.
+    let rhs_base_dep: std::collections::BTreeMap<String, String> = rhs_preps
+        .iter()
+        .filter_map(|(rel, prep)| prep.base_rel.clone().map(|base| (rel.clone(), base)))
+        .collect();
+
+    // Phase C: assemble the chunk payloads. `encode_grids` dominates this
+    // stage, so it runs on the bounded worker pool.
+    let built_payloads = compression_pool.install(|| {
+        rhs_preps
+            .par_iter()
+            .map(|(rel, prep)| {
+                Ok((
+                    rel.clone(),
+                    build_rhs_chunk_payload(&holder, dict_remaps.as_deref(), rel, prep)?,
                 ))
             })
-            .collect::<Result<Vec<_>>>()?;
-        payload.sprite_bank = Some(ShippingSpriteBank {
-            signature: holder.signature(),
-            dictionaries: Vec::new(),
-            sprite_count: holder.sprites().len() as u32,
-            sprites,
-        });
-        tracing::info!(
-            rhs = rel,
-            sprites = used_sprite_ids.len(),
-            required_rhs_profiles = matched_profiles.len(),
-            "built shared RHS sprite payload"
-        );
-        rhs_payloads.insert(rel.clone(), payload);
+            .collect::<Vec<Result<(String, ShippingMission)>>>()
+    });
+    let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    for built in built_payloads {
+        let (rel, payload) = built?;
+        rhs_payloads.insert(rel, payload);
     }
 
     // Resolve only the terrain and loading art the original runtime can open
@@ -2236,18 +2633,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     fs::create_dir_all(&rhs_dir)?;
     fs::create_dir_all(&terrain_dir)?;
     fs::create_dir_all(&audio_dir)?;
-    // Max-level zstd is deliberately expensive and memory hungry. Bound the
-    // worker count and write each completed chunk in its worker so the result
-    // vector retains only small manifest metadata, not every compressed RHS.
-    let compression_workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(4);
-    let compression_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(compression_workers)
-        .thread_name(|index| format!("shipping-zstd-{index}"))
-        .build()
-        .context("create bounded shipping compression pool")?;
     let encoded_level_assets = compression_pool.install(|| {
         level_asset_payloads
             .into_par_iter()
@@ -2291,25 +2676,38 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let relative = format!("rhs/{filename}");
         rhs_files.insert(rel, relative);
     }
+    // A dependency on a family-variant chunk implies its base chunk: the
+    // runtime decodes the variant's VQ grids against the base's at install.
+    let rhs_chunk_files = |rel: &str| -> Result<Vec<String>> {
+        let mut chunk_files = Vec::with_capacity(2);
+        let file = rhs_files
+            .get(rel)
+            .ok_or_else(|| anyhow!("missing shipping RHS payload {rel}"))?;
+        chunk_files.push(file.clone());
+        if let Some(base_rel) = rhs_base_dep.get(rel) {
+            let base_file = rhs_files.get(base_rel).ok_or_else(|| {
+                anyhow!("missing shipping RHS family-base payload {base_rel} (required by {rel})")
+            })?;
+            chunk_files.push(base_file.clone());
+        }
+        Ok(chunk_files)
+    };
     for (profile_index, requirements) in character_rhs_requirements {
         let mut files = Vec::with_capacity(requirements.len());
         for rel in requirements.keys() {
-            let file = rhs_files.get(rel).ok_or_else(|| {
-                anyhow!(
-                    "character profile {profile_index} requires missing shipping RHS payload {rel}"
-                )
-            })?;
-            files.push(file.clone());
+            files.extend(rhs_chunk_files(rel).with_context(|| {
+                format!("character profile {profile_index} RHS dependency {rel}")
+            })?);
         }
         files.sort();
         files.dedup();
         dd.character_rhs_files.insert(profile_index, files);
     }
     for rel in saved_world_rhs_requirements.keys() {
-        let file = rhs_files.get(rel).ok_or_else(|| {
-            anyhow!("saved-world compatibility requires missing shipping RHS payload {rel}")
-        })?;
-        dd.saved_world_rhs_files.push(file.clone());
+        dd.saved_world_rhs_files.extend(
+            rhs_chunk_files(rel)
+                .with_context(|| format!("saved-world compatibility RHS dependency {rel}"))?,
+        );
     }
     dd.saved_world_rhs_files.sort();
     dd.saved_world_rhs_files.dedup();
@@ -2601,10 +2999,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             files.push(file.clone());
         }
         for rel in required_rhs_profiles.keys() {
-            let file = rhs_files.get(rel).ok_or_else(|| {
-                anyhow!("shipping mission {mission_name} requires missing RHS payload {rel}")
-            })?;
-            files.push(file.clone());
+            files.extend(
+                rhs_chunk_files(rel)
+                    .with_context(|| format!("shipping mission {mission_name} RHS dependency"))?,
+            );
         }
         if let Some(file) = common_audio_file.as_ref() {
             files.push(file.clone());
