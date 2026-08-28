@@ -1,6 +1,7 @@
 //! Live Sherwood inventory-trading panel.
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::campaign::CampaignValue;

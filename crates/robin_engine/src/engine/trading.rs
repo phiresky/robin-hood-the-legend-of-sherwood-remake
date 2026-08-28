@@ -1,13 +1,13 @@
 use crate::campaign::CampaignValue;
-use crate::element::BonusId;
-use crate::engine::EngineInner;
-use crate::engine::level_loading::LevelAssets;
 use crate::entities::Entities;
+use crate::entity_id::BonusId;
 use crate::player_command::PlayerId;
 use crate::profiles::{Action, MissionLocation};
 use crate::sector_production::Type;
 use crate::sound::{Jingle, SoundCommand};
 use crate::trading::{TradeOutcome, TradeQuantity, TradeReceipt, TradeRejectReason, trade_item};
+
+use super::{EngineInner, LevelAssets};
 
 fn stored_stock(entities: &Entities, action: Action) -> u16 {
     let total: u32 = entities

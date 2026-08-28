@@ -186,6 +186,27 @@ mod tests {
     }
 
     #[test]
+    fn documented_price_table_is_stable() {
+        let actual: Vec<_> = TRADE_ITEMS
+            .iter()
+            .map(|item| (item.prod_type, item.unit_price))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (Type::MakeArrow, 1),
+                (Type::MakeStone, 2),
+                (Type::MakeApple, 3),
+                (Type::MakeLamblegg, 3),
+                (Type::MakeAle, 4),
+                (Type::MakePlant, 5),
+                (Type::MakeNet, 7),
+                (Type::MakeWaspNest, 9),
+            ]
+        );
+    }
+
+    #[test]
     fn non_inventory_sectors_are_rejected_explicitly() {
         for prod_type in [
             Type::MakePurse,
