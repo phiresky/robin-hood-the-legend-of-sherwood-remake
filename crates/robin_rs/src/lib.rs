@@ -208,6 +208,7 @@ pub mod shipping_mission;
 pub use host::Host;
 pub mod audio_backend;
 pub mod audio_duration_cache;
+pub mod combat_gesture_overlay;
 pub mod gfx_types;
 pub mod ingame_menu;
 pub mod input;

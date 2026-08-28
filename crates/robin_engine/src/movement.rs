@@ -203,6 +203,11 @@ pub struct SweepState {
     pub strike: crate::weapons::SwordStrike,
     /// Attacker's weapon profile index for damage calculation.
     pub attacker_profile_idx: Option<u32>,
+    /// Resolved gesture tier for the strike that owns this sweep. Keeping it
+    /// on the serialized sweep prevents a save at the action point from
+    /// restoring authored damage instead of the player's reduced damage.
+    #[serde(default)]
+    pub gesture_quality: crate::player_command::GestureQuality,
     /// The thrust kind — TrueCircle/FalseCircle need extended duration
     /// and per-frame attacker rotation.
     pub strike_kind: crate::profiles::WeaponThrustKind,
@@ -874,6 +879,38 @@ mod tests {
 
         am.clear();
         assert!(!am.is_active());
+    }
+
+    #[test]
+    fn sweep_gesture_quality_survives_snapshot_formats() {
+        let sweep = SweepState {
+            gesture_quality: crate::player_command::GestureQuality::GOOD,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&sweep).expect("serialize sweep");
+        let decoded: SweepState = serde_json::from_value(json).expect("deserialize sweep");
+        assert_eq!(
+            decoded.gesture_quality,
+            crate::player_command::GestureQuality::GOOD
+        );
+        let wire = bitcode::encode(&sweep);
+        let decoded: SweepState = bitcode::decode(&wire).expect("decode sweep snapshot");
+        assert_eq!(
+            decoded.gesture_quality,
+            crate::player_command::GestureQuality::GOOD
+        );
+
+        let mut pre_gesture = serde_json::to_value(&sweep).expect("serialize legacy sweep");
+        pre_gesture
+            .as_object_mut()
+            .expect("sweep object")
+            .remove("gesture_quality");
+        let decoded: SweepState =
+            serde_json::from_value(pre_gesture).expect("decode pre-gesture sweep");
+        assert_eq!(
+            decoded.gesture_quality,
+            crate::player_command::GestureQuality::PERFECT
+        );
     }
 
     #[test]

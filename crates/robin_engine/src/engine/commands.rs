@@ -10,7 +10,9 @@ use super::{CameraDisplayState, EngineInner, LevelAssets};
 use super::{HostDisplayState, InputState};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
-use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
+use crate::player_command::{
+    CompositeSwordTechnique, GestureQuality, PlayerCommand, PlayerId, PlayerInput,
+};
 use crate::profiles::Action;
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
@@ -49,6 +51,42 @@ fn quick_action_tail_command(command: Command, is_tail: bool, was_aiming: bool) 
 #[inline]
 fn group_move_actor_accepts_command(actor: EntityId, recorded_failed_routes: &[EntityId]) -> bool {
     !recorded_failed_routes.contains(&actor)
+}
+
+/// Author one ordinary strike or one of the optional two-strike techniques.
+/// Sequential command levels give each constituent its normal animation,
+/// interruption, target validation and energy cost.
+fn sword_gesture_sequence(
+    actor: EntityId,
+    target: EntityId,
+    first_command: Command,
+    composite: Option<CompositeSwordTechnique>,
+    gesture_quality: GestureQuality,
+) -> Sequence {
+    assert!(
+        gesture_quality.is_strike_quality(),
+        "combat gesture sequence received invalid or zero quality"
+    );
+    let commands: Vec<Command> = match composite {
+        Some(technique) => technique.commands().into_iter().collect(),
+        None => vec![first_command],
+    };
+    let mut sequence = Sequence::new();
+    for (index, command) in commands.into_iter().enumerate() {
+        assert!(
+            command.is_swordstrike(),
+            "combat gesture authored non-sword command {command:?}"
+        );
+        let mut element = SequenceElement::new_interaction(
+            u16::try_from(index + 1).expect("two-strike command level fits u16"),
+            command,
+            Some(actor),
+            Some(target),
+        );
+        element.gesture_quality = gesture_quality;
+        sequence.append_element(element);
+    }
+    sequence
 }
 
 /// Map a PC [`Action`] to the titbit phase used by the portrait
@@ -801,6 +839,8 @@ impl EngineInner {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             } => {
@@ -808,9 +848,26 @@ impl EngineInner {
                     ?actor,
                     ?target,
                     ?command,
+                    ?composite,
+                    quality_permille = gesture_quality.permille(),
                     with_seek,
                     "PlayerCommand::SwordStrikeCmd"
                 );
+                if !gesture_quality.is_strike_quality() {
+                    tracing::warn!(
+                        quality_permille = gesture_quality.permille(),
+                        "rejecting SwordStrikeCmd with invalid or zero gesture quality"
+                    );
+                    return;
+                }
+                if composite.is_some_and(|technique| technique.first_command() != *command) {
+                    tracing::warn!(
+                        ?command,
+                        ?composite,
+                        "rejecting SwordStrikeCmd whose first strike does not match its technique"
+                    );
+                    return;
+                }
                 self.prepare_tactical_player_combat_command(*actor);
                 if *with_seek {
                     self.apply_sword_strike_with_seek(
@@ -818,19 +875,24 @@ impl EngineInner {
                         *actor,
                         *target,
                         *command,
+                        *composite,
+                        *gesture_quality,
                         *seek_distance,
                     );
                 } else {
-                    let elem =
-                        SequenceElement::new_interaction(1, *command, Some(*actor), Some(*target));
+                    let sequence = sword_gesture_sequence(
+                        *actor,
+                        *target,
+                        *command,
+                        *composite,
+                        *gesture_quality,
+                    );
                     // Original mouse-command handling calls
                     // SequenceManager::LaunchSequenceElement here.  A
                     // preference strike is therefore registered for the
                     // post-entity manager drain; it does not arbitrate
                     // against and interrupt the actor's current order on the
                     // input callback stack.
-                    let mut sequence = Sequence::new();
-                    sequence.append_element(elem);
                     self.launch_sequence(sequence);
                 }
             }
@@ -2037,6 +2099,8 @@ impl EngineInner {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             } => {
@@ -2053,6 +2117,8 @@ impl EngineInner {
                     QaReplayCommand::SwordStrike {
                         target: *target,
                         command: *command,
+                        composite: *composite,
+                        gesture_quality: *gesture_quality,
                         with_seek: *with_seek,
                         seek_distance: *seek_distance,
                     },
@@ -2932,6 +2998,8 @@ impl EngineInner {
                 crate::macro_store::QaReplayCommand::SwordStrike {
                     target,
                     command,
+                    composite,
+                    gesture_quality,
                     with_seek,
                     seek_distance,
                 } => {
@@ -2944,6 +3012,8 @@ impl EngineInner {
                         actor: pc,
                         target,
                         command,
+                        composite,
+                        gesture_quality,
                         with_seek,
                         seek_distance,
                     }
@@ -4965,6 +5035,8 @@ impl EngineInner {
         pc_id: EntityId,
         target_id: EntityId,
         strike_cmd: Command,
+        composite: Option<crate::player_command::CompositeSwordTechnique>,
+        gesture_quality: crate::player_command::GestureQuality,
         resolved_seek_distance: Option<f32>,
     ) {
         use crate::order::OrderType;
@@ -4986,17 +5058,16 @@ impl EngineInner {
             _ => false,
         };
 
-        let strike_elem = SequenceElement::new_interaction(
-            if same_sector { 2 } else { 1 },
-            strike_cmd,
-            Some(pc_id),
-            Some(target_id),
-        );
+        let mut strike_sequence =
+            sword_gesture_sequence(pc_id, target_id, strike_cmd, composite, gesture_quality);
+        if same_sector {
+            for element in &mut strike_sequence.elements {
+                element.command_level += 1;
+            }
+        }
 
         if !same_sector {
-            let mut sequence = Sequence::new();
-            sequence.append_element(strike_elem);
-            self.launch_sequence(sequence);
+            self.launch_sequence(strike_sequence);
             return;
         }
 
@@ -5014,9 +5085,7 @@ impl EngineInner {
                 ?strike_cmd,
                 "apply_sword_strike_with_seek: unsupported seek strike requested; launching direct strike"
             );
-            let mut sequence = Sequence::new();
-            sequence.append_element(strike_elem);
-            self.launch_sequence(sequence);
+            self.launch_sequence(strike_sequence);
             return;
         }
 
@@ -5031,8 +5100,7 @@ impl EngineInner {
             Some(pc_id),
             OrderType::RunningWithSword,
         );
-        let mut post_seek = Sequence::new();
-        post_seek.append_element(strike_elem);
+        let post_seek = strike_sequence;
         if let SequenceElementData::Movement {
             element,
             tolerance,
@@ -6785,6 +6853,8 @@ mod tests {
                 actor: pc_id,
                 target,
                 command: Command::SwordstrikeThrustA,
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek: false,
                 seek_distance: Some(0.0),
             },
@@ -6805,6 +6875,66 @@ mod tests {
                 }),
             "the manual strike still executes while macro recording is armed"
         );
+    }
+
+    #[test]
+    fn composite_sword_command_launches_two_quantized_strikes() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::SwordStrikeCmd {
+                actor: pc_id,
+                target,
+                command: Command::SwordstrikeThrustD,
+                composite: Some(CompositeSwordTechnique::RisingFeint),
+                gesture_quality: GestureQuality::GOOD,
+                with_seek: false,
+                seek_distance: None,
+            },
+        );
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find(|sequence| sequence.elements.len() == 2)
+            .expect("composite strike sequence");
+        assert_eq!(sequence.elements[0].command, Command::SwordstrikeThrustD);
+        assert_eq!(sequence.elements[1].command, Command::SwordstrikeThrustB);
+        assert_eq!(sequence.elements[0].command_level, 1);
+        assert_eq!(sequence.elements[1].command_level, 2);
+        assert!(
+            sequence
+                .elements
+                .iter()
+                .all(|element| element.gesture_quality == GestureQuality::GOOD)
+        );
+    }
+
+    #[test]
+    fn mismatched_composite_command_is_rejected() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::SwordStrikeCmd {
+                actor: pc_id,
+                target,
+                command: Command::SwordstrikeThrustA,
+                composite: Some(CompositeSwordTechnique::RisingFeint),
+                gesture_quality: GestureQuality::PERFECT,
+                with_seek: false,
+                seek_distance: None,
+            },
+        );
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
     }
 
     #[test]
@@ -6829,6 +6959,8 @@ mod tests {
                     actor: pc_id,
                     target,
                     command: Command::SwordstrikeThrustA,
+                    composite: None,
+                    gesture_quality: GestureQuality::PERFECT,
                     with_seek: false,
                     seek_distance: Some(0.0),
                 }
@@ -6847,6 +6979,8 @@ mod tests {
             QaReplayCommand::SwordStrike {
                 target: recorded_target,
                 command: Command::SwordstrikeThrustA,
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek: false,
                 seek_distance: Some(0.0),
             } if recorded_target == target
@@ -9597,6 +9731,8 @@ mod tests {
             pc_id,
             target_id,
             Command::SwordstrikeThrustD,
+            None,
+            GestureQuality::PERFECT,
             Some(63.0),
         );
 
@@ -9642,6 +9778,44 @@ mod tests {
     }
 
     #[test]
+    fn composite_seek_retains_both_strikes_and_quality() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+        engine.apply_sword_strike_with_seek(
+            &assets,
+            pc_id,
+            target_id,
+            Command::SwordstrikeThrustD,
+            Some(CompositeSwordTechnique::RisingFeint),
+            GestureQuality::FAIR,
+            Some(63.0),
+        );
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("strike seek sequence");
+        let SequenceElementData::Movement {
+            post_seek_sequence: Some(post_seek),
+            ..
+        } = &sequence.elements[0].data
+        else {
+            panic!("composite seek lost post-seek sequence");
+        };
+        assert_eq!(post_seek.elements.len(), 2);
+        assert_eq!(post_seek.elements[0].command, Command::SwordstrikeThrustD);
+        assert_eq!(post_seek.elements[1].command, Command::SwordstrikeThrustB);
+        assert!(
+            post_seek
+                .elements
+                .iter()
+                .all(|element| element.gesture_quality == GestureQuality::FAIR)
+        );
+    }
+
+    #[test]
     fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
         let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
         {
@@ -9673,6 +9847,8 @@ mod tests {
             pc_id,
             target_id,
             Command::SwordstrikeThrustA,
+            None,
+            GestureQuality::PERFECT,
             Some(63.0),
         );
         assert_eq!(first_seek_tolerance(&engine), 63.0);
@@ -9845,6 +10021,8 @@ mod tests {
             pc_id,
             target_id,
             Command::SwordstrikeThrustE,
+            None,
+            GestureQuality::PERFECT,
             Some(54.0),
         );
 

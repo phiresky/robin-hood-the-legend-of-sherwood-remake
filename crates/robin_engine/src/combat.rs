@@ -456,6 +456,9 @@ pub struct SwordDamageParams<'a> {
     pub attacker_profile: &'a HtHWeaponProfile,
     pub strike: SwordStrike,
     pub attacker: &'a SwordAttackerContext,
+    /// Resolved mouse/touch gesture scale. Perfect (`1000`) reproduces the
+    /// authored profile exactly; it never changes protection RNG or geometry.
+    pub gesture_quality: crate::player_command::GestureQuality,
     pub concussion_ctx: &'a ConcussionContext,
     /// Max life points for the defender.
     pub max_life_points: i16,
@@ -481,9 +484,14 @@ pub fn receive_sword_damage(
         attacker_profile,
         strike,
         attacker,
+        gesture_quality,
         concussion_ctx,
         max_life_points: _,
     } = params;
+    assert!(
+        gesture_quality.is_strike_quality(),
+        "sword damage received invalid or zero gesture quality"
+    );
     let mut result = SwordDamageResult::empty();
     // Raw cutting damage attempted against this victim (before HP clamp).
     // Needed so the floating damage-number titbit displays the attempted
@@ -514,12 +522,12 @@ pub fn receive_sword_damage(
             let roll: u16 =
                 crate::sim_rng::u16(sim, crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > protection {
-                let cutting = get_strike_cutting_effect(
+                let cutting = gesture_quality.scale_u16(get_strike_cutting_effect(
                     attacker_profile,
                     *strike,
                     attacker.fighting_ability,
                     attacker.is_rank_soldier,
-                );
+                ));
                 if cutting > 0 {
                     // A scroll-carrying civilian overrides the wounding
                     // primitive to a no-op, but the strike still counts as
@@ -552,14 +560,18 @@ pub fn receive_sword_damage(
             let roll: u16 =
                 crate::sim_rng::u16(sim, crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > bludgeon_prot {
-                let stunning = get_strike_stunning_effect(attacker_profile, *strike);
+                let stunning = gesture_quality
+                    .scale_u16(get_strike_stunning_effect(attacker_profile, *strike));
                 if stunning > 0 {
                     add_concussion(human, stunning as i16, *life_points, concussion_ctx);
                     result |= SwordDamageResult::STUNNING_DAMAGE;
                 }
             }
         } else {
-            // No armor — take full cutting + stunning damage.
+            // Preserve the existing unarmed-defender behavior exactly. This
+            // branch reports both effects but historically applies neither
+            // scalar here; introducing gesture quality must not turn a
+            // perfect stroke into a gameplay change.
             result |= SwordDamageResult::CUTTING_DAMAGE | SwordDamageResult::STUNNING_DAMAGE;
         }
     } else if defender.action_state == ActionState::ParryingSwordLow || !strike.is_smalltalk() {
@@ -2444,6 +2456,7 @@ mod tests {
                 attacker_profile: &profile,
                 strike: SwordStrike::A,
                 attacker: &attacker,
+                gesture_quality: crate::player_command::GestureQuality::PERFECT,
                 concussion_ctx: &ctx,
                 max_life_points: 100,
             },
@@ -2474,7 +2487,7 @@ mod tests {
         };
         let ctx = default_ctx();
 
-        let (result, _cutting) = receive_sword_damage(
+        let (result, cutting) = receive_sword_damage(
             sim,
             &mut h,
             &mut lp,
@@ -2484,6 +2497,7 @@ mod tests {
                 attacker_profile: &profile,
                 strike: SwordStrike::A,
                 attacker: &attacker,
+                gesture_quality: crate::player_command::GestureQuality::PERFECT,
                 concussion_ctx: &ctx,
                 max_life_points: 100,
             },
@@ -2491,6 +2505,69 @@ mod tests {
         // No defender profile → full damage flags set.
         assert!(result.contains(SwordDamageResult::CUTTING_DAMAGE));
         assert!(result.contains(SwordDamageResult::STUNNING_DAMAGE));
+        assert_eq!(cutting, 0);
+        assert_eq!(lp, 100);
+        assert_eq!(h.concussion_of_the_brain, 0);
+    }
+
+    #[test]
+    fn gesture_quality_scales_damage_without_changing_protection_rng() {
+        let mut profile = make_hth_profile();
+        profile.protection_by_localization = [0; 5];
+        profile.bludgeon_protection = 0;
+        let defender = SwordDefenderContext {
+            action_state: ActionState::WaitingSword,
+            direction: 0,
+            elevation: 0.0,
+        };
+        let attacker = SwordAttackerContext {
+            direction: 8,
+            direction_to_attacker: 0,
+            elevation: 0.0,
+            fighting_ability: 50,
+            is_rank_soldier: false,
+        };
+        let ctx = default_ctx();
+        let apply = |quality| {
+            let sim = crate::sim_rng::test_context();
+            let mut human = make_human();
+            let mut life_points = 100;
+            let ((result, cutting), trace) = crate::sim_rng::with_draw_trace(|| {
+                receive_sword_damage(
+                    &sim,
+                    &mut human,
+                    &mut life_points,
+                    &SwordDamageParams {
+                        defender: &defender,
+                        defender_profile: Some(&profile),
+                        attacker_profile: &profile,
+                        strike: SwordStrike::A,
+                        attacker: &attacker,
+                        gesture_quality: quality,
+                        concussion_ctx: &ctx,
+                        max_life_points: 100,
+                    },
+                )
+            });
+            (
+                result,
+                cutting,
+                life_points,
+                human.concussion_of_the_brain,
+                trace,
+            )
+        };
+
+        let perfect = apply(crate::player_command::GestureQuality::PERFECT);
+        let fair = apply(crate::player_command::GestureQuality::FAIR);
+        assert_eq!(perfect.1, 25);
+        assert_eq!(perfect.2, 75);
+        assert_eq!(fair.1, 13);
+        assert_eq!(fair.2, 87);
+        assert!(fair.3 < perfect.3);
+        assert_eq!(fair.4, perfect.4, "quality must not alter protection RNG");
+        assert!(fair.0.contains(SwordDamageResult::CUTTING_DAMAGE));
+        assert!(fair.0.contains(SwordDamageResult::STUNNING_DAMAGE));
     }
 
     #[test]
@@ -2541,6 +2618,7 @@ mod tests {
                         attacker_profile: &attacker_profile,
                         strike,
                         attacker: &attacker,
+                        gesture_quality: crate::player_command::GestureQuality::PERFECT,
                         concussion_ctx: &ctx,
                         max_life_points: 100,
                     },
@@ -2612,6 +2690,7 @@ mod tests {
                     attacker_profile: profile,
                     strike: SwordStrike::A,
                     attacker: &attacker,
+                    gesture_quality: crate::player_command::GestureQuality::PERFECT,
                     concussion_ctx: &ctx,
                     max_life_points: 100,
                 },

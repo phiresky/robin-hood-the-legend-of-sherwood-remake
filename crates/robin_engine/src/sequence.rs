@@ -1035,6 +1035,13 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
     /// provenance, because bow equip/unequip reads it while executing.
     pub script_driven: bool,
 
+    /// Fixed-point cutting/concussion multiplier resolved from a combat
+    /// gesture. This is perfect for every original/script/AI element. It is
+    /// stored on the sequence element so a save or rollback in the middle of
+    /// an animation cannot lose the input result.
+    #[serde(default)]
+    pub gesture_quality: crate::player_command::GestureQuality,
+
     /// Posture the actor should have after transition orders complete.
     pub posture_after_transition: Posture,
 
@@ -1125,6 +1132,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             state,
             priority,
             script_driven,
+            gesture_quality,
             posture_after_transition,
             action_state_after_transition,
             num_transition_orders,
@@ -1146,6 +1154,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             state,
             priority,
             script_driven,
+            gesture_quality,
             posture_after_transition,
             action_state_after_transition,
             num_transition_orders,
@@ -1244,6 +1253,7 @@ impl SequenceElement {
             state: SequenceState::Todo,
             priority: SequencePriority::NotYetSet,
             script_driven: false,
+            gesture_quality: crate::player_command::GestureQuality::PERFECT,
             posture_after_transition: Posture::default(),
             action_state_after_transition: ActionState::default(),
             num_transition_orders: 0,
@@ -7608,8 +7618,10 @@ mod tests;
 
 #[cfg(test)]
 mod native_bitcode_tests {
-    use super::{OrderedSequences, Sequence, SequenceId};
+    use super::{OrderedSequences, Sequence, SequenceElement, SequenceId};
     use crate::bitcode_adapters::NativeBitcode;
+    use crate::element::Command;
+    use crate::player_command::GestureQuality;
 
     #[test]
     #[should_panic(expected = "native bitcode snapshot contains duplicate sequence id")]
@@ -7618,5 +7630,30 @@ mod native_bitcode_tests {
         let wire = vec![(id, Sequence::new()), (id, Sequence::new())];
 
         let _ = OrderedSequences::from_wire(wire);
+    }
+
+    #[test]
+    fn gesture_quality_survives_saves_and_changes_sequence_hash() {
+        let mut reduced = SequenceElement::new(1, Command::SwordstrikeThrustA, None);
+        reduced.gesture_quality = GestureQuality::GOOD;
+
+        let wire = bitcode::encode(&reduced);
+        let decoded: SequenceElement = bitcode::decode(&wire).expect("decode sequence element");
+        assert_eq!(decoded.gesture_quality, GestureQuality::GOOD);
+
+        let mut pre_gesture = serde_json::to_value(&reduced).expect("serialize sequence element");
+        pre_gesture
+            .as_object_mut()
+            .expect("sequence element object")
+            .remove("gesture_quality");
+        let decoded: SequenceElement =
+            serde_json::from_value(pre_gesture).expect("load pre-gesture sequence element");
+        assert_eq!(decoded.gesture_quality, GestureQuality::PERFECT);
+
+        let perfect = SequenceElement::new(1, Command::SwordstrikeThrustA, None);
+        assert_ne!(
+            robin_util::state_hash::compute(&perfect),
+            robin_util::state_hash::compute(&reduced),
+        );
     }
 }

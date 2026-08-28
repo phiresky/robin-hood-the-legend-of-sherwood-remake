@@ -335,6 +335,24 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     #[state_hash(skip)]
     pub detailed_save_metadata: bool,
+
+    /// Recognize nine additional mouse/touch shapes as composite techniques.
+    /// Off preserves the original A-I classifier and command set.
+    #[serde(default)]
+    pub more_combat_gestures: bool,
+
+    /// Scale cutting and concussion by the accuracy of a recognized gesture.
+    /// Off sends the original perfect multiplier for every strike.
+    #[serde(default)]
+    pub gesture_quality_damage: bool,
+
+    /// Draw the fixed composite-template reference while swordfighting.
+    #[serde(default)]
+    pub show_combat_gesture_guide: bool,
+
+    /// Show the recognized template and quality briefly after a stroke.
+    #[serde(default)]
+    pub combat_gesture_coach: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -372,6 +390,10 @@ impl Default for GameplayConfig {
             show_achievement_debrief: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            more_combat_gestures: true,
+            gesture_quality_damage: true,
+            show_combat_gesture_guide: false,
+            combat_gesture_coach: false,
         }
     }
 }
@@ -407,6 +429,10 @@ impl GameplayConfig {
             show_achievement_debrief: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            more_combat_gestures: false,
+            gesture_quality_damage: false,
+            show_combat_gesture_guide: false,
+            combat_gesture_coach: false,
         }
     }
 }
@@ -447,6 +473,19 @@ mod tests {
         );
         assert!(config.enable_timed_missions);
         assert!(config.enable_dynamic_ambience);
+        assert!(!config.more_combat_gestures);
+        assert!(!config.gesture_quality_damage);
+        assert!(!config.show_combat_gesture_guide);
+        assert!(!config.combat_gesture_coach);
+    }
+
+    #[test]
+    fn new_profiles_enable_combat_gestures_but_not_training_overlays() {
+        let config = GameplayConfig::default();
+        assert!(config.more_combat_gestures);
+        assert!(config.gesture_quality_damage);
+        assert!(!config.show_combat_gesture_guide);
+        assert!(!config.combat_gesture_coach);
     }
 
     #[test]

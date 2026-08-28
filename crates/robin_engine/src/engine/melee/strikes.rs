@@ -201,6 +201,19 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(attacker_id)
+            .and_then(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+            })
+            .unwrap_or_else(|| {
+                panic!("melee MotionState::Start owner {attacker_id:?} has no sequence element")
+            })
+            .gesture_quality;
         let profile_idx = {
             let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
                 panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
@@ -279,6 +292,7 @@ impl EngineInner {
                 profile_idx,
                 strike_kind.expect("rebased warning strike kind disappeared"),
                 retained_victims,
+                gesture_quality,
             );
             if let Some(actor) = self
                 .get_entity_mut(attacker_id)
@@ -581,6 +595,17 @@ impl EngineInner {
         else {
             return;
         };
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected melee element {:?}/{} disappeared before its hit",
+                    selected.seq_id, selected.elem_idx
+                )
+            })
+            .gesture_quality;
         let profile_idx = self
             .get_entity(attacker_id)
             .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
@@ -668,6 +693,7 @@ impl EngineInner {
                 target_id,
                 strike,
                 profile_idx,
+                gesture_quality,
             );
         }
         if completed {
@@ -691,6 +717,7 @@ impl EngineInner {
         victim_id: EntityId,
         strike: SwordStrike,
         profile_idx: Option<u32>,
+        gesture_quality: crate::player_command::GestureQuality,
     ) {
         // RHElementActorHuman::ExecuteStraightSwordStrike uses the full
         // stored 3-D positions here, unlike several swordfight planning
@@ -746,7 +773,15 @@ impl EngineInner {
         }
         if in_range {
             if let Some(profile_idx) = profile_idx {
-                self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
+                self.queue_scaled_sword_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    attacker_id,
+                    strike,
+                    profile_idx,
+                    gesture_quality,
+                );
             }
         } else {
             tracing::debug!(
@@ -972,6 +1007,17 @@ impl EngineInner {
         else {
             return SweepTickPhase::Dormant;
         };
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected melee element {:?}/{} disappeared before its hit",
+                    selected.seq_id, selected.elem_idx
+                )
+            })
+            .gesture_quality;
         let profile_idx = self
             .get_entity(attacker_id)
             .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
@@ -999,6 +1045,7 @@ impl EngineInner {
             victim_id: EntityId,
             strike: SwordStrike,
             attacker_profile_idx: Option<u32>,
+            gesture_quality: crate::player_command::GestureQuality,
         }
         struct CompletedStrike {
             actor_id: EntityId,
@@ -1112,6 +1159,7 @@ impl EngineInner {
                         victim_id: target_id,
                         strike,
                         attacker_profile_idx: profile_idx,
+                        gesture_quality,
                     });
                 }
                 if matches!(
@@ -1174,6 +1222,7 @@ impl EngineInner {
                     hit.attacker_profile_idx,
                     strike_kind,
                     all_victims,
+                    hit.gesture_quality,
                 );
                 initialized_sweep = self
                     .get_entity(hit.attacker_id)
@@ -1192,13 +1241,14 @@ impl EngineInner {
                 );
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = hit.attacker_profile_idx {
-                        self.queue_sword_damage(
+                        self.queue_scaled_sword_damage(
                             sim,
                             assets,
                             *victim_id,
                             hit.attacker_id,
                             hit.strike,
                             profile_idx,
+                            hit.gesture_quality,
                         );
                     }
                 }
@@ -1215,6 +1265,7 @@ impl EngineInner {
                     hit.victim_id,
                     hit.strike,
                     hit.attacker_profile_idx,
+                    hit.gesture_quality,
                 );
             }
         }
@@ -1359,12 +1410,23 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let Some((strike, active_order_id)) = self
+        let Some((strike, active_order_id, gesture_quality)) = self
             .orders
             .sequence_manager
             .current_order_for_actor(attacker_id)
-            .and_then(|(_, _, order)| {
-                sword_strike_from_animation(order.order_type).map(|strike| (strike, order.order_id))
+            .and_then(|(sequence_id, element_index, order)| {
+                let strike = sword_strike_from_animation(order.order_type)?;
+                let gesture_quality = self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "active sweep owner {attacker_id:?} lost sequence element {sequence_id:?}/{element_index}"
+                        )
+                    })
+                    .gesture_quality;
+                Some((strike, order.order_id, gesture_quality))
             })
         else {
             return;
@@ -1447,6 +1509,7 @@ impl EngineInner {
                     direction: thrust.direction,
                     strike,
                     attacker_profile_idx: Some(profile_idx),
+                    gesture_quality,
                     strike_kind: thrust.kind,
                 });
             }
@@ -1457,6 +1520,7 @@ impl EngineInner {
             sweep.direction = thrust.direction;
             sweep.strike = strike;
             sweep.attacker_profile_idx = Some(profile_idx);
+            sweep.gesture_quality = gesture_quality;
             sweep.strike_kind = thrust.kind;
         }
     }
@@ -1557,7 +1621,12 @@ impl EngineInner {
         profile_idx: Option<u32>,
         strike_kind: WeaponThrustKind,
         victims: Vec<EntityId>,
+        gesture_quality: crate::player_command::GestureQuality,
     ) {
+        assert!(
+            gesture_quality.is_strike_quality(),
+            "invalid gesture quality reached sweep initialization"
+        );
         let profile = match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
             Some(p) => p,
             None => return,
@@ -1647,6 +1716,7 @@ impl EngineInner {
             direction,
             strike,
             attacker_profile_idx: profile_idx,
+            gesture_quality,
             strike_kind,
         };
 
@@ -1841,13 +1911,14 @@ impl EngineInner {
 
             for victim_id in hit_victim_ids {
                 if let Some(profile_idx) = active.sweep.attacker_profile_idx {
-                    self.queue_sword_damage(
+                    self.queue_scaled_sword_damage(
                         sim,
                         assets,
                         victim_id,
                         active.attacker_id,
                         active.sweep.strike,
                         profile_idx,
+                        active.sweep.gesture_quality,
                     );
                 }
                 let should_enter = match (

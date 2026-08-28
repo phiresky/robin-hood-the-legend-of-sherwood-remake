@@ -31,6 +31,10 @@ pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
 pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
 pub(crate) const TIMED_MISSIONS_OPTION_INDEX: usize = 34;
 pub(crate) const DYNAMIC_AMBIENCE_OPTION_INDEX: usize = 35;
+pub(crate) const MORE_COMBAT_GESTURES_OPTION_INDEX: usize = 36;
+pub(crate) const GESTURE_QUALITY_DAMAGE_OPTION_INDEX: usize = 37;
+pub(crate) const COMBAT_GESTURE_GUIDE_OPTION_INDEX: usize = 38;
+pub(crate) const COMBAT_GESTURE_COACH_OPTION_INDEX: usize = 39;
 
 /// Toggle rows shown on the screen, in display order.
 pub(crate) const OPTION_LABELS: &[&str] = &[
@@ -70,6 +74,10 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Detailed Save Metadata",
     "Authored Mission Timers",
     "Dynamic Ambience Gameplay",
+    "More Combat Gestures",
+    "Gesture Quality Damage",
+    "Show Combat Gesture Guide",
+    "Combat Gesture Coach",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -109,6 +117,10 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show mission and player provenance, relative age, and expanded save details.",
     "Enforce time limits authored by Rust JSON missions.",
     "Advance authored day, night, and fog gameplay schedules.",
+    "Recognize nine additional sword gestures as composite two-strike techniques.",
+    "Scale sword damage to the recognized gesture's deterministic quality tier.",
+    "Show reference paths for the additional combat gestures while swordfighting.",
+    "Briefly show the recognized or nearest gesture and its quality after drawing.",
 ];
 
 pub(crate) fn option_tooltip(index: usize) -> &'static str {
@@ -444,6 +456,18 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         DYNAMIC_AMBIENCE_OPTION_INDEX => {
             config.enable_dynamic_ambience = !config.enable_dynamic_ambience
         }
+        MORE_COMBAT_GESTURES_OPTION_INDEX => {
+            config.more_combat_gestures = !config.more_combat_gestures
+        }
+        GESTURE_QUALITY_DAMAGE_OPTION_INDEX => {
+            config.gesture_quality_damage = !config.gesture_quality_damage
+        }
+        COMBAT_GESTURE_GUIDE_OPTION_INDEX => {
+            config.show_combat_gesture_guide = !config.show_combat_gesture_guide
+        }
+        COMBAT_GESTURE_COACH_OPTION_INDEX => {
+            config.combat_gesture_coach = !config.combat_gesture_coach
+        }
         _ => {}
     }
 }
@@ -489,6 +513,10 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
         TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions,
         DYNAMIC_AMBIENCE_OPTION_INDEX => config.enable_dynamic_ambience,
+        MORE_COMBAT_GESTURES_OPTION_INDEX => config.more_combat_gestures,
+        GESTURE_QUALITY_DAMAGE_OPTION_INDEX => config.gesture_quality_damage,
+        COMBAT_GESTURE_GUIDE_OPTION_INDEX => config.show_combat_gesture_guide,
+        COMBAT_GESTURE_COACH_OPTION_INDEX => config.combat_gesture_coach,
         _ => false,
     }
 }
@@ -538,6 +566,10 @@ mod tests {
                 "Detailed Save Metadata",
                 "Authored Mission Timers",
                 "Dynamic Ambience Gameplay",
+                "More Combat Gestures",
+                "Gesture Quality Damage",
+                "Show Combat Gesture Guide",
+                "Combat Gesture Coach",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -561,6 +593,22 @@ mod tests {
         ));
         assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
         assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
+        assert!(is_option_selected(
+            &config,
+            MORE_COMBAT_GESTURES_OPTION_INDEX
+        ));
+        assert!(is_option_selected(
+            &config,
+            GESTURE_QUALITY_DAMAGE_OPTION_INDEX
+        ));
+        assert!(!is_option_selected(
+            &config,
+            COMBAT_GESTURE_GUIDE_OPTION_INDEX
+        ));
+        assert!(!is_option_selected(
+            &config,
+            COMBAT_GESTURE_COACH_OPTION_INDEX
+        ));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -664,5 +712,24 @@ mod tests {
             config.noise_distraction_feedback,
             before.noise_distraction_feedback
         );
+    }
+
+    #[test]
+    fn every_combat_gesture_setting_is_independently_toggleable() {
+        let mut config: GameplayConfig = serde_json::from_str("{}").expect("empty legacy config");
+        for index in [
+            MORE_COMBAT_GESTURES_OPTION_INDEX,
+            GESTURE_QUALITY_DAMAGE_OPTION_INDEX,
+            COMBAT_GESTURE_GUIDE_OPTION_INDEX,
+            COMBAT_GESTURE_COACH_OPTION_INDEX,
+        ] {
+            assert!(!is_option_selected(&config, index));
+            apply_option_toggle(&mut config, index);
+            assert!(is_option_selected(&config, index));
+        }
+        assert!(config.more_combat_gestures);
+        assert!(config.gesture_quality_damage);
+        assert!(config.show_combat_gesture_guide);
+        assert!(config.combat_gesture_coach);
     }
 }

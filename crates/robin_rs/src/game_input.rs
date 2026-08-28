@@ -8,7 +8,7 @@
 //! for deterministic replay and rollback networking.
 
 use crate::host::Host;
-use crate::mouse_way::MouseWayPattern;
+use crate::mouse_way::{GestureCoachFeedback, MouseWayPattern};
 use crate::shadow_polygon::ASPECT_RATIO;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
@@ -17,7 +17,9 @@ use robin_engine::element as engine_element;
 use robin_engine::element::{ActionState, Command, Entity, EntityId, Focus, ListenPhase, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::{PlayerCommand, PlayerId, QueuedQuickActionCommand};
+use robin_engine::player_command::{
+    CompositeSwordTechnique, GestureQuality, PlayerCommand, PlayerId, QueuedQuickActionCommand,
+};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::Action;
 use robin_engine::sector as engine_sector;
@@ -1608,6 +1610,7 @@ pub fn resolve_swordfight(
 
     let mut cmds = Vec::new();
     let mut consumed = false;
+    let mut feedback_recorded = false;
 
     for pc_id in selected_units(engine, local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
@@ -1643,11 +1646,46 @@ pub fn resolve_swordfight(
         }
 
         let pc_screen = host.viewport.map_to_screen_unclamped(pos_map);
-        let pattern = host.mouse_way.evaluate(pc_screen, facing_dir);
+        let evaluation = host.mouse_way.evaluate_detailed(
+            pc_screen,
+            facing_dir,
+            host.gameplay_config.more_combat_gestures,
+        );
+        let pattern = evaluation.pattern;
         tracing::trace!(
-            "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} mw_pts={}",
+            "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} quality={} similarity={} mw_pts={}",
+            evaluation.quality.permille(),
+            evaluation.similarity,
             host.mouse_way.len(),
         );
+
+        if host.gameplay_config.combat_gesture_coach
+            && !feedback_recorded
+            && !matches!(pattern, MouseWayPattern::None)
+            && let Some(bounds) = host.mouse_way.bounds()
+        {
+            let feedback_pattern = if host.gameplay_config.more_combat_gestures
+                && matches!(pattern, MouseWayPattern::Attempt)
+            {
+                evaluation
+                    .nearest_composite
+                    .map(MouseWayPattern::Composite)
+                    .unwrap_or(pattern)
+            } else {
+                pattern
+            };
+            host.gesture_coach_feedback = Some(GestureCoachFeedback {
+                pattern: feedback_pattern,
+                quality: evaluation.quality,
+                bounds,
+                template_rotation: crate::mouse_way::display_template_rotation(
+                    feedback_pattern,
+                    facing_dir,
+                ),
+                created_at_ms: crate::window::process_uptime_ms(),
+            });
+            feedback_recorded = true;
+        }
 
         match pattern {
             MouseWayPattern::Attempt => {
@@ -1681,6 +1719,8 @@ pub fn resolve_swordfight(
                         actor: pc_id,
                         target: target_id,
                         command: Command::SwordstrikeThrustA,
+                        composite: None,
+                        gesture_quality: GestureQuality::PERFECT,
                         with_seek,
                         seek_distance: with_seek.then(|| {
                             resolved_sword_seek_distance(
@@ -1706,26 +1746,26 @@ pub fn resolve_swordfight(
                 let Some(strike_cmd) = pattern_to_command(recognised) else {
                     continue;
                 };
+                let composite = pattern_to_composite(recognised);
                 let principal = engine
                     .get_entity(pc_id)
                     .and_then(|e| e.human_data())
                     .and_then(|h| h.opponents.first().copied());
                 let Some(target_id) = principal else { continue };
 
-                let with_seek =
-                    matches!(
-                        recognised,
-                        MouseWayPattern::ThrustA
-                            | MouseWayPattern::ThrustB
-                            | MouseWayPattern::ThrustC
-                            | MouseWayPattern::ThrustD
-                            | MouseWayPattern::ThrustE
-                    ) && sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
+                let with_seek = command_supports_sword_seek(strike_cmd)
+                    && sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
 
                 cmds.push(PlayerCommand::SwordStrikeCmd {
                     actor: pc_id,
                     target: target_id,
                     command: strike_cmd,
+                    composite,
+                    gesture_quality: if host.gameplay_config.gesture_quality_damage {
+                        evaluation.quality
+                    } else {
+                        GestureQuality::PERFECT
+                    },
                     with_seek,
                     seek_distance: with_seek.then(|| {
                         resolved_sword_seek_distance(engine, assets, pc_id, strike_cmd, false)
@@ -2053,8 +2093,27 @@ fn pattern_to_command(pattern: MouseWayPattern) -> Option<Command> {
         MouseWayPattern::ThrustG => Command::SwordstrikeThrustG,
         MouseWayPattern::ThrustH => Command::SwordstrikeThrustH,
         MouseWayPattern::ThrustI => Command::SwordstrikeThrustI,
+        MouseWayPattern::Composite(technique) => technique.first_command(),
         MouseWayPattern::None | MouseWayPattern::Attempt => return None,
     })
+}
+
+fn pattern_to_composite(pattern: MouseWayPattern) -> Option<CompositeSwordTechnique> {
+    match pattern {
+        MouseWayPattern::Composite(technique) => Some(technique),
+        _ => None,
+    }
+}
+
+fn command_supports_sword_seek(command: Command) -> bool {
+    matches!(
+        command,
+        Command::SwordstrikeThrustA
+            | Command::SwordstrikeThrustB
+            | Command::SwordstrikeThrustC
+            | Command::SwordstrikeThrustD
+            | Command::SwordstrikeThrustE
+    )
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────
@@ -3039,6 +3098,8 @@ mod tests {
 
         // A full circle is the game's Thrust-H gesture. It exercises the
         // gesture path without needing a seek-distance profile fixture.
+        host.gameplay_config.more_combat_gestures = false;
+        host.gameplay_config.gesture_quality_damage = false;
         for (x, y) in [
             (320.0, 280.0),
             (360.0, 320.0),
@@ -3058,6 +3119,31 @@ mod tests {
                 actor: soldier,
                 target: opponent,
                 command: Command::SwordstrikeThrustH,
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
+                with_seek: false,
+                seek_distance: None,
+            }]
+        );
+
+        host.mouse_way.clear();
+        host.gameplay_config.more_combat_gestures = true;
+        host.gameplay_config.gesture_quality_damage = true;
+        for &(x, y) in crate::mouse_way::composite_template(CompositeSwordTechnique::Vortex) {
+            host.mouse_way
+                .add_point(engine_coordinates::ScreenPoint::new(
+                    320.0 + x * 90.0,
+                    320.0 + y * 90.0,
+                ));
+        }
+        assert_cmds!(
+            resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(0.0, 0.0), true,),
+            vec![PlayerCommand::SwordStrikeCmd {
+                actor: soldier,
+                target: opponent,
+                command: Command::SwordstrikeThrustH,
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek: false,
                 seek_distance: None,
             }]

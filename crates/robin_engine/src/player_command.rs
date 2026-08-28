@@ -18,6 +18,170 @@ use crate::sequence::Field;
 use crate::tactical_control::{CombatStance, TacticalFormation};
 use serde::{Deserialize, Serialize};
 
+/// Fixed-point multiplier applied to cutting and concussion effects from a
+/// mouse/touch combat gesture. `1000` is the authored, original-game effect;
+/// lower values only reduce it.
+///
+/// Keeping this integer in the resolved command makes replays, rollback and
+/// multiplayer independent of platform mouse sampling and floating-point
+/// template matching.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct GestureQuality(u16);
+
+impl GestureQuality {
+    pub const MINIMUM: Self = Self(250);
+    pub const FAIR: Self = Self(500);
+    pub const GOOD: Self = Self(750);
+    pub const PERFECT_PERMILLE: u16 = 1000;
+    pub const PERFECT: Self = Self(Self::PERFECT_PERMILLE);
+    pub const LEVELS: [Self; 5] = [
+        Self(0),
+        Self::MINIMUM,
+        Self::FAIR,
+        Self::GOOD,
+        Self::PERFECT,
+    ];
+
+    /// Construct one of the deterministic quality tiers. Zero is reserved
+    /// for host-side feedback about an unrecognized gesture and never enters
+    /// a sword command.
+    pub fn new(permille: u16) -> Result<Self, GestureQualityError> {
+        if matches!(permille, 0 | 250 | 500 | 750 | 1000) {
+            Ok(Self(permille))
+        } else {
+            Err(GestureQualityError { permille })
+        }
+    }
+
+    pub const fn permille(self) -> u16 {
+        self.0
+    }
+
+    pub const fn is_valid(self) -> bool {
+        matches!(self.0, 0 | 250 | 500 | 750 | 1000)
+    }
+
+    pub const fn is_strike_quality(self) -> bool {
+        matches!(self.0, 250 | 500 | 750 | 1000)
+    }
+
+    /// Scale an authored combat effect, rounding to the nearest integer.
+    pub fn scale_u16(self, effect: u16) -> u16 {
+        let scaled =
+            (u32::from(effect) * u32::from(self.0) + 500) / u32::from(Self::PERFECT_PERMILLE);
+        u16::try_from(scaled).expect("gesture quality cannot increase a u16 effect")
+    }
+}
+
+impl Default for GestureQuality {
+    fn default() -> Self {
+        Self::PERFECT
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GestureQualityError {
+    pub permille: u16,
+}
+
+impl std::fmt::Display for GestureQualityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "gesture quality {} is not a supported tier (expected 0, 250, 500, 750, or {})",
+            self.permille,
+            GestureQuality::PERFECT_PERMILLE
+        )
+    }
+}
+
+impl std::error::Error for GestureQualityError {}
+
+/// The nine optional single-stroke techniques. Each expands into two ordinary
+/// A-I sword strikes, preserving the shipped animation set and normal combat
+/// interruption/energy rules.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum CompositeSwordTechnique {
+    RisingFeint,
+    FallingFeint,
+    Lightning,
+    Backslash,
+    Triad,
+    Rampart,
+    Vortex,
+    Stag,
+    Serpent,
+}
+
+impl CompositeSwordTechnique {
+    pub const ALL: [Self; 9] = [
+        Self::RisingFeint,
+        Self::FallingFeint,
+        Self::Lightning,
+        Self::Backslash,
+        Self::Triad,
+        Self::Rampart,
+        Self::Vortex,
+        Self::Stag,
+        Self::Serpent,
+    ];
+
+    pub const fn commands(self) -> [Command; 2] {
+        match self {
+            Self::RisingFeint => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustB],
+            Self::FallingFeint => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustB],
+            Self::Lightning => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustE],
+            Self::Backslash => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustD],
+            Self::Triad => [Command::SwordstrikeThrustF, Command::SwordstrikeThrustB],
+            Self::Rampart => [Command::SwordstrikeThrustG, Command::SwordstrikeThrustB],
+            Self::Vortex => [Command::SwordstrikeThrustH, Command::SwordstrikeThrustA],
+            Self::Stag => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustA],
+            Self::Serpent => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustA],
+        }
+    }
+
+    pub const fn first_command(self) -> Command {
+        self.commands()[0]
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::RisingFeint => "Rising Feint",
+            Self::FallingFeint => "Falling Feint",
+            Self::Lightning => "Lightning",
+            Self::Backslash => "Backslash",
+            Self::Triad => "Triad",
+            Self::Rampart => "Rampart",
+            Self::Vortex => "Vortex",
+            Self::Stag => "Stag",
+            Self::Serpent => "Serpent",
+        }
+    }
+}
+
 /// The deliberately restricted command payload accepted by
 /// [`PlayerCommand::QueueQuickAction`]. Keeping this as a separate enum makes
 /// the player-command wire graph non-recursive and prevents queue commands
@@ -77,6 +241,14 @@ pub enum QueuedQuickActionCommand {
         actor: EntityId,
         target: EntityId,
         command: Command,
+        /// Optional authored two-strike technique. `command` must match its
+        /// first strike so seek-distance resolution remains explicit.
+        #[serde(default)]
+        composite: Option<CompositeSwordTechnique>,
+        /// Resolved input quality. Missing pre-feature JSON commands retain
+        /// original damage through the perfect default.
+        #[serde(default)]
+        gesture_quality: GestureQuality,
         with_seek: bool,
         #[serde(deserialize_with = "deserialize_required_option")]
         seek_distance: Option<f32>,
@@ -169,12 +341,16 @@ impl QueuedQuickActionCommand {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             } => Self::SwordStrikeCmd {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             },
@@ -274,12 +450,16 @@ impl QueuedQuickActionCommand {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             } => PlayerCommand::SwordStrikeCmd {
                 actor,
                 target,
                 command,
+                composite,
+                gesture_quality,
                 with_seek,
                 seek_distance,
             },
@@ -447,6 +627,10 @@ pub enum PlayerCommand {
         actor: EntityId,
         target: EntityId,
         command: Command,
+        #[serde(default)]
+        composite: Option<CompositeSwordTechnique>,
+        #[serde(default)]
+        gesture_quality: GestureQuality,
         with_seek: bool,
         /// Exact tolerance resolved by the input source. Explicitly null for
         /// a direct strike and required in every current Rust command.
@@ -1221,6 +1405,8 @@ mod tests {
                 actor: EntityId::new(3, EntityIdKind::Pc),
                 target: EntityId::new(7, EntityIdKind::Soldier),
                 command: Command::SwordstrikeThrustA,
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek: true,
                 seek_distance: Some(63.0),
             }
@@ -1247,6 +1433,8 @@ mod tests {
             actor: EntityId::new(3, EntityIdKind::Pc),
             target: EntityId::new(7, EntityIdKind::Soldier),
             command: Command::SwordstrikeThrustA,
+            composite: Some(CompositeSwordTechnique::Vortex),
+            gesture_quality: GestureQuality::GOOD,
             with_seek: true,
             seek_distance: Some(63.0),
         };
@@ -1257,6 +1445,38 @@ mod tests {
             decoded,
             PlayerCommand::SwordStrikeCmd {
                 seek_distance: Some(63.0),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality,
+                ..
+            } if gesture_quality == GestureQuality::GOOD
+        ));
+
+        let wire = bitcode::encode(&command);
+        let decoded: PlayerCommand = bitcode::decode(&wire).expect("roundtrip sword command wire");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::GOOD,
+                seek_distance: Some(63.0),
+                ..
+            }
+        ));
+
+        let mut pre_gesture = encoded.clone();
+        let payload = pre_gesture
+            .get_mut("SwordStrikeCmd")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword command");
+        payload.remove("composite");
+        payload.remove("gesture_quality");
+        let decoded: PlayerCommand =
+            serde_json::from_value(pre_gesture).expect("pre-gesture command remains compatible");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 ..
             }
         ));
@@ -1271,6 +1491,50 @@ mod tests {
             serde_json::from_value::<PlayerCommand>(legacy).is_err(),
             "a Rust sword command without seek_distance must not enter the current schema"
         );
+    }
+
+    #[test]
+    fn gesture_quality_scales_without_exceeding_authored_effect() {
+        assert_eq!(GestureQuality::PERFECT.scale_u16(57), 57);
+        assert_eq!(GestureQuality::FAIR.scale_u16(57), 29);
+        assert_eq!(GestureQuality::new(0).unwrap().scale_u16(57), 0);
+        assert!(GestureQuality::new(725).is_err());
+        assert!(GestureQuality::new(1001).is_err());
+    }
+
+    #[test]
+    fn composite_techniques_are_typed_two_strike_sequences() {
+        for technique in CompositeSwordTechnique::ALL {
+            let commands = technique.commands();
+            assert_eq!(commands[0], technique.first_command());
+            assert!(commands.into_iter().all(Command::is_swordstrike));
+        }
+    }
+
+    #[test]
+    fn gesture_resolution_participates_in_command_state_hashes() {
+        let make = |composite: Option<CompositeSwordTechnique>, gesture_quality: GestureQuality| {
+            PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: composite
+                    .map(CompositeSwordTechnique::first_command)
+                    .unwrap_or(Command::SwordstrikeThrustA),
+                composite,
+                gesture_quality,
+                with_seek: false,
+                seek_distance: None,
+            }
+        };
+        let original = robin_util::state_hash::compute(&make(None, GestureQuality::PERFECT));
+        let reduced = robin_util::state_hash::compute(&make(None, GestureQuality::GOOD));
+        let composite = robin_util::state_hash::compute(&make(
+            Some(CompositeSwordTechnique::Vortex),
+            GestureQuality::PERFECT,
+        ));
+        assert_ne!(original, reduced);
+        assert_ne!(original, composite);
+        assert_ne!(reduced, composite);
     }
 
     #[test]

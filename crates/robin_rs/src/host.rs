@@ -1015,6 +1015,9 @@ pub struct HostFrontend {
     /// movement. Pure host UI state.
     pub mouse_way: MouseWay,
 
+    /// Last released sword gesture for the optional, host-only coach overlay.
+    pub gesture_coach_feedback: Option<crate::mouse_way::GestureCoachFeedback>,
+
     /// Gamepad / joystick state. Carries edge-detection, the QA macro
     /// timer, and the in-progress swordfight-gesture buffer across
     /// frames.  Updated from gilrs controller events each frame.

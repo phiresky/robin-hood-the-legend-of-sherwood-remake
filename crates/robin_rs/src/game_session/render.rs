@@ -1356,6 +1356,8 @@ pub(super) fn render_frame(
         trail.render(&mut host.mouse_way, renderer);
     }
 
+    crate::combat_gesture_overlay::render(host, engine, renderer, hud_fonts);
+
     // ── GPU phase: per-PC macro dotted chains (world space) ──
     // Walks each PC's recorded macro slots and draws a dotted
     // polyline from the PC through its titbit waypoints.  Advances
