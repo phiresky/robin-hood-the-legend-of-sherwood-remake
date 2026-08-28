@@ -33,7 +33,7 @@ const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
-const OPTION_COUNT: u32 = 8;
+const OPTION_COUNT: u32 = 9;
 const ID_EFFECT_BASE: u32 = 500;
 const PRESET_LIST_X: i32 = 360;
 const PRESET_LIST_Y: i32 = 350;
@@ -189,6 +189,14 @@ pub async fn show_graphics(
         },
         super::layout::MenuButton {
             label: "Dynamic Ambience Visuals".to_string(),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
+        super::layout::MenuButton {
+            label: "Diplomacy Colors (neutral = amber)".to_string(),
             enabled: true,
             x: 30,
             y: 0,
@@ -883,6 +891,7 @@ fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
         5 => config.native_refresh_presentation = !config.native_refresh_presentation,
         6 => config.show_mission_countdown = !config.show_mission_countdown,
         7 => config.dynamic_ambience_visuals = !config.dynamic_ambience_visuals,
+        8 => config.diplomacy_visuals = !config.diplomacy_visuals,
         _ => {}
     }
 }
@@ -897,6 +906,7 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         5 => config.native_refresh_presentation,
         6 => config.show_mission_countdown,
         7 => config.dynamic_ambience_visuals,
+        8 => config.diplomacy_visuals,
         _ => false,
     }
 }
@@ -922,7 +932,9 @@ mod tests {
         assert!(config.dynamic_ambience_visuals);
         apply_option_toggle(&mut config, 7);
         assert!(!config.dynamic_ambience_visuals);
-        assert_eq!(OPTION_COUNT, 8);
+        assert_eq!(OPTION_COUNT, 9);
+        apply_option_toggle(&mut config, 8);
+        assert!(!config.diplomacy_visuals);
     }
 
     #[test]

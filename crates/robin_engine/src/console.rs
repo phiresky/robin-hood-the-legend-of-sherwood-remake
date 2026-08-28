@@ -82,6 +82,12 @@ pub enum ConsoleCommand {
         actor: String,
         method: String,
     },
+    /// `DIPLOMACY <first> <second> <allied|neutral|hostile>`.
+    SetDiplomacy {
+        first: u16,
+        second: u16,
+        relationship: crate::diplomacy::Relationship,
+    },
 
     // ── Display toggles ──
     Ai,
@@ -272,6 +278,10 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
             "Verboten : Please enter a valid filename !".to_owned(),
         )),
         "DIES" if tokens.get(1) == Some(&"IRAE") => Some(ConsoleCommand::DiesIrae),
+        "DIPLOMACY" if tokens.len() == 4 => parse_diplomacy_args(tokens),
+        "DIPLOMACY" => Some(ConsoleCommand::UsageError(
+            "USAGE: DIPLOMACY <first> <second> <allied|neutral|hostile>".to_owned(),
+        )),
         "EINSTEIN" => Some(ConsoleCommand::Einstein),
         "ELEVATION" => Some(ConsoleCommand::Elevation),
         "EULER" => Some(ConsoleCommand::Euler),
@@ -340,6 +350,22 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
         "WIN" => Some(ConsoleCommand::WinMission),
         _ => None,
     }
+}
+
+fn parse_diplomacy_args(tokens: &[&str]) -> Option<ConsoleCommand> {
+    let first = tokens[1].parse::<u16>().ok()?;
+    let second = tokens[2].parse::<u16>().ok()?;
+    let relationship = match tokens[3] {
+        "ALLIED" => crate::diplomacy::Relationship::Allied,
+        "NEUTRAL" => crate::diplomacy::Relationship::Neutral,
+        "HOSTILE" => crate::diplomacy::Relationship::Hostile,
+        _ => return None,
+    };
+    Some(ConsoleCommand::SetDiplomacy {
+        first,
+        second,
+        relationship,
+    })
 }
 
 fn parse_money_args(args: &[&str]) -> ConsoleCommand {

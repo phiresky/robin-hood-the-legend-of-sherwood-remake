@@ -672,7 +672,7 @@ impl EnemyAi {
         // GetIQ -> GetModifiedCapacity scales only when the NPC's camp
         // is Lacklandists; Royalist soldiers (also EnemyAi-driven)
         // get the raw intelligence.
-        if !ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
+        if !ctx.is_hostile_to_player() {
             return self.soldier_profile_iq;
         }
         ctx.difficulty
@@ -693,7 +693,7 @@ impl EnemyAi {
     /// bow-aim timer — without this override the timer would track
     /// the soldier's *intelligence* instead of its shooting skill.
     pub fn get_shooting_ability(&self, ctx: &AiContext) -> u16 {
-        let mut shooting = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
+        let mut shooting = if ctx.is_hostile_to_player() {
             // Retail accidentally selects the fighting modifier here. The
             // classic presets keep that result exactly; Custom deliberately
             // exposes shooting as its own rule at this typed boundary.
@@ -848,7 +848,7 @@ impl EnemyAi {
     /// archer flee via MerryManForestCassos, 180° vision cone, fast
     /// reaction time.
     fn is_merry_man_forest(&self, ctx: &AiContext) -> bool {
-        ctx.camp == crate::element::Camp::Royalists && ctx.is_forest_level && !ctx.self_is_rider
+        ctx.is_player_aligned() && ctx.is_forest_level && !ctx.self_is_rider
     }
 
     /// Returns true if any same-camp soldier (other than us) is currently
@@ -2226,8 +2226,7 @@ impl EnemyAi {
             real_half_aperture: ctx.self_real_half_aperture,
             viewer_in_building,
             target_in_same_building,
-            forest_180_degree_view: ctx.is_forest_level
-                && ctx.camp == crate::element::Camp::Royalists,
+            forest_180_degree_view: ctx.is_forest_level && ctx.is_player_aligned(),
             golden_eye_mode: false,
             effective_view_radius: ctx.self_view_radius as f32,
             target_is_active_and_outside_building: view.active && view.building_sector.is_none(),
@@ -4850,7 +4849,7 @@ impl EnemyAi {
         // (also EnemyAi-driven) retain 1.0. The original's Easy==Hard
         // copy-paste bug remains optional for the exact Hard preset; Legendary
         // and Custom always use their resolved reaction rule.
-        let modifier = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
+        let modifier = if ctx.is_hostile_to_player() {
             if ctx.difficulty == crate::player_profile::DifficultyLevel::Hard
                 && !tick.fix_hard_reaction_times
             {

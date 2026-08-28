@@ -335,6 +335,16 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     #[state_hash(skip)]
     pub detailed_save_metadata: bool,
+
+    /// Enable authored and runtime diplomacy overrides. When disabled, every
+    /// distinct valid allegiance is hostile, preserving legacy behavior.
+    #[serde(default)]
+    pub diplomacy: bool,
+
+    /// Let hostile NPC soldiers perceive and fight one another. Turning this
+    /// off leaves conflicts involving a player active.
+    #[serde(default = "enabled_by_default")]
+    pub npc_faction_wars: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -372,6 +382,8 @@ impl Default for GameplayConfig {
             show_achievement_debrief: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            diplomacy: true,
+            npc_faction_wars: true,
         }
     }
 }
@@ -407,6 +419,8 @@ impl GameplayConfig {
             show_achievement_debrief: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            diplomacy: false,
+            npc_faction_wars: true,
         }
     }
 }
@@ -447,6 +461,8 @@ mod tests {
         );
         assert!(config.enable_timed_missions);
         assert!(config.enable_dynamic_ambience);
+        assert!(!config.diplomacy);
+        assert!(config.npc_faction_wars);
     }
 
     #[test]

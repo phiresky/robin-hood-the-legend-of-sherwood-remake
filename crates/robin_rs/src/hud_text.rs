@@ -162,7 +162,7 @@ fn entity_display_name(
                 })
         }
         Entity::Soldier(s) => {
-            if s.soldier.cached_camp == Camp::Royalists
+            if engine.is_player_aligned_camp(s.soldier.cached_camp)
                 && let Some(name) = assets.random_peasant_name(id.index() as usize)
             {
                 Some(name)

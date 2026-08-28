@@ -29,6 +29,7 @@ pub mod cloak;
 pub mod combat;
 pub mod console;
 pub mod coordinates;
+pub mod diplomacy;
 pub mod element;
 pub mod element_kinds;
 pub mod element_priority;

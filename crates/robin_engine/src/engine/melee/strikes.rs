@@ -826,8 +826,12 @@ impl EngineInner {
                 .entities
                 .get(victim_id)
                 .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
-            let should_enter =
-                should_enter_swordfight_after_strike(attacker, victim, &assets.profile_manager);
+            let should_enter = should_enter_swordfight_after_strike(
+                attacker,
+                victim,
+                &assets.profile_manager,
+                &self.mission_domain.diplomacy,
+            );
             if should_enter {
                 self.queue_enter_swordfight_after_strike(victim_id, actor_id);
             }
@@ -1854,9 +1858,12 @@ impl EngineInner {
                     self.get_entity(active.attacker_id),
                     self.get_entity(victim_id),
                 ) {
-                    (Some(a), Some(v)) => {
-                        should_enter_swordfight_after_strike(a, v, &assets.profile_manager)
-                    }
+                    (Some(a), Some(v)) => should_enter_swordfight_after_strike(
+                        a,
+                        v,
+                        &assets.profile_manager,
+                        &self.mission_domain.diplomacy,
+                    ),
                     _ => false,
                 };
                 if should_enter {

@@ -802,12 +802,11 @@ impl EngineInner {
         let is_soldier_vip =
             matches!(entity, Entity::Soldier(_)) && self.is_entity_vip(assets, entity);
 
-        let camp =
-            if entity.is_human() && entity.camp().is_hostile_to(crate::element::Camp::Royalists) {
-                MmCamp::Lacklandists
-            } else {
-                MmCamp::Other
-            };
+        let camp = match self.relationship(entity.camp(), crate::element::Camp::Royalists) {
+            crate::diplomacy::Relationship::Hostile => MmCamp::Hostile,
+            crate::diplomacy::Relationship::Neutral => MmCamp::Neutral,
+            crate::diplomacy::Relationship::Allied => MmCamp::Allied,
+        };
 
         Some(ElementDotInfo {
             custom_dot: CustomDot::from_u16(elem.custom_minimap_dot),

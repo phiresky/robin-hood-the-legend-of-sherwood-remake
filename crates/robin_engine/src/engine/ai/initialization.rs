@@ -303,8 +303,13 @@ impl EngineInner {
         }
 
         // -- Phase 3: Build the detectable-enemy list for this NPC. --
-        let detectables =
-            build_detectable_enemies_for(self_camp, is_friendly, npc_id, potential_detectables);
+        let detectables = build_detectable_enemies_for_with(
+            &self.mission_domain.diplomacy,
+            self_camp,
+            is_friendly,
+            npc_id,
+            potential_detectables,
+        );
 
         // -- Phase 4: Re-read entity (post-fix) and mutate all the
         //    per-NPC state fields in one shot. --

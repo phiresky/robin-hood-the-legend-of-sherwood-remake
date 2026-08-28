@@ -436,6 +436,20 @@ pub struct AiContext {
 }
 
 impl AiContext {
+    pub fn player_relationship(&self) -> crate::diplomacy::Relationship {
+        self.entity_views
+            .diplomacy
+            .relationship(self.camp, crate::element::Camp::Royalists)
+    }
+
+    pub fn is_player_aligned(&self) -> bool {
+        self.player_relationship() == crate::diplomacy::Relationship::Allied
+    }
+
+    pub fn is_hostile_to_player(&self) -> bool {
+        self.player_relationship() == crate::diplomacy::Relationship::Hostile
+    }
+
     pub(crate) fn hiking_waypoint_sector(
         &self,
         path_index: usize,
@@ -1604,12 +1618,12 @@ impl Default for AiGlobalState {
 }
 
 impl AiGlobalState {
-    pub fn npcs_can_be_enemies(&self) -> bool {
+    pub fn npcs_can_be_enemies(&self, diplomacy: &crate::diplomacy::DiplomacyState) -> bool {
         self.soldier_camps.iter().enumerate().any(|(index, camp)| {
             self.soldier_camps
                 .iter()
                 .skip(index + 1)
-                .any(|other| camp.is_hostile_to(*other))
+                .any(|other| diplomacy.is_hostile(*camp, *other))
         }) || (self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers)
     }
 

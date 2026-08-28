@@ -204,8 +204,9 @@ pub enum UIState {
 /// Camp / faction affiliation used to determine dot colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Camp {
-    Lacklandists,
-    Other,
+    Hostile,
+    Neutral,
+    Allied,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1100,7 +1101,16 @@ fn classify_npc_soldier(info: &ElementDotInfo) -> Option<DotType> {
             Some(DotType::Vip)
         };
     }
-    let is_enemy = info.camp == Camp::Lacklandists;
+    if info.camp == Camp::Neutral {
+        return if info.is_dead {
+            Some(DotType::DeadCivilian)
+        } else if info.is_unconscious {
+            Some(DotType::StunnedCivilian)
+        } else {
+            Some(DotType::Civilian)
+        };
+    }
+    let is_enemy = info.camp == Camp::Hostile;
     if info.is_dead {
         Some(if is_enemy {
             DotType::DeadEnemy
@@ -1184,7 +1194,7 @@ mod tests {
             is_dead: false,
             is_unconscious: false,
             posture_lying: false,
-            camp: Camp::Other,
+            camp: Camp::Allied,
         }
     }
 
@@ -1237,7 +1247,7 @@ mod tests {
         let info = ElementDotInfo {
             is_human: true,
             is_soldier: true,
-            camp: Camp::Lacklandists,
+            camp: Camp::Hostile,
             ..default_info()
         };
         assert_eq!(classify_element_dot(&info), Some(DotType::Enemy));
@@ -1248,7 +1258,7 @@ mod tests {
         let info = ElementDotInfo {
             is_human: true,
             is_soldier: true,
-            camp: Camp::Other,
+            camp: Camp::Allied,
             ..default_info()
         };
         assert_eq!(classify_element_dot(&info), Some(DotType::Ally));
@@ -1260,7 +1270,7 @@ mod tests {
             is_human: true,
             is_soldier: true,
             is_vip: true,
-            camp: Camp::Lacklandists,
+            camp: Camp::Hostile,
             ..default_info()
         };
         assert_eq!(classify_element_dot(&info), Some(DotType::Vip));
@@ -1272,7 +1282,7 @@ mod tests {
             is_human: true,
             is_soldier: true,
             is_blipped: true,
-            camp: Camp::Lacklandists,
+            camp: Camp::Hostile,
             ..default_info()
         };
         assert_eq!(classify_element_dot(&info), Some(DotType::Blip));

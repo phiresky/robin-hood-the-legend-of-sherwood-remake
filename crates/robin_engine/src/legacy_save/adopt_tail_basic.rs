@@ -129,6 +129,7 @@ impl LegacyTailBasicAdoptionPlan {
                 .cloned()
                 .map(|name| PcStatName::new(name, None))
                 .collect(),
+            factions: Default::default(),
         };
         Ok(Self {
             global_ai,

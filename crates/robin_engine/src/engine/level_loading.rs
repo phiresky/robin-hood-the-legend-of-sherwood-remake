@@ -3418,6 +3418,17 @@ impl EngineInner {
         let config = sim.config();
         let level_builder = MissionLevelBuilder::new(mission_name, config.script_enabled, &loaded);
 
+        self.mission_domain.diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+            config.diplomacy,
+            config.npc_faction_wars,
+            loaded.diplomacy.as_ref(),
+        )
+        .map_err(|error| {
+            EngineError::Io(std::io::Error::other(format!(
+                "invalid diplomacy definition for {mission_name}: {error}"
+            )))
+        })?;
+
         self.begin_mission_level_stage();
         self.load_environment_stage(assets, &mut loaded, config.script_enabled);
         progress(1.0);

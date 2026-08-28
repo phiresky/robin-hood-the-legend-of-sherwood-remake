@@ -984,6 +984,20 @@ pub enum PlayerCommand {
     SetSherwoodTrading {
         enabled: bool,
     },
+    /// Toggle authored/runtime relationship overrides at an authoritative
+    /// frame boundary. Disabling restores distinct-ID hostility.
+    SetDiplomacyEnabled {
+        enabled: bool,
+    },
+    SetNpcFactionWars {
+        enabled: bool,
+    },
+    /// Symmetrically change one relationship at runtime.
+    SetDiplomacyRelationship {
+        first: u16,
+        second: u16,
+        relationship: crate::diplomacy::Relationship,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input

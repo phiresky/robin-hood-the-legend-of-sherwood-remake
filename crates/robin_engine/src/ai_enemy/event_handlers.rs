@@ -2158,7 +2158,7 @@ impl EnemyAi {
         // already-tied / already-guarded targets and archers on
         // unreachable wall-tops.
         let enemy_view = ctx.entity_view(enemy);
-        if ctx.camp == crate::element::Camp::Royalists
+        if ctx.is_player_aligned()
             && let Some(v) = enemy_view
             && (v.is_unconscious || v.posture == crate::element::Posture::Tied || v.is_carried)
         {
@@ -2170,7 +2170,7 @@ impl EnemyAi {
         {
             return;
         }
-        if ctx.camp == crate::element::Camp::Royalists
+        if ctx.is_player_aligned()
             && let Some(v) = enemy_view
             && v.elevation > ctx.elevation + 100.0
             && v.is_soldier()

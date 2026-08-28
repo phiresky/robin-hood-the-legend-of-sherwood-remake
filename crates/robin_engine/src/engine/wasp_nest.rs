@@ -417,7 +417,7 @@ impl EngineInner {
                 Some(e) => e,
                 None => continue,
             };
-            if !entity.is_active() || !entity.camp().is_hostile_to(Camp::Royalists) {
+            if !entity.is_active() || !self.camps_are_hostile(entity.camp(), Camp::Royalists) {
                 continue;
             }
             // Exclude already-swordfighting soldiers and existing

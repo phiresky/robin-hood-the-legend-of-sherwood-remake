@@ -3033,7 +3033,7 @@ impl EngineInner {
                     let Some(entity @ Entity::Soldier(s)) = self.world.entities.get(id) else {
                         return false;
                     };
-                    if s.soldier.cached_camp != camp {
+                    if !self.camps_are_allied(s.soldier.cached_camp, camp) {
                         return false;
                     }
                     // AI state Attacking

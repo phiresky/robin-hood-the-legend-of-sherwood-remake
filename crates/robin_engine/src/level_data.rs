@@ -1995,6 +1995,10 @@ pub struct LoadedMission {
 pub struct LoadedLevel {
     pub proto: LoadedProtoLevel,
     pub mission: LoadedMission,
+    /// Rust-port diplomacy authoring. Legacy binary levels leave this unset
+    /// and retain the original different-camp-is-hostile behavior.
+    #[serde(default)]
+    pub diplomacy: Option<crate::diplomacy::DiplomacyDefinition>,
 }
 
 /// Datadir-relative path of the hackable JSON level descriptor for a mission.
@@ -2040,6 +2044,9 @@ pub struct HackableLevelDescriptor {
     /// Ordered ambience changes measured in active gameplay seconds.
     #[serde(default)]
     pub ambience_schedule: Vec<AmbienceScheduleCue>,
+    /// Optional symmetric relationship matrix and player coalition.
+    #[serde(default)]
+    pub diplomacy: Option<crate::diplomacy::DiplomacyDefinition>,
 }
 
 /// Author-facing timed-mission rules for hackable JSON levels.
@@ -2285,6 +2292,7 @@ impl LoadedLevel {
         }
 
         let mut level = Self::empty_for_test();
+        level.diplomacy = descriptor.diplomacy.clone();
         level.mission.reserve_null_ai_handle = true;
         level.proto.grid_chunk_order = vec![ProtoGridChunk::Sight, ProtoGridChunk::Motion];
         let motion_obstacles = descriptor
@@ -2550,6 +2558,7 @@ impl LoadedLevel {
                 timed_mission: None,
                 ambience_schedule: Vec::new(),
             },
+            diplomacy: None,
         }
     }
 }
@@ -2608,7 +2617,11 @@ pub fn load_level(
     let mission = load_mission(&mut mission_reader, format, is_beggar)?;
     progress(1.0);
 
-    Ok(LoadedLevel { proto, mission })
+    Ok(LoadedLevel {
+        proto,
+        mission,
+        diplomacy: None,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════

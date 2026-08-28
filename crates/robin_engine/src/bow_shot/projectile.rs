@@ -1202,7 +1202,17 @@ pub fn tick_arrows(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, None, None, false, &[], None)
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+    )
 }
 
 /// Advance every projectile except the ones listed in `skip_arrow_ids`.
@@ -1225,6 +1235,7 @@ pub fn tick_arrows_excluding(
         None,
         false,
         skip_arrow_ids,
+        None,
         None,
     )
 }
@@ -1251,6 +1262,7 @@ pub fn tick_arrow(
         true,
         &[],
         None,
+        None,
     )
 }
 
@@ -1273,6 +1285,29 @@ pub(crate) fn tick_arrow_in_actor_order(
         true,
         &[],
         Some(actor_order),
+        None,
+    )
+}
+
+pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+    arrow_id: EntityId,
+    actor_order: &[EntityId],
+    diplomacy: &crate::diplomacy::DiplomacyState,
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        obstacle_check,
+        Some(arrow_id),
+        true,
+        &[],
+        Some(actor_order),
+        Some(diplomacy),
     )
 }
 
@@ -1299,6 +1334,7 @@ pub fn tick_existing_projectile(
         false,
         &[],
         None,
+        None,
     )
 }
 
@@ -1311,6 +1347,7 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     projectile_id: EntityId,
     actor_order: &[EntityId],
+    diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
         sim,
@@ -1321,6 +1358,7 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
         false,
         &[],
         Some(actor_order),
+        Some(diplomacy),
     )
 }
 
@@ -1334,6 +1372,7 @@ fn tick_arrows_matching(
     primed_segment_already_advanced: bool,
     skip_arrow_ids: &[EntityId],
     actor_order: Option<&[EntityId]>,
+    diplomacy: Option<&crate::diplomacy::DiplomacyState>,
 ) -> Vec<ArrowTickResult> {
     let mut results = Vec::new();
 
@@ -1960,7 +1999,10 @@ fn tick_arrows_matching(
             };
             let same_camp = matches!(
                 (shooter.camp, victim.camp),
-                (Some(shooter_camp), Some(victim_camp)) if shooter_camp == victim_camp
+                (Some(shooter_camp), Some(victim_camp)) if diplomacy.map_or(
+                    shooter_camp == victim_camp,
+                    |matrix| matrix.is_allied(shooter_camp, victim_camp),
+                )
             );
 
             // C++ filters these candidates inside `FindHumanVictim`

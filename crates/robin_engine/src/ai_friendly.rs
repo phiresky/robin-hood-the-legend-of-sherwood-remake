@@ -1892,7 +1892,7 @@ impl FriendlyAi {
                 // On a Royalist civilian's scream, the civilian
                 // panics directly instead of alerting a (nearby,
                 // also Royalist) soldier.
-                let is_royalist = ctx.camp == crate::element::Camp::Royalists;
+                let is_royalist = ctx.is_player_aligned();
 
                 if is_royalist
                     || !self.alert_soldier(

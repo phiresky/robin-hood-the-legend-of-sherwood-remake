@@ -1505,7 +1505,8 @@ impl EngineInner {
                     if !tgt_human {
                         continue;
                     }
-                    if !crate::ai_detectable_filter::should_add_enemy_detectable(
+                    if !crate::ai_detectable_filter::should_add_enemy_detectable_with(
+                        &self.mission_domain.diplomacy,
                         npc_camp,
                         npc_uses_enemy_combat_ai,
                         tgt_pc,

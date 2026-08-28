@@ -815,6 +815,14 @@ fn non_enemy_visibility_blocked_before_cadence(
     eye_status.is_blind() || !viewer_camp.is_hostile_to(Camp::Royalists) || type_gate_blocked
 }
 
+fn non_enemy_visibility_blocked_with_relationship(
+    eye_status: crate::element::EyeStatus,
+    viewer_hostile_to_player: bool,
+    type_gate_blocked: bool,
+) -> bool {
+    eye_status.is_blind() || !viewer_hostile_to_player || type_gate_blocked
+}
+
 fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
     dead || unconscious
 }
@@ -834,6 +842,27 @@ fn apply_enemy_beggar_disguise(
         return visibility;
     }
 
+    match order_type {
+        crate::order::OrderType::SimulatingBeggar => 0.0,
+        crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar
+        | crate::order::OrderType::TransitionSimulatingBeggarWaitingUpright => {
+            *got_beggar_trick = true;
+            visibility
+        }
+        _ => visibility,
+    }
+}
+
+fn apply_enemy_beggar_disguise_with_relationship(
+    viewer_hostile_to_player: bool,
+    target_is_pc: bool,
+    got_beggar_trick: &mut bool,
+    order_type: crate::order::OrderType,
+    visibility: f32,
+) -> f32 {
+    if !viewer_hostile_to_player || !target_is_pc || *got_beggar_trick || visibility <= 0.0 {
+        return visibility;
+    }
     match order_type {
         crate::order::OrderType::SimulatingBeggar => 0.0,
         crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar
@@ -1316,7 +1345,9 @@ impl EngineInner {
 
         // Royalist soldiers reveal themselves without consulting PCs, but
         // only behind the same RefreshDetection entry/cadence gates.
-        if matches!(entity, Entity::Soldier(s) if s.soldier.cached_camp == Camp::Royalists) {
+        if matches!(entity, Entity::Soldier(s)
+            if self.is_player_aligned_camp(s.soldier.cached_camp))
+        {
             self.world
                 .entities
                 .get_mut(npc_id)
@@ -2689,7 +2720,7 @@ impl EngineInner {
                 // targets before its PC-vs-soldier cadence branch. Keep the
                 // detectable (CleanUpDetectables only removes dead enemies),
                 // but clear both live visibility and the cached sample.
-                if viewer.camp.is_hostile_to(Camp::Royalists) && target.hollow_man {
+                if self.camps_are_hostile(viewer.camp, Camp::Royalists) && target.hollow_man {
                     det.seen_now = false;
                     det.last_visibility = 0.0;
                     continue;
@@ -2698,7 +2729,7 @@ impl EngineInner {
                 // Original's Lacklandist PC-only blip and guard gates run
                 // before the PC cadence decision. They invalidate the cached
                 // sample even when this frame would otherwise reuse it.
-                if viewer.camp.is_hostile_to(Camp::Royalists)
+                if self.camps_are_hostile(viewer.camp, Camp::Royalists)
                     && target.is_pc
                     && viewer_blipped
                     && !viewer_inside_building
@@ -2707,7 +2738,7 @@ impl EngineInner {
                     det.last_visibility = 0.0;
                     continue;
                 }
-                if viewer.camp.is_hostile_to(Camp::Royalists)
+                if self.camps_are_hostile(viewer.camp, Camp::Royalists)
                     && target.is_pc
                     && !det.seen_last_frame
                     && target.guarded
@@ -2723,7 +2754,8 @@ impl EngineInner {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_PC
                 };
                 let gate_open = modified_frame.is_multiple_of(frequency)
-                    || (viewer.camp.is_hostile_to(Camp::Royalists) && lacklandist_refresh_always);
+                    || (self.camps_are_hostile(viewer.camp, Camp::Royalists)
+                        && lacklandist_refresh_always);
                 tracing::trace!(
                     observer = ?npc_id,
                     target = ?target_id,
@@ -2917,7 +2949,7 @@ impl EngineInner {
                 // already has it baked in.
                 let mut visibility = if gate_open {
                     let detection_speed_factor =
-                        if target.is_pc && viewer.camp.is_hostile_to(Camp::Royalists) {
+                        if target.is_pc && self.camps_are_hostile(viewer.camp, Camp::Royalists) {
                             let detection_speed_pct = if is_forest_level {
                                 target.detection_speed_in_forest
                             } else {
@@ -2949,8 +2981,8 @@ impl EngineInner {
                 //     stays > 0 so the sighting still commits this frame.
                 // Once the flag is true the NPC sees through future
                 // beggar disguises permanently (per-NPC, not global).
-                visibility = apply_enemy_beggar_disguise(
-                    viewer.camp,
+                visibility = apply_enemy_beggar_disguise_with_relationship(
+                    self.camps_are_hostile(viewer.camp, Camp::Royalists),
                     target.is_pc,
                     &mut got_beggar_trick,
                     target.order_type,
@@ -4318,6 +4350,7 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
+        let viewer_hostile_to_player = self.camps_are_hostile(viewer.camp, Camp::Royalists);
         let target_obstacle = target_obstacle_handle.map(|handle| {
             sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
                 panic!(
@@ -4603,6 +4636,7 @@ impl EngineInner {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
+                hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
                 dir,
@@ -4642,6 +4676,7 @@ impl EngineInner {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
+                hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
                 dir,
@@ -4697,6 +4732,7 @@ impl EngineInner {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
+                hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
                 dir,
@@ -4749,6 +4785,7 @@ impl EngineInner {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
+                hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
                 dir,
@@ -4855,6 +4892,7 @@ impl EngineInner {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
+                hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
                 dir,
@@ -5001,9 +5039,9 @@ impl EngineInner {
             } else {
                 Some(target_pre_filter(target))
             };
-            let visibility_blocked = non_enemy_visibility_blocked_before_cadence(
+            let visibility_blocked = non_enemy_visibility_blocked_with_relationship(
                 ctx.eye_status,
-                ctx.camp,
+                ctx.hostile_to_player,
                 extra_gate_blocks_visibility
                     || ctx.viewer_in_building
                     || target_pre_filter_passed == Some(false),
@@ -5348,9 +5386,9 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             }
-            let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
+            let visibility: f32 = if non_enemy_visibility_blocked_with_relationship(
                 ctx.eye_status,
-                ctx.camp,
+                ctx.hostile_to_player,
                 ctx.viewer_in_building,
             ) {
                 0.0
@@ -5612,6 +5650,7 @@ struct ViewContext<'a> {
     /// Used only by RefreshDetection's outer scan-entry alternative.
     viewer_inside_building: bool,
     camp: Camp,
+    hostile_to_player: bool,
     eye: MapPoint,
     eye_world: crate::coordinates::WorldPoint3D,
     dir: i16,

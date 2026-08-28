@@ -509,6 +509,36 @@ impl EngineInner {
         self.control.engine_locked()
     }
 
+    /// Resolve the authoritative symmetric relationship between two actors'
+    /// allegiances. Gameplay code must use this instead of comparing raw IDs.
+    pub fn relationship(
+        &self,
+        first: crate::element::Camp,
+        second: crate::element::Camp,
+    ) -> crate::diplomacy::Relationship {
+        self.mission_domain.diplomacy.relationship(first, second)
+    }
+
+    pub fn camps_are_hostile(
+        &self,
+        first: crate::element::Camp,
+        second: crate::element::Camp,
+    ) -> bool {
+        self.mission_domain.diplomacy.is_hostile(first, second)
+    }
+
+    pub fn camps_are_allied(
+        &self,
+        first: crate::element::Camp,
+        second: crate::element::Camp,
+    ) -> bool {
+        self.mission_domain.diplomacy.is_allied(first, second)
+    }
+
+    pub fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
+        self.mission_domain.diplomacy.is_player_aligned(camp)
+    }
+
     #[cfg(any(test, feature = "test-helpers"))]
     pub(crate) fn set_engine_locked(&mut self, locked: bool) {
         self.control.set_engine_locked(locked);
@@ -987,7 +1017,7 @@ impl EngineInner {
 
         let mut score = 0;
         for (_, s) in self.world.entities.soldiers() {
-            if s.camp().is_hostile_to(Camp::Royalists)
+            if self.camps_are_hostile(s.camp(), Camp::Royalists)
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
             {
@@ -1007,13 +1037,27 @@ impl EngineInner {
 
         let mut living = 0u32;
         let mut dead = 0u32;
+        let mut living_by_camp = std::collections::BTreeMap::<Camp, u32>::new();
         for (_, s) in self.world.entities.soldiers() {
-            if s.camp().is_hostile_to(Camp::Royalists) {
+            if s.life_points() > 0 {
+                *living_by_camp.entry(s.camp()).or_default() += 1;
+            }
+            if self.camps_are_hostile(s.camp(), Camp::Royalists) {
                 if s.life_points() > 0 {
                     living += 1;
                 } else {
                     dead += 1;
                 }
+            }
+        }
+        self.mission_domain
+            .mission_stat
+            .reset_faction_living_counts();
+        for (camp, count) in living_by_camp {
+            for _ in 0..count {
+                self.mission_domain
+                    .mission_stat
+                    .record_living_soldier_at_end(camp);
             }
         }
         // The living-soldier increment runs inside the per-soldier loop,

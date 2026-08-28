@@ -384,10 +384,8 @@ impl EngineInner {
                 // The shooting-ability lookup applies FIGHTING modifiers
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
-                let mut shooting = if s
-                    .soldier
-                    .cached_camp
-                    .is_hostile_to(crate::element::Camp::Royalists)
+                let mut shooting = if self
+                    .camps_are_hostile(s.soldier.cached_camp, crate::element::Camp::Royalists)
                 {
                     let diff = self.control.sim_config.difficulty;
                     diff.rules().enemy_shooting(profile.shooting, 100) as u32
@@ -1219,7 +1217,7 @@ impl EngineInner {
         let victim_camp = victim.is_human().then(|| victim.camp());
         let same_camp = matches!(
             (shooter_camp, victim_camp),
-            (Some(sc), Some(vc)) if sc == vc,
+            (Some(sc), Some(vc)) if self.camps_are_allied(sc, vc),
         );
         let victim_is_pc_with_shield = if victim.is_pc() {
             match victim.actor_data() {
@@ -3536,6 +3534,7 @@ impl EngineInner {
             Some(&obstacle_check),
             projectile_id,
             &actor_order,
+            &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }
@@ -3557,13 +3556,14 @@ impl EngineInner {
             water_zones: Some(&assets.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
-        let results = bow_shot::tick_arrow_in_actor_order(
+        let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
             sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             arrow_id,
             &actor_order,
+            &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }

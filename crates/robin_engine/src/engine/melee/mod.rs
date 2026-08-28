@@ -938,14 +938,15 @@ impl EngineInner {
         // without allocating a Damage element. Preserve their exact optional
         // killer instead of inferring responsibility from aggregate totals.
         self.record_achievement_npc_death(entity_id, killer);
-        let (is_pc, is_ai_owner, allied_soldier, killer_is_pc) = {
+        let (is_pc, is_ai_owner, soldier_camp, allied_soldier, killer_is_pc) = {
             let entity = self
                 .get_entity(entity_id)
                 .expect("script-killed actor vanished before virtual Kill");
             (
                 entity.is_pc(),
                 entity.ai_controller().is_some(),
-                entity.is_soldier() && entity.camp() == crate::element::Camp::Royalists,
+                entity.is_soldier().then(|| entity.camp()),
+                entity.is_soldier() && self.is_player_aligned_camp(entity.camp()),
                 killer
                     .and_then(|killer_id| self.get_entity(killer_id))
                     .is_some_and(|killer| killer.is_pc()),
@@ -993,6 +994,11 @@ impl EngineInner {
         }
         if allied_soldier {
             self.mission_domain.mission_stat.add_killed_allied();
+        }
+        if let Some(camp) = soldier_camp {
+            self.mission_domain
+                .mission_stat
+                .record_soldier_death(camp, killer_is_pc);
         }
 
         self.quit_swordfight(sim, assets, entity_id);
@@ -1099,10 +1105,17 @@ impl EngineInner {
         });
         let waker_is_pc = waker.is_pc();
         let waker_is_soldier = matches!(waker, Entity::Soldier(_));
-        if !(waker_is_pc || (waker_is_soldier && self.ai.global.npcs_can_be_enemies())) {
+        if !(waker_is_pc
+            || (waker_is_soldier
+                && self
+                    .ai
+                    .global
+                    .npcs_can_be_enemies(&self.mission_domain.diplomacy)))
+        {
             return;
         }
         let waker_camp = waker.camp();
+        let diplomacy = self.mission_domain.diplomacy.clone();
         let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             if npc_id == waker_id {
@@ -1111,7 +1124,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
-            if entity.camp() == waker_camp {
+            if diplomacy.is_allied(entity.camp(), waker_camp) {
                 continue;
             }
             let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
@@ -1294,7 +1307,6 @@ fn fighting_ability_from_profile(
         _ => 50,
     }
 }
-
 /// Look up an entity's endurance from its profile.
 fn endurance_from_profile(
     entity: &Entity,
@@ -1375,11 +1387,12 @@ pub(in crate::engine) fn should_enter_swordfight_after_strike(
     attacker: &Entity,
     victim: &Entity,
     profile_manager: &crate::profiles::ProfileManager,
+    diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> bool {
     if victim.is_civilian() {
         return false;
     }
-    if !victim.camp().is_hostile_to(attacker.camp()) {
+    if !diplomacy.is_hostile(victim.camp(), attacker.camp()) {
         return false;
     }
     let attacker_is_robin = matches!(attacker, Entity::Pc(pc) if pc.pc.robin);

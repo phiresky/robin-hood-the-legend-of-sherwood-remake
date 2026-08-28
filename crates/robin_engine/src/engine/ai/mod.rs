@@ -1316,6 +1316,22 @@ pub(super) fn build_detectable_enemies_for(
     self_id: EntityId,
     snapshot: &[PotentialDetectable],
 ) -> Vec<Detectable> {
+    build_detectable_enemies_for_with(
+        &crate::diplomacy::DiplomacyState::default(),
+        self_camp,
+        self_is_civilian,
+        self_id,
+        snapshot,
+    )
+}
+
+pub(super) fn build_detectable_enemies_for_with(
+    diplomacy: &crate::diplomacy::DiplomacyState,
+    self_camp: Camp,
+    self_is_civilian: bool,
+    self_id: EntityId,
+    snapshot: &[PotentialDetectable],
+) -> Vec<Detectable> {
     let mut out = Vec::new();
     for pd in snapshot {
         if pd.id == self_id {
@@ -1328,18 +1344,14 @@ pub(super) fn build_detectable_enemies_for(
         if pd_is_civilian {
             continue;
         }
-        let is_detectable = if self_is_civilian {
-            // Bonhomie considers Royalist soldiers for Lacklandist
-            // civilians in its outer loop, but AddDetectable's civilian arm
-            // rejects them. Both civilian camps therefore retain PCs only.
-            pd.is_pc && (!matches!(self_camp, Camp::Custom(_)) || self_camp.is_hostile_to(pd.camp))
-        } else {
-            // Malignity (enemy soldier) AddDetectable cases:
-            // - Royalist (Good) soldier → detects enemy (Lacklandist) soldiers.
-            // - Lacklandist (Evil) soldier → detects good (Royalist) soldiers
-            //   AND PCs.
-            (pd.is_pc || pd.is_soldier) && self_camp.is_hostile_to(pd.camp)
-        };
+        let is_detectable = crate::ai_detectable_filter::should_add_enemy_detectable_with(
+            diplomacy,
+            self_camp,
+            !self_is_civilian,
+            pd.is_pc,
+            pd.is_soldier,
+            pd.camp,
+        );
         if is_detectable {
             out.push(Detectable {
                 element: Some(pd.id),
@@ -3600,6 +3612,7 @@ pub(super) fn lookup_primary_target_metadata(
 /// eligible.
 pub(super) fn build_friend_swap_candidates(
     entities: &Entities,
+    diplomacy: &crate::diplomacy::DiplomacyState,
     doors: &[crate::gate::Door],
     sequence_manager: &crate::sequence::SequenceManager,
     me_id: impl Into<crate::element::EntityId>,
@@ -3614,7 +3627,7 @@ pub(super) fn build_friend_swap_candidates(
         if friend_id == me_id {
             continue;
         }
-        if s.soldier.cached_camp != my_camp {
+        if !diplomacy.is_allied(s.soldier.cached_camp, my_camp) {
             continue;
         }
         let substate = s.npc.ai_substate();
@@ -4475,6 +4488,7 @@ fn refresh_prepared_entity_views(
         .stamps
         .retain(|index, _| live_slots.get(*index as usize).copied().unwrap_or(false));
     views.building_authorizations = engine.building_authorizations_for_ai_views();
+    views.diplomacy = engine.mission_domain.diplomacy.clone();
     rebuilt
 }
 
@@ -4738,7 +4752,7 @@ impl EngineInner {
         };
         let Some((opposing_camp, opposing_ids)) = fighter_ids
             .iter()
-            .filter(|(camp, ids)| source_camp.is_hostile_to(**camp) && !ids.is_empty())
+            .filter(|(camp, ids)| self.camps_are_hostile(source_camp, **camp) && !ids.is_empty())
             .max_by_key(|(_, ids)| ids.len())
             .map(|(camp, ids)| (*camp, ids.clone()))
         else {
@@ -5328,7 +5342,7 @@ impl EngineInner {
         // `pick_door` closure doesn't need to borrow `self.world.entities`
         // (which is re-borrowed mutably after door selection).
         let dangerous_house_sectors: std::collections::HashSet<u32> =
-            if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
+            if self.camps_are_hostile(ctx.camp, crate::element::Camp::Royalists) {
                 self.ai
                     .global
                     .houses

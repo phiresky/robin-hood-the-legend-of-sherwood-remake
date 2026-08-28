@@ -321,6 +321,9 @@ macro_rules! native_registry {
             IsActorOutOfAction => ("bool", [("Actor", "actActor")], lua);
             SetPatrolShouldRun => ("void", [("Actor", "actPatrolLeader"), ("bool", "bShouldRun")], lua);
             SequenceReveal => ("int", [("Actor", "actActor")], lua);
+            GetActorAllegiance => ("int", [("Actor", "actActor")], lua);
+            GetDiplomacyRelationship => ("int", [("int", "iFirst"), ("int", "iSecond")], lua);
+            SetDiplomacyRelationship => ("void", [("int", "iFirst"), ("int", "iSecond"), ("int", "iRelationship")], lua);
             }
         }
     };

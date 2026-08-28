@@ -22,6 +22,25 @@ pub fn should_add_enemy_detectable(
     target_is_soldier: bool,
     target_camp: Camp,
 ) -> bool {
+    should_add_enemy_detectable_with(
+        &crate::diplomacy::DiplomacyState::default(),
+        npc_camp,
+        npc_is_soldier,
+        target_is_pc,
+        target_is_soldier,
+        target_camp,
+    )
+}
+
+/// Authoritative variant using the mission relationship matrix.
+pub fn should_add_enemy_detectable_with(
+    diplomacy: &crate::diplomacy::DiplomacyState,
+    npc_camp: Camp,
+    npc_is_soldier: bool,
+    target_is_pc: bool,
+    target_is_soldier: bool,
+    target_camp: Camp,
+) -> bool {
     if npc_camp == Camp::Error || target_camp == Camp::Error {
         tracing::warn!(
             ?npc_camp,
@@ -39,9 +58,16 @@ pub fn should_add_enemy_detectable(
         // allegiance instead of inheriting Original's all-PCs-are-Royalist
         // assumption.
         return target_is_pc
-            && (!matches!(npc_camp, Camp::Custom(_)) || npc_camp.is_hostile_to(target_camp));
+            && (!matches!(npc_camp, Camp::Custom(_))
+                || diplomacy.is_hostile(npc_camp, target_camp));
     }
-    (target_is_soldier || target_is_pc) && npc_camp.is_hostile_to(target_camp)
+    if target_is_soldier
+        && !diplomacy.npc_faction_wars()
+        && (matches!(npc_camp, Camp::Custom(_)) || matches!(target_camp, Camp::Custom(_)))
+    {
+        return false;
+    }
+    (target_is_soldier || target_is_pc) && diplomacy.is_hostile(npc_camp, target_camp)
 }
 
 #[cfg(test)]

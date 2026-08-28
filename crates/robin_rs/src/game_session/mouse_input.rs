@@ -1534,6 +1534,8 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.enable_timed_missions = engine.sim_config().enable_timed_missions;
                 gameplay_config.enable_dynamic_ambience =
                     engine.sim_config().enable_dynamic_ambience;
+                gameplay_config.diplomacy = engine.sim_config().diplomacy;
+                gameplay_config.npc_faction_wars = engine.sim_config().npc_faction_wars;
                 *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
                     event_pump,
                     renderer,
