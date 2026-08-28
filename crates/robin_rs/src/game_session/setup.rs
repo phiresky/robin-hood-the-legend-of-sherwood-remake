@@ -2189,6 +2189,7 @@ pub(super) fn load_level_and_sprite_bank(
                 format!("{ambiance:?} background map load failed: {error}"),
             )
         })?;
+        drop(update);
         if let Some(decoded) = decoded {
             let decoded_dims = (decoded.width as f32, decoded.height as f32);
             if bg_pixel_dims == (0.0, 0.0) || decoded_dims == bg_pixel_dims {
