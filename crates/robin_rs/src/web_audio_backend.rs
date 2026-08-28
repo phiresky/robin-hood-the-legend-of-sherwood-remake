@@ -1,17 +1,23 @@
-//! Browser-native playback; decoded PCM remains browser-owned.
+//! Browser-native playback; encoded audio and decoded PCM remain browser-owned.
 
 use crate::sound::AudioBackend;
-use futures::{StreamExt as _, TryStreamExt as _};
-use js_sys::Uint8Array;
-use std::{cell::RefCell, collections::HashMap, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode, StereoPannerNode};
 
 struct BrowserAudio {
     context: AudioContext,
-    boot: HashMap<String, AudioBuffer>,
-    mission: HashMap<String, AudioBuffer>,
+    /// Decoded buffers are keyed by content URL, not by the legacy path the
+    /// game used to request them. This makes aliases share one decode too.
+    buffers: HashMap<String, AudioBuffer>,
+    loading: HashSet<String>,
+    failed: HashSet<String>,
+    generation: u64,
 }
 
 thread_local! {
@@ -24,95 +30,108 @@ fn with_audio<R>(f: impl FnOnce(&mut BrowserAudio) -> R) -> Result<R, String> {
         if slot.is_none() {
             *slot = Some(BrowserAudio {
                 context: AudioContext::new().map_err(|e| format!("create AudioContext: {e:?}"))?,
-                boot: HashMap::new(),
-                mission: HashMap::new(),
+                buffers: HashMap::new(),
+                loading: HashSet::new(),
+                failed: HashSet::new(),
+                generation: 0,
             });
         }
         Ok(f(slot.as_mut().expect("initialized above")))
     })
 }
 
-fn aliases(path: &str) -> Vec<String> {
-    let path = path
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_start_matches('/')
-        .to_ascii_lowercase();
-    let stem = path.rfind('.').map_or(path.as_str(), |dot| &path[..dot]);
-    let mut bases = vec![stem.to_owned()];
-    let data_relative = stem
-        .rfind("/data/")
-        .map(|offset| &stem[offset + "/data/".len()..])
-        .or_else(|| stem.strip_prefix("data/"));
-    if let Some(relative) = data_relative {
-        bases.push(relative.to_owned());
+async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
+    let context = with_audio(|audio| audio.context.clone())?;
+    let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_owned())?;
+    let response = JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|error| format!("fetch {url}: {error:?}"))?
+        .dyn_into::<web_sys::Response>()
+        .map_err(|_| format!("fetch {url}: result is not a Response"))?;
+    if !response.ok() {
+        return Err(format!("fetch {url}: HTTP {}", response.status()));
     }
-    let sound_relative_base = data_relative.unwrap_or(stem);
-    for prefix in ["sounds/exclamations/", "sounds/"] {
-        if let Some(relative) = sound_relative_base.strip_prefix(prefix) {
-            bases.push(relative.to_owned());
-        }
-    }
-    let mut result = Vec::new();
-    for base in bases {
-        for extension in ["opus", "wav", "ogg"] {
-            result.push(format!("{base}.{extension}"));
-        }
-    }
-    result.sort();
-    result.dedup();
-    result
+    let encoded = JsFuture::from(
+        response
+            .array_buffer()
+            .map_err(|error| format!("fetch {url}: arrayBuffer: {error:?}"))?,
+    )
+    .await
+    .map_err(|error| format!("fetch {url}: read body: {error:?}"))?
+    .dyn_into::<js_sys::ArrayBuffer>()
+    .map_err(|_| format!("fetch {url}: body is not an ArrayBuffer"))?;
+    let promise = context
+        .decode_audio_data(&encoded)
+        .map_err(|e| format!("decode {url}: {e:?}"))?;
+    JsFuture::from(promise)
+        .await
+        .map_err(|e| format!("decode {url}: {e:?}"))?
+        .dyn_into::<AudioBuffer>()
+        .map_err(|_| format!("decode {url}: result is not AudioBuffer"))
 }
 
-fn insert(cache: &mut HashMap<String, AudioBuffer>, path: &str, buffer: &AudioBuffer) {
-    for alias in aliases(path) {
-        cache.insert(alias, buffer.clone());
+fn request_buffer(path: &str) -> Option<AudioBuffer> {
+    let asset = robin_assets::shipping_datadir::global()?.remote_audio_asset(Path::new(path))?;
+    let url = asset.url;
+    let (buffer, generation) = with_audio(|audio| {
+        if let Some(buffer) = audio.buffers.get(&url) {
+            return (Some(buffer.clone()), audio.generation);
+        }
+        if audio.loading.contains(&url) || audio.failed.contains(&url) {
+            return (None, audio.generation);
+        }
+        audio.loading.insert(url.clone());
+        (None, audio.generation)
+    })
+    .ok()?;
+    if buffer.is_some() {
+        return buffer;
     }
+
+    let requested_path = path.to_owned();
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = fetch_and_decode(&url).await;
+        let _ = with_audio(|audio| {
+            // A mission transition invalidates in-flight work. In particular,
+            // an old decode must not overwrite the same logical alias in the
+            // newly active catalog.
+            if audio.generation != generation {
+                return;
+            }
+            audio.loading.remove(&url);
+            match result {
+                Ok(buffer) => {
+                    tracing::debug!(path = requested_path, %url, "browser audio ready");
+                    audio.buffers.insert(url, buffer);
+                }
+                Err(error) => {
+                    audio.failed.insert(url.clone());
+                    tracing::warn!(path = requested_path, %url, error, "browser audio load failed");
+                }
+            }
+        });
+    });
+    None
 }
 
-fn lookup(audio: &BrowserAudio, path: &str) -> Option<AudioBuffer> {
-    aliases(path).into_iter().find_map(|key| {
-        audio
-            .mission
-            .get(&key)
-            .or_else(|| audio.boot.get(&key))
-            .cloned()
+/// Legacy adapter while callers stop passing embedded audio bytes. Nothing is
+/// decoded eagerly: cache misses are fetched from the standalone catalog.
+pub async fn preload_boot(_path: &str, _bytes: &[u8]) -> Result<(), String> {
+    Ok(())
+}
+
+pub fn clear_mission() -> Result<(), String> {
+    with_audio(|audio| {
+        audio.generation = audio.generation.wrapping_add(1);
+        audio.buffers.clear();
+        audio.loading.clear();
+        audio.failed.clear();
     })
 }
 
-async fn decode(path: &str, bytes: &[u8]) -> Result<AudioBuffer, String> {
-    let context = with_audio(|audio| audio.context.clone())?;
-    // Copy only the encoded representation into JS; decodeAudioData owns PCM.
-    let encoded = Uint8Array::new_with_length(bytes.len() as u32);
-    encoded.copy_from(bytes);
-    let promise = context
-        .decode_audio_data(&encoded.buffer())
-        .map_err(|e| format!("decode {path}: {e:?}"))?;
-    JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("decode {path}: {e:?}"))?
-        .dyn_into::<AudioBuffer>()
-        .map_err(|_| format!("decode {path}: result is not AudioBuffer"))
-}
-
-pub async fn preload_boot(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let buffer = decode(path, bytes).await?;
-    with_audio(|audio| insert(&mut audio.boot, path, &buffer))
-}
-
-pub async fn replace_mission(entries: Vec<(String, &[u8])>) -> Result<(), String> {
-    const DECODE_CONCURRENCY: usize = 8;
-    let decoded = futures::stream::iter(entries.into_iter().map(|(path, bytes)| async move {
-        decode(&path, bytes).await.map(|buffer| (path, buffer))
-    }))
-    .buffer_unordered(DECODE_CONCURRENCY)
-    .try_collect::<Vec<_>>()
-    .await?;
-    let mut replacement = HashMap::new();
-    for (path, buffer) in decoded {
-        insert(&mut replacement, &path, &buffer);
-    }
-    with_audio(|audio| audio.mission = replacement)
+/// Legacy adapter while mission payload callers stop passing embedded bytes.
+pub async fn replace_mission(_entries: Vec<(String, &[u8])>) -> Result<(), String> {
+    clear_mission()
 }
 
 struct Voice {
@@ -198,6 +217,10 @@ pub struct KiraAudioBackend {
     context: AudioContext,
     channels: Vec<Option<Voice>>,
     music: Option<Voice>,
+    /// `SoundEngine` asks for a music track only once. Keep that request while
+    /// its standalone file is fetched so `take_music_finished`, which is
+    /// polled every tick, can start it as soon as decoding completes.
+    pending_music: Option<(String, bool)>,
     was_music_playing: bool,
     music_volume: u16,
     jingle_channel: Option<usize>,
@@ -210,6 +233,7 @@ impl KiraAudioBackend {
             context: with_audio(|audio| audio.context.clone())?,
             channels: (0..num_channels).map(|_| None).collect(),
             music: None,
+            pending_music: None,
             was_music_playing: false,
             music_volume: 128,
             jingle_channel: None,
@@ -217,11 +241,15 @@ impl KiraAudioBackend {
         })
     }
     fn buffer(&self, path: &str) -> Option<AudioBuffer> {
-        let found = with_audio(|audio| lookup(audio, path)).ok().flatten();
-        if found.is_none() {
-            tracing::warn!(path, "Web Audio sample was not predecoded");
-        }
-        found
+        request_buffer(path)
+    }
+    fn buffer_failed(&self, path: &str) -> bool {
+        let Some(asset) = robin_assets::shipping_datadir::global()
+            .and_then(|shipping| shipping.remote_audio_asset(Path::new(path)))
+        else {
+            return true;
+        };
+        with_audio(|audio| audio.failed.contains(&asset.url)).unwrap_or(true)
     }
     fn free_channel(&self) -> Option<usize> {
         let now = self.context.current_time();
@@ -264,6 +292,24 @@ impl KiraAudioBackend {
                 Err(error) => tracing::warn!(error, "Web Audio resume failed"),
             }
             let _ = context.resume();
+        }
+    }
+    fn start_music_buffer(&mut self, path: &str, buffer: AudioBuffer, looping: bool) -> bool {
+        if let Some(old) = self.music.take() {
+            old.stop();
+        }
+        let volume = (self.music_volume as f32 / 128.0).clamp(0.0, 1.0);
+        match make_voice(&self.context, buffer, looping, 0.0, volume, 0.0) {
+            Ok(voice) => {
+                let _ = self.context.resume();
+                self.music = Some(voice);
+                self.was_music_playing = true;
+                true
+            }
+            Err(error) => {
+                tracing::warn!(path, error, "Web Audio music failed");
+                false
+            }
         }
     }
 }
@@ -324,26 +370,18 @@ impl AudioBackend for KiraAudioBackend {
     }
     fn play_music(&mut self, path: &str, looping: bool) -> bool {
         let Some(buffer) = self.buffer(path) else {
-            return false;
+            if self.buffer_failed(path) {
+                return false;
+            }
+            self.pending_music = Some((path.to_owned(), looping));
+            self.was_music_playing = true;
+            return true;
         };
-        if let Some(old) = self.music.take() {
-            old.stop();
-        }
-        let volume = (self.music_volume as f32 / 128.0).clamp(0.0, 1.0);
-        match make_voice(&self.context, buffer, looping, 0.0, volume, 0.0) {
-            Ok(voice) => {
-                let _ = self.context.resume();
-                self.music = Some(voice);
-                self.was_music_playing = true;
-                true
-            }
-            Err(error) => {
-                tracing::warn!(path, error, "Web Audio music failed");
-                false
-            }
-        }
+        self.pending_music = None;
+        self.start_music_buffer(path, buffer, looping)
     }
     fn halt_music(&mut self) {
+        self.pending_music = None;
         if let Some(music) = self.music.take() {
             music.stop();
         }
@@ -370,6 +408,23 @@ impl AudioBackend for KiraAudioBackend {
         self.music_volume
     }
     fn take_music_finished(&mut self) -> bool {
+        if let Some((path, looping)) = self.pending_music.clone() {
+            if let Some(buffer) = self.buffer(&path) {
+                self.pending_music = None;
+                if !self.start_music_buffer(&path, buffer, looping) {
+                    self.was_music_playing = false;
+                    return true;
+                }
+            } else if self.buffer_failed(&path) {
+                self.pending_music = None;
+                if let Some(old) = self.music.take() {
+                    old.stop();
+                }
+                self.was_music_playing = false;
+                return true;
+            }
+            return false;
+        }
         let playing = self
             .music
             .as_ref()
@@ -433,28 +488,7 @@ impl Drop for KiraAudioBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::aliases;
-    #[test]
-    fn opus_aliases_legacy_names_and_relative_speech() {
-        let got = aliases("Data/Sounds/Exclamations/Expressions/Line.OPUS");
-        assert!(got.contains(&"data/sounds/exclamations/expressions/line.wav".into()));
-        assert!(got.contains(&"expressions/line.ogg".into()));
-        assert!(got.contains(&"expressions/line.opus".into()));
-    }
-
-    #[test]
-    fn shipped_sound_resolves_bare_legacy_request() {
-        let inserted = aliases("Sounds/foo.opus");
-        assert!(aliases("foo.wav").iter().any(|key| inserted.contains(key)));
-    }
-
-    #[test]
-    fn shipped_music_resolves_absolute_legacy_request() {
-        let inserted = aliases("Musics/Menu.opus");
-        assert!(
-            aliases("/install/Data/Musics/Menu.wav")
-                .iter()
-                .any(|key| inserted.contains(key))
-        );
-    }
+    // Browser behavior is covered by the wasm smoke test. Legacy-path alias
+    // resolution now belongs to ShippingDatadir::remote_audio_asset and is
+    // tested alongside the manifest rather than duplicated here.
 }

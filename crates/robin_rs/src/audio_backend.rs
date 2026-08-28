@@ -546,7 +546,9 @@ impl AudioBackend for KiraAudioBackend {
 // don't need per-cfg plumbing.
 
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
-pub use crate::web_audio_backend::{KiraAudioBackend, preload_boot, replace_mission};
+pub use crate::web_audio_backend::{
+    KiraAudioBackend, clear_mission, preload_boot, replace_mission,
+};
 
 #[cfg(not(feature = "audio"))]
 pub struct KiraAudioBackend;
