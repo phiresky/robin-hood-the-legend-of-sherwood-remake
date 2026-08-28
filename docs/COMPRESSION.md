@@ -1243,3 +1243,65 @@ the cross-variant path is exercised (unit tests cover the merge/materialize
 order and missing-base error paths). Decode of the whole demo corpus took
 ~110 s single-threaded at this baseline — the decode-speed optimization
 listed in the design section remains the open item before wasm shipping.
+
+## Parallel research results (2026-08-29, subagents)
+
+Four parallel investigations; full data in each probe example.
+
+### Family base topology (`sprite_probe_experiments.rs --topology`) — SHIPPED
+
+Full pairwise real-codec matrix over all 9 families: the lexicographically
+first member is the best star base in only 1 of 9. Best-base stars total
+37,286,493 B vs the naive 38,861,886 B (-4.05% of the family corpus,
+~1.6 MB fullgame). "01"/"02" members are the natural hubs; "04" members are
+uniformly poor bases (smallest standalone entropy, worst predictors).
+Chains beat the best star only for Officier B (-0.85%) and couple the
+dependency closure, so star stays. The converter now selects the base per
+family via a sampled conditional-entropy proxy (H(base|above) +
+sum H(member|base)) instead of name order.
+
+### Sprite coding order (`--order`) — closed
+
+Animation-script first-occurrence order is +0.05..0.14% WORSE than bank-id
+order on all three test characters. The model's information is the 2-D
+neighborhood, not stream position (mirrors the zstd reorder non-result).
+Bank-id order stays (and needs no permutation metadata).
+
+### Mirrored-direction prediction (`--mirror`) — closed
+
+Direction d vs 16-d: only 4.4% (RobinTown) / 12.9% (Knight01) of opposite
+pairs even share dimensions (independent cropping), and on that favorable
+subsample the mirror context is ~1 bit/tile WEAKER than the plain above
+context (3.41 vs 2.44 b/t Knight01; 3.78 vs 2.73 RobinTown) despite 33-46%
+of tiles mirroring exactly: directional lighting breaks bilateral symmetry
+(same root cause as the recolor/video negatives).
+
+### RLE bucket context modeling (`sprite_probe_rle_dict.rs --rle`) — closed
+
+The RLE bucket is 10,134 sprites / 66.8 MB raw, dominated by the 116
+Data/Animations RHS. Pixel-domain PPM (left/above contexts): 16.65 MB total
+vs zstd-19 17.69 MB (-5.9%) but xz -9e 15.56 MB (-12.1% vs zstd) BEATS the
+CM by 7%: animation frames carry real LZ matches an order-2 neighborhood
+model can't see, and the literals are high-entropy dither (4.1 bits/px).
+Actionable: an xz/LZMA entropy stage for animation/patch chunks (~2.1 MB)
+instead of a bespoke pixel CM. Also surfaced: the animation RHS files carry
+8,023 VQ sprites (65 MB packed) — schema v9's generic chunk path already
+blob-codes those.
+
+### Family-shared dictionaries (`--dict`) — closed
+
+Family dictionaries are essentially disjoint: 0.7-3.8% exact tile overlap
+with the base, 75-85% of the rest >= 3 channel-steps away. Unified-id
+cross-variant coding is uniformly +0.07..0.31% worse (near-pure permutation,
+which the PPM is invariant to, plus a bigger alphabet); shared-dictionary
+storage saves only ~6 KB raw per family. No format change.
+
+### Schema v9 + SEE, integrated demo numbers
+
+After merging the v9 wiring with the SEE codec (`demo_leicester_ecoste`,
+raw maps, windowLog 30): Data/ 51,169,682 (v8 no-rank) -> 50,397,716 (v8
+ranked) -> 43,070,372 (v9, PPMC codec) -> **42,422,327 B (v9 + SEE)**;
+VQ blob bytes 16,796,145 -> 16,148,418 (-3.9%); corpus decode 110 s -> 55 s
+with the fast paths. verify-shipping: all 65,058 sprites / 146,584,025
+pixels identical to the source bank. The demo carries no complete variant
+families; fullgame conversion exercises the cross-variant path.
