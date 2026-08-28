@@ -4762,7 +4762,7 @@ impl EngineInner {
                 let coalition = fighter_ids
                     .iter()
                     .filter(|(ally, _)| {
-                        self.camps_are_allied(**camp, **ally)
+                        self.camps_are_allied(*camp, **ally)
                             && self.camps_are_hostile(source_camp, **ally)
                     })
                     .flat_map(|(_, ids)| ids.iter().copied())

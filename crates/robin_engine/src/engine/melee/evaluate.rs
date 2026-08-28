@@ -304,6 +304,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .unwrap_or(50);
@@ -316,6 +317,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
@@ -1505,6 +1507,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
@@ -1555,6 +1558,7 @@ impl EngineInner {
                     opp,
                     &assets.profile_manager,
                     sim.config().difficulty,
+                    &self.mission_domain.diplomacy,
                 );
                 opponents_ability = opponents_ability.saturating_add(fa);
             } else {
@@ -1681,6 +1685,7 @@ impl EngineInner {
                     victim,
                     &assets.profile_manager,
                     sim.config().difficulty,
+                    &self.mission_domain.diplomacy,
                 );
                 let is_swordfighting = victim
                     .human_data()
@@ -2323,6 +2328,7 @@ impl EngineInner {
                 victim_entity,
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
@@ -3051,6 +3057,7 @@ impl EngineInner {
                         entity,
                         &assets.profile_manager,
                         self.control.sim_config.difficulty,
+                        &self.mission_domain.diplomacy,
                     );
                     if friend_ability < MIN_CAPACITY_LEARNING_BY_LOOKING {
                         return false;
@@ -3079,6 +3086,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .unwrap_or(0);

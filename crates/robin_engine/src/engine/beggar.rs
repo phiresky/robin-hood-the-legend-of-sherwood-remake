@@ -103,7 +103,7 @@ pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
     beggar_id: EntityId,
     difficulty: crate::player_profile::DifficultyLevel,
 ) {
-    use crate::element::{Camp, Detectable, DetectableType};
+    use crate::element::{Detectable, DetectableType};
     let eligible: Vec<_> = entities
         .soldiers()
         .filter_map(|(soldier_id, soldier)| {

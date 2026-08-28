@@ -2474,7 +2474,11 @@ impl EngineInner {
         // InstantDetection is camp-wide in the Original: Royalists always
         // commit Enemy sightings, while Lacklandists accumulate in the
         // sleeping/default/wondering states.
-        let viewer_player_aligned = self.is_player_aligned_camp(viewer.camp);
+        // Snapshot the authoritative matrix before mutably borrowing the NPC.
+        // Every relationship decision in this scan must observe one revision.
+        let diplomacy = self.mission_domain.diplomacy.clone();
+        let viewer_player_aligned = diplomacy.is_player_aligned(viewer.camp);
+        let viewer_hostile_to_player = diplomacy.is_hostile_to_player(viewer.camp);
         let instant_detection = viewer_player_aligned
             || !matches!(
                 current_state,
@@ -2728,7 +2732,7 @@ impl EngineInner {
                 // targets before its PC-vs-soldier cadence branch. Keep the
                 // detectable (CleanUpDetectables only removes dead enemies),
                 // but clear both live visibility and the cached sample.
-                if self.is_hostile_to_player_camp(viewer.camp) && target.hollow_man {
+                if viewer_hostile_to_player && target.hollow_man {
                     det.seen_now = false;
                     det.last_visibility = 0.0;
                     continue;
@@ -2737,7 +2741,7 @@ impl EngineInner {
                 // Original's Lacklandist PC-only blip and guard gates run
                 // before the PC cadence decision. They invalidate the cached
                 // sample even when this frame would otherwise reuse it.
-                if self.is_hostile_to_player_camp(viewer.camp)
+                if viewer_hostile_to_player
                     && target.is_pc
                     && viewer_blipped
                     && !viewer_inside_building
@@ -2746,7 +2750,7 @@ impl EngineInner {
                     det.last_visibility = 0.0;
                     continue;
                 }
-                if self.is_hostile_to_player_camp(viewer.camp)
+                if viewer_hostile_to_player
                     && target.is_pc
                     && !det.seen_last_frame
                     && target.guarded
@@ -2762,7 +2766,7 @@ impl EngineInner {
                     ai_vision::DETECTION_FREQUENCY_ENEMY_PC
                 };
                 let gate_open = modified_frame.is_multiple_of(frequency)
-                    || (self.is_hostile_to_player_camp(viewer.camp) && lacklandist_refresh_always);
+                    || (viewer_hostile_to_player && lacklandist_refresh_always);
                 tracing::trace!(
                     observer = ?npc_id,
                     target = ?target_id,
@@ -2955,17 +2959,16 @@ impl EngineInner {
                 // refresh gate — the cached `last_visibility` value
                 // already has it baked in.
                 let mut visibility = if gate_open {
-                    let detection_speed_factor =
-                        if target.is_pc && self.is_hostile_to_player_camp(viewer.camp) {
-                            let detection_speed_pct = if is_forest_level {
-                                target.detection_speed_in_forest
-                            } else {
-                                target.detection_speed_in_city
-                            };
-                            0.01 * detection_speed_pct as f32
+                    let detection_speed_factor = if target.is_pc && viewer_hostile_to_player {
+                        let detection_speed_pct = if is_forest_level {
+                            target.detection_speed_in_forest
                         } else {
-                            1.0
+                            target.detection_speed_in_city
                         };
+                        0.01 * detection_speed_pct as f32
+                    } else {
+                        1.0
+                    };
                     frequency as f32 * visibility_raw * detection_speed_factor
                 } else {
                     // Closed-gate frame — reuse the cached post-
@@ -2989,7 +2992,7 @@ impl EngineInner {
                 // Once the flag is true the NPC sees through future
                 // beggar disguises permanently (per-NPC, not global).
                 visibility = apply_enemy_beggar_disguise_with_relationship(
-                    self.is_hostile_to_player_camp(viewer.camp),
+                    viewer_hostile_to_player,
                     target.is_pc,
                     &mut got_beggar_trick,
                     target.order_type,
@@ -3317,7 +3320,7 @@ impl EngineInner {
                 // side when the NPC is Royalist, but for Lacklandists
                 // PCs are enemies — skip). For now, only add NPCs.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || !self.camps_are_allied(ss.camp, my_camp) {
+                    if ss.id == npc_id || !diplomacy.is_allied(ss.camp, my_camp) {
                         continue;
                     }
                     if !ss.able_to_fight {
@@ -3435,7 +3438,7 @@ impl EngineInner {
                     else {
                         continue;
                     };
-                    if !self.camps_are_allied(claimant.camp, my_camp) || !claimant.able_to_fight {
+                    if !diplomacy.is_allied(claimant.camp, my_camp) || !claimant.able_to_fight {
                         continue;
                     }
                     if Some(crate::ai::AiEntityHandle::new(target)) == enemy_ai.base.primary_target
@@ -3452,7 +3455,7 @@ impl EngineInner {
                 tick_data.camp_soldiers.clear();
                 tick_data.camp_unconscious_soldiers.clear();
                 for (ko_id, ko_camp, knocked_out_in_money_fight) in unconscious_soldiers {
-                    if *ko_id == npc_id || !self.camps_are_allied(*ko_camp, my_camp) {
+                    if *ko_id == npc_id || !diplomacy.is_allied(*ko_camp, my_camp) {
                         continue;
                     }
                     tick_data.camp_unconscious_soldiers.push(
@@ -3468,7 +3471,7 @@ impl EngineInner {
                 // and MaybeOfficerSeesMeFighting; eager LOS here would fire
                 // O(N²) raycasts and perturb the cache on idle ticks.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || !self.camps_are_allied(ss.camp, my_camp) {
+                    if ss.id == npc_id || !diplomacy.is_allied(ss.camp, my_camp) {
                         continue;
                     }
                     let ss_position = crate::ai::Position {
@@ -3628,7 +3631,7 @@ impl EngineInner {
                     // walking / running / charging the same target.
                     for ss in soldier_snapshots {
                         if ss.id.index() == me_handle
-                            || !self.camps_are_allied(ss.camp, my_camp)
+                            || !diplomacy.is_allied(ss.camp, my_camp)
                             || !ss.able_to_fight
                             || !ss.is_swordfighting
                         {
@@ -4357,7 +4360,6 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
-        let viewer_hostile_to_player = self.is_hostile_to_player_camp(viewer.camp);
         let target_obstacle = target_obstacle_handle.map(|handle| {
             sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
                 panic!(
@@ -4534,6 +4536,7 @@ impl EngineInner {
         let view_radius = viewer.view_radius;
         let eye_status = viewer.eye_status;
         let current_state = viewer.current_state;
+        let viewer_hostile_to_player = self.is_hostile_to_player_camp(viewer.camp);
         let view_forward = viewer.view_forward;
         let real_half_aperture = viewer.real_half_aperture;
         let view_lean_out = viewer.view_lean_out;

@@ -1027,7 +1027,7 @@ impl EngineInner {
     /// that is tied or unconscious.
     ///
     pub fn score_tied_unconscious_soldiers(&self) -> i32 {
-        use crate::element::{Actor as _, Camp, Human as _};
+        use crate::element::{Actor as _, Human as _};
         const SCORE_SOLDIER_TIED_AND_UNCONSCIOUS: i32 = 70;
 
         let mut score = 0;

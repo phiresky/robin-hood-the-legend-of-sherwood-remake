@@ -1993,6 +1993,7 @@ fn tick_arrows_matching(
         fn projectile_victim_prefilter_allows(
             shooter: Option<&ShooterTraits>,
             victim: &HumanSnapshot,
+            diplomacy: Option<&crate::diplomacy::DiplomacyState>,
         ) -> bool {
             let Some(shooter) = shooter else {
                 return true;
@@ -2064,7 +2065,7 @@ fn tick_arrows_matching(
                 if Some(snap.id) == shooter_id {
                     continue;
                 }
-                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap) {
+                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap, diplomacy) {
                     continue;
                 }
                 let anchor = if uses_eyes_anchor {

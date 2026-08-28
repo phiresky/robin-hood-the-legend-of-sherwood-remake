@@ -159,7 +159,7 @@ pub(crate) fn record_test_sword_damage_observation(
     });
 }
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
-use crate::element::{ActionState, Camp, Entity, EntityId, EyeStatus, Posture};
+use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
 
 /// Original's RECEIVE_HIT_DAMAGE sends EVENT_GOTHIT only through the NPC
@@ -462,6 +462,7 @@ impl EngineInner {
                 atk,
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = is_rank_soldier(atk, &assets.profile_manager);
             let def_to_atk = direction_to(&self.world.entities, victim_id, attacker);

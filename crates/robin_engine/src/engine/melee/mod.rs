@@ -1279,26 +1279,26 @@ fn get_max_life_points(entity: &Entity) -> i16 {
 }
 
 /// Look up an entity's fighting ability from its character/soldier profile.
-/// For Lacklandist soldiers, applies the supplied engine difficulty scaling.
+/// Soldiers hostile to the current player coalition receive the configured
+/// enemy-difficulty scaling; allied and neutral soldiers retain their base
+/// profile capacity.
 fn fighting_ability_from_profile(
     entity: &Entity,
     profile_manager: &crate::profiles::ProfileManager,
     difficulty: crate::player_profile::DifficultyLevel,
+    diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> u16 {
     match entity {
         Entity::Pc(pc) => profile_manager
             .get_character(pc.pc.profile_index)
-            .map(|p| p.fighting)
+            .map(|profile| profile.fighting)
             .unwrap_or(50),
-        Entity::Soldier(s) => {
+        Entity::Soldier(soldier) => {
             let base = profile_manager
-                .get_soldier(s.soldier.soldier_profile_index)
-                .map(|p| p.fighting)
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .map(|profile| profile.fighting)
                 .unwrap_or(50);
-            if s.soldier
-                .cached_camp
-                .is_hostile_to(crate::element::Camp::Royalists)
-            {
+            if diplomacy.is_hostile_to_player(soldier.soldier.cached_camp) {
                 difficulty.rules().enemy_fighting(base, 100)
             } else {
                 base

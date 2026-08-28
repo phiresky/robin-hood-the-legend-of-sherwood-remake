@@ -1604,6 +1604,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 ) as u32
             })
             .unwrap_or(0);
@@ -1614,6 +1615,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 ) as u32
             })
             .unwrap_or(0);

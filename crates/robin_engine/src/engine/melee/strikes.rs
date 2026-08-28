@@ -2949,6 +2949,7 @@ impl EngineInner {
                 }),
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = ai.soldier_profile_rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
