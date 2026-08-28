@@ -473,6 +473,19 @@ impl ViewportState {
         self.clip_view();
     }
 
+    /// Mirror the shared script/director camera while a cutscene owns input.
+    pub fn adopt_director_camera(&mut self, view_position: MapPoint, zoom_factor: f32) {
+        assert!(
+            zoom_factor.is_finite() && zoom_factor > 0.0,
+            "director camera supplied invalid zoom factor {zoom_factor}"
+        );
+        self.old_view_position = self.view_position;
+        self.old_zoom_factor = self.zoom_factor;
+        self.view_position = view_position;
+        self.zoom_factor = zoom_factor;
+        self.clip_view();
+    }
+
     pub fn sound_listen_point(&self) -> MapPoint {
         MapPoint::new(
             self.view_position.x + self.screen_size.x * 0.5 / self.zoom_factor,

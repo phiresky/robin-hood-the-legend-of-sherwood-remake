@@ -2680,6 +2680,7 @@ struct CharacterRosterPatch {
     initial_character: String,
     rescue_characters: Vec<String>,
     rescue_target_scripts: Vec<String>,
+    rescue_directions: Vec<u32>,
     #[serde(rename = "descriptor_mission")]
     _descriptor_mission: String,
 }
@@ -2756,6 +2757,27 @@ fn apply_character_roster_patch(
             ),
         });
     }
+    if patch.rescue_directions.len() != patch.rescue_characters.len() {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!(
+                "{path} supplies {} rescue directions for {} rescue characters",
+                patch.rescue_directions.len(),
+                patch.rescue_characters.len()
+            ),
+        });
+    }
+    if let Some(direction) = patch
+        .rescue_directions
+        .iter()
+        .copied()
+        .find(|direction| !(12..=15).contains(direction))
+    {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!("{path} rescue direction {direction} is outside 12..=15"),
+        });
+    }
 
     let initial_profile = character_profile_index_by_filename(profiles, &patch.initial_character)?;
     let rescue_profiles = patch
@@ -2763,18 +2785,21 @@ fn apply_character_roster_patch(
         .iter()
         .map(|filename| character_profile_index_by_filename(profiles, filename))
         .collect::<Result<Vec<_>, _>>()?;
-    for (rescue, profile) in level
+    for ((rescue, profile), direction) in level
         .mission
         .pcs_to_rescue
         .iter_mut()
         .zip(rescue_profiles.iter().copied())
+        .zip(patch.rescue_directions.iter().copied())
     {
         rescue.profile_index = profile.0;
+        rescue.direction = direction;
     }
-    for (script_class, profile_index) in patch
+    for ((script_class, profile_index), direction) in patch
         .rescue_target_scripts
         .iter()
         .zip(rescue_profiles.iter().copied())
+        .zip(patch.rescue_directions.iter().copied())
     {
         let matches = level
             .mission
@@ -2806,6 +2831,7 @@ fn apply_character_roster_patch(
         target.filename = profile.filename.clone();
         target.profile_name = profile.profile_name.clone();
         target.action = crate::order::OrderType::BeingTied as u32;
+        target.direction = direction;
         target.character_sprite = true;
     }
     let beam = level

@@ -152,12 +152,18 @@ fn entity_display_name(
                 }
                 return Some(kind.profile_name().to_string());
             }
-            // Mod-added PCs deliberately have no retail CharacterKind. Their
-            // authored character profile is the stable portrait label.
+            // Mod-added PCs deliberately have no retail CharacterKind. Keep
+            // their visible label separate from the RHS-internal profile key.
             assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
-                .map(|profile| profile.profile_name.clone())
+                .map(|profile| {
+                    if profile.display_name.is_empty() {
+                        profile.profile_name.clone()
+                    } else {
+                        profile.display_name.clone()
+                    }
+                })
         }
         Entity::Soldier(s) => {
             if s.soldier.cached_camp == Camp::Royalists

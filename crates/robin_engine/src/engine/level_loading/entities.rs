@@ -484,7 +484,11 @@ impl EngineInner {
                             } else if kind.is_none() {
                                 // TODO(mod-localization): allow profile patches
                                 // to provide locale-specific display names.
-                                profile.profile_name.clone()
+                                if profile.display_name.is_empty() {
+                                    profile.profile_name.clone()
+                                } else {
+                                    profile.display_name.clone()
+                                }
                             } else {
                                 return Err(EngineError::MissionLevelStage {
                                     stage: "rescue PCs",

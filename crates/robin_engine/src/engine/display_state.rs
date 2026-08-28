@@ -38,6 +38,7 @@ impl DrawOrder {
 impl EngineInner {
     // ─── Rendering ───────────────────────────────────────────────
 
+    #[cfg(test)]
     pub(super) fn with_camera_display_state<R>(
         &mut self,
         f: impl FnOnce(&mut Self, &mut CameraDisplayState) -> R,
@@ -46,12 +47,6 @@ impl EngineInner {
         let result = f(self, &mut display);
         self.feedback.cutscene_camera.display = display;
         result
-    }
-
-    /// Advance the script/director camera display state stored inside
-    /// the engine snapshot.
-    pub(super) fn tick_camera_display_state(&mut self) -> u32 {
-        self.with_camera_display_state(|engine, display| engine.tick_display_state(display))
     }
 
     /// Apply an engine state request against the internal camera display

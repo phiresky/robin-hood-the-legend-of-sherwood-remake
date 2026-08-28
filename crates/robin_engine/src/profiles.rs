@@ -625,6 +625,10 @@ pub struct CharacterProfile {
     pub index: u32,
     pub filename: String,
     pub profile_name: String,
+    /// Host-facing label for mod-added characters. Retail profiles leave this
+    /// empty and continue to use their localized `CharacterKind` name.
+    #[serde(default)]
+    pub display_name: String,
     pub alternative_profile_name: String,
     pub valid_alternative_profile: bool,
     pub vip: bool,
@@ -1404,6 +1408,7 @@ impl CharacterProfile {
             priority,
             filename,
             profile_name,
+            display_name: String::new(),
             alternative_profile_name,
             valid_alternative_profile,
             vip,

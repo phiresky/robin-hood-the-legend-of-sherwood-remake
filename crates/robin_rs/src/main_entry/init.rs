@@ -550,6 +550,7 @@ struct CharacterProfileAddition {
     template: String,
     filename: String,
     profile_name: String,
+    display_name: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -663,6 +664,7 @@ fn apply_soldier_profile_patch(
         profile.index = profiles.characters.len() as u32;
         profile.filename = addition.filename;
         profile.profile_name = addition.profile_name;
+        profile.display_name = addition.display_name;
         profile.alternative_profile_name.clear();
         profile.valid_alternative_profile = false;
         profiles.characters.push(profile);
@@ -921,6 +923,34 @@ mod tests {
         assert_eq!(profiles.soldiers[1].profile_name, "Blue Cavalier");
         assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
         assert!(!profiles.soldiers[1].hostile);
+    }
+
+    #[test]
+    fn soldier_profile_patch_keeps_character_rhs_key_separate_from_display_name() {
+        let mut profiles = ProfileManager::new();
+        profiles.characters.push(engine_profiles::CharacterProfile {
+            filename: "RobinHood".to_owned(),
+            profile_name: "Robin des Bois".to_owned(),
+            ..Default::default()
+        });
+        let patch = SoldierProfilePatch {
+            characters: vec![CharacterProfileAddition {
+                template: "RobinHood".to_owned(),
+                filename: "Guisbourne".to_owned(),
+                profile_name: "Guisbourne".to_owned(),
+                display_name: "Guy of Guisbourne".to_owned(),
+            }],
+            soldiers: Vec::new(),
+        };
+
+        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
+
+        assert_eq!(profiles.characters.len(), 2);
+        assert_eq!(profiles.characters[0].profile_name, "Robin des Bois");
+        assert!(profiles.characters[0].display_name.is_empty());
+        assert_eq!(profiles.characters[1].filename, "Guisbourne");
+        assert_eq!(profiles.characters[1].profile_name, "Guisbourne");
+        assert_eq!(profiles.characters[1].display_name, "Guy of Guisbourne");
     }
 
     #[test]

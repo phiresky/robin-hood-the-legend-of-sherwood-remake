@@ -2498,7 +2498,11 @@ impl EngineInner {
             }
         }
 
-        let skip_render = self.tick_camera_display_state();
+        // `perform_frame_hourglass` temporarily moves the authoritative
+        // camera display state into this argument. Advance that exact value;
+        // taking `cutscene_camera.display` again here would tick a fresh
+        // default and then overwrite it when the outer value is restored.
+        let skip_render = self.tick_display_state(display);
 
         // Original's portrait refresh mirrors these fields from canonical
         // profile/status/interface state. Event-driven open, burn, and
