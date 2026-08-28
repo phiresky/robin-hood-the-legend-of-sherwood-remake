@@ -297,4 +297,37 @@ mod tests {
             TradeOutcome::Rejected(TradeRejectReason::InsufficientStock { available: 1 })
         );
     }
+
+    #[test]
+    fn disabled_location_and_overflow_rejections_are_atomic() {
+        let (mut disabled, assets) = sherwood_engine();
+        disabled.control.sim_config.sherwood_trading = false;
+        disabled.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        assert_eq!(stored_stock(&disabled.world.entities, Action::Bow), 6);
+        assert_eq!(
+            disabled.feedback.pending_side_effects.trade_receipts[0].outcome,
+            TradeOutcome::Rejected(TradeRejectReason::TradingDisabled)
+        );
+
+        let (mut outside, assets) = sherwood_engine();
+        outside.mission_domain.campaign.current_mission_idx = None;
+        outside.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        assert_eq!(stored_stock(&outside.world.entities, Action::Bow), 6);
+        assert_eq!(
+            outside.feedback.pending_side_effects.trade_receipts[0].outcome,
+            TradeOutcome::Rejected(TradeRejectReason::NotInSherwood)
+        );
+
+        let (mut overflow, assets) = sherwood_engine();
+        overflow
+            .mission_domain
+            .campaign
+            .set_value(CampaignValue::Ransom, i32::MAX);
+        overflow.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        assert_eq!(stored_stock(&overflow.world.entities, Action::Bow), 6);
+        assert_eq!(
+            overflow.feedback.pending_side_effects.trade_receipts[0].outcome,
+            TradeOutcome::Rejected(TradeRejectReason::CurrencyOverflow)
+        );
+    }
 }
