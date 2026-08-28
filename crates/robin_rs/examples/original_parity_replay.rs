@@ -255,6 +255,9 @@ impl TraceSimConfig {
             difficulty: self.difficulty.into(),
             // Original-parity traces deliberately retain the shipped bug.
             fix_hard_reaction_times: false,
+            // Reusable cloaks are an opt-in extension and must never alter
+            // original-parity traces.
+            reusable_cloaks: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,

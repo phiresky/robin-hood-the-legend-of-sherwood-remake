@@ -427,6 +427,7 @@ fn simulation_config_for_level_restart(
 ) -> engine_api::SimConfig {
     if !replay_restart {
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
+        checkpoint.reusable_cloaks = outcome.reusable_cloaks;
     }
     checkpoint
 }
