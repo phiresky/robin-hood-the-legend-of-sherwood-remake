@@ -393,7 +393,7 @@ impl EngineInner {
         if let Some(attacker_id) = attacker_id {
             let attacker = self.expect_entity(attacker_id, "sword-damage diplomacy attacker");
             let victim = self.expect_entity(victim_id, "sword-damage diplomacy victim");
-            if !self.mission_domain.diplomacy.actors_may_fight(
+            if !self.mission_domain.diplomacy.actors_may_damage(
                 attacker.camp(),
                 attacker.is_pc(),
                 victim.camp(),
@@ -1929,7 +1929,7 @@ impl EngineInner {
         if let Some(attacker_id) = attacker_id {
             let attacker = self.expect_entity(attacker_id, "hit-damage diplomacy attacker");
             let victim = self.expect_entity(victim_id, "hit-damage diplomacy victim");
-            if !self.mission_domain.diplomacy.actors_may_fight(
+            if !self.mission_domain.diplomacy.actors_may_damage(
                 attacker.camp(),
                 attacker.is_pc(),
                 victim.camp(),

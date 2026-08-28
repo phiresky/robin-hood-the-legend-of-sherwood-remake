@@ -1380,7 +1380,9 @@ fn estimate_damage_of_sword_strike(
         }
 
         // Friendly fire check.
-        if !ctx.diplomacy.is_hostile(attacker_camp, victim.camp) && !is_drunken {
+        if !ctx.diplomacy.is_hostile(attacker_camp, victim.camp)
+            && (ctx.diplomacy.enabled() || !is_drunken)
+        {
             return (0, -1);
         }
 

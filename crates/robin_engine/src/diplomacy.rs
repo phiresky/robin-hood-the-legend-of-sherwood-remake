@@ -298,6 +298,23 @@ impl DiplomacyState {
             && (self.npc_faction_wars || first_is_pc || second_is_pc)
     }
 
+    /// Final damage gate. With diplomacy enabled, only hostile actors may
+    /// hurt one another. With the extension disabled, retain Original's
+    /// incidental/scripted friendly-fire behavior while still honoring the
+    /// independently configurable NPC-vs-NPC gate.
+    pub fn actors_may_damage(
+        &self,
+        first_camp: Camp,
+        first_is_pc: bool,
+        second_camp: Camp,
+        second_is_pc: bool,
+    ) -> bool {
+        Self::valid_id(first_camp);
+        Self::valid_id(second_camp);
+        (!self.enabled || self.is_hostile(first_camp, second_camp))
+            && (self.npc_faction_wars || first_is_pc || second_is_pc)
+    }
+
     pub fn is_player_aligned(&self, camp: Camp) -> bool {
         if !self.enabled {
             return Self::valid_id(camp) == Camp::ROYALIST_ID;
@@ -697,5 +714,15 @@ mod tests {
         assert!(!state.actors_may_fight(Camp::Lacklandists, false, Camp::Custom(7), false,));
         assert!(state.actors_may_fight(Camp::Royalists, true, Camp::Lacklandists, false,));
         assert!(!state.actors_may_fight(Camp::Royalists, true, Camp::Royalists, true,));
+    }
+
+    #[test]
+    fn disabled_diplomacy_keeps_incidental_friendly_damage_parity() {
+        let mut state = DiplomacyState::default();
+        assert!(state.actors_may_damage(Camp::Royalists, true, Camp::Royalists, false));
+        assert!(!state.actors_may_fight(Camp::Royalists, true, Camp::Royalists, false));
+
+        state.set_enabled(true);
+        assert!(!state.actors_may_damage(Camp::Royalists, true, Camp::Royalists, false));
     }
 }
