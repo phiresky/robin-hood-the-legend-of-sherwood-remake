@@ -311,10 +311,13 @@ mod tests {
     }
 
     #[test]
-    fn old_sim_state_disables_diplomacy_extensions() {
+    fn old_sim_state_preserves_legacy_diplomacy_behavior() {
         let mut serialized = serde_json::to_value(SimConfig::default()).unwrap();
-        serialized.as_object_mut().unwrap().remove("diplomacy");
+        let object = serialized.as_object_mut().unwrap();
+        object.remove("diplomacy");
+        object.remove("npc_faction_wars");
         let config: SimConfig = serde_json::from_value(serialized).unwrap();
         assert!(!config.diplomacy);
+        assert!(config.npc_faction_wars);
     }
 }
