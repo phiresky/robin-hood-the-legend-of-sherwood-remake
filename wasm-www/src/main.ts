@@ -21,7 +21,9 @@ type BuildManifest = {
 };
 
 type RobinWasmModule = {
-    readonly default: (init?: { module_or_path?: string | URL | Request }) => Promise<unknown>;
+    readonly default: (init?: {
+        module_or_path?: string | URL | Request | ArrayBuffer;
+    }) => Promise<unknown>;
     readonly wasm_boot: (datadir: Uint8Array, dataBaseUrl: string) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
@@ -187,8 +189,7 @@ async function main(): Promise<void> {
     logOk(`[selected ${build.source} build ${build.short}]`);
 
     logOk('[loading wasm module]');
-    const wasm = await import(/* @vite-ignore */ `${buildBase}/robin.js`) as RobinWasmModule;
-    await wasm.default({ module_or_path: `${buildBase}/robin_bg.wasm` });
+    const wasm = await loadWasmModule(buildBase, build.short !== 'local', build.source === 'latest');
 
     logOk('[wasm module ready, fetching datadir]');
 
@@ -219,6 +220,68 @@ async function main(): Promise<void> {
             installTimeline(replayTimeline, rpc);
         }
     }
+}
+
+async function loadWasmModule(
+    buildBase: string,
+    preferPrecompressed: boolean,
+    noCache: boolean,
+): Promise<RobinWasmModule> {
+    const jsUrl = `${buildBase}/robin.js`;
+    const wasmUrl = `${buildBase}/robin_bg.wasm`;
+    const cache: RequestCache = noCache ? 'no-cache' : 'force-cache';
+
+    // GitHub Pages serves checked-in `.gz` files as opaque gzip downloads,
+    // without a Content-Encoding header. Decompress those in the browser so
+    // the large wasm module does not cross the network uncompressed. Local
+    // development keeps the ordinary URL/import path and its useful source
+    // identity instead of paying for two failed `.gz` probes on every boot.
+    const jsBytes = preferPrecompressed
+        ? await fetchPrecompressed(`${jsUrl}.gz`, cache)
+        : undefined;
+    let wasm: RobinWasmModule;
+    if (jsBytes === undefined) {
+        wasm = await import(/* @vite-ignore */ jsUrl) as RobinWasmModule;
+    } else {
+        const moduleUrl = URL.createObjectURL(new Blob([jsBytes], { type: 'text/javascript' }));
+        try {
+            wasm = await import(/* @vite-ignore */ moduleUrl) as RobinWasmModule;
+        } finally {
+            URL.revokeObjectURL(moduleUrl);
+        }
+    }
+
+    const wasmBytes = preferPrecompressed
+        ? await fetchPrecompressed(`${wasmUrl}.gz`, cache)
+        : undefined;
+    await wasm.default({ module_or_path: wasmBytes ?? wasmUrl });
+    return wasm;
+}
+
+async function fetchPrecompressed(
+    url: string,
+    cache: RequestCache,
+): Promise<ArrayBuffer | undefined> {
+    if (typeof DecompressionStream === 'undefined') {
+        return undefined;
+    }
+    const resp = await fetch(url, { cache });
+    if (resp.status === 404) {
+        return undefined;
+    }
+    if (!resp.ok) {
+        throw new Error(`fetch ${url}: HTTP ${resp.status}`);
+    }
+    if (resp.body === null) {
+        throw new Error(`fetch ${url}: response has no body`);
+    }
+    // A conventional host may recognize the suffix and attach
+    // Content-Encoding itself. Fetch has already decoded such a response.
+    if (resp.headers.get('Content-Encoding')?.toLowerCase().includes('gzip') === true) {
+        return await resp.arrayBuffer();
+    }
+    const decompressed = resp.body.pipeThrough(new DecompressionStream('gzip'));
+    return await new Response(decompressed).arrayBuffer();
 }
 
 function installRpcClient(wasm: RobinWasmModule): RobinRpc {

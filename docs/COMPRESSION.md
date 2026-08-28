@@ -83,14 +83,17 @@ saved by interface jxl after sprite trim                        2,435,771 B
 saved vs v2 q80                                                 7,229,849 B
 ```
 
-The browser converter path for the artifact named `v6-web-opus-q80.rhdata.zst` is:
+The canonical browser converter path for the artifact named
+`v6-web-opus-q80.rhdata.zst` is the checked-in wrapper:
 
+```sh
+scripts/build_web_shipping_datadir.sh \
+  datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 ```
-convert_datadir --format shipping \
-  --map-format jxl-q80 \
-  --audio-format opus \
-  --zstd-window-log 30
-```
+
+The wrapper invokes `convert_datadir --format shipping --map-format jxl-q80
+--audio-format opus --zstd-window-log 30` explicitly. This matters because the
+converter's native-oriented defaults retain raw maps and source audio.
 
 Only map quality is lossy. Interface pictures are left in the raw RGB565
 shipping representation so transparent/keyed UI art remains exact. The
