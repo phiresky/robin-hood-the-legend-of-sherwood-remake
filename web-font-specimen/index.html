@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Robin Hood — in-game font specimen</title>
+  <style>
+    @font-face { font-family: "RH Debrief"; src: url("fonts/Debrief.woff2") format("woff2"); }
+    @font-face { font-family: "RH Edit Fields"; src: url("fonts/EditFields.woff2") format("woff2"); }
+    @font-face { font-family: "RH Info Scroll"; src: url("fonts/InfoScroll.woff2") format("woff2"); }
+    @font-face { font-family: "RH Menu Disabled"; src: url("fonts/MenuButtonDisabled.woff2") format("woff2"); }
+    @font-face { font-family: "RH Menu Enabled"; src: url("fonts/MenuButtonEnabled.woff2") format("woff2"); }
+    @font-face { font-family: "RH Scroll"; src: url("fonts/Scroll.woff2") format("woff2"); }
+    @font-face { font-family: "RH Briefing Active"; src: url("fonts/ShortBriefingActive.woff2") format("woff2"); }
+    @font-face { font-family: "RH Briefing Inactive"; src: url("fonts/ShortBriefingInactive.woff2") format("woff2"); }
+    @font-face { font-family: "RH Title"; src: url("fonts/Title.woff2") format("woff2"); }
+    @font-face { font-family: "RH Dialog"; src: url("fonts/dialog.woff2?v=lossless-4") format("woff2"); }
+    @font-face { font-family: "RH Tooltips"; src: url("fonts/tooltips.woff2") format("woff2"); }
+    @font-face { font-family: "RH Arial"; src: url("fonts/arial.woff2") format("woff2"); }
+
+    :root {
+      color-scheme: dark;
+      --ink: #f0e5c7;
+      --muted: #a99e84;
+      --gold: #d5b875;
+      --panel: rgba(27, 25, 22, .92);
+      --line: rgba(213, 184, 117, .22);
+      --scale: 2;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% -10%, rgba(114, 84, 39, .34), transparent 35rem),
+        linear-gradient(rgba(8, 10, 8, .91), rgba(8, 10, 8, .96)),
+        repeating-linear-gradient(95deg, #313526 0 2px, #262b21 2px 7px);
+      font-family: Georgia, serif;
+    }
+
+    main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 54px 0 72px; }
+
+    header { display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: end; margin-bottom: 34px; }
+    .eyebrow { color: var(--gold); font: 700 11px/1.4 Arial, sans-serif; letter-spacing: .19em; text-transform: uppercase; }
+    h1 { max-width: 720px; margin: 8px 0 8px; font: 54px/.98 "RH Title", Georgia, serif; color: #ebcf8c; }
+    .intro { max-width: 700px; margin: 0; color: #bdb299; font-size: 16px; line-height: 1.55; }
+
+    .control { min-width: 210px; padding: 15px 16px; border: 1px solid var(--line); background: rgba(0, 0, 0, .2); }
+    .control label { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 10px; color: var(--muted); font: 700 11px/1 Arial, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    input[type="range"] { width: 100%; accent-color: var(--gold); }
+
+    .note { margin: 0 0 22px; padding: 12px 14px; border-left: 2px solid var(--gold); color: #aaa18d; background: rgba(0, 0, 0, .18); font: 13px/1.5 Arial, sans-serif; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { min-width: 0; padding: 18px 19px 20px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 14px 35px rgba(0, 0, 0, .17); }
+    .card.light { --line: rgba(74, 48, 24, .35); background: linear-gradient(135deg, #e2d2aa, #c7ae78); }
+    .card.light h2 { color: #402b1c; }
+    .card.light .role { color: #735b3e; }
+    .card.light .source { color: #6b5236; }
+    .meta { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+    h2 { margin: 0; color: #d5c49e; font: 700 12px/1.3 Arial, sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+    .role { overflow: hidden; color: #77705f; font: 11px/1.3 Arial, sans-serif; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+    .sample {
+      min-height: calc(var(--native-size) * var(--scale) * 1px + 12px);
+      overflow-wrap: anywhere;
+      color: var(--sample-color, #eee2c5);
+      font-family: var(--face);
+      font-size: calc(var(--native-size) * var(--scale) * 1px);
+      font-kerning: none;
+      font-synthesis: none;
+      font-weight: 400;
+      line-height: 1.12;
+      outline: none;
+      text-rendering: geometricPrecision;
+    }
+    .sample:focus { background: rgba(213, 184, 117, .05); box-shadow: 0 0 0 5px rgba(213, 184, 117, .05); }
+    .source { margin-top: 14px; color: #6f695b; font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    footer { margin-top: 26px; color: #766f60; font: 12px/1.6 Arial, sans-serif; }
+    code { color: #a99d84; }
+
+    @media (max-width: 760px) {
+      main { padding-top: 34px; }
+      header { grid-template-columns: 1fr; align-items: start; }
+      h1 { font-size: 38px; }
+      .control { width: 100%; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">Webfont archive · Latin set</div>
+        <h1>Robin Hood</h1>
+        <p class="intro">Every distinct in-game Latin font asset, losslessly converted to colour WOFF2. Click any specimen to edit it; changes are mirrored across the complete set.</p>
+      </div>
+      <div class="control">
+        <label for="scale"><span>Display scale</span><output id="scale-value">2×</output></label>
+        <input id="scale" type="range" min="1" max="4" step="1" value="2">
+      </div>
+    </header>
+
+    <p class="note">Each original RGB565 colour and 5-bit alpha value is retained in dual OpenType colour representations: nearest-neighbour CBDT/CBLC bitmap strikes for Chromium and exact SVG pixel glyphs for Firefox. Original spacing and baselines are preserved; CJK/SimSun descriptors are intentionally excluded.</p>
+
+    <section class="grid" aria-label="Font specimens">
+      <article class="card" style="--face:'RH Title';--native-size:29;--sample-color:#d8bd79">
+        <div class="meta"><h2>Title</h2><span class="role">MissionTitle</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">Title.bfn · 29 px · 162 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Dialog';--native-size:30;--sample-color:#e7dcc1">
+        <div class="meta"><h2>Dialog</h2><span class="role">Loading · Dialogue</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">dialog.fnt · 30 px · 162 glyphs</div>
+      </article>
+
+      <article class="card light" style="--face:'RH Scroll';--native-size:18;--sample-color:#b8783e">
+        <div class="meta"><h2>Scroll</h2><span class="role">PopupScroll</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">Scroll.bfn · 18 px · 161 glyphs</div>
+      </article>
+
+      <article class="card light" style="--face:'RH Debrief';--native-size:19;--sample-color:#c38b51">
+        <div class="meta"><h2>Debrief</h2><span class="role">Debrief</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">Debrief.bfn · 19 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Info Scroll';--native-size:19;--sample-color:#e1d0a8">
+        <div class="meta"><h2>Info Scroll</h2><span class="role">InfoScroll</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">InfoScroll.bfn · 19 px · 162 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Edit Fields';--native-size:22;--sample-color:#f0deba">
+        <div class="meta"><h2>Edit Fields</h2><span class="role">EditField</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">EditFields.bfn · 22 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Menu Enabled';--native-size:22;--sample-color:#e4bc6d">
+        <div class="meta"><h2>Menu Button Enabled</h2><span class="role">MenuButtonEnabled</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">MenuButtonEnabled.bfn · 22 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Menu Disabled';--native-size:22;--sample-color:#716e64">
+        <div class="meta"><h2>Menu Button Disabled</h2><span class="role">MenuButtonDisabled</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">MenuButtonDisabled.bfn · 22 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Briefing Active';--native-size:13;--sample-color:#f8ed99">
+        <div class="meta"><h2>Briefing Active</h2><span class="role">ActiveShortBriefing</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">ShortBriefingActive.bfn · 13 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Briefing Inactive';--native-size:13;--sample-color:#68a994">
+        <div class="meta"><h2>Briefing Inactive</h2><span class="role">InactiveShortBriefing</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">ShortBriefingInactive.bfn · 13 px · 161 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Tooltips';--native-size:20;--sample-color:#efe6cc">
+        <div class="meta"><h2>Tooltips</h2><span class="role">Default · Tooltips · MenuText · Version</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">tooltips.bfn · 20 px · 162 glyphs</div>
+      </article>
+
+      <article class="card" style="--face:'RH Arial';--native-size:15;--sample-color:#f1e7cd">
+        <div class="meta"><h2>Arial</h2><span class="role">ListDefault · ListFocused · ListSelected</span></div>
+        <div class="sample" contenteditable="true" spellcheck="false">The Legend of Sherwood</div>
+        <div class="source">arial.ttf → arial.woff2 · TrueType</div>
+      </article>
+    </section>
+
+    <footer>Generated from <code>assets/core-datadir/Data/Interface/Fonts</code>. Rebuild with <code>scripts/convert_native_fonts_to_woff2.py</code>.</footer>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const scale = document.querySelector("#scale");
+    const scaleValue = document.querySelector("#scale-value");
+    const samples = [...document.querySelectorAll(".sample")];
+
+    scale.addEventListener("input", () => {
+      root.style.setProperty("--scale", scale.value);
+      scaleValue.value = `${scale.value}×`;
+    });
+
+    samples.forEach(sample => sample.addEventListener("input", event => {
+      const text = event.currentTarget.textContent;
+      samples.forEach(other => {
+        if (other !== event.currentTarget) other.textContent = text;
+      });
+    }));
+  </script>
+</body>
+</html>
