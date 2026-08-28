@@ -97,15 +97,17 @@ fn action_to_quick_phase(action: Action, running: bool) -> QuickAction {
 /// Quick-action phases authored by an interaction's concrete Original call
 /// site rather than by the PC's currently selected portrait action.
 ///
-/// These three paths all arrive through `RHParity::RecordInteraction`, but
-/// their subsequent `AddTitbit` calls deliberately choose their own phase:
+/// These paths all arrive through `RHParity::RecordInteraction`, but their
+/// subsequent `AddTitbit` calls deliberately choose their own phase:
 /// `ManageInputActionBow` uses `RHQUICK_BOW_OK`, while the two PC-on-PC
 /// contextual clicks in `RHElementActorPC::MouseClicked` use `RHQUICK_WALK`.
-/// The latter is true even though the acting PC owns Carry or Jump.
+/// The latter is true even though the acting PC owns Carry or Jump. Untie is
+/// the Rust extension and deliberately records under the existing Tie phase.
 fn recorded_interaction_quick_phase(command: Command) -> Option<QuickAction> {
     match command {
         Command::ShootBow => Some(QuickAction::BowOk),
         Command::TakeCorpse | Command::ClimbUpOnShoulders => Some(QuickAction::Walk),
+        Command::Untie => Some(QuickAction::Tie),
         _ => None,
     }
 }
@@ -1426,6 +1428,9 @@ impl EngineInner {
             }
             SetFixHardReactionTimes { enabled } => {
                 self.control.sim_config.fix_hard_reaction_times = *enabled;
+            }
+            SetUnbindingEnabled { enabled } => {
+                self.control.sim_config.enable_unbinding = *enabled;
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -3293,6 +3298,8 @@ impl EngineInner {
                         | Command::ShootBowOnce
                         | Command::Take
                         | Command::SearchCmd
+                        | Command::TieCmd
+                        | Command::Untie
                 )
             {
                 let element =
@@ -3497,6 +3504,7 @@ impl EngineInner {
                 | Command::TakeCorpse
                 | Command::SearchCmd
                 | Command::TieCmd
+                | Command::Untie
         ) {
             Some((distance as u16) as f32)
         } else {
@@ -3619,6 +3627,7 @@ impl EngineInner {
                 | Command::SearchCmd
                 | Command::SwordstrikeDown
                 | Command::TieCmd
+                | Command::Untie
                 | Command::WakeUp
                 | Command::UseLever
                 | Command::Take
@@ -3762,6 +3771,7 @@ impl EngineInner {
             | Command::SearchCmd
             | Command::SwordstrikeDown
             | Command::TieCmd
+            | Command::Untie
             | Command::Take => {
                 per_command_seek_flags |= MoveFlags::SEEK_IN_BUILDINGS;
             }
@@ -5738,6 +5748,35 @@ fn determine_use_command(
         return None;
     }
 
+    if engine.control.sim_config.enable_unbinding && is_tied && entity.is_npc() && !is_dead {
+        let npc_money = match entity {
+            crate::element::Entity::Soldier(s) => s.npc.money,
+            crate::element::Entity::Civilian(c) => c.npc.money,
+            _ => unreachable!("NPC human interaction target must be soldier or civilian"),
+        };
+        if npc_money != 0
+            && engine.selected_pc_has_contextual_action(
+                assets,
+                Some(pc_id),
+                crate::profiles::Action::Search,
+            )
+            && (!engine.is_entity_vip(assets, entity)
+                || engine
+                    .get_entity(pc_id)
+                    .and_then(|selected| selected.pc_data())
+                    .is_some_and(|pc| pc.robin))
+        {
+            return Some(Command::SearchCmd);
+        }
+        if engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            crate::profiles::Action::Tie,
+        ) {
+            return Some(Command::Untie);
+        }
+    }
+
     if is_dead {
         return Some(Command::SearchCmd);
     }
@@ -5844,7 +5883,7 @@ pub(crate) fn command_action_distance_animation(cmd: Command) -> Option<crate::o
     match cmd {
         Command::StrangleCmd => Some(OrderType::Strangling),
         Command::HealCmd => Some(OrderType::Healing),
-        Command::TieCmd => Some(OrderType::Tying),
+        Command::TieCmd | Command::Untie => Some(OrderType::Tying),
         Command::TakeCorpse => Some(OrderType::TransitionWaitingUprightCarryingCorpse),
         Command::ClimbUpOnShoulders => Some(OrderType::ClimbingUpOnShoulders),
         Command::SearchCmd => Some(OrderType::Searching),
@@ -5867,7 +5906,7 @@ pub(crate) fn interaction_distance(cmd: Command) -> f32 {
     match cmd {
         Command::StrangleCmd => 30.0,
         Command::HealCmd => 35.0,
-        Command::TieCmd => 25.0,
+        Command::TieCmd | Command::Untie => 25.0,
         Command::TakeCorpse => 25.0,
         Command::ClimbUpOnShoulders => 8.0,
         Command::SearchCmd => 25.0,
@@ -8715,6 +8754,7 @@ mod tests {
                 QuickAction::Walk,
             ),
             (Command::ClimbUpOnShoulders, Action::Jump, QuickAction::Walk),
+            (Command::Untie, Action::Tie, QuickAction::Tie),
         ];
 
         for (command, selected_action, expected_phase) in cases {
@@ -9919,6 +9959,138 @@ mod tests {
         assert_eq!(
             engine.choose_use_cursor(&assets, enemy, Some(pc_id)),
             crate::resource_ids::RHMOUSE_DEFAULT
+        );
+    }
+
+    #[test]
+    fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavior() {
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[..2]
+            .copy_from_slice(&[Action::Tie, Action::Search]);
+        let target_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Tied,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            // Script-created tied actors need not have been knocked out.
+            human: HumanData {
+                unconscious: false,
+                ..HumanData::default()
+            },
+            npc: {
+                let mut npc = NpcData::default();
+                npc.money = 12;
+                npc
+            },
+            soldier: SoldierData {
+                cached_camp: Camp::Lacklandists,
+                ..SoldierData::default()
+            },
+        }));
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc_id, target_id),
+            Some(Command::SearchCmd)
+        );
+        assert_eq!(
+            engine.choose_use_cursor(&assets, target_id, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_SEARCH
+        );
+        let search =
+            SequenceElement::new_interaction(1, Command::SearchCmd, Some(pc_id), Some(target_id));
+        assert!(
+            engine.check_sequence_element_validity(&assets, pc_id, &search, true),
+            "a script-authored conscious tied NPC must remain searchable before release"
+        );
+
+        engine
+            .get_entity_mut(target_id)
+            .and_then(Entity::npc_data_mut)
+            .expect("test target is an NPC")
+            .money = 0;
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc_id, target_id),
+            Some(Command::Untie)
+        );
+        assert_eq!(
+            engine.choose_use_cursor(&assets, target_id, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_TIE
+        );
+        let untie =
+            SequenceElement::new_interaction(1, Command::Untie, Some(pc_id), Some(target_id));
+        assert!(engine.check_sequence_element_validity(&assets, pc_id, &untie, true));
+
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
+            Action::NoAction;
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc_id, target_id),
+            None
+        );
+        assert_eq!(
+            engine.choose_use_cursor(&assets, target_id, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_DEFAULT
+        );
+        assert!(!engine.check_sequence_element_validity(&assets, pc_id, &untie, false));
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
+            Action::Tie;
+
+        engine
+            .get_entity_mut(target_id)
+            .expect("test target remains present")
+            .set_posture(Posture::Lying);
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::actor_data_mut)
+            .expect("test owner remains a PC")
+            .active_ability = crate::movement::ActiveAbility {
+            kind: Some(crate::movement::AbilityKind::Untie),
+            done_effect_applied: true,
+            strangle_initialized: false,
+            sequence_id: Some(crate::sequence::SequenceId(9)),
+            element_index: 0,
+            target: Some(target_id),
+            order_id: std::num::NonZeroU32::new(91),
+        };
+        assert!(
+            engine.check_sequence_element_validity(&assets, pc_id, &untie, true),
+            "remaining reversed frames must stay valid after DONE releases the target"
+        );
+
+        engine.control.sim_config.enable_unbinding = false;
+        assert!(
+            engine.check_sequence_element_validity(&assets, pc_id, &untie, true),
+            "a setting edit must not cancel an already accepted release"
+        );
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::actor_data_mut)
+            .expect("test owner remains a PC")
+            .active_ability
+            .clear();
+        engine
+            .get_entity_mut(target_id)
+            .expect("test target remains present")
+            .set_posture(Posture::Tied);
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc_id, target_id),
+            None
+        );
+        assert_eq!(
+            engine.choose_use_cursor(&assets, target_id, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_DEFAULT
+        );
+        assert!(!engine.check_sequence_element_validity(&assets, pc_id, &untie, false));
+        assert!(!engine.check_sequence_element_validity(&assets, pc_id, &search, false));
+    }
+
+    #[test]
+    fn untie_quick_action_uses_tie_phase() {
+        assert_eq!(
+            recorded_interaction_quick_phase(Command::Untie),
+            Some(QuickAction::Tie)
         );
     }
 

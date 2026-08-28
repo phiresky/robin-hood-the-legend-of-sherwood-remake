@@ -444,9 +444,9 @@ pub(crate) fn establish_mission_restart_boundary(
 }
 
 /// Restore construction-time simulation controls for a mission restart while
-/// retaining the profile setting the player deterministically changed during
-/// the just-finished attempt. Replay restarts must instead return to their
-/// exact header config and let the recorded command reapply the edit.
+/// retaining profile settings the player deterministically changed during the
+/// just-finished attempt. Replay restarts must instead return to their exact
+/// header config and let the recorded commands reapply the edits.
 fn simulation_config_for_level_restart(
     mut checkpoint: engine_api::SimConfig,
     outcome: engine_api::SimConfig,
@@ -454,6 +454,7 @@ fn simulation_config_for_level_restart(
 ) -> engine_api::SimConfig {
     if !replay_restart {
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
+        checkpoint.enable_unbinding = outcome.enable_unbinding;
     }
     checkpoint
 }
@@ -1190,6 +1191,10 @@ mod required_state_tests {
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     robin_engine::player_command::PlayerCommand::SetAmountOfSpeaking { amount: 9 }
                         .into(),
+                    robin_engine::player_command::PlayerCommand::SetUnbindingEnabled {
+                        enabled: false,
+                    }
+                    .into(),
                 ])
                 .with_hourglass(false),
             )
@@ -1204,24 +1209,26 @@ mod required_state_tests {
     }
 
     #[test]
-    fn session_restart_preserves_commanded_amount_of_speaking_only() {
+    fn session_restart_preserves_commanded_profile_options() {
         let (checkpoint, outcome) = commanded_level_restart_fixture();
         assert!(matches!(outcome.result, Ok(GameCode::LevelRestart)));
 
         let restarted = simulation_config_for_level_restart(checkpoint, outcome.sim_config, false);
 
         assert_eq!(restarted.amount_of_speaking, 9);
+        assert!(!restarted.enable_unbinding);
         assert!(restarted.highlander2, "other construction config resets");
     }
 
     #[test]
-    fn direct_restart_preserves_commanded_amount_of_speaking_only() {
+    fn direct_restart_preserves_commanded_profile_options() {
         let (checkpoint, outcome) = commanded_level_restart_fixture();
         assert!(matches!(outcome.result, Ok(GameCode::LevelRestart)));
 
         let restarted = simulation_config_for_level_restart(checkpoint, outcome.sim_config, false);
 
         assert_eq!(restarted.amount_of_speaking, 9);
+        assert!(!restarted.enable_unbinding);
         assert!(restarted.highlander2, "direct launch uses its checkpoint");
     }
 
@@ -1234,6 +1241,7 @@ mod required_state_tests {
 
         assert_eq!(restarted, checkpoint);
         assert_eq!(restarted.amount_of_speaking, 3);
+        assert!(restarted.enable_unbinding);
     }
 
     #[test]

@@ -137,6 +137,7 @@ fn path_request_needs_source_extraction(direct_dispatch: bool, source_authorized
 enum ActorPostSeekInteraction {
     Hit,
     Tie,
+    Untie,
 }
 
 /// Identify an actor-owned interaction whose init-time 40-unit validity
@@ -163,6 +164,7 @@ fn actor_post_seek_interaction(
     match element.command {
         crate::element::Command::HitCmd => Some(ActorPostSeekInteraction::Hit),
         crate::element::Command::TieCmd => Some(ActorPostSeekInteraction::Tie),
+        crate::element::Command::Untie => Some(ActorPostSeekInteraction::Untie),
         _ => None,
     }
 }

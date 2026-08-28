@@ -4,6 +4,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
+  to release them, using the rope cursor and the authored tying animation in
+  reverse. Search remains the first contextual action while the NPC carries
+  loot. Untying preserves unconsciousness and concussion so normal recovery
+  remains authoritative, works in Shift queues and replay/multiplayer command
+  streams, and can be disabled under Gameplay to restore shipped behavior.
+
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
@@ -396,7 +403,6 @@ A list of which additional features we have added, which ones we might still wan
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
-- unbind - after you have tied up an enemy you should be able to untie them
 - throw something skill that makes a noise somewhere else so guards run there
 - cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
 - timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time

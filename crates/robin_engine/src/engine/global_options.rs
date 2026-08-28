@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::player_profile::DifficultyLevel;
 
+const fn enabled_by_default() -> bool {
+    true
+}
+
 /// Immutable gameplay configuration copied out of application/profile state.
 ///
 /// This is deliberately separate from [`GlobalOptions`]: filesystem paths,
@@ -32,6 +36,9 @@ pub struct SimConfig {
     // extension existed and therefore preserves the original game's bug.
     #[serde(default)]
     pub fix_hard_reaction_times: bool,
+    /// Enable the post-port player interaction for releasing tied NPCs.
+    #[serde(default = "enabled_by_default")]
+    pub enable_unbinding: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -52,6 +59,7 @@ impl SimConfig {
         Self {
             difficulty,
             fix_hard_reaction_times: true,
+            enable_unbinding: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -187,6 +195,7 @@ mod tests {
     #[test]
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
         assert!(SimConfig::default().fix_hard_reaction_times);
+        assert!(SimConfig::default().enable_unbinding);
     }
 
     #[test]
@@ -197,9 +206,14 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("fix_hard_reaction_times");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("enable_unbinding");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
+        assert!(config.enable_unbinding);
     }
 }

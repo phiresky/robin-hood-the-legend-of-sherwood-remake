@@ -603,7 +603,7 @@ fn get_transition_flags_pc(ctx: &TransitionCtx) -> (EX, CP, EA) {
             EA::empty(),
         ),
         EatCmd | HealCmd | ThrowApple | ThrowStone | ThrowPurse | ThrowWaspNest | ThrowNet
-        | UseLever | UnlockDoor | HitTarget | HandleTarget | TakeTarget | Pay | TieCmd
+        | UseLever | UnlockDoor | HitTarget | HandleTarget | TakeTarget | Pay | TieCmd | Untie
         | StrangleCmd | WhistleCmd => (EX::MUST_BE_WAITING, CP::MUST_BE_UPRIGHT, EA::empty()),
         HideBehindShield => (
             EX::MUST_BE_WAITING,

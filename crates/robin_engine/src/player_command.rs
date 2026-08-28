@@ -959,6 +959,10 @@ pub enum PlayerCommand {
     SetFixHardReactionTimes {
         enabled: bool,
     },
+    /// Toggle the post-port player interaction for releasing tied NPCs.
+    SetUnbindingEnabled {
+        enabled: bool,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input

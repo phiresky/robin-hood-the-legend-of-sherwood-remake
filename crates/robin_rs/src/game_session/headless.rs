@@ -403,7 +403,7 @@ mod tests {
                 target_frame: 0,
                 input: PlayerInput::new(
                     PlayerId(2),
-                    PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+                    PlayerCommand::SetUnbindingEnabled { enabled: false },
                 ),
             })
             .expect("queue current-frame network command");
@@ -438,6 +438,17 @@ mod tests {
         };
 
         mission.run_frame(&crate::main_entry::CliArgs::default());
+        assert!(
+            !mission
+                .runtime
+                .world
+                .view()
+                .manager
+                .engine
+                .sim_config()
+                .enable_unbinding,
+            "network-owned gameplay settings must apply on the admitted frame"
+        );
 
         let checkpoint = mission
             .runtime

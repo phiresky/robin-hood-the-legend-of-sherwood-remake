@@ -162,6 +162,13 @@ pub enum AbilityTickResult {
         seq_id: SequenceId,
         elem_idx: usize,
     },
+    /// PC finished releasing a tied NPC.
+    UntieDone {
+        actor_id: EntityId,
+        target_id: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    },
     /// Friar Tuck finished healing a wounded PC.
     HealDone {
         healer_id: EntityId,
@@ -907,6 +914,75 @@ pub fn begin_tie(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
+    sequence_manager.push_order_on(seq_id, elem_idx, order);
+
+    BeginResult::Started
+}
+
+/// Start releasing a living tied NPC.
+///
+/// The original command enum contains `RHCOMMAND_UNTIE`, but the shipped game
+/// never translated it into a playable action. The Rust extension reuses the
+/// authored tying animation in reverse and applies the posture change only at
+/// its `DONE` boundary.
+pub fn begin_untie(
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    actor_id: EntityId,
+    target_id: EntityId,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    order_id_counter: &mut u32,
+) -> BeginResult {
+    if actor_id == target_id {
+        return BeginResult::Impossible;
+    }
+
+    let target_valid = entities.get(target_id).is_some_and(|target| {
+        target.is_active()
+            && target.is_npc()
+            && !target.is_dead()
+            && target.human_data().is_some()
+            && target.element_data().posture == Posture::Tied
+    });
+    if !target_valid {
+        return BeginResult::Impossible;
+    }
+    let target_pos = entities
+        .get(target_id)
+        .expect("validated untie target disappeared")
+        .element_data()
+        .position_map();
+
+    let Some(actor_entity) = entities.get_mut(actor_id) else {
+        return BeginResult::Impossible;
+    };
+    if actor_entity.is_dead() || !actor_entity.is_pc() {
+        return BeginResult::Impossible;
+    }
+    let Some(actor) = actor_entity.actor_data_mut() else {
+        return BeginResult::Impossible;
+    };
+    if actor.active_ability.is_active() {
+        return BeginResult::Impossible;
+    }
+
+    let order_id = alloc_order_id(order_id_counter);
+    actor.active_ability = ActiveAbility {
+        kind: Some(AbilityKind::Untie),
+        done_effect_applied: false,
+        strangle_initialized: false,
+        sequence_id: Some(seq_id),
+        element_index: elem_idx,
+        target: Some(target_id),
+        order_id: Some(order_id),
+    };
+
+    let mut order = Order::new(OrderType::Tying, target_pos.x, target_pos.y, order_id);
+    order.target_actor = Some(target_id.index());
+    order.antagonist = Some(target_id);
+    order.compute_direction = false;
+    order.reverse = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1879,6 +1955,7 @@ pub(crate) fn ability_order_type(kind: AbilityKind) -> OrderType {
         AbilityKind::Carry => OrderType::TransitionWaitingUprightCarryingCorpse,
         AbilityKind::Drop => OrderType::TransitionCarryingCorpseWaitingUpright,
         AbilityKind::Tie => OrderType::Tying,
+        AbilityKind::Untie => OrderType::Tying,
         AbilityKind::Heal => OrderType::Healing,
         AbilityKind::Whistle => OrderType::Whistling,
         AbilityKind::ThrowNet => OrderType::ThrowingNet,
@@ -1917,7 +1994,12 @@ pub(crate) fn restore_loaded_active_abilities(
         Some(match order.order_type {
             OrderType::TransitionWaitingUprightCarryingCorpse => (AbilityKind::Carry, None, None),
             OrderType::TransitionCarryingCorpseWaitingUpright => (AbilityKind::Drop, None, None),
-            OrderType::Tying => (AbilityKind::Tie, None, None),
+            OrderType::Tying if element.command == Command::TieCmd => {
+                (AbilityKind::Tie, None, None)
+            }
+            OrderType::Tying if element.command == Command::Untie => {
+                (AbilityKind::Untie, None, None)
+            }
             OrderType::Healing | OrderType::Eating if element.command == Command::HealCmd => {
                 (AbilityKind::Heal, None, None)
             }
@@ -2096,6 +2178,28 @@ pub fn tick_ability(
                 actor_id: entity_id,
                 kind,
                 seq_id: ability.sequence_id.expect("Tie ability sequence"),
+                elem_idx: ability.element_index,
+                order_id: ability.order_id,
+            });
+            return results;
+        }
+    }
+    if kind == AbilityKind::Untie && !ability.done_effect_applied {
+        let target_id = ability
+            .target
+            .expect("active Untie ability must retain its antagonist");
+        let target_valid = entities.get(target_id).is_some_and(|target| {
+            target.is_active()
+                && target.is_npc()
+                && !target.is_dead()
+                && target.human_data().is_some()
+                && target.element_data().posture == Posture::Tied
+        });
+        if !target_valid {
+            results.push(AbilityTickResult::Aborted {
+                actor_id: entity_id,
+                kind,
+                seq_id: ability.sequence_id.expect("Untie ability sequence"),
                 elem_idx: ability.element_index,
                 order_id: ability.order_id,
             });
@@ -2389,6 +2493,7 @@ pub fn tick_ability(
             | AbilityKind::Heal
             | AbilityKind::Pay
             | AbilityKind::Tie
+            | AbilityKind::Untie
             | AbilityKind::Eat
             | AbilityKind::ClimbOnShoulders
             | AbilityKind::ThrowApple
@@ -2397,7 +2502,9 @@ pub fn tick_ability(
             | AbilityKind::ThrowWaspNest
             | AbilityKind::ThrowNet
     ) && entity.position_iface_mut().turn();
-    let frame_progression = if matches!(
+    let frame_progression = if kind == AbilityKind::Untie {
+        crate::sprite::FrameProgression::Reversed
+    } else if matches!(
         kind,
         AbilityKind::Hit
             | AbilityKind::Pay
@@ -2589,6 +2696,12 @@ pub fn tick_ability(
             }
         }
         AbilityKind::Tie => AbilityTickResult::TieDone {
+            actor_id: entity_id,
+            target_id: ability.target.unwrap(),
+            seq_id,
+            elem_idx,
+        },
+        AbilityKind::Untie => AbilityTickResult::UntieDone {
             actor_id: entity_id,
             target_id: ability.target.unwrap(),
             seq_id,
@@ -3307,6 +3420,7 @@ mod tests {
     };
     use crate::sequence::SequenceElement;
     use crate::sight_obstacle::ObstacleList;
+    use crate::sprite_script::{SpriteScript, UNMAPPED};
 
     fn launch_ability_element(
         manager: &mut SequenceManager,
@@ -3860,6 +3974,241 @@ mod tests {
         assert_eq!(restored.target, Some(target));
         assert_eq!(restored.order_id, Some(order_id));
         assert!(!restored.done_effect_applied);
+    }
+
+    #[test]
+    fn untie_translation_targets_living_tied_npc_and_reverses_tying_animation() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                ..Default::default()
+            },
+        })));
+        entities.push(Some(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Tied,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData {
+                unconscious: true,
+                ..Default::default()
+            },
+            npc: NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            civilian: CivilianData::default(),
+        })));
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+            1,
+            Command::Untie,
+            Some(owner),
+            Some(target),
+        ));
+        manager.element_in_progress(seq_id, 0);
+        let mut next_order_id = 77;
+
+        assert_eq!(
+            begin_untie(
+                &mut entities,
+                &mut manager,
+                owner,
+                target,
+                seq_id,
+                0,
+                &mut next_order_id,
+            ),
+            BeginResult::Started
+        );
+
+        let ability = &entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability;
+        assert_eq!(ability.kind, Some(AbilityKind::Untie));
+        assert_eq!(ability.target, Some(target));
+        let order = manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        assert_eq!(order.order_type, OrderType::Tying);
+        assert_eq!(order.target_actor, Some(target.index()));
+        assert_eq!(order.antagonist, Some(target));
+        assert!(order.reverse);
+        assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn untie_plays_tying_frames_backwards_through_terminal_completion() {
+        let tying_script = SpriteScript {
+            action_id: OrderType::Tying as u16,
+            action_done: 2,
+            frame_ids: vec![10, 11, 12, 13],
+            delays: vec![0; 4],
+            distances: vec![0; 4],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+            sound_ids: vec![0; 4],
+            ..SpriteScript::default()
+        };
+        let mut conversion = vec![UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[OrderType::Tying as usize] = 0;
+
+        let mut owner_element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            ..Default::default()
+        };
+        owner_element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![tying_script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: owner_element,
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                ..Default::default()
+            },
+        })));
+        entities.push(Some(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Tied,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData {
+                unconscious: true,
+                ..Default::default()
+            },
+            npc: NpcData::default(),
+            civilian: CivilianData::default(),
+        })));
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+            1,
+            Command::Untie,
+            Some(owner),
+            Some(target),
+        ));
+        manager.element_in_progress(seq_id, 0);
+        let mut next_order_id = 1;
+        assert_eq!(
+            begin_untie(
+                &mut entities,
+                &mut manager,
+                owner,
+                target,
+                seq_id,
+                0,
+                &mut next_order_id,
+            ),
+            BeginResult::Started
+        );
+
+        let sim = crate::sim_rng::test_context();
+        assert!(tick_ability(&sim, &mut entities, &manager, owner, false).is_empty());
+        assert_eq!(
+            entities
+                .get(owner)
+                .unwrap()
+                .element_data()
+                .sprite
+                .current_frame,
+            3,
+            "the reverse action must begin on the tying animation's last frame"
+        );
+
+        let done = (0..8).find_map(|_| {
+            tick_ability(&sim, &mut entities, &manager, owner, false)
+                .into_iter()
+                .find(|result| matches!(result, AbilityTickResult::UntieDone { .. }))
+        });
+        assert!(
+            done.is_some(),
+            "reversed Tying must reach its DONE boundary"
+        );
+        entities.get_mut(target).unwrap().untie_human();
+
+        let terminated = (0..8).any(|_| {
+            tick_ability(&sim, &mut entities, &manager, owner, false)
+                .into_iter()
+                .any(|result| matches!(result, AbilityTickResult::Terminated { .. }))
+        });
+        assert!(
+            terminated,
+            "the successful release must play the rest of the reverse animation"
+        );
+        assert_eq!(
+            entities
+                .get(owner)
+                .unwrap()
+                .element_data()
+                .sprite
+                .current_frame,
+            0
+        );
+    }
+
+    #[test]
+    fn loaded_untie_order_restores_untie_latch() {
+        let mut entities = Entities::new();
+        for _ in 0..2 {
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })));
+        }
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::Untie, owner);
+        let order_id = std::num::NonZeroU32::new(42).unwrap();
+        let mut order = Order::new(OrderType::Tying, 12.0, 34.0, order_id);
+        order.antagonist = Some(target);
+        order.target_actor = Some(target.index());
+        order.reverse = true;
+        manager.push_order_on(seq_id, 0, order);
+
+        restore_loaded_active_abilities(&mut entities, &manager);
+
+        let restored = &entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability;
+        assert_eq!(restored.kind, Some(AbilityKind::Untie));
+        assert_eq!(restored.sequence_id, Some(seq_id));
+        assert_eq!(restored.target, Some(target));
+        assert_eq!(restored.order_id, Some(order_id));
     }
 
     #[test]

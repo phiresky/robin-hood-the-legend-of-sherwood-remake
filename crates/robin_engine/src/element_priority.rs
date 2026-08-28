@@ -107,6 +107,7 @@ fn pc_branch(ctx: ActorPriorityContext, elem: &SequenceElement) -> SequencePrior
         | Command::TakeTarget
         | Command::Pay
         | Command::TieCmd
+        | Command::Untie
         | Command::StrangleCmd
         | Command::TakeCorpse
         | Command::DropCorpse => SequencePriority::Normal,
