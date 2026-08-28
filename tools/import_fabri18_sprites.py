@@ -62,6 +62,107 @@ ARCHIVES = (
     ),
 )
 
+# Original profile.cpf progression is blue (00), yellow (01), orange (02),
+# red (03), black (04), then separate green ally records. Some cavalry and
+# cape-officer filenames are duplicated or incorrect in the retail CPF, so
+# those tiers use the runtime's explicit `<identifier>__<cpf-index>` form.
+STAT_TEMPLATES = {
+    "Archer": ("archer00", "archer01", "archer02", "archer03", "archer04", "archer05__17"),
+    "Cavalryman": (
+        "knight02__52",
+        "knight01",
+        "knight02__54",
+        "knight03",
+        "knight02__56",
+        "knight02__57",
+    ),
+    "Crossbowman": (
+        "crossbowman00",
+        "crossbowman01",
+        "crossbowman02",
+        "crossbowman03",
+        "crossbowman04",
+        "crossbowman05__41",
+    ),
+    "Halberdier": ("guard_a00", "guard_a01", "guard_a02", "guard_a03", "guard_a04", "guard_a05__5"),
+    "Knight": ("soldier_b00", "soldier_b01", "soldier_b02", "soldier_b03", "soldier_b04", "soldier_b05__29"),
+    "Lancer": ("guard_b00", "guard_b01", "guard_b02", "guard_b03", "guard_b04", "guard_b05__35"),
+    "Officer": (
+        "officier_b00",
+        "officier_b01",
+        "officier_b02",
+        "officier_b03",
+        "officier_b04",
+        "officer05__23",
+    ),
+    "OfficerCape": (
+        "officer02__63",
+        "officer02__64",
+        "officer02__65",
+        "officer03",
+        "officer04",
+        "officer05__23",
+    ),
+    "Swordsman": (
+        "soldier_a00",
+        "soldier_a01",
+        "soldier_a02",
+        "soldier_a03",
+        "soldier_a04",
+        "soldier_a05__11",
+    ),
+}
+
+# The two complete blue sets extend the bottom of the retail ladder. Royal
+# Purple extends it one tier beyond black; New Sprite and White retain their
+# existing red-tier balance because no progression was specified for them.
+ARCHIVE_STAT_TIERS = {
+    "BlueV2": 0,
+    "DarkBlue": 1,
+    "NewSprite": 3,
+    "White": 3,
+    "RoyalPurple": 5,
+    "CavalryBlue": 0,
+    "CavalryBlack": 4,
+    "CavalryGreen": "green",
+    "OfficerGreen": "green",
+    "OfficerCapeBlue": 0,
+    "OfficerCapeYellow": 1,
+}
+
+
+def profile_addition(archive: Archive, unit_key: str) -> dict:
+    unit = UNITS[unit_key]
+    filename = f"Fabri18 {archive.slug} {unit_key}"
+    tier = ARCHIVE_STAT_TIERS[archive.slug]
+    templates = STAT_TEMPLATES[unit_key]
+    if tier == "green":
+        template = templates[5]
+        progression_from = None
+    elif tier == 5:
+        template = templates[4]
+        progression_from = templates[3]
+    else:
+        template = templates[tier]
+        progression_from = None
+    addition = {
+        "template": template,
+        "filename": filename,
+        "display_name": f"Fabri18 {archive.label} {unit.label}",
+        "hostile": False,
+    }
+    if progression_from is not None:
+        addition["progression_from"] = progression_from
+    return addition
+
+
+def all_profile_additions() -> list[dict]:
+    return [
+        profile_addition(archive, unit_key)
+        for archive in ARCHIVES
+        for unit_key in archive.units
+    ]
+
 
 def parse_rhs_bank_ids(path: Path) -> tuple[int, list[list[list[int]]]]:
     data = memoryview(path.read_bytes())
@@ -285,7 +386,19 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, default=Path("mods/fabri18-sprite-gallery"))
     parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument(
+        "--profiles-only",
+        action="store_true",
+        help="refresh only the generated soldier profile patch",
+    )
     args = parser.parse_args()
+    if args.profiles_only:
+        patch = args.output / "Data/Configuration/soldier-profiles.patch.json"
+        if not patch.is_file():
+            raise RuntimeError(f"missing generated profile patch: {patch}")
+        patch.write_text(json.dumps({"soldiers": all_profile_additions()}, indent=2) + "\n")
+        print(f"Refreshed profile stats for {len(all_profile_additions())} profiles")
+        return 0
     if args.preview_only:
         additions = json.loads(
             (args.output / "Data/Configuration/soldier-profiles.patch.json").read_text()
@@ -336,14 +449,7 @@ def main() -> int:
                     bank_ids,
                     archive_images,
                 )
-                additions.append(
-                    {
-                        "template": unit.template,
-                        "filename": filename,
-                        "display_name": f"Fabri18 {label}",
-                        "hostile": False,
-                    }
-                )
+                additions.append(profile_addition(archive, unit_key))
                 previews.append((label, preview))
     write_gallery(args.output, additions, previews)
     print(f"Imported {len(additions)} new soldier profiles into {args.output}")

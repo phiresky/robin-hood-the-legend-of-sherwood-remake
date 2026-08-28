@@ -74,6 +74,14 @@ def main() -> int:
         identifiers = {identifier(filename) for filename in filenames}
         if len(identifiers) != len(filenames):
             raise RuntimeError(f"duplicate normalized profile identifier in {patch_path}")
+        for addition in additions:
+            for field in ("template", "progression_from"):
+                reference = addition.get(field)
+                if reference is not None and reference not in retail_identifiers:
+                    raise RuntimeError(
+                        f"{patch_path}: {field} uses unknown or ambiguous retail "
+                        f"profile {reference!r}"
+                    )
 
         level_files = list((root / "Data/Levels").glob("*.level.json"))
         if not level_files:

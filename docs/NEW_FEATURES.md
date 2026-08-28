@@ -366,6 +366,10 @@ A list of which additional features we have added, which ones we might still wan
 - Overlay mods can append soldier profiles through
   `Data/Configuration/soldier-profiles.patch.json` without replacing the
   retail CPF profile table.
+- Added profiles may specify `progression_from` alongside their `template` to
+  extrapolate one additional combat-stat tier from two adjacent retail tiers.
+  This supports elite variants beyond the original black-guard ceiling while
+  retaining each unit role's established progression.
 - Readable soldier identifiers use normalized CPF filenames. When the retail
   CPF repeats a filename, hackable levels retain the original numeric identity
   with `<name>__<cpf-index>` (for example `archer05__47`) instead of silently

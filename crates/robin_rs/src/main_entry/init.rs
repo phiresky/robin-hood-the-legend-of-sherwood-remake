@@ -556,12 +556,79 @@ struct CharacterProfileAddition {
 #[serde(deny_unknown_fields)]
 struct SoldierProfileAddition {
     template: String,
+    /// Optional preceding colour tier. When present, the new profile starts
+    /// from `template` and extrapolates one more step of the original combat
+    /// stat progression (`template + (template - progression_from)`).
+    #[serde(default)]
+    progression_from: Option<String>,
     filename: String,
     #[serde(default)]
     profile_name: Option<String>,
     display_name: String,
     #[serde(default)]
     hostile: Option<bool>,
+}
+
+fn resolve_soldier_profile_template(
+    profiles: &ProfileManager,
+    reference: &str,
+) -> Result<engine_profiles::SoldierProfile, String> {
+    let mut exact = profiles
+        .soldiers
+        .iter()
+        .filter(|profile| profile.filename == reference);
+    if let Some(profile) = exact.next() {
+        if exact.next().is_none() {
+            return Ok(profile.clone());
+        }
+    }
+
+    profiles.soldier_idx_by_identifier(reference).map(|index| {
+        profiles
+            .get_soldier(index)
+            .expect("resolved soldier profile index disappeared")
+            .clone()
+    })
+}
+
+fn extrapolate_progressive_stat(previous: u16, current: u16) -> u16 {
+    let next = i32::from(current) * 2 - i32::from(previous);
+    next.clamp(0, i32::from(u16::MAX)) as u16
+}
+
+fn extrapolate_capacity(previous: u16, current: u16) -> u16 {
+    extrapolate_progressive_stat(previous, current).min(100)
+}
+
+fn extrapolate_soldier_progression(
+    profile: &mut engine_profiles::SoldierProfile,
+    previous: &engine_profiles::SoldierProfile,
+) -> Result<(), String> {
+    if profile.rank != previous.rank
+        || profile.rider != previous.rider
+        || profile.heavy != previous.heavy
+        || profile.pathfinder_index != previous.pathfinder_index
+        || profile.hth_weapon_id != previous.hth_weapon_id
+        || profile.shooting_weapon_id != previous.shooting_weapon_id
+    {
+        return Err(format!(
+            "progression profiles {:?} and {:?} are different soldier archetypes",
+            previous.filename, profile.filename
+        ));
+    }
+
+    profile.life_point = extrapolate_progressive_stat(previous.life_point, profile.life_point);
+    // Original treats these as 0..=100 capacities. In particular,
+    // `RHartificialmalignity.cpp` computes `100 - courage` and
+    // `100 - intelligence`; exceeding 100 would underflow its UWORD math.
+    profile.intelligence = extrapolate_capacity(previous.intelligence, profile.intelligence);
+    profile.courage = extrapolate_capacity(previous.courage, profile.courage);
+    profile.initiative = extrapolate_capacity(previous.initiative, profile.initiative);
+    profile.pride = extrapolate_capacity(previous.pride, profile.pride);
+    profile.shooting = extrapolate_capacity(previous.shooting, profile.shooting);
+    profile.fighting = extrapolate_capacity(previous.fighting, profile.fighting);
+    profile.endurance = extrapolate_capacity(previous.endurance, profile.endurance);
+    Ok(())
 }
 
 fn apply_soldier_profile_patch(
@@ -612,16 +679,12 @@ fn apply_soldier_profile_patch(
                 addition.filename
             ));
         }
-        let mut templates = profiles
-            .soldiers
-            .iter()
-            .filter(|profile| profile.filename == addition.template);
-        let mut profile = templates
-            .next()
-            .cloned()
-            .ok_or_else(|| format!("template {:?} does not exist", addition.template))?;
-        if templates.next().is_some() {
-            return Err(format!("template {:?} is ambiguous", addition.template));
+        let mut profile = resolve_soldier_profile_template(profiles, &addition.template)
+            .map_err(|message| format!("template {:?}: {message}", addition.template))?;
+        if let Some(previous_reference) = addition.progression_from.as_deref() {
+            let previous = resolve_soldier_profile_template(profiles, previous_reference)
+                .map_err(|message| format!("progression_from {previous_reference:?}: {message}"))?;
+            extrapolate_soldier_progression(&mut profile, &previous)?;
         }
         profile.filename = addition.filename;
         if let Some(profile_name) = addition.profile_name {
@@ -840,6 +903,7 @@ mod tests {
             characters: Vec::new(),
             soldiers: vec![SoldierProfileAddition {
                 template: "Knight03".to_owned(),
+                progression_from: None,
                 filename: "Knight00".to_owned(),
                 profile_name: Some("Blue Cavalier".to_owned()),
                 display_name: "Blue Cavalier".to_owned(),
@@ -857,6 +921,87 @@ mod tests {
         assert_eq!(profiles.soldiers[1].profile_name, "Blue Cavalier");
         assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
         assert!(!profiles.soldiers[1].hostile);
+    }
+
+    #[test]
+    fn soldier_profile_patch_extrapolates_an_elite_tier_from_original_progression() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Soldier B03".to_owned(),
+            life_point: 135,
+            intelligence: 95,
+            courage: 95,
+            pride: 80,
+            fighting: 90,
+            endurance: 95,
+            rank: engine_profiles::ProfileRank::Knight,
+            hth_weapon_id: 17,
+            ..Default::default()
+        });
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Soldier B04".to_owned(),
+            life_point: 145,
+            intelligence: 100,
+            courage: 100,
+            pride: 90,
+            fighting: 100,
+            endurance: 100,
+            rank: engine_profiles::ProfileRank::Knight,
+            hth_weapon_id: 17,
+            ..Default::default()
+        });
+        let patch = SoldierProfilePatch {
+            characters: Vec::new(),
+            soldiers: vec![SoldierProfileAddition {
+                template: "soldier_b04".to_owned(),
+                progression_from: Some("soldier_b03".to_owned()),
+                filename: "Fabri18 RoyalPurple Knight".to_owned(),
+                profile_name: None,
+                display_name: "Fabri18 Royal Purple Knight".to_owned(),
+                hostile: Some(false),
+            }],
+        };
+
+        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
+
+        let elite = &profiles.soldiers[2];
+        assert_eq!(elite.life_point, 155);
+        assert_eq!(elite.intelligence, 100);
+        assert_eq!(elite.courage, 100);
+        assert_eq!(elite.pride, 100);
+        assert_eq!(elite.fighting, 100);
+        assert_eq!(elite.endurance, 100);
+        assert!(!elite.hostile);
+    }
+
+    #[test]
+    fn soldier_profile_patch_accepts_an_explicit_duplicate_identifier() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Knight02".to_owned(),
+            life_point: 105,
+            ..Default::default()
+        });
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Knight02".to_owned(),
+            life_point: 145,
+            ..Default::default()
+        });
+        let patch = SoldierProfilePatch {
+            characters: Vec::new(),
+            soldiers: vec![SoldierProfileAddition {
+                template: "knight02__1".to_owned(),
+                progression_from: None,
+                filename: "Fabri18 CavalryBlack Cavalryman".to_owned(),
+                profile_name: None,
+                display_name: "Fabri18 Cavalry Black Cavalryman".to_owned(),
+                hostile: Some(false),
+            }],
+        };
+
+        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
+
+        assert_eq!(profiles.soldiers[2].life_point, 145);
     }
 
     #[test]
