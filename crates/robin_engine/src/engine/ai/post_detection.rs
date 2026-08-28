@@ -213,7 +213,7 @@ impl EngineInner {
             )
         });
         assert!(
-            entity.npc_data().is_some(),
+            entity.ai_actor_data().is_some(),
             "post-detection owner {} has no NPC data",
             npc_id.index()
         );
@@ -721,7 +721,7 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-                let npc = entity.npc_data().unwrap_or_else(|| {
+                let npc = entity.ai_actor_data().unwrap_or_else(|| {
                     panic!(
                         "shadow-event receiver {} lost its NPC state before Think",
                         npc_id.index()
@@ -769,7 +769,7 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-                let npc = entity.npc_data().unwrap_or_else(|| {
+                let npc = entity.ai_actor_data().unwrap_or_else(|| {
                     panic!(
                         "shadow-event receiver {} lost its NPC state after Think",
                         npc_id.index()
@@ -989,7 +989,7 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-            let npc = entity.npc_data().unwrap_or_else(|| {
+            let npc = entity.ai_actor_data().unwrap_or_else(|| {
                 panic!(
                     "entity {} has no NPC data for live Enemy-list reconstruction",
                     npc_id.index()

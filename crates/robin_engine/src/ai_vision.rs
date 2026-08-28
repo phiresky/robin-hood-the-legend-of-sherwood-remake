@@ -31,7 +31,7 @@
 //! then checking opaque blockers on that smaller candidate list.
 
 use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
-use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
+use crate::element::{ActionState, AiActorData, EntityId, EyeStatus, Posture};
 use crate::order::OrderType;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO, ObstacleHandle};
 use crate::sight_obstacle::ObstacleList;
@@ -1600,7 +1600,7 @@ pub struct RefreshViewContext {
 /// defensive reset inside the `LookToTheLeft` / `LookToTheRight` arm
 /// of [`refresh_view_look`] still clears a stale look-status the
 /// moment the animation is no longer playing.
-pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
+pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
     // Symptom therapy: unconscious/tied/dead NPCs that somehow have
     // a non-closed status get forced to Closed.
     if npc.eye_status != EyeStatus::DieOrGetUnconscious
@@ -1781,24 +1781,24 @@ pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
 }
 
 /// Sets the transition flag when the status actually changes.
-pub fn set_view_status(npc: &mut NpcData, status: EyeStatus) {
+pub fn set_view_status(npc: &mut AiActorData, status: EyeStatus) {
     npc.view_transition = npc.eye_status != status;
     npc.eye_status = status;
 }
 
-pub fn focus_entity(npc: &mut NpcData, target: EntityId) {
+pub fn focus_entity(npc: &mut AiActorData, target: EntityId) {
     npc.follow_target = Some(target);
     npc.eye_status = EyeStatus::Follow;
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
 }
 
-pub fn focus_point(npc: &mut NpcData, point: GroundPoint) {
+pub fn focus_point(npc: &mut AiActorData, point: GroundPoint) {
     npc.stare_point = point;
     npc.eye_status = EyeStatus::Stare;
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
 }
 
-pub fn unfocus(npc: &mut NpcData) {
+pub fn unfocus(npc: &mut AiActorData) {
     npc.eye_status = EyeStatus::LookForward;
     npc.view_half_angle_range = NORMAL_HALF_ANGLE_RANGE;
     npc.follow_target = None;
@@ -1806,7 +1806,7 @@ pub fn unfocus(npc: &mut NpcData) {
 
 /// Common handler for `LookForward`, `LookToTheLeft`, `LookToTheRight`,
 /// and `ViewconeGrow` (after the grow step).
-fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy: f32) {
+fn refresh_view_look(npc: &mut AiActorData, ctx: &RefreshViewContext, vdx: f32, vdy: f32) {
     // Per-status angle goal + animation validation.
     let angle_goal = match npc.eye_status {
         EyeStatus::LookForward | EyeStatus::ViewconeGrow => 0.0f32,
@@ -1863,7 +1863,7 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 }
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
-fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
+fn refresh_view_stare(npc: &mut AiActorData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -2746,8 +2746,8 @@ mod tests {
 
     // ─── refresh_view behavioural tests ──────────────────────────
 
-    fn default_npc() -> NpcData {
-        NpcData {
+    fn default_npc() -> AiActorData {
+        AiActorData {
             eye_status: EyeStatus::LookForward,
             view_direction: [1.0, 0.0], // facing east (sector 4)
             direction_old: 4,

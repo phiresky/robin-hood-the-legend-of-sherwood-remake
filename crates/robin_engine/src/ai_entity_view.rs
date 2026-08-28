@@ -83,7 +83,8 @@ pub struct AiEntityView {
     pub direction: u16,
     /// Standing / crouching / etc.
     pub posture: Posture,
-    /// Defaults to [`Camp::default()`] (Neutral) for non-human entities.
+    /// Uses [`Camp::Error`] for non-human entities; hostility queries involving
+    /// those views warn and treat the invalid pair as non-hostile.
     pub camp: Camp,
 
     pub is_pc: bool,
@@ -527,7 +528,7 @@ pub fn entity_view_from_entity(
     let (kind, camp, is_pc, is_robin, is_vip, is_beggar, is_child) = match entity {
         Entity::Pc(pc) => (
             EntityKind::Pc,
-            Camp::Royalists,
+            pc.pc.cached_camp,
             true,
             pc.pc.robin,
             // Conservatively flag only Robin as VIP, matching the
@@ -1007,6 +1008,34 @@ fn authoritative_initial_position(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pc_view_preserves_authored_allegiance() {
+        let entity = Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                cached_camp: Camp::Custom(7),
+                ..Default::default()
+            },
+        });
+
+        let view = entity_view_from_entity(
+            &entity,
+            1,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+
+        assert_eq!(view.camp, Camp::Custom(7));
+    }
 
     #[test]
     fn detached_alert_path_remains_visible_to_other_ai() {

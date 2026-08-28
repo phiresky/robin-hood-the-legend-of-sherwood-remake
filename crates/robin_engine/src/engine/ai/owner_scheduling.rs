@@ -17,7 +17,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.drain_self_stimuli_for_npc(sim, npc_id, assets);
         }
@@ -133,13 +133,13 @@ impl EngineInner {
             let stimulus = crate::ai::Stimulus::from_queued_self(queued_stimulus);
             if owner_local_no_forecast {
                 match self.world.entities.get(npc_id) {
-                    Some(Entity::Soldier(_)) => {
+                    Some(entity) if entity.enemy_ai().is_some() => {
                         let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
                         self.dispatch_filtered_stimulus_without_forecast(
                             sim, assets, npc_id, &stimulus, &ctx, &tick_data,
                         );
                     }
-                    Some(Entity::Civilian(_)) => {
+                    Some(entity) if entity.friendly_ai().is_some() => {
                         self.dispatch_filtered_friendly_stimulus_without_forecast(
                             sim, assets, npc_id, &stimulus, &ctx,
                         );
@@ -1191,8 +1191,8 @@ impl EngineInner {
         // The16thFrame uses bits 4..5 to reduce some work to every
         // 64th frame, so substituting `frame % 16` ran that work 4x.
         let register_number = entity
-            .npc_data()
-            .unwrap_or_else(|| panic!("periodic entity {} is not an NPC", npc_id.index()))
+            .ai_actor_data()
+            .unwrap_or_else(|| panic!("periodic entity {} is not an AI owner", npc_id.index()))
             .register_number;
         let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
         if (frame_phase & 15) != 0 {
@@ -1235,7 +1235,7 @@ impl EngineInner {
         // without ForecastDestinationForIA, so resolving door exits here
         // would consume unrelated BuildingExitGate RNG merely because an
         // idle soldier reached its staggered periodic slot.
-        let tick_data = if matches!(entity, Entity::Soldier(_)) {
+        let tick_data = if entity.enemy_ai().is_some() {
             self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets)
         } else {
             crate::ai::AiPerTickData::stub()
@@ -1275,11 +1275,9 @@ impl EngineInner {
             });
 
         match entity {
-            Entity::Soldier(s) => {
-                let has_stuck_suffix = s
-                    .npc
-                    .ai_brain
-                    .enemy_mut()
+            Entity::Pc(_) | Entity::Soldier(_) => {
+                let has_stuck_suffix = entity
+                    .enemy_ai_mut()
                     .unwrap_or_else(|| {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
@@ -1322,7 +1320,7 @@ impl EngineInner {
                 // don't need it.
                 let _ = &tick_data;
             }
-            _ => unreachable!("post-detection owner must remain an NPC"),
+            _ => unreachable!("post-detection owner must remain an AI actor"),
         }
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
@@ -1356,19 +1354,12 @@ impl EngineInner {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
-        let Entity::Soldier(soldier) = self
-            .world
+        self.world
             .entities
             .get_mut(npc_id)
-            .unwrap_or_else(|| panic!("periodic soldier {} disappeared", npc_id.index()))
-        else {
-            panic!("periodic soldier {} changed kind", npc_id.index());
-        };
-        soldier
-            .npc
-            .ai_brain
-            .enemy_mut()
-            .unwrap_or_else(|| panic!("periodic soldier {} lost enemy AI", npc_id.index()))
+            .unwrap_or_else(|| panic!("periodic AI owner {} disappeared", npc_id.index()))
+            .enemy_ai_mut()
+            .unwrap_or_else(|| panic!("periodic AI owner {} lost enemy AI", npc_id.index()))
             .the_16th_frame_after_refresh(
                 frame_phase,
                 ctx,
@@ -1773,8 +1764,8 @@ impl EngineInner {
                     panic!("deafness-refresh NPC {} disappeared", npc_id.index())
                 });
             assert!(
-                entity.npc_data().is_some(),
-                "deafness-refresh owner {} has no NPC data",
+                entity.ai_actor_data().is_some(),
+                "deafness-refresh owner {} has no AI data",
                 npc_id.index()
             );
             (
@@ -1794,8 +1785,8 @@ impl EngineInner {
             )
         });
         entity
-            .npc_data_mut()
-            .unwrap_or_else(|| panic!("deafness-refresh owner {} lost NPC data", npc_id.index()))
+            .ai_actor_data_mut()
+            .unwrap_or_else(|| panic!("deafness-refresh owner {} lost AI data", npc_id.index()))
             .get_deafness(self.control.frame_counter, cover_volume);
     }
 
@@ -1886,8 +1877,8 @@ impl EngineInner {
                 )
             });
             let npc = entity
-                .npc_data_mut()
-                .unwrap_or_else(|| panic!("ladder-tail owner {} has no NPC data", npc_id.index()));
+                .ai_actor_data_mut()
+                .unwrap_or_else(|| panic!("ladder-tail owner {} has no AI data", npc_id.index()));
             if qualifies {
                 npc.stuck_on_ladder_emergency_counter =
                     npc.stuck_on_ladder_emergency_counter.saturating_add(1);

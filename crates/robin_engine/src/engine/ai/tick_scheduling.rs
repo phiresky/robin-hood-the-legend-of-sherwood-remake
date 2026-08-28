@@ -73,8 +73,8 @@ impl EngineInner {
             )
         });
         assert!(
-            entity.npc_data().is_some(),
-            "fused NPC owner {} has no NPC data",
+            entity.ai_actor_data().is_some(),
+            "fused AI owner {} has no AI actor data",
             npc_id.index()
         );
         // FrozenAll is volatile script state. Sample it at the consuming NPC
@@ -447,13 +447,12 @@ impl EngineInner {
         // effects in one outbox; preserve that authored order instead of
         // draining the core swordfight channel first.
         let attentive_requests = {
-            let mut take = Vec::new();
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && let Some(base) = s.npc.ai_brain.base_mut()
-            {
-                take = base.outbox.actor.take_attentive_modes();
-            }
-            take
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .map(|base| base.outbox.actor.take_attentive_modes())
+                .unwrap_or_default()
         };
         for request in attentive_requests {
             self.set_soldier_attentive_mode_from(
@@ -463,8 +462,11 @@ impl EngineInner {
                 crate::engine::soldier_helpers::AttentiveModeCaller::AiOwnerEffect,
             );
             if request.forget_after
-                && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
-                && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
+                && let Some(enemy) = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::enemy_ai_mut)
             {
                 // Original SetState's SetAttentiveMode call has now launched
                 // its transition and written will-be-attentive. The special
@@ -563,18 +565,11 @@ impl EngineInner {
                         "AI reconsider swordfight target",
                     );
                     if self.direct_enter_swordfight(sim, assets, npc_id, target_id) {
-                        let Entity::Soldier(soldier) = self
-                            .world
+                        self.world
                             .entities
                             .get_mut(npc_id)
                             .expect("successful AI swordfight rebalance owner disappeared")
-                        else {
-                            panic!("successful AI swordfight rebalance owner is not a soldier");
-                        };
-                        soldier
-                            .npc
-                            .ai_brain
-                            .enemy_mut()
+                            .enemy_ai_mut()
                             .expect("successful AI swordfight rebalance owner lost enemy AI")
                             .base
                             .primary_target = target_handle;
@@ -663,8 +658,8 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
             crate::ai_vision::focus_entity(npc, target_id);
             focus_channel_fired = true;
         }
@@ -679,8 +674,8 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
             crate::ai_vision::focus_point(
                 npc,
                 crate::coordinates::GroundPoint::new(point_3d.x, point_3d.y),
@@ -693,8 +688,8 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
             crate::ai_vision::unfocus(npc);
             focus_channel_fired = true;
         }
@@ -723,8 +718,8 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
             npc.view_transition = true;
             npc.view_radius = 5;
             npc.view_radius_base = 5;
@@ -1226,22 +1221,16 @@ impl EngineInner {
         // drops the PC and stops firing duplicate `EventSeesBeggar`
         // stimuli on subsequent frames.
         let delete_beggar_requests: Vec<EntityId> = {
-            match self.world.entities.get_mut(npc_id) {
-                Some(Entity::Soldier(s)) => std::mem::take(
-                    &mut s
-                        .npc
-                        .ai_brain
-                        .base_mut()
-                        .unwrap_or_else(|| {
-                            panic!("pending-drain soldier {} lost its AI", npc_id.index())
-                        })
-                        .outbox
-                        .actor
-                        .delete_beggar_for_all_npc,
-                ),
-                Some(Entity::Civilian(_)) => Vec::new(),
-                Some(_) => panic!("pending-drain owner {} is not an NPC", npc_id.index()),
-                None => panic!("pending-drain NPC {} disappeared", npc_id.index()),
+            let entity =
+                self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                    panic!("pending-drain AI owner {} disappeared", npc_id.index())
+                });
+            let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
+                panic!("pending-drain owner {} lost AI actor data", npc_id.index())
+            });
+            match ai_actor.ai_brain.base_mut() {
+                Some(ai) => std::mem::take(&mut ai.outbox.actor.delete_beggar_for_all_npc),
+                None => Vec::new(),
             }
         };
         for beggar_id in delete_beggar_requests {
@@ -1343,18 +1332,20 @@ impl EngineInner {
                     })
                     .collect();
 
-            let (npc_camp, npc_is_soldier) = {
+            let (npc_camp, npc_uses_enemy_combat_ai) = {
                 let owner = self.world.entities.get(npc_id).unwrap_or_else(|| {
                     panic!("pending-drain owner {} disappeared", npc_id.index())
                 });
-                (owner.camp(), owner.is_soldier())
+                (owner.camp(), owner.enemy_ai().is_some())
             };
             let npc = self
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
+                });
             // Delete all detectables of specified types.
             for det_type in &effects.delete_detectables {
                 let idx = *det_type as usize;
@@ -1485,7 +1476,7 @@ impl EngineInner {
                     }
                     if !crate::ai_detectable_filter::should_add_enemy_detectable(
                         npc_camp,
-                        npc_is_soldier,
+                        npc_uses_enemy_combat_ai,
                         tgt_pc,
                         tgt_soldier,
                         tgt_camp,
@@ -1680,8 +1671,10 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
+                });
             let idx = crate::element::DetectableType::Enemy as usize;
             let list = npc.detectable_lists.get_mut(idx).unwrap_or_else(|| {
                 panic!(

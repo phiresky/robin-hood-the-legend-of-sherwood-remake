@@ -2157,7 +2157,10 @@ mod tests {
             },
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             soldier: SoldierData::default(),

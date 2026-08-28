@@ -1352,7 +1352,10 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 life_points: 50,
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             soldier: SoldierData {

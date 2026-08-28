@@ -11,7 +11,6 @@ use crate::host::Host;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
-use robin_engine::element::Entity;
 use robin_engine::element::Focus;
 use robin_engine::engine::input::{
     BowTarget, MOUSE_BOW_CIVIL_COLOR, MOUSE_BOW_NO_COLOR, MOUSE_BOW_VIP_COLOR,
@@ -895,7 +894,6 @@ fn cursor_for_bow(
     mouse_map_pt: MapPoint,
     shift_held: bool,
 ) -> i32 {
-    use robin_engine::element::Camp;
     use robin_engine::resource_ids::*;
     {
         if engine.seat_selection(host.transport.local_seat).is_empty() {
@@ -972,11 +970,7 @@ fn cursor_for_bow(
 
                 // Extract entity data before mutating host.input.
                 let target_info = engine.get_entity(target_id).map(|target| {
-                    let camp = match target {
-                        Entity::Soldier(s) => s.soldier.cached_camp,
-                        Entity::Civilian(_) => Camp::Lacklandists,
-                        _ => Camp::Error,
-                    };
+                    let camp = target.camp();
                     let is_npc = target.is_npc();
                     let is_civilian = target.is_civilian();
                     let is_fx_target = target.kind().is_fx_target();
@@ -1003,7 +997,16 @@ fn cursor_for_bow(
                                 };
                                 opacity = 50;
                                 shadow_color = MOUSE_BOW_VIP_COLOR;
-                            } else if camp != Camp::Royalists {
+                            } else if camp.is_hostile_to(
+                                engine
+                                    .get_entity(pc_id)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "selected PC {pc_id:?} disappeared during bow cursor lookup"
+                                        )
+                                    })
+                                    .camp(),
+                            ) {
                                 // Enemy target.
                                 cursor = if is_long {
                                     RHMOUSE_BOW_YES_LONG

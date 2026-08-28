@@ -1824,13 +1824,6 @@ mod tests {
     use super::*;
     use crate::profiles::*;
 
-    #[test]
-    fn aggressive_combat_skips_only_the_initial_strike_skill_gate() {
-        assert!(initial_strike_skill_gate_rejects(75, 50, false));
-        assert!(!initial_strike_skill_gate_rejects(75, 50, true));
-        assert!(!initial_strike_skill_gate_rejects(25, 50, false));
-    }
-
     fn default_ctx() -> ConcussionContext {
         ConcussionContext::default()
     }

@@ -2732,11 +2732,15 @@ impl EngineInner {
         // manager and then mutate the AI without aliasing `self`.
         if only_owner.is_none() {
             let mut flagged: Vec<EntityId> = Vec::new();
-            for (npc_id, soldier) in self.world.entities.soldiers() {
-                if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
-                    && ai.pending_special_strike
+            for npc_id in self.world.entities.ai_owner_ids() {
+                if self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::enemy_ai)
+                    .is_some_and(|ai| ai.pending_special_strike)
                 {
-                    flagged.push(npc_id.into());
+                    flagged.push(npc_id);
                 }
             }
             for npc_id in flagged {
@@ -2746,8 +2750,11 @@ impl EngineInner {
                     .has_live_element_for_actor_matching(npc_id, |cmd| {
                         cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
                     });
-                if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
-                    && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
+                if let Some(ai) = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::enemy_ai_mut)
                 {
                     ai.reconcile_special_strike(has_active, current_frame);
                 }
@@ -2801,30 +2808,32 @@ impl EngineInner {
             }
         }
 
-        let pending_considerations: std::collections::HashSet<EntityId> = self
-            .world
-            .entities
-            .soldiers_mut()
-            .filter_map(|(npc_id, soldier)| {
-                if only_owner.is_some_and(|owner| owner != EntityId::from(npc_id)) {
-                    return None;
-                }
-                let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
-                    return None;
-                };
-                let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
-                (pending && !suppressed_considerations.contains(&EntityId::from(npc_id)))
-                    .then_some(EntityId::from(npc_id))
-            })
-            .collect();
+        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let mut pending_considerations = std::collections::HashSet::new();
+        for npc_id in ai_owner_ids {
+            if only_owner.is_some_and(|owner| owner != npc_id) {
+                continue;
+            }
+            let Some(ai) = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::enemy_ai_mut)
+            else {
+                continue;
+            };
+            let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
+            if pending && !suppressed_considerations.contains(&npc_id) {
+                pending_considerations.insert(npc_id);
+            }
+        }
         for &owner in &pending_considerations {
             if special_strike_lifecycle_debug_matches(current_frame, owner.index()) {
                 let ai = self
                     .world
                     .entities
                     .get(owner)
-                    .and_then(|entity| entity.npc_data())
-                    .and_then(|npc| npc.ai_brain.enemy())
+                    .and_then(Entity::enemy_ai)
                     .unwrap_or_else(|| panic!("special-strike owner {owner:?} lost Enemy AI"));
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?} selected={}",
@@ -2856,8 +2865,12 @@ impl EngineInner {
         }
 
         let mut attacks: Vec<PendingAttack> = Vec::new();
-        for (npc_id, soldier) in self.world.entities.soldiers() {
-            if !pending_considerations.contains(&EntityId::from(npc_id)) {
+        for npc_id in pending_considerations.iter().copied() {
+            let attacker =
+                self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!("authorized sword-strike owner {npc_id:?} disappeared")
+                });
+            if !pending_considerations.contains(&npc_id) {
                 continue;
             }
 
@@ -2868,9 +2881,8 @@ impl EngineInner {
             // point from any real swordfight substate (including Parade),
             // and Original still performs the proposal before arbitration
             // decides what work survives.
-            let ai = match &soldier.npc.ai_brain {
-                crate::element::AiBrain::Enemy(ai) => ai,
-                _ => continue,
+            let Some(ai) = attacker.enemy_ai() else {
+                continue;
             };
 
             let weapon_id = ai.hth_weapon_id;
@@ -2881,7 +2893,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!(
                         "authorized sword-strike proposal owner {:?} requires missing principal opponent slot {}",
-                        EntityId::from(npc_id),
+                        npc_id,
                         ai.base.primary_target
                     )
                 });
@@ -2914,14 +2926,6 @@ impl EngineInner {
                 continue;
             }
 
-            let spi = soldier.soldier.soldier_profile_index;
-            let sp = assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
-                panic!(
-                    "authorized sword-strike owner {:?} requires missing soldier profile {}",
-                    EntityId::from(npc_id),
-                    spi
-                )
-            });
             // RHElementActorSoldier::GetFightingAbility applies the active
             // difficulty modifier for Lacklandists. Strike availability,
             // damage estimation, and the special-strike skill gate all call
@@ -2931,24 +2935,24 @@ impl EngineInner {
                 self.get_entity(npc_id).unwrap_or_else(|| {
                     panic!(
                         "authorized sword-strike owner {:?} disappeared before ability lookup",
-                        EntityId::from(npc_id)
+                        npc_id
                     )
                 }),
                 &assets.profile_manager,
                 sim.config().difficulty,
             );
-            let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
+            let is_rank = ai.soldier_profile_rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
 
             attacks.push(PendingAttack {
-                soldier_id: npc_id.into(),
+                soldier_id: npc_id,
                 target_id,
                 weapon_id,
                 fighting_ability: fa,
                 blood_alcohol: ba,
                 is_rank_soldier: is_rank,
-                attacker_direction: soldier.element.direction(),
-                attacker_camp: soldier.soldier.cached_camp,
+                attacker_direction: attacker.element_data().direction(),
+                attacker_camp: attacker.camp(),
                 attacker_pos: {
                     // `GetPossibleVictimsOfSwordStrike` subtracts
                     // `GetPositionMap()` for both actors. Elevation remains a
@@ -2956,12 +2960,17 @@ impl EngineInner {
                     // only the attacker's projected Y mixes world and map
                     // coordinates and can turn an adjacent opponent into a
                     // target hundreds of units away.
-                    let map = &soldier.element.position_map();
+                    let map = attacker.element_data().position_map();
                     (map.x, map.y)
                 },
-                attacker_elevation: soldier.element.position().z,
-                is_swordfighting: !soldier.human.opponents.is_empty(),
-                boredom: soldier.human.sword_strike_boredom.clone(),
+                attacker_elevation: attacker.element_data().position().z,
+                is_swordfighting: attacker
+                    .human_data()
+                    .is_some_and(|human| !human.opponents.is_empty()),
+                boredom: attacker
+                    .human_data()
+                    .map(|human| human.sword_strike_boredom.clone())
+                    .unwrap_or_else(|| panic!("AI sword-strike owner {npc_id:?} is not human")),
             });
         }
 
@@ -3230,7 +3239,7 @@ impl EngineInner {
             // ProposeGoodSwordStrike mutates its boredom history even when no
             // viable strike is selected, so persist it before branching on
             // the proposal result.
-            let Entity::Soldier(soldier) = self
+            let owner = self
                 .world
                 .entities
                 .get_mut(attack.soldier_id)
@@ -3239,14 +3248,16 @@ impl EngineInner {
                         "sword-strike proposal owner {:?} disappeared during selection",
                         attack.soldier_id
                     )
+                });
+            owner
+                .human_data_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "sword-strike proposal owner {:?} is no longer human",
+                        attack.soldier_id
+                    )
                 })
-            else {
-                panic!(
-                    "sword-strike proposal owner {:?} changed entity kind",
-                    attack.soldier_id
-                );
-            };
-            soldier.human.sword_strike_boredom = attack.boredom;
+                .sword_strike_boredom = attack.boredom;
 
             let strike = match strike {
                 Some(s) => s,
@@ -3254,14 +3265,20 @@ impl EngineInner {
             };
             let command = strike.to_command();
 
-            // When targeting a PC, start the hulk glow and insert a
-            // difficulty-dependent preparation delay.
-            let target_is_pc = self
-                .get_entity(attack.target_id)
-                .map(|e| e.kind().is_pc())
-                .unwrap_or(false);
+            // Telegraph attacks against a player-controlled PC with the hulk
+            // glow and difficulty-dependent preparation delay. Autonomous PCs
+            // are EnemyAi combatants rather than players awaiting a warning,
+            // so PC-vs-PC battle missions use the normal immediate cadence.
+            let target_is_player_controlled_pc = match self.get_entity(attack.target_id) {
+                Some(Entity::Pc(pc)) => !pc.pc.autonomous,
+                Some(_) => false,
+                None => panic!(
+                    "sword-strike target {:?} disappeared before preparation",
+                    attack.target_id
+                ),
+            };
 
-            let wait_time: u32 = if target_is_pc {
+            let wait_time: u32 = if target_is_player_controlled_pc {
                 // Start the striking-outline hulk with width 2.
                 if let Some(entity) = self.world.entities.get_mut(attack.soldier_id) {
                     if let Some(human) = entity.human_data_mut() {
@@ -3294,25 +3311,31 @@ impl EngineInner {
                 );
             }
 
-            // Flag the pending special strike and cancel movement so
-            // the soldier stands still during the delay.
+            // Flag the pending special strike and cancel movement so the
+            // EnemyAi owner stands still during the delay.
             // `begin_special_strike` sets the lifecycle latch and enters the
             // observable legacy special-strike substate; the
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
-            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(attack.soldier_id)
-                && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
-            {
-                ai.begin_special_strike();
-                ai.base.stop_all();
-            }
+            let ai = self
+                .world
+                .entities
+                .get_mut(attack.soldier_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "special-strike owner {:?} lost Enemy AI before begin",
+                        attack.soldier_id
+                    )
+                });
+            ai.begin_special_strike();
+            ai.base.stop_all();
             if special_debug {
                 let ai = self
                     .world
                     .entities
                     .get(attack.soldier_id)
-                    .and_then(|entity| entity.npc_data())
-                    .and_then(|npc| npc.ai_brain.enemy())
+                    .and_then(Entity::enemy_ai)
                     .expect("special-strike owner lost Enemy AI after begin");
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=after_begin pending_special={} state={:?} substate={:?} selected={}",
@@ -3335,8 +3358,7 @@ impl EngineInner {
                     .world
                     .entities
                     .get(attack.soldier_id)
-                    .and_then(|entity| entity.npc_data())
-                    .and_then(|npc| npc.ai_brain.enemy())
+                    .and_then(Entity::enemy_ai)
                     .expect("special-strike owner lost Enemy AI after drain");
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=after_begin_drain pending_special={} state={:?} substate={:?} selected={}",
@@ -3357,22 +3379,21 @@ impl EngineInner {
             if matches!(
                 strike,
                 SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
-            ) && let Some(Entity::Soldier(soldier)) =
-                self.world.entities.get_mut(attack.soldier_id)
-            {
-                let is_vip = assets
-                    .profile_manager
-                    .get_soldier(soldier.soldier.soldier_profile_index)
-                    .map(|p| p.vip)
-                    .unwrap_or(false);
-                if let Some(ai) = soldier.npc.ai_brain.base_mut() {
-                    let remark = if is_vip {
-                        crate::ai::Remark::VipWarcry
-                    } else {
-                        crate::ai::Remark::Warcry
-                    };
-                    ai.say(remark);
-                }
+            ) {
+                let owner = self
+                    .world
+                    .entities
+                    .get_mut(attack.soldier_id)
+                    .unwrap_or_else(|| panic!("warcry owner {:?} disappeared", attack.soldier_id));
+                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
+                let ai = owner.enemy_ai_mut().unwrap_or_else(|| {
+                    panic!("warcry owner {:?} lost Enemy AI", attack.soldier_id)
+                });
+                ai.base.say(if is_vip {
+                    crate::ai::Remark::VipWarcry
+                } else {
+                    crate::ai::Remark::Warcry
+                });
                 self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
             }
 
@@ -3408,8 +3429,7 @@ impl EngineInner {
                     .world
                     .entities
                     .get(attack.soldier_id)
-                    .and_then(|entity| entity.npc_data())
-                    .and_then(|npc| npc.ai_brain.enemy())
+                    .and_then(Entity::enemy_ai)
                     .expect("special-strike owner lost Enemy AI after launch");
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=after_launch pending_special={} state={:?} substate={:?} selected={}",
@@ -3442,12 +3462,14 @@ impl EngineInner {
         // Keep this after every rejection/launch path, but before returning
         // to the dispatcher's owner-work drain.
         for owner in pending_considerations {
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner) else {
-                continue;
-            };
-            let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
-                continue;
-            };
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!("sword-strike consideration owner {owner:?} lost Enemy AI")
+                });
             if std::mem::take(&mut ai.pending_combat_insult_after_strike_consideration)
                 && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
                 && !ai.pending_special_strike

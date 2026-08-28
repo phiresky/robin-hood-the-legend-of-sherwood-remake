@@ -949,6 +949,10 @@ pub struct RawPcRescue {
     /// strike legality, skill, timing, damage, tiredness, and defence rules.
     #[serde(default)]
     pub aggressive_combat: bool,
+    /// Readable soldier-profile identifier supplying the established enemy
+    /// AI's personality/decision parameters for an autonomous PC.
+    #[serde(default)]
+    pub ai_profile: Option<String>,
     /// Makes a custom-mission PC immediately player-controllable instead of
     /// treating it as a normal rescue target.
     #[serde(default)]
@@ -2023,13 +2027,17 @@ pub struct HackablePc {
     pub allegiance: u16,
     #[serde(default)]
     pub direction: u32,
-    /// Starts this PC in an automatically evaluated swordfight against the
-    /// nearest hostile autonomous PC.
+    /// Excludes this PC from player selection so an attached combat AI may
+    /// control it.
     #[serde(default)]
     pub autonomous: bool,
     /// Opt-in high-activity combat behavior for autonomous battle examples.
     #[serde(default)]
     pub aggressive_combat: bool,
+    /// Soldier profile used only for AI decision parameters. The PC retains
+    /// its own character sprite, weapon, health, and combat skill.
+    #[serde(default)]
+    pub ai_profile: Option<String>,
     #[serde(default)]
     pub playable: bool,
 }
@@ -2237,6 +2245,7 @@ impl LoadedLevel {
                 allegiance: Some(pc.allegiance),
                 autonomous: pc.autonomous,
                 aggressive_combat: pc.aggressive_combat,
+                ai_profile: pc.ai_profile.clone(),
                 playable: pc.playable,
                 attributes: 0,
                 script_class: None,
@@ -3541,6 +3550,7 @@ fn read_pcs_to_rescue(
             allegiance: None,
             autonomous: false,
             aggressive_combat: false,
+            ai_profile: None,
             playable: false,
             attributes,
             script_class,
@@ -4721,7 +4731,7 @@ mod tests {
                     {"position": [80, 20], "profile": 1, "allegiance": 9}
                 ],
                 "pcs": [
-                    {"position": [50, 80], "profile": 2, "allegiance": 7, "autonomous": true, "aggressive_combat": true}
+                    {"position": [50, 80], "profile": 2, "allegiance": 7, "autonomous": true, "aggressive_combat": true, "ai_profile": "soldier_b04"}
                 ]
             }"#,
         )
@@ -4734,6 +4744,10 @@ mod tests {
         assert_eq!(level.mission.pcs_to_rescue[0].allegiance, Some(7));
         assert!(level.mission.pcs_to_rescue[0].autonomous);
         assert!(level.mission.pcs_to_rescue[0].aggressive_combat);
+        assert_eq!(
+            level.mission.pcs_to_rescue[0].ai_profile.as_deref(),
+            Some("soldier_b04")
+        );
     }
 
     #[test]
@@ -4787,6 +4801,14 @@ mod tests {
             assert!(
                 level
                     .mission
+                    .pcs_to_rescue
+                    .iter()
+                    .all(|pc| !pc.aggressive_combat || pc.ai_profile.is_some()),
+                "{mission} aggressive PCs must select an AI behavior profile"
+            );
+            assert!(
+                level
+                    .mission
                     .soldiers
                     .iter()
                     .all(|soldier| soldier.revealed),
@@ -4816,7 +4838,9 @@ mod tests {
                 .mission
                 .pcs_to_rescue
                 .iter()
-                .all(|pc| pc.autonomous && pc.aggressive_combat)
+                .all(|pc| pc.autonomous
+                    && pc.aggressive_combat
+                    && pc.ai_profile.as_deref() == Some("soldier_b04"))
         );
         let pc_profiles: std::collections::BTreeSet<_> = pc_circle
             .mission
@@ -4844,6 +4868,7 @@ mod tests {
                 && matches!(pc.profile_index, 0 | 1)
                 && pc.autonomous
                 && pc.aggressive_combat
+                && pc.ai_profile.as_deref() == Some("soldier_b04")
         }));
         assert_eq!(
             robins

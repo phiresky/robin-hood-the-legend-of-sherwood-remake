@@ -3303,7 +3303,6 @@ impl EngineInner {
         self.cache_door_ai_metadata();
         self.sort_pc_ids_by_priority(assets);
         self.select_highest_priority_pc(assets, 0);
-        self.start_autonomous_pc_fights(sim, assets);
 
         Ok(())
     }
@@ -3315,48 +3314,6 @@ impl EngineInner {
     pub(crate) fn reserve_null_ai_handle_slot_if_empty(&mut self) {
         if self.world.entities.is_empty() {
             self.world.entities.push(None);
-        }
-    }
-
-    /// Seed custom-mission autonomous PCs into combat. Once linked, the
-    /// ordinary PC swordfight evaluator controls attacks, defence, spacing,
-    /// and termination without player input.
-    fn start_autonomous_pc_fights(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let actors: Vec<_> = self
-            .world
-            .entities
-            .occupied()
-            .filter_map(|(id, entity)| match entity {
-                Entity::Pc(pc) if pc.pc.autonomous => {
-                    Some((id, entity.camp(), entity.element_data().position_map()))
-                }
-                _ => None,
-            })
-            .collect();
-        for &(id, camp, position) in &actors {
-            let nearest = actors
-                .iter()
-                .filter(|&&(other_id, other_camp, _)| {
-                    other_id != id && camp.is_hostile_to(other_camp)
-                })
-                .min_by(|&&(_, _, left), &&(_, _, right)| {
-                    let left_dx = position.x - left.x;
-                    let left_dy = position.y - left.y;
-                    let right_dx = position.x - right.x;
-                    let right_dy = position.y - right.y;
-                    (left_dx * left_dx + left_dy * left_dy)
-                        .total_cmp(&(right_dx * right_dx + right_dy * right_dy))
-                })
-                .map(|&(other_id, _, _)| other_id);
-            if let Some(opponent) = nearest {
-                self.direct_enter_swordfight(sim, assets, id, opponent);
-            } else {
-                tracing::warn!(?id, ?camp, "autonomous PC has no hostile PC opponent");
-            }
         }
     }
 

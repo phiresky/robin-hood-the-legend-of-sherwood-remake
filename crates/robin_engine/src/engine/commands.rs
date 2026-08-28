@@ -4381,7 +4381,7 @@ impl EngineInner {
         target_id: EntityId,
         running: bool,
     ) {
-        use crate::element::{Camp, Entity};
+        use crate::element::Entity;
         use crate::order::OrderType;
 
         // VIP gate
@@ -4409,17 +4409,23 @@ impl EngineInner {
                 Some(e) => e,
                 None => return,
             };
+            let selector_camp = self
+                .get_entity(pc_id)
+                .unwrap_or_else(|| {
+                    panic!("selected PC {pc_id:?} disappeared during sword-target dispatch")
+                })
+                .camp();
             let is_blipped = target.element_data().blipped;
             let is_dead = target.is_dead();
             let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
-            let (is_lacklandist, scroll_attached) = match target {
+            let (is_hostile, scroll_attached) = match target {
                 Entity::Soldier(s) => (
-                    s.camp().is_hostile_to(Camp::Royalists),
+                    s.camp().is_hostile_to(selector_camp),
                     s.npc.attached_scroll.is_some(),
                 ),
                 _ => (false, false),
             };
-            !is_blipped && !is_dead && !is_unconscious && is_lacklandist && !scroll_attached
+            !is_blipped && !is_dead && !is_unconscious && is_hostile && !scroll_attached
         };
 
         if !status_ok {
@@ -5739,10 +5745,8 @@ fn determine_use_command(
         return Some(Command::SearchCmd);
     }
 
-    // Wake-Up arm: `(IsPc || (IsSoldier && same camp as selected PC))
-    // && is_unconscious && selector has Resuscitate`.  Selected PCs
-    // are always Royalists, so the camp test reduces to
-    // `Soldier::cached_camp == Royalists`.
+    // Wake-Up arm: target and selected PC must share an allegiance,
+    // and the selector must have Resuscitate.
     if is_unconscious
         && engine.selected_pc_has_contextual_action(
             assets,
@@ -5750,14 +5754,11 @@ fn determine_use_command(
             crate::profiles::Action::Resuscitate,
         )
     {
-        let target_pc_or_same_camp = match entity {
-            crate::element::Entity::Pc(_) => true,
-            crate::element::Entity::Soldier(s) => {
-                s.soldier.cached_camp == crate::element::Camp::Royalists
-            }
-            _ => false,
-        };
-        if target_pc_or_same_camp {
+        let selector_camp = engine
+            .get_entity(pc_id)
+            .unwrap_or_else(|| panic!("selected PC {pc_id:?} disappeared during WakeUp dispatch"))
+            .camp();
+        if entity.is_human() && entity.camp() == selector_camp {
             return Some(Command::WakeUp);
         }
     }
@@ -9560,7 +9561,10 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                attached_scroll: None,
+                ai: crate::element::AiActorData {
+                    attached_scroll: None,
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             civilian: Default::default(),
@@ -9860,6 +9864,56 @@ mod tests {
             .element_data_mut()
             .set_position_map(crate::coordinates::MapPoint { x: 144.0, y: 100.0 });
         assert!(!engine.check_sequence_element_validity(&assets, pc_id, &element, true));
+    }
+
+    #[test]
+    fn custom_pc_can_wake_only_same_allegiance_pc() {
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
+            Action::Resuscitate;
+        engine
+            .get_entity_mut(pc_id)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .cached_camp = Camp::Custom(2);
+
+        let add_unconscious_pc = |engine: &mut EngineInner, camp| {
+            engine.add_entity(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    active: true,
+                    posture: Posture::Lying,
+                    ..ElementData::default()
+                },
+                actor: ActorData::default(),
+                human: HumanData {
+                    unconscious: true,
+                    ..HumanData::default()
+                },
+                pc: PcData {
+                    cached_camp: camp,
+                    life_points: 50,
+                    ..PcData::default()
+                },
+            }))
+        };
+        let ally = add_unconscious_pc(&mut engine, Camp::Custom(2));
+        let enemy = add_unconscious_pc(&mut engine, Camp::Custom(3));
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc_id, ally),
+            Some(Command::WakeUp)
+        );
+        assert_eq!(determine_use_command(&engine, &assets, pc_id, enemy), None);
+        assert_eq!(
+            engine.choose_use_cursor(&assets, ally, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_WAKE_UP
+        );
+        assert_eq!(
+            engine.choose_use_cursor(&assets, enemy, Some(pc_id)),
+            crate::resource_ids::RHMOUSE_DEFAULT
+        );
     }
 
     #[test]

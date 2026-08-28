@@ -71,9 +71,40 @@ fn with_swordfight_preparation_scope<R>(
     Some(body())
 }
 
+/// Choose the side whose existing opponents are purged when two already
+/// engaged fighters meet. Original always chooses the Royalist side. For
+/// arbitrary allegiances, the lower authored allegiance ID is the canonical
+/// equivalent, with entity identity breaking the impossible same-camp tie.
+/// This makes reciprocal enter-swordfight calls choose the same actor.
+fn crowded_fight_purge_side(
+    initiator: EntityId,
+    initiator_camp: crate::element::Camp,
+    opponent: EntityId,
+    opponent_camp: crate::element::Camp,
+) -> EntityId {
+    let initiator_key = (
+        initiator_camp.allegiance_id().unwrap_or_else(|| {
+            panic!("crowded swordfight initiator {initiator:?} has invalid allegiance")
+        }),
+        initiator,
+    );
+    let opponent_key = (
+        opponent_camp.allegiance_id().unwrap_or_else(|| {
+            panic!("crowded swordfight opponent {opponent:?} has invalid allegiance")
+        }),
+        opponent,
+    );
+    if initiator_key <= opponent_key {
+        initiator
+    } else {
+        opponent
+    }
+}
+
 #[cfg(test)]
 mod preparation_scope_tests {
-    use super::with_swordfight_preparation_scope;
+    use super::{crowded_fight_purge_side, with_swordfight_preparation_scope};
+    use crate::element::Camp;
     use crate::element::{EntityId, PcId, SoldierId};
 
     #[test]
@@ -95,6 +126,32 @@ mod preparation_scope_tests {
             allocated_reciprocals,
             [1],
             "same-pair callback reentry must not allocate another reciprocal sequence"
+        );
+    }
+
+    #[test]
+    fn crowded_custom_fight_purge_side_is_reciprocal_and_canonical() {
+        let left = EntityId::Pc(PcId(3));
+        let right = EntityId::Pc(PcId(7));
+
+        assert_eq!(
+            crowded_fight_purge_side(left, Camp::Custom(8), right, Camp::Custom(4)),
+            right
+        );
+        assert_eq!(
+            crowded_fight_purge_side(right, Camp::Custom(4), left, Camp::Custom(8)),
+            right
+        );
+    }
+
+    #[test]
+    fn crowded_legacy_fight_still_purges_royalist_side() {
+        let royalist = EntityId::Pc(PcId(3));
+        let lacklandist = EntityId::Soldier(SoldierId(7));
+
+        assert_eq!(
+            crowded_fight_purge_side(lacklandist, Camp::Lacklandists, royalist, Camp::Royalists,),
+            royalist
         );
     }
 
@@ -263,7 +320,13 @@ impl EngineInner {
                 pc.melee_target = None;
             }
             self.enable_pc_actions_temp(assets, 0, entity_id);
-        } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+        }
+        if self
+            .world
+            .entities
+            .get(entity_id)
+            .is_some_and(|entity| entity.enemy_ai().is_some())
+        {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
                 entity_id,
@@ -1200,11 +1263,9 @@ impl EngineInner {
 
             if initiator_has_opps && opponent_has_opps {
                 let initiator_camp = entity_camp(&self.world.entities, initiator);
-                let human_to_purge = if initiator_camp == crate::element::Camp::Royalists {
-                    initiator
-                } else {
-                    opponent
-                };
+                let opponent_camp = entity_camp(&self.world.entities, opponent);
+                let human_to_purge =
+                    crowded_fight_purge_side(initiator, initiator_camp, opponent, opponent_camp);
 
                 let mut purge_index = 0;
                 loop {
@@ -1456,14 +1517,14 @@ impl EngineInner {
             self.enable_pc_actions_temp(assets, 0, entity_id);
         }
 
-        // When a non-dead soldier voluntarily quits a swordfight,
-        // immediately pump EventQuitSwordfight into its own AI so it
+        // When a non-dead AI owner voluntarily quits a swordfight,
+        // immediately pump EventQuitSwordfight into its own brain so it
         // can re-plan, rather than waiting for the next AI tick.
         if !entity_is_dead
-            && matches!(
-                self.expect_entity(entity_id, "quit_swordfight quitter"),
-                Entity::Soldier(_)
-            )
+            && self
+                .expect_entity(entity_id, "quit_swordfight quitter")
+                .enemy_ai()
+                .is_some()
         {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,

@@ -1245,10 +1245,13 @@ mod tests {
                 // Level loading copies the soldier profile's HtH weapon onto
                 // the brain; the fighter-registry scan reached from net
                 // capture requires it.
-                ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
-                    hth_weapon_id: 1,
-                    ..crate::ai_enemy::EnemyAi::default()
-                })),
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
+                        hth_weapon_id: 1,
+                        ..crate::ai_enemy::EnemyAi::default()
+                    })),
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             soldier: SoldierData {

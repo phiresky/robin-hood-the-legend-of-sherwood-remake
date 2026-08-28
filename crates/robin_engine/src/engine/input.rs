@@ -813,11 +813,16 @@ impl EngineInner {
             lp > 0 && !h.unconscious
         });
         let is_dead = entity.is_dead();
-        let camp = match entity {
-            Entity::Soldier(s) => s.soldier.cached_camp,
-            Entity::Civilian(_) => Camp::Lacklandists,
-            _ => Camp::Error,
+        let camp = entity.camp();
+        let interaction_camp = match selected_pc_id {
+            Some(id) => self
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("selected PC {id:?} disappeared during focus lookup"))
+                .camp(),
+            None => Camp::Royalists,
         };
+        let same_camp_as_selector = camp == interaction_camp;
+        let hostile_to_selector = camp.is_hostile_to(interaction_camp);
         let posture = entity.element_data().posture;
         let is_tied = posture == Posture::Tied;
         let is_vip = self.is_entity_vip(assets, entity);
@@ -850,26 +855,20 @@ impl EngineInner {
             .is_some_and(|pc| pc.robin);
 
         match focus {
-            Focus::Bow => !(blipped || is_out_of_order || (camp == Camp::Royalists && is_soldier)),
+            Focus::Bow => !(blipped || is_out_of_order || (same_camp_as_selector && is_soldier)),
             Focus::Hit => {
                 !blipped
                     && !is_out_of_order
-                    && camp.is_hostile_to(Camp::Royalists)
+                    && hostile_to_selector
                     && is_soldier
                     && !is_vip
                     && !is_rider
             }
             // Apple has no VIP/rider exclusion.
-            Focus::Apple => {
-                !blipped && !is_out_of_order && is_soldier && camp.is_hostile_to(Camp::Royalists)
-            }
+            Focus::Apple => !blipped && !is_out_of_order && is_soldier && hostile_to_selector,
             // Stone excludes VIPs.
             Focus::Stone => {
-                !blipped
-                    && !is_out_of_order
-                    && is_soldier
-                    && camp.is_hostile_to(Camp::Royalists)
-                    && !is_vip
+                !blipped && !is_out_of_order && is_soldier && hostile_to_selector && !is_vip
             }
             Focus::View => !blipped,
             // Sword rejects only on blipped / out-of-order / Royalists
@@ -877,11 +876,7 @@ impl EngineInner {
             // the SWORD switch returns directly without falling through
             // to the NPC focusable check.
             Focus::Sword => {
-                !blipped
-                    && !is_out_of_order
-                    && is_soldier
-                    && camp.is_hostile_to(Camp::Royalists)
-                    && !is_fast_rider
+                !blipped && !is_out_of_order && is_soldier && hostile_to_selector && !is_fast_rider
             }
             // Strangle has two branches keyed on whether a macro is
             // being recorded.
@@ -898,13 +893,9 @@ impl EngineInner {
                     return false;
                 }
                 if self.is_recording_macro() {
-                    blipped || !(is_dead || camp == Camp::Royalists || is_vip || is_rider)
+                    blipped || !(is_dead || same_camp_as_selector || is_vip || is_rider)
                 } else {
-                    !blipped
-                        && !is_out_of_order
-                        && camp.is_hostile_to(Camp::Royalists)
-                        && !is_vip
-                        && !is_rider
+                    !blipped && !is_out_of_order && hostile_to_selector && !is_vip && !is_rider
                 }
             }
             // Contextual use.
@@ -940,7 +931,7 @@ impl EngineInner {
                     && is_unconscious
                     && posture == Posture::Lying
                     && is_soldier
-                    && camp.is_hostile_to(Camp::Royalists)
+                    && hostile_to_selector
                     && !is_vip
                     && self.selected_pc_has_contextual_action(
                         assets,
@@ -951,9 +942,9 @@ impl EngineInner {
                     return true;
                 }
                 // Tie up. Requires the TIE contextual action.
-                // Royalist NPCs on Merry Man Forest levels can't be tied.
+                // Allied NPCs on Merry Man Forest levels can't be tied.
                 let is_merry_man_forest =
-                    camp == Camp::Royalists && self.world.weather.is_forest_level && !is_rider;
+                    same_camp_as_selector && self.world.weather.is_forest_level && !is_rider;
                 if is_unconscious
                     && !is_dead
                     && !is_tied
@@ -1005,15 +996,13 @@ impl EngineInner {
                     }
                 }
                 // Resuscitate arm — fall-through base for NPC targets.
-                // The selected PC is always Royalist, so `same camp`
-                // reduces to soldier camp == Royalists. (The PC
-                // in-coma branch is unreachable here — this NPC
-                // dispatcher is only called for non-PC targets.)
+                // The PC in-coma branch is unreachable here — this NPC
+                // dispatcher is only called for non-PC targets.
                 if !is_dead
                     && is_unconscious
                     && is_soldier
                     && !is_civilian
-                    && camp == Camp::Royalists
+                    && same_camp_as_selector
                     && self.selected_pc_has_contextual_action(
                         assets,
                         selected_pc_id,
@@ -1074,7 +1063,7 @@ impl EngineInner {
                     .is_some_and(|pc| pc.robin);
 
                 let alive_common_soldier = !is_dead && is_soldier && !is_vip;
-                let robin_ally = camp == Camp::Royalists;
+                let selector_ally = same_camp_as_selector;
                 let is_beggar = matches!(entity, Entity::Civilian(c)
                     if c.civilian.cached_civilian_type
                         == crate::profiles::CivilianType::Beggar);
@@ -1101,8 +1090,8 @@ impl EngineInner {
                     return true;
                 }
                 // 5. Reanimate: resuscitate action and alive
-                //    non-civilian Royalist.
-                if pc_has_resuscitate && !is_dead && !is_civilian && robin_ally {
+                //    non-civilian ally.
+                if pc_has_resuscitate && !is_dead && !is_civilian && selector_ally {
                     return true;
                 }
                 // 6. Tie: tie action, alive, non-VIP, non-rider — the
@@ -1386,7 +1375,13 @@ impl EngineInner {
         let dead = entity.is_dead();
         let unconscious = entity.human_data().is_some_and(|h| h.unconscious);
         let posture = entity.element_data().posture;
-        let is_pc = entity.is_pc();
+        let interaction_camp = match selected_pc_id {
+            Some(id) => self
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("selected PC {id:?} disappeared during cursor lookup"))
+                .camp(),
+            None => crate::element::Camp::Royalists,
+        };
 
         // 0. Civilian beggar + selected PC is VIP → PAY_YES / PAY_NO.
         // Checked before the shared NPC chain because it pre-empts the
@@ -1453,11 +1448,8 @@ impl EngineInner {
         if unconscious
             && self.selected_pc_has_contextual_action(assets, selected_pc_id, PA::Resuscitate)
         {
-            let same_camp = match entity {
-                Entity::Soldier(s) => s.soldier.cached_camp == crate::element::Camp::Royalists,
-                _ => false,
-            };
-            if is_pc || same_camp {
+            let same_camp = entity.is_human() && entity.camp() == interaction_camp;
+            if same_camp {
                 return RHMOUSE_WAKE_UP;
             }
         }

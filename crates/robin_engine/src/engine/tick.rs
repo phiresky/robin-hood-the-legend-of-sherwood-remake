@@ -5813,6 +5813,20 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
+                        if engine
+                            .world
+                            .entities
+                            .get(owner)
+                            .is_some_and(|entity| entity.ai_controller().is_some())
+                        {
+                            engine.tick_npc_owner_pass(
+                                sim,
+                                assets,
+                                positions_before_movement,
+                                &mut prepared,
+                                owner,
+                            );
+                        }
                         engine.tick_pc_auto_heal_for(sim, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
                     }

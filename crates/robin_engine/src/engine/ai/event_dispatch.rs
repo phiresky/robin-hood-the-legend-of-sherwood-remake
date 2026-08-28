@@ -960,7 +960,7 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
                 panic!(
                     "entity {} lost its NPC data while applying its pending eye status",
                     npc_id.index()
@@ -1031,7 +1031,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            let Some(npc) = entity.npc_data() else {
+            let Some(npc) = entity.ai_actor_data() else {
                 return;
             };
 
@@ -1116,7 +1116,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
-            if let Some(npc) = entity.npc_data_mut() {
+            if let Some(npc) = entity.ai_actor_data_mut() {
                 let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
                 let _guard = span.enter();
                 ai_vision::refresh_view(npc, &ctx);
@@ -1197,6 +1197,15 @@ impl EngineInner {
             .ai_controller()
             .unwrap_or_else(|| panic!("speech gate diagnostic owner {owner:?} lost AI"));
         let (is_soldier, speech_id) = match entity {
+            Entity::Pc(pc) => {
+                let profile = assets
+                    .profile_manager
+                    .get_character(pc.pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!("speech gate diagnostic owner {owner:?} lost character profile")
+                    });
+                (entity.enemy_ai().is_some(), profile.exclamation_id)
+            }
             Entity::Soldier(soldier) => {
                 let profile = assets
                     .profile_manager
@@ -1362,6 +1371,7 @@ impl EngineInner {
         self.debug_speech_attempt_gate_snapshot(assets, owner, attempt);
         #[derive(Clone, Copy)]
         enum OwnerProfile {
+            Character(crate::profiles::CharacterProfileIdx),
             Soldier(crate::profiles::SoldierProfileIdx),
             Civilian(crate::profiles::CivilianProfileIdx),
         }
@@ -1382,6 +1392,9 @@ impl EngineInner {
                 .get(owner)
                 .unwrap_or_else(|| panic!("queued speech owner {} is missing", owner.index()));
             let owner_profile = match entity {
+                Entity::Pc(pc) if entity.enemy_ai().is_some() => {
+                    OwnerProfile::Character(pc.pc.profile_index)
+                }
                 Entity::Soldier(s) => OwnerProfile::Soldier(s.soldier.soldier_profile_index),
                 Entity::Civilian(c) => OwnerProfile::Civilian(c.civilian.civilian_profile_index),
                 other => panic!(
@@ -1404,11 +1417,27 @@ impl EngineInner {
                 ai.current_remark,
             )
         };
-        let is_soldier = matches!(owner_profile, OwnerProfile::Soldier(_));
+        let is_soldier = matches!(
+            owner_profile,
+            OwnerProfile::Character(_) | OwnerProfile::Soldier(_)
+        );
         let mut resolved_profile: Option<(bool, u32)> = None;
         let resolve_profile = |cached: &mut Option<(bool, u32)>| {
             if cached.is_none() {
                 *cached = Some(match owner_profile {
+                    OwnerProfile::Character(profile_index) => {
+                        let profile = assets
+                            .profile_manager
+                            .get_character(profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing character profile {} after early gates",
+                                    owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (false, profile.exclamation_id)
+                    }
                     OwnerProfile::Soldier(profile_index) => {
                         let profile = assets
                             .profile_manager

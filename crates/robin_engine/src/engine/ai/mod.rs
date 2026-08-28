@@ -708,8 +708,8 @@ mod directed_panic_front_tests {
 mod panic_boundary_tests {
     use super::*;
     use crate::element::{
-        ActorData, ActorSoldier, AiBrain, ElementData, ElementKind, HumanData, NpcData, Posture,
-        SoldierData,
+        ActorData, ActorPc, ActorSoldier, AiActorData, AiBrain, ElementData, ElementKind,
+        HumanData, NpcData, PcData, Posture, SoldierData,
     };
 
     fn enemy_soldier() -> Entity {
@@ -725,11 +725,96 @@ mod panic_boundary_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                ai: crate::element::AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..Default::default()
+                },
                 ..NpcData::default()
             },
             soldier: SoldierData::default(),
         })
+    }
+
+    fn autonomous_enemy_pc() -> Entity {
+        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+        enemy_ai.hth_weapon_id = 1;
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                autonomous: true,
+                aggressive_combat: true,
+                ai: Some(Box::new(AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..AiActorData::default()
+                })),
+                ..PcData::default()
+            },
+        })
+    }
+
+    #[test]
+    fn panic_state_dispatch_accepts_autonomous_pc_enemy_ai() {
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(autonomous_enemy_pc());
+
+        engine.set_typed_npc_state(
+            pc_id,
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+            "Panic run entry",
+        );
+
+        let ai = engine
+            .get_entity(pc_id)
+            .and_then(Entity::enemy_ai)
+            .expect("autonomous PC must retain its Enemy AI");
+        assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingPanic);
+    }
+
+    #[test]
+    fn autonomous_pc_completes_new_no_door_panic_boundary() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let mut assets = LevelAssets::default();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::CharacterProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+        let request = crate::ai::PanicRequest {
+            center: None,
+            runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: true,
+        };
+
+        engine.begin_panic_no_door_branch(
+            &sim,
+            &assets,
+            pc_id,
+            &request,
+            &AiContext::default(),
+            false,
+        );
+
+        let ai = engine
+            .get_entity(pc_id)
+            .and_then(Entity::enemy_ai)
+            .expect("autonomous PC must retain its Enemy AI");
+        assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingHiding);
     }
 
     #[test]
@@ -1074,13 +1159,12 @@ pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<Potential
         // begin inactive but must already occur in every applicable Enemy
         // detectable list so activation does not alter list identity/order.
         match entity {
-            Entity::Pc(_) => {
+            Entity::Pc(pc) => {
                 out.push(PotentialDetectable {
                     id: id.into(),
                     is_pc: true,
                     is_soldier: false,
-                    // All PCs are Royalists.
-                    camp: Camp::Royalists,
+                    camp: pc.pc.cached_camp,
                 });
             }
             Entity::Soldier(s) => {
@@ -1123,6 +1207,7 @@ pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<Potential
 /// - Lacklandist soldier: detects Royalist soldiers + PCs.
 /// - Royalist civilian: detects PCs.
 /// - Lacklandist civilian (hostile civ): detects PCs.
+/// - Custom soldier: detects PCs and soldiers of every other allegiance.
 pub(super) fn build_detectable_enemies_for(
     self_camp: Camp,
     self_is_civilian: bool,
@@ -1145,7 +1230,7 @@ pub(super) fn build_detectable_enemies_for(
             // Bonhomie considers Royalist soldiers for Lacklandist
             // civilians in its outer loop, but AddDetectable's civilian arm
             // rejects them. Both civilian camps therefore retain PCs only.
-            pd.is_pc
+            pd.is_pc && (!matches!(self_camp, Camp::Custom(_)) || self_camp.is_hostile_to(pd.camp))
         } else {
             // Malignity (enemy soldier) AddDetectable cases:
             // - Royalist (Good) soldier → detects enemy (Lacklandist) soldiers.
@@ -1342,7 +1427,7 @@ mod parity_tests {
     #[test]
     fn potential_detectables_include_inactive_authored_pcs() {
         let mut engine = EngineInner::new();
-        let add_pc = |engine: &mut EngineInner, active| {
+        let add_pc = |engine: &mut EngineInner, active, camp| {
             engine.add_entity(Entity::Pc(crate::element::ActorPc {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ActorPc,
@@ -1351,18 +1436,24 @@ mod parity_tests {
                 },
                 actor: Default::default(),
                 human: Default::default(),
-                pc: Default::default(),
+                pc: crate::element::PcData {
+                    cached_camp: camp,
+                    ..Default::default()
+                },
             }))
         };
-        let inactive = add_pc(&mut engine, false);
-        let active = add_pc(&mut engine, true);
+        let inactive = add_pc(&mut engine, false, Camp::Custom(7));
+        let active = add_pc(&mut engine, true, Camp::Custom(8));
 
-        let ids = build_potential_detectables(&engine)
+        let candidates = build_potential_detectables(&engine)
             .into_iter()
-            .map(|candidate| candidate.id)
+            .map(|candidate| (candidate.id, candidate.camp))
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec![inactive, active]);
+        assert_eq!(
+            candidates,
+            vec![(inactive, Camp::Custom(7)), (active, Camp::Custom(8))]
+        );
     }
 
     #[test]
@@ -2448,6 +2539,68 @@ mod parity_tests {
             vec![7, 3]
         );
     }
+
+    #[test]
+    fn custom_retinue_detects_hostile_champions_but_not_its_own() {
+        let self_id = EntityId::Soldier(crate::entity_id::SoldierId(5));
+        let allied_champion = EntityId::Pc(crate::entity_id::PcId(1));
+        let hostile_champion = EntityId::Pc(crate::entity_id::PcId(2));
+        let snapshot = vec![
+            PotentialDetectable {
+                id: allied_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(2),
+            },
+            PotentialDetectable {
+                id: hostile_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(3),
+            },
+        ];
+
+        let detectables = build_detectable_enemies_for(Camp::Custom(2), false, self_id, &snapshot);
+
+        assert_eq!(
+            detectables
+                .iter()
+                .map(|detectable| detectable.element)
+                .collect::<Vec<_>>(),
+            vec![Some(hostile_champion)]
+        );
+    }
+
+    #[test]
+    fn custom_civilian_detects_hostile_champion_but_not_allied_champion() {
+        let self_id = EntityId::Civilian(crate::entity_id::CivilianId(5));
+        let allied_champion = EntityId::Pc(crate::entity_id::PcId(1));
+        let hostile_champion = EntityId::Pc(crate::entity_id::PcId(2));
+        let snapshot = vec![
+            PotentialDetectable {
+                id: allied_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(2),
+            },
+            PotentialDetectable {
+                id: hostile_champion,
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Custom(3),
+            },
+        ];
+
+        let detectables = build_detectable_enemies_for(Camp::Custom(2), true, self_id, &snapshot);
+
+        assert_eq!(
+            detectables
+                .iter()
+                .map(|detectable| detectable.element)
+                .collect::<Vec<_>>(),
+            vec![Some(hostile_champion)]
+        );
+    }
 }
 
 /// Per-segment obstacle check against a hiking path's waypoints.
@@ -2867,11 +3020,7 @@ pub(super) fn build_ai_context_from_entity(
     let elem = entity.element_data();
     let original_creation_order =
         context_original_creation_order(elem.index_in_elements_list as u32, entity_views);
-    let camp = match entity {
-        Entity::Soldier(s) => s.soldier.cached_camp,
-        Entity::Civilian(c) => c.civilian.cached_camp,
-        _ => crate::element::Camp::default(),
-    };
+    let camp = entity.camp();
     let actor = entity.actor_data();
     // `is_swordfighting` is "opponents list is non-empty"; do not proxy
     // it through action_state.
@@ -2884,10 +3033,10 @@ pub(super) fn build_ai_context_from_entity(
     } else {
         Default::default()
     };
-    let remaining_arrows = match entity {
-        Entity::Soldier(s) => s.npc.number_of_arrows,
-        _ => 0,
-    };
+    let remaining_arrows = entity
+        .ai_actor_data()
+        .map(|ai| ai.number_of_arrows)
+        .unwrap_or(0);
     // `self_is_beggar` / `self_is_child` are civilian-type checks.
     // Non-civilian NPCs always read false (callers cast to civilian
     // first).
@@ -2901,7 +3050,7 @@ pub(super) fn build_ai_context_from_entity(
     // Soldier vs civilian — drives the soldier-only macro opcodes
     // (CMD_CHECK_4, CMD_LOOK_LEFT, CMD_BEND, CMD_PATROL_*) which error
     // on civilians.
-    let self_is_soldier = matches!(entity, Entity::Soldier(_));
+    let self_is_soldier = entity.enemy_ai().is_some();
     // `self_is_rider` is the cached `SoldierData.rider` flag from the
     // soldier profile, set at level load.  Non-soldier NPCs are never
     // riders.
@@ -2910,29 +3059,15 @@ pub(super) fn build_ai_context_from_entity(
     // pride, used by the bored-time picker for longer officer/pride
     // bored intervals.  `ProfileRank::None` for non-soldiers makes the
     // officer check fall through.
-    let (self_rank, self_pride) = match entity {
-        Entity::Soldier(s) => {
-            let rank = s
-                .npc
-                .ai_brain
-                .enemy()
-                .map(|e| e.soldier_profile_rank)
-                .unwrap_or(crate::profiles::ProfileRank::None);
-            let pride = s
-                .npc
-                .ai_brain
-                .enemy()
-                .map(|e| e.soldier_profile_pride)
-                .unwrap_or(0);
-            (rank, pride)
-        }
-        _ => (crate::profiles::ProfileRank::None, 0),
-    };
+    let (self_rank, self_pride) = entity
+        .enemy_ai()
+        .map(|ai| (ai.soldier_profile_rank, ai.soldier_profile_pride))
+        .unwrap_or((crate::profiles::ProfileRank::None, 0));
     // Number of detectables of type Friend — the
     // `return_to_duty_common_stuff` guard uses this to decide whether
     // to clear the stashed detected body.
     let self_detectable_friend_count = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::Friend as usize)
@@ -2943,7 +3078,7 @@ pub(super) fn build_ai_context_from_entity(
     // `return_to_duty` uses this to know whether to record the
     // abandoned checkpoint Charly in the missed-in-action list.
     let self_detectable_missed_friend_count = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::MissedFriend as usize)
@@ -2951,7 +3086,7 @@ pub(super) fn build_ai_context_from_entity(
         .map(|lst| lst.len() as u16)
         .unwrap_or(0);
     let self_seen_enemy_handles = entity
-        .npc_data()
+        .ai_actor_data()
         .and_then(|npc| {
             npc.detectable_lists
                 .get(crate::element::DetectableType::Enemy as usize)
@@ -3023,11 +3158,10 @@ pub(super) fn build_ai_context_from_entity(
     // `set_alert_status_with_flags` can apply the view-override from
     // inside shared `AiController` paths.
     let self_forced_attentive = entity
-        .npc_data()
-        .and_then(|npc| npc.ai_brain.enemy())
+        .enemy_ai()
         .is_some_and(|enemy| enemy.forced_attentive);
     let self_view_radius = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.view_radius as f32)
         .unwrap_or(standard_view_polygon_radius as f32);
     let self_eye = entity.compute_eyes_point(None);
@@ -3045,24 +3179,24 @@ pub(super) fn build_ai_context_from_entity(
         .compute_eyes_point(Some(crate::element::Posture::Upright))
         .unwrap_or(elem.position());
     let self_stare_point = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.stare_point)
         .unwrap_or_else(|| {
             crate::coordinates::GroundPoint::from_map_and_z(elem.position_map(), elem.position().z)
         });
     let self_view_direction = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.view_direction)
         .unwrap_or_else(|| {
             let (x, y) = crate::ai_vision::sector_to_forward(elem.direction());
             [x, y]
         });
     let self_real_half_aperture = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.real_half_aperture)
         .unwrap_or(crate::ai_vision::NORMAL_HALF_APERTURE);
     let self_eye_status = entity
-        .npc_data()
+        .ai_actor_data()
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
     // `RHArtificialIntelligence::Position(mpMe)` uses the committed gate
@@ -5535,8 +5669,10 @@ impl EngineInner {
     }
 
     /// Enter a virtual Enemy/Friendly `SetState` call after releasing the
-    /// engine's prior controller borrow. Required callers must not degrade a
-    /// missing owner or mismatched brain into a silent no-op.
+    /// engine's prior controller borrow. Dispatch follows the actor's AI brain,
+    /// not its entity kind: custom-mission PCs may own the same [`EnemyAi`] as
+    /// soldiers. Required callers must not degrade a missing owner or
+    /// mismatched brain into a silent no-op.
     pub(super) fn set_typed_npc_state(
         &mut self,
         npc_id: EntityId,
@@ -5544,28 +5680,24 @@ impl EngineInner {
         substate: crate::ai::Substate,
         context: &'static str,
     ) {
-        match self.world.entities.get_mut(npc_id) {
-            Some(Entity::Soldier(s)) => s
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .unwrap_or_else(|| panic!("{context} owner {} requires Enemy AI", npc_id.index()))
-                .set_state(state, substate),
-            Some(Entity::Civilian(c)) => c
-                .npc
-                .ai_brain
-                .friendly_mut()
-                .unwrap_or_else(|| {
-                    panic!("{context} owner {} requires Friendly AI", npc_id.index())
-                })
-                .set_state(state, substate),
-            Some(other) => panic!(
-                "{context} owner {} has invalid entity kind {:?}",
-                npc_id.index(),
-                other.element_data().kind
-            ),
-            None => panic!("{context} owner {} disappeared", npc_id.index()),
+        let entity = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("{context} owner {} disappeared", npc_id.index()));
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.set_state(state, substate);
+            return;
         }
+        if let Some(friendly) = entity.friendly_ai_mut() {
+            friendly.set_state(state, substate);
+            return;
+        }
+        panic!(
+            "{context} owner {} has entity kind {:?} but no typed AI brain",
+            npc_id.index(),
+            entity.element_data().kind
+        );
     }
 
     /// Enter the pre-filter half of typed `StartThink(NO_EVENT)`.

@@ -1973,6 +1973,10 @@ pub struct PcData {
     /// only and is deliberately independent from autonomous control itself.
     #[serde(default)]
     pub aggressive_combat: bool,
+    /// Shared soldier AI runtime used by autonomous aggressive PCs. Ordinary
+    /// player-controlled PCs intentionally have no AI owner.
+    #[serde(default)]
+    pub ai: Option<Box<AiActorData>>,
 
     /// Whether the per-PC UI panel should be hidden.  Toggled today by
     /// the `CALL <initial> HIDEINTERFACE|DISPLAYINTERFACE` console
@@ -2113,6 +2117,7 @@ impl Default for PcData {
             playable: true,
             autonomous: false,
             aggressive_combat: false,
+            ai: None,
             interface_hidden: false,
             current_action: Action::default(),
             saved_action: Action::default(),
@@ -2348,7 +2353,11 @@ impl AiBrain {
     }
 }
 
-/// NPC-level data.
+/// Per-actor state owned by the NPC AI runtime.
+///
+/// This is separate from [`NpcData`] so an autonomous PC can run the same
+/// perception and battle-decision machinery without masquerading as an NPC or
+/// carrying a second, potentially divergent copy of its body health.
 #[derive(
     Debug,
     Clone,
@@ -2358,7 +2367,7 @@ impl AiBrain {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct NpcData {
+pub struct AiActorData {
     /// Persistent NPC-only construction ordinal.
     ///
     /// Original `RHElementActorNPC` assigns this from
@@ -2366,7 +2375,6 @@ pub struct NpcData {
     /// distinct from both the entity-table slot and element creation order
     /// because non-NPC elements do not increment the counter.
     pub register_number: u16,
-    pub life_points: i16,
     pub number_of_arrows: u16,
 
     pub direction_old: i16,
@@ -2578,11 +2586,10 @@ impl EyeStatus {
     }
 }
 
-impl Default for NpcData {
+impl Default for AiActorData {
     fn default() -> Self {
         Self {
             register_number: 0,
-            life_points: 100,
             // Seed `MAX_NPC_ARROWS` for every NPC unconditionally —
             // civilians, friendlies, hostile soldiers — even those
             // who never use a bow.  Arrows are only consumed when a
@@ -2660,7 +2667,7 @@ impl Default for NpcData {
     }
 }
 
-impl NpcData {
+impl AiActorData {
     /// Original `RHElementActorNPC::DeleteDetectable`: remove only the first
     /// matching entry and report whether one was found. Release recordings can
     /// contain duplicates because several Original `AddDetectable` callers only
@@ -2786,6 +2793,48 @@ impl NpcData {
         }
         self.maximal_detection_suspect = 0;
         self.worst_detected_type = DetectableType::None;
+    }
+}
+
+/// Body state shared by soldier and civilian entities plus their AI runtime.
+///
+/// `Deref` preserves the existing `npc.ai_brain`/vision-field API while making
+/// the ownership boundary explicit for actors which are not NPC bodies.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct NpcData {
+    pub life_points: i16,
+    #[serde(flatten)]
+    pub ai: AiActorData,
+}
+
+impl Default for NpcData {
+    fn default() -> Self {
+        Self {
+            life_points: 100,
+            ai: AiActorData::default(),
+        }
+    }
+}
+
+impl std::ops::Deref for NpcData {
+    type Target = AiActorData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ai
+    }
+}
+
+impl std::ops::DerefMut for NpcData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ai
     }
 }
 
@@ -3833,6 +3882,17 @@ impl Entity {
         }
     }
 
+    /// Perception and decision state for every actor which owns an AI brain.
+    /// This includes ordinary NPCs and opt-in autonomous PCs.
+    pub fn ai_actor_data(&self) -> Option<&AiActorData> {
+        match self {
+            Self::Pc(e) => e.pc.ai.as_deref(),
+            Self::Soldier(e) => Some(&e.npc.ai),
+            Self::Civilian(e) => Some(&e.npc.ai),
+            _ => None,
+        }
+    }
+
     pub fn human_data_mut(&mut self) -> Option<&mut HumanData> {
         match self {
             Self::Pc(e) => Some(&mut e.human),
@@ -3915,6 +3975,15 @@ impl Entity {
         match self {
             Self::Soldier(e) => Some(&mut e.npc),
             Self::Civilian(e) => Some(&mut e.npc),
+            _ => None,
+        }
+    }
+
+    pub fn ai_actor_data_mut(&mut self) -> Option<&mut AiActorData> {
+        match self {
+            Self::Pc(e) => e.pc.ai.as_deref_mut(),
+            Self::Soldier(e) => Some(&mut e.npc.ai),
+            Self::Civilian(e) => Some(&mut e.npc.ai),
             _ => None,
         }
     }
@@ -4071,10 +4140,9 @@ impl Entity {
         }
     }
 
-    /// Camp allegiance for fighter-camp-keyed iteration.  PCs are
-    /// always `Royalists`; Soldiers/Civilians read from their cached
-    /// camp.  Non-actor entities have no camp and return
-    /// `Camp::Error`.
+    /// Camp allegiance for fighter-camp-keyed iteration. PCs, soldiers, and
+    /// civilians read their authored cached camp. Non-actor entities have no
+    /// camp and return `Camp::Error`.
     pub fn camp(&self) -> Camp {
         match self {
             Self::Pc(pc) => pc.pc.cached_camp,
@@ -4252,27 +4320,30 @@ impl Entity {
         GroundPoint::new(position.x, position.y)
     }
 
-    /// Get the NPC's base AI controller, if this is an NPC with AI.
+    /// Get an actor's base AI controller, if it owns an AI brain.
     pub fn ai_controller(&self) -> Option<&AiController> {
         match self {
+            Self::Pc(e) => e.pc.ai.as_deref()?.ai_brain.base(),
             Self::Soldier(e) => e.npc.ai_brain.base(),
             Self::Civilian(e) => e.npc.ai_brain.base(),
             _ => None,
         }
     }
 
-    /// Get the NPC's base AI controller mutably.
+    /// Get an actor's base AI controller mutably.
     pub fn ai_controller_mut(&mut self) -> Option<&mut AiController> {
         match self {
+            Self::Pc(e) => e.pc.ai.as_deref_mut()?.ai_brain.base_mut(),
             Self::Soldier(e) => e.npc.ai_brain.base_mut(),
             Self::Civilian(e) => e.npc.ai_brain.base_mut(),
             _ => None,
         }
     }
 
-    /// Get the enemy AI subclass, if this is a soldier with enemy AI.
+    /// Get the enemy AI subclass, if this actor has enemy AI.
     pub fn enemy_ai(&self) -> Option<&EnemyAi> {
         match self {
+            Self::Pc(e) => e.pc.ai.as_deref()?.ai_brain.enemy(),
             Self::Soldier(e) => e.npc.ai_brain.enemy(),
             _ => None,
         }
@@ -4281,7 +4352,16 @@ impl Entity {
     /// Get the enemy AI subclass mutably.
     pub fn enemy_ai_mut(&mut self) -> Option<&mut EnemyAi> {
         match self {
+            Self::Pc(e) => e.pc.ai.as_deref_mut()?.ai_brain.enemy_mut(),
             Self::Soldier(e) => e.npc.ai_brain.enemy_mut(),
+            _ => None,
+        }
+    }
+
+    /// Get the friendly AI subclass, if this actor has friendly AI.
+    pub fn friendly_ai(&self) -> Option<&FriendlyAi> {
+        match self {
+            Self::Civilian(e) => e.npc.ai_brain.friendly(),
             _ => None,
         }
     }
@@ -5983,6 +6063,10 @@ mod tests {
                 assert_eq!(left.is_hostile_to(*right), left_index != right_index);
             }
         }
+    }
+
+    #[test]
+    fn invalid_camp_hostility_remains_nonhostile_after_warning() {
         assert!(!Camp::Error.is_hostile_to(Camp::Royalists));
     }
 
@@ -6309,7 +6393,10 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                ai: AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
+                    ..AiActorData::default()
+                },
                 ..NpcData::default()
             },
             soldier: SoldierData::default(),

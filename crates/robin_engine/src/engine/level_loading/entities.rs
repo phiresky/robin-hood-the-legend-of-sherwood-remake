@@ -2,6 +2,51 @@
 
 use super::*;
 
+/// Populate the behavior traits consumed by the established malignity battle
+/// state machine. `weapon_*`, shooting, and endurance come from the physical
+/// actor profile, allowing PCs to keep their actual character combat data
+/// while borrowing only decision personality from a soldier profile.
+#[allow(clippy::too_many_arguments)]
+fn configure_enemy_ai_profile(
+    ai: &mut crate::ai_enemy::EnemyAi,
+    behavior: &crate::profiles::SoldierProfile,
+    hth_weapon_id: u32,
+    shooting_weapon_id: u32,
+    shooting: u16,
+    endurance: u16,
+    profiles: &crate::profiles::ProfileManager,
+    profile_number: u32,
+) {
+    ai.soldier_profile_courage = behavior.courage;
+    ai.soldier_profile_iq = behavior.intelligence;
+    ai.soldier_profile_shooting = shooting;
+    ai.soldier_profile_pride = behavior.pride;
+    ai.soldier_profile_rank = behavior.rank;
+    ai.soldier_profile_initiative = behavior.initiative;
+    ai.soldier_profile_beer = behavior.beer;
+    ai.soldier_profile_money = behavior.money;
+    ai.soldier_profile_apple = behavior.apple;
+    ai.soldier_profile_whistle = behavior.whistle;
+    ai.soldier_profile_duty = behavior.duty;
+    ai.soldier_profile_endurance = endurance;
+    ai.is_vip = false;
+    ai.hth_weapon_id = hth_weapon_id;
+    ai.is_archer_unit = if shooting_weapon_id == 0 {
+        false
+    } else {
+        profiles.get_bow(shooting_weapon_id).unwrap_or_else(|| {
+            panic!(
+                "combat profile {profile_number} requires missing bow profile {shooting_weapon_id}"
+            )
+        });
+        true
+    };
+    if let Some(weapon) = profiles.get_hth_weapon(hth_weapon_id) {
+        ai.sword_range = weapon.distance[crate::weapons::WeaponDistance::Default as usize];
+        ai.sword_is_charge_weapon = weapon.charge;
+    }
+}
+
 impl EngineInner {
     pub(super) fn spawn_proto_entities_stage(
         &mut self,
@@ -217,10 +262,13 @@ impl EngineInner {
                     ..Default::default()
                 },
                 npc: crate::element::NpcData {
-                    register_number: u16::try_from(npc_register_number)
-                        .expect("civilian NPC register number exceeds u16"),
-                    money: raw.money,
-                    ai_brain: crate::element::AiBrain::Friendly(Box::new(ai)),
+                    ai: crate::element::AiActorData {
+                        register_number: u16::try_from(npc_register_number)
+                            .expect("civilian NPC register number exceeds u16"),
+                        money: raw.money,
+                        ai_brain: crate::element::AiBrain::Friendly(Box::new(ai)),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 civilian: crate::element::CivilianData {
@@ -506,6 +554,50 @@ impl EngineInner {
                     ),
                 })?;
 
+            let autonomous_ai = if raw.autonomous && raw.aggressive_combat {
+                let behavior_profile_id = raw.ai_profile.as_deref().ok_or_else(|| {
+                    EngineError::MissionLevelStage {
+                        stage: "rescue PCs",
+                        reason: format!(
+                            "aggressive autonomous PC profile {} requires a readable ai_profile",
+                            raw.profile_index
+                        ),
+                    }
+                })?;
+                let behavior_profile_index = profiles
+                    .soldier_idx_by_identifier(behavior_profile_id)
+                    .map_err(|reason| EngineError::ProfileSpriteLoadFailed {
+                        kind: "autonomous PC AI",
+                        profile_id: raw.profile_index,
+                        reason,
+                    })?;
+                let behavior_profile = profiles.get_soldier(behavior_profile_index).unwrap_or_else(
+                    || {
+                        panic!(
+                            "resolved autonomous-PC AI profile {behavior_profile_id:?} disappeared"
+                        )
+                    },
+                );
+                let mut ai = crate::ai_enemy::EnemyAi::new(0);
+                ai.base.initial_action = raw.action;
+                configure_enemy_ai_profile(
+                    &mut ai,
+                    behavior_profile,
+                    char_profile.hth_weapon_id,
+                    char_profile.shooting_weapon_id,
+                    char_profile.shooting,
+                    char_profile.endurance,
+                    &profiles,
+                    behavior_profile_index.0,
+                );
+                Some(Box::new(crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
+                    ..Default::default()
+                }))
+            } else {
+                None
+            };
+
             let entity = Entity::Pc(crate::element::ActorPc {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ActorPc,
@@ -540,10 +632,20 @@ impl EngineInner {
                     playable: raw.playable,
                     autonomous: raw.autonomous,
                     aggressive_combat: raw.aggressive_combat,
+                    ai: autonomous_ai,
                     ..Default::default()
                 },
             });
-            self.add_entity(entity);
+            let eid = self.add_entity(entity);
+            if let Some(ai) = self
+                .world
+                .entities
+                .get_mut(eid)
+                .and_then(Entity::ai_controller_mut)
+            {
+                ai.me = eid.index();
+                ai.owner_entity_id = Some(eid);
+            }
             // The low-priority idle order is enqueued by the post-spawn
             // `ensure_wait_element` loop further below, which iterates
             // every actor (rescue PCs included) before the first tick.
@@ -668,39 +770,16 @@ impl EngineInner {
             // Copy courage from soldier profile for the approach logic.
             // Also pull the soldier's sword range from the HtH weapon
             // profile's distance[Default] entry.
-            {
-                let p = soldier_profile;
-                ai.soldier_profile_courage = p.courage;
-                ai.soldier_profile_iq = p.intelligence;
-                ai.soldier_profile_shooting = p.shooting;
-                ai.soldier_profile_pride = p.pride;
-                ai.soldier_profile_rank = p.rank;
-                ai.soldier_profile_initiative = p.initiative;
-                ai.soldier_profile_beer = p.beer;
-                ai.soldier_profile_money = p.money;
-                ai.soldier_profile_apple = p.apple;
-                ai.soldier_profile_whistle = p.whistle;
-                ai.soldier_profile_duty = p.duty;
-                ai.soldier_profile_endurance = p.endurance;
-                ai.is_vip = p.vip;
-                ai.hth_weapon_id = p.hth_weapon_id;
-                ai.is_archer_unit = if p.shooting_weapon_id == 0 {
-                    false
-                } else {
-                    profiles.get_bow(p.shooting_weapon_id).unwrap_or_else(|| {
-                        panic!(
-                            "soldier profile {} requires missing bow profile {}",
-                            profile_number, p.shooting_weapon_id
-                        )
-                    });
-                    true
-                };
-                if let Some(weapon) = profiles.get_hth_weapon(p.hth_weapon_id) {
-                    ai.sword_range =
-                        weapon.distance[crate::weapons::WeaponDistance::Default as usize];
-                    ai.sword_is_charge_weapon = weapon.charge;
-                }
-            }
+            configure_enemy_ai_profile(
+                &mut ai,
+                soldier_profile,
+                soldier_profile.hth_weapon_id,
+                soldier_profile.shooting_weapon_id,
+                soldier_profile.shooting,
+                soldier_profile.endurance,
+                &profiles,
+                profile_number,
+            );
 
             // Set the sprite's move box + pathfinder index from the
             // soldier profile right after `LoadFrameInfo`.
@@ -772,12 +851,14 @@ impl EngineInner {
                     ..Default::default()
                 },
                 npc: crate::element::NpcData {
-                    register_number: npc_register_number,
                     // cached_max_lp was already difficulty-scaled above.
                     life_points: cached_max_lp,
-                    money: raw.money,
-                    ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
-                    ..Default::default()
+                    ai: crate::element::AiActorData {
+                        register_number: npc_register_number,
+                        money: raw.money,
+                        ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
+                        ..Default::default()
+                    },
                 },
                 soldier: crate::element::SoldierData {
                     soldier_profile_index: crate::profiles::SoldierProfileIdx(profile_number),
