@@ -1308,6 +1308,7 @@ pub enum NoiseType {
     Drawbridge,
     ZingZing,
     Off,
+    Distraction,
 }
 
 /// Surface material.

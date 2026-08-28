@@ -597,6 +597,9 @@ pub enum Field {
     Scroll,
     ScrollReader,
     ScrollOwner,
+    /// Rust extension: 3D landing target for a ground-thrown stone noise
+    /// distraction. It has no Original `RHfield` ordinal.
+    NoiseDistractionTarget,
 }
 
 impl Field {
@@ -652,6 +655,7 @@ impl Field {
             Scroll => 40,
             ScrollReader => 41,
             ScrollOwner => 42,
+            NoiseDistractionTarget => return None,
         })
     }
 }

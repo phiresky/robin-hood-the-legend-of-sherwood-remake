@@ -460,6 +460,8 @@ fn simulation_config_for_level_restart(
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
         checkpoint.enable_unbinding = outcome.enable_unbinding;
         checkpoint.reusable_cloaks = outcome.reusable_cloaks;
+        checkpoint.item_gameplay = outcome.item_gameplay;
+        checkpoint.noise_distraction_feedback = outcome.noise_distraction_feedback;
     }
     checkpoint
 }
@@ -1200,6 +1202,14 @@ mod required_state_tests {
                         enabled: false,
                     }
                     .into(),
+                    robin_engine::player_command::PlayerCommand::SetItemGameplayConfig {
+                        config: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
+                    }
+                    .into(),
+                    robin_engine::player_command::PlayerCommand::SetNoiseDistractionFeedback {
+                        enabled: false,
+                    }
+                    .into(),
                 ])
                 .with_hourglass(false),
             )
@@ -1222,6 +1232,11 @@ mod required_state_tests {
 
         assert_eq!(restarted.amount_of_speaking, 9);
         assert!(!restarted.enable_unbinding);
+        assert_eq!(
+            restarted.item_gameplay,
+            robin_engine::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!restarted.noise_distraction_feedback);
         assert!(restarted.highlander2, "other construction config resets");
     }
 
@@ -1234,6 +1249,11 @@ mod required_state_tests {
 
         assert_eq!(restarted.amount_of_speaking, 9);
         assert!(!restarted.enable_unbinding);
+        assert_eq!(
+            restarted.item_gameplay,
+            robin_engine::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!restarted.noise_distraction_feedback);
         assert!(restarted.highlander2, "direct launch uses its checkpoint");
     }
 
@@ -1247,6 +1267,11 @@ mod required_state_tests {
         assert_eq!(restarted, checkpoint);
         assert_eq!(restarted.amount_of_speaking, 3);
         assert!(restarted.enable_unbinding);
+        assert_eq!(restarted.item_gameplay, checkpoint.item_gameplay);
+        assert_eq!(
+            restarted.noise_distraction_feedback,
+            checkpoint.noise_distraction_feedback
+        );
     }
 
     #[test]

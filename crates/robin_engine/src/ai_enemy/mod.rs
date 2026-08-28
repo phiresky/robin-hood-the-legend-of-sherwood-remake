@@ -167,6 +167,12 @@ pub struct EnemyAi {
     pub heard_nets: Vec<ObjectHandle>,
     /// Last position at which an unexplained stimulus was detected.
     pub detected_something_there: Position,
+    /// The current heard-steps route was caused by an intentional stone
+    /// distraction and therefore uses a running approach. This is explicit
+    /// serialized AI memory: save/load and rollback must not infer it from a
+    /// transient sound side effect.
+    #[serde(default)]
+    pub investigating_distraction: bool,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
     pub beggar_to_examine: HumanHandle,
@@ -409,6 +415,7 @@ impl Default for EnemyAi {
             frame_when_missed_charly: 0,
             heard_nets: Vec::new(),
             detected_something_there: Position::default(),
+            investigating_distraction: false,
             last_seek_direction_index: 0,
             beggar_to_examine: 0,
             beggar_is_npc: false,
@@ -4379,6 +4386,8 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        self.investigating_distraction = false;
+
         // DeleteAllDetectables(DETECTABLE_BEGGAR) is synchronous in
         // Original. In particular, SeekNextPoint can call ReturnToDuty after
         // SeekArea queued beggars earlier in the same borrowed AI dispatch;

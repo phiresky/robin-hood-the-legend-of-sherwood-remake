@@ -120,7 +120,7 @@ fn recorded_interaction_quick_phase(command: Command) -> Option<QuickAction> {
 /// does use the selected layer; Net also authors literal zero before capture.
 fn recorded_ground_target_titbit_layer(command: Command, captured_layer: u16) -> u16 {
     match command {
-        Command::ThrowPurse | Command::ThrowNet => 0,
+        Command::ThrowPurse | Command::ThrowNet | Command::ThrowStone => 0,
         _ => captured_layer,
     }
 }
@@ -646,6 +646,7 @@ impl EngineInner {
                         Command::ThrowNet => crate::titbit::QuickAction::Net as u16,
                         Command::ThrowWaspNest => crate::titbit::QuickAction::Wasp as u16,
                         Command::ThrowPurse => crate::titbit::QuickAction::Purse as u16,
+                        Command::ThrowStone => crate::titbit::QuickAction::Stone as u16,
                         _ => panic!(
                             "recorded ground-target command {command:?} has no Original QA titbit"
                         ),
@@ -8848,6 +8849,14 @@ mod tests {
     #[test]
     fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
         let cases = [
+            (
+                Action::Stone,
+                Command::ThrowStone,
+                Field::NoiseDistractionTarget,
+                QuickAction::Stone,
+                9,
+                0,
+            ),
             (
                 Action::Purse,
                 Command::ThrowPurse,

@@ -2101,6 +2101,8 @@ impl EnemyAi {
             return;
         }
         self.current_task_priority = self.new_task_priority;
+        // Seeing a real enemy supersedes an in-flight curiosity route.
+        self.investigating_distraction = false;
 
         // Royalist-camp early returns. These guards are NOT hoisted into
         // the engine-side dispatcher (which only filters on state), so
@@ -2337,6 +2339,10 @@ impl EnemyAi {
             return;
         }
         self.current_task_priority = self.new_task_priority;
+        // A later ordinary noise supersedes the extension-only run latch.
+        // The Distraction arm below sets it only after all of its admission
+        // checks have passed.
+        self.investigating_distraction = false;
 
         if self.base.object_of_desire != 0 {
             self.base.forgotten_objects.push(self.base.object_of_desire);
@@ -2348,6 +2354,32 @@ impl EnemyAi {
         // available; replay-normalized sector-less origins fall back to the
         // separately recorded RHnoise elevation instead of fake ground zero.
         match noise.noise_type {
+            NoiseType::Distraction => {
+                if self.base.current_substate == Substate::SeekingHeardstepsPreReactiontime
+                    || self.base.current_substate == Substate::SeekingHeardstepsReactiontime
+                    || self.base.current_substate.is_take_money()
+                    || self.base.current_substate.is_fight_for_money()
+                {
+                    return;
+                }
+
+                let was_default = self.base.current_state == AiState::Default;
+                self.base.stop_all();
+                self.base
+                    .my_reconnaissance_report
+                    .update(ReportType::Noise, noise.origin);
+                self.base.seek_position = noise.origin;
+                self.investigating_distraction = true;
+                self.base.say(Remark::HearsNoise);
+                self.base.set_emoticon(EmoticonType::QuestionMark);
+                self.set_state(AiState::Seeking, Substate::SeekingHeardstepsPreReactiontime);
+                if was_default {
+                    self.react(parameters_ai::AI_MAX_STEPS_REACTIONTIME as u16, ctx, tick);
+                } else {
+                    self.base.launch_timer(1, ctx.frame);
+                }
+            }
+
             NoiseType::Pfiiit => {
                 // Whistling.
                 //
@@ -5147,6 +5179,50 @@ mod tests {
             ai.base.current_substate,
             Substate::SeekingHeardstepsReactiontime
         );
+    }
+
+    #[test]
+    fn distraction_noise_records_the_impact_and_enters_investigation() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(71);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultOnPost;
+        ai.current_task_priority = task_priority::NONE;
+        ai.new_task_priority = task_priority::STRANGE_THING;
+        let origin = Position {
+            x: 140.0,
+            y: 90.0,
+            sector: None,
+            level: 0,
+        };
+        let noise = Noise {
+            origin,
+            noise_type: NoiseType::Distraction,
+            volume: crate::parameters_ai::NOISE_VOLUME_DISTRACTION as u16,
+            elevation: 0,
+            element_id: 0,
+        };
+        let ctx = AiContext {
+            frame: 300,
+            self_is_active: true,
+            ..AiContext::default()
+        };
+
+        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+
+        assert!(ai.investigating_distraction);
+        assert_eq!(ai.base.seek_position, origin);
+        assert_eq!(
+            ai.base.my_reconnaissance_report.report_type,
+            ReportType::Noise
+        );
+        assert_eq!(ai.base.my_reconnaissance_report.seek_position, origin);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingHeardstepsPreReactiontime
+        );
+        assert!(ai.base.timer_is_running);
     }
 
     /// Original `RHartificialmalignity.cpp:5442-5452` sweeps the waiting

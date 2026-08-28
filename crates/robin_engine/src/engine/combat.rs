@@ -1687,6 +1687,62 @@ impl EngineInner {
         self.decrement_ability_ammo(assets, actor_id, action);
     }
 
+    /// Spawn the ground-targeted stone extension after the original throw
+    /// animation completes. The projectile carries the one-shot noise latch,
+    /// so saving or rolling back mid-flight cannot lose or duplicate the
+    /// impact stimulus.
+    fn on_throw_noise_distraction_done(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        target: crate::coordinates::WorldPoint3D,
+    ) {
+        // Admission was validated when the sequence began. Disabling the
+        // option during the throw animation prevents future throws but does
+        // not erase this already-authoritative command.
+        let (throw_pos, layer) =
+            self.projectile_throw_origin(actor_id, "ThrowNoiseDistractionDone");
+        let thrower = self.get_entity(actor_id).unwrap_or_else(|| {
+            panic!("noise-distraction thrower {actor_id:?} disappeared before Done")
+        });
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, thrower.element_data());
+        let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            layer,
+            sight_obstacles: self.sight_obstacles(assets),
+            water_zones: Some(&assets.water_zones),
+        };
+        let mut projectile = crate::bow_shot::spawn_stone(
+            actor_id,
+            throw_pos,
+            target,
+            None,
+            None,
+            layer,
+            Some(&obstacle_check),
+        );
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            panic!("ground stone spawn returned a non-projectile entity");
+        };
+        projectile_data.projectile.noise_distraction = true;
+        set_projectile_trajectory_origin(
+            &mut projectile_data.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
+        let projectile_id = self.add_entity(projectile);
+        self.attach_accessory_sprite(assets, projectile_id);
+        self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Stone);
+        tracing::debug!(
+            actor = ?actor_id,
+            projectile = ?projectile_id,
+            x = target.x,
+            y = target.y,
+            "ground noise-distraction stone spawned"
+        );
+    }
+
     fn projectile_throw_origin(
         &self,
         actor_id: EntityId,
@@ -2281,6 +2337,40 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    #[test]
+    fn distraction_projectile_latch_survives_serialization_and_emits_once() {
+        let mut engine = EngineInner::new();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Stone,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                noise_distraction: true,
+                ..Default::default()
+            },
+        });
+        projectile.element_data_mut().set_layer(2);
+
+        let encoded = bitcode::encode(&projectile);
+        let restored: Entity = bitcode::decode(&encoded).expect("decode distraction projectile");
+        assert!(matches!(
+            &restored,
+            Entity::Projectile(projectile) if projectile.projectile.noise_distraction
+        ));
+
+        let projectile_id = engine.add_entity(restored);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
+        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
     }
 
     fn purse_publication_assets() -> LevelAssets {
@@ -3552,7 +3642,15 @@ impl EngineInner {
                     command = ?activation_cmd,
                     "FX target activated by projectile"
                 );
-                if let Some(fx_id) = result.impact_fx {
+                let was_distraction = self.emit_noise_distraction_impact(
+                    sim,
+                    assets,
+                    result.arrow,
+                    result.impact_pos,
+                );
+                if let Some(fx_id) = result.impact_fx
+                    && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+                {
                     self.feedback
                         .pending_side_effects
                         .sounds
@@ -3724,7 +3822,11 @@ impl EngineInner {
             // Impact sound: apple 509, stone 508.  The arrow's 510
             // plays only on shield deflection (handled above), so
             // non-shield arrow impacts stay silent.
-            if let Some(fx_id) = result.impact_fx {
+            let was_distraction =
+                self.emit_noise_distraction_impact(sim, assets, result.arrow, result.impact_pos);
+            if let Some(fx_id) = result.impact_fx
+                && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+            {
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -3753,6 +3855,47 @@ impl EngineInner {
                 self.deactivate_projectile_tombstone(result.arrow, result.hit_target.is_none());
             }
         }
+    }
+
+    /// Consume a ground-stone's one-shot impact latch and synchronously feed
+    /// the resulting authored noise into the existing AI hearing pipeline.
+    /// Returns whether this impact was the distraction terminal, allowing the
+    /// caller to apply the independently configurable feedback gate.
+    fn emit_noise_distraction_impact(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+        impact: MapPoint,
+    ) -> bool {
+        let (layer, elevation) = {
+            let entity = self.get_entity_mut(projectile_id).unwrap_or_else(|| {
+                panic!("noise-distraction impact projectile {projectile_id:?} is missing")
+            });
+            let Entity::Projectile(projectile) = entity else {
+                panic!("noise-distraction impact id {projectile_id:?} is not a projectile");
+            };
+            if !projectile.projectile.noise_distraction {
+                return false;
+            }
+            projectile.projectile.noise_distraction = false;
+            (
+                projectile.element.layer(),
+                projectile.element.sprite.position_iface.get_elevation() as u16,
+            )
+        };
+
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Distraction,
+            impact,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_DISTRACTION as u16,
+            elevation,
+            Some(projectile_id),
+        );
+        true
     }
 
     pub(super) fn deactivate_projectile_tombstone(
@@ -5658,17 +5801,24 @@ impl EngineInner {
                 AbilityTickResult::ThrowStoneDone {
                     actor_id,
                     target,
+                    ground_target,
                     seq_id,
                     elem_idx,
-                } => {
-                    self.on_throw_projectile_done(
+                } => match (target, ground_target) {
+                    (Some(target), None) => self.on_throw_projectile_done(
                         assets,
                         actor_id,
-                        target,
+                        Some(target),
                         crate::profiles::Action::Stone,
                         crate::element::ObjectType::Stone,
-                    );
-                }
+                    ),
+                    (None, Some(target)) => {
+                        self.on_throw_noise_distraction_done(assets, actor_id, target)
+                    }
+                    pair => panic!(
+                        "completed ThrowStone must carry exactly one target kind, got {pair:?}"
+                    ),
+                },
                 AbilityTickResult::PayDone {
                     pc_id,
                     beggar_id,

@@ -764,6 +764,37 @@ fn resolve_action_left_click(
                 }
                 return cmds;
             }
+            // Optional extension: the same Stone inventory action can target
+            // valid ground. It remains a real projectile and consumes one
+            // stone; only the impact's AI stimulus differs from an ordinary
+            // entity-targeted throw.
+            if engine
+                .sim_config()
+                .item_gameplay
+                .stone_ground_distraction
+                && engine.is_mouse_sector_valid_for_ground_target(map_pt)
+                && (is_deferred
+                    || (valid_trajectory
+                        && engine.is_in_range_for_projectile(
+                            assets,
+                            pc_id,
+                            map_pt,
+                            Action::Stone,
+                            None,
+                        )))
+            {
+                let mut cmds = vec![PlayerCommand::LaunchGroundTarget {
+                    actor: pc_id,
+                    target_pos: convert_to_3d(map_pt),
+                    command: Command::ThrowStone,
+                    target_field: Field::NoiseDistractionTarget,
+                    titbit_layer: selected_layer,
+                }];
+                if is_recording {
+                    cmds.push(PlayerCommand::StopRecordingMacro);
+                }
+                return cmds;
+            }
         }
         Action::Heal => {
             // Heal unselects the action unconditionally after launch;

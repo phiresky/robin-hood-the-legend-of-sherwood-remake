@@ -1327,7 +1327,43 @@ fn cursor_for_stone(
                     host.valid_trajectory = false;
                 }
             } else {
-                host.valid_trajectory = false;
+                let ground_allowed = engine
+                    .sim_config()
+                    .item_gameplay
+                    .stone_ground_distraction
+                    && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+                    && (shift_held
+                        || pc_id.is_some_and(|pid| {
+                            engine.is_in_range_for_projectile(
+                                assets,
+                                pid,
+                                mouse_map_pt,
+                                Action::Stone,
+                                None,
+                            )
+                        }));
+                if ground_allowed {
+                    cursor = RHMOUSE_STONE_YES;
+                    const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                    if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                        && !host.valid_trajectory
+                        && let Some(pid) = pc_id
+                    {
+                        let preview = if shift_held {
+                            engine.compute_planned_trajectory_preview_ground(
+                                assets,
+                                pid,
+                                mouse_map_pt,
+                                Action::Stone,
+                            )
+                        } else {
+                            engine.compute_trajectory_preview_ground(assets, pid, mouse_map_pt)
+                        };
+                        apply_trajectory_preview(host, preview);
+                    }
+                } else {
+                    host.valid_trajectory = false;
+                }
             }
         } else {
             host.valid_trajectory = false;

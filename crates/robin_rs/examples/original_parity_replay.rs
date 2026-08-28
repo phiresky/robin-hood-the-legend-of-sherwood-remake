@@ -260,6 +260,9 @@ impl TraceSimConfig {
             // Reusable cloaks are an opt-in extension and must never alter
             // original-parity traces.
             reusable_cloaks: false,
+            // Item rebalances and their extra cue are post-port extensions.
+            item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
+            noise_distraction_feedback: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,

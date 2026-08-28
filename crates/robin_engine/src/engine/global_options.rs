@@ -206,11 +206,14 @@ impl GlobalOptions {
 #[cfg(test)]
 mod tests {
     use super::SimConfig;
+    use crate::gameplay_config::ItemGameplayConfig;
 
     #[test]
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
         assert!(SimConfig::default().fix_hard_reaction_times);
         assert!(SimConfig::default().enable_unbinding);
+        assert_eq!(SimConfig::default().item_gameplay, ItemGameplayConfig::classic());
+        assert!(SimConfig::default().noise_distraction_feedback);
     }
 
     #[test]
@@ -229,11 +232,21 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("reusable_cloaks");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("item_gameplay");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("noise_distraction_feedback");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
         assert!(config.enable_unbinding);
         assert!(!config.reusable_cloaks);
+        assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
+        assert!(!config.noise_distraction_feedback);
     }
 }

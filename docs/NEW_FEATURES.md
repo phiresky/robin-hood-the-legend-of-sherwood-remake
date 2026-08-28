@@ -442,7 +442,12 @@ A list of which additional features we have added, which ones we might still wan
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
-- throw something skill that makes a noise somewhere else so guards run there
+- Ground-targeted stone noise distractions are implemented. With the
+  independent gameplay toggle enabled, a real Stone projectile may target
+  valid ground and emits one deterministic 240-unit noise stimulus on its
+  terminal impact. Guards use the existing heard-noise search behavior. The
+  command, target layer, replay, rollback, multiplayer, and quick-action paths
+  remain authoritative; its additional impact cue is independently toggleable.
 - Cloaking (implemented, optional): selected heroes whose sprite profile has
   the shipped cape rows can put the cloak back on with a rebindable key. The
   reversed original transition leads to a dedicated stationary Cloaked state;
