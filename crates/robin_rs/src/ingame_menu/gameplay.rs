@@ -27,7 +27,11 @@ const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 
 /// Toggle rows shown on the screen, in display order.
-const OPTION_LABELS: &[&str] = &["Fix Hard Reaction Times", "Control Allied Soldiers"];
+const OPTION_LABELS: &[&str] = &[
+    "Fix Hard Reaction Times",
+    "Control Allied Soldiers",
+    "Touch Camera Gestures",
+];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
@@ -188,7 +192,7 @@ pub async fn show_gameplay(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {
@@ -203,6 +207,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
     match idx {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_allied_soldiers = !config.control_allied_soldiers,
+        2 => config.touch_camera_gestures = !config.touch_camera_gestures,
         _ => {}
     }
 }
@@ -211,6 +216,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
     match idx {
         0 => config.fix_hard_reaction_times,
         1 => config.control_allied_soldiers,
+        2 => config.touch_camera_gestures,
         _ => false,
     }
 }

@@ -1061,10 +1061,11 @@ pub enum GraphicsOption {
     EffectAnimations = 2,
     BackgroundAnimations = 3,
     FogTintAllSprites = 4,
+    NativeRefreshPresentation = 5,
 }
 
 /// Number of graphics option toggles.
-pub const GRAPHICS_OPTION_COUNT: usize = 5;
+pub const GRAPHICS_OPTION_COUNT: usize = 6;
 
 /// State for the graphics settings screen.
 ///
@@ -1097,6 +1098,7 @@ impl GraphicsScreen {
             config.display_anim,
             config.display_titbits,
             config.apply_fog_to_all_sprites,
+            config.native_refresh_presentation,
         ];
         Self {
             config: config.clone(),
@@ -1140,6 +1142,9 @@ impl GraphicsScreen {
             }
             GraphicsOption::FogTintAllSprites => {
                 self.config.apply_fog_to_all_sprites = self.option_toggles[idx];
+            }
+            GraphicsOption::NativeRefreshPresentation => {
+                self.config.native_refresh_presentation = self.option_toggles[idx];
             }
         }
     }

@@ -188,6 +188,12 @@ pub(crate) async fn show_main_menu(
 ) -> Result<MainMenuChoice, String> {
     let shipping = application_context.shipping()?;
     window.set_logical_size(MENU_W as u32, MENU_H as u32);
+    let initial_native_refresh = application_context
+        .active_profile_snapshot()
+        .map_err(|error| format!("Main menu requires an active profile: {error}"))?
+        .graphic_config
+        .native_refresh_presentation;
+    window.set_native_refresh_presentation(initial_native_refresh);
 
     // Main menu runs before a profile is loaded, so fall back to the
     // default texture scale mode.  Once the player selects a profile or
@@ -198,6 +204,11 @@ pub(crate) async fn show_main_menu(
         MENU_W as u16,
         MENU_H as u16,
         TextureScaleMode::default(),
+    );
+    renderer.configure_native_refresh_presentation(
+        initial_native_refresh,
+        window.surface_config.width,
+        window.surface_config.height,
     );
 
     // Shared menu resources (buttons, fonts, menu text table) — reused
@@ -502,7 +513,7 @@ pub(crate) async fn show_main_menu(
 
         // Custom cursor on top — the OS cursor is hidden, so skip this
         // and the mouse appears to vanish.
-        cursor_renderer.advance_animation();
+        cursor_renderer.advance_ui_animation();
         ModalCursor::new(&mut cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             &mut renderer,
             transform,
@@ -510,7 +521,7 @@ pub(crate) async fn show_main_menu(
         );
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -665,6 +676,14 @@ async fn dispatch_click(
                 renderer.resize(w, h);
                 event_pump.set_logical_size(w as u32, h as u32);
             }
+            event_pump.set_native_refresh_presentation(
+                profile.graphic_config.native_refresh_presentation,
+            );
+            renderer.configure_native_refresh_presentation(
+                profile.graphic_config.native_refresh_presentation,
+                event_pump.surface_config.width,
+                event_pump.surface_config.height,
+            );
             None
         }
         ClickAction::Options => {

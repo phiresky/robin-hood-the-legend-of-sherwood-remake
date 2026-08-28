@@ -46,6 +46,11 @@ pub struct GraphicConfig {
     /// already contain ambiance-specific pixels are left untouched.
     #[serde(default)]
     pub apply_fog_to_all_sprites: bool,
+    /// Present host-only camera/world interpolation between 25 Hz simulation
+    /// ticks at the display's vsync cadence. Turning this off restores legacy
+    /// one-present-per-tick behavior and the non-vsync swapchain mode.
+    #[serde(default = "default_native_refresh_presentation")]
+    pub native_refresh_presentation: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -166,6 +171,10 @@ fn default_shader_preset() -> String {
     String::new()
 }
 
+fn default_native_refresh_presentation() -> bool {
+    true
+}
+
 impl Default for GraphicConfig {
     fn default() -> Self {
         Self {
@@ -180,6 +189,7 @@ impl Default for GraphicConfig {
             scale_mode: TextureScaleMode::default(),
             shader_preset: default_shader_preset(),
             apply_fog_to_all_sprites: true,
+            native_refresh_presentation: true,
         }
     }
 }
@@ -218,6 +228,7 @@ mod tests {
         assert!(!cfg.fullscreen);
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);
+        assert!(cfg.native_refresh_presentation);
     }
 
     #[test]
@@ -253,6 +264,7 @@ mod tests {
         assert!(restored.fullscreen);
         assert!(restored.hardware_cursor);
         assert!(restored.apply_fog_to_all_sprites);
+        assert!(restored.native_refresh_presentation);
     }
 
     #[test]
@@ -265,6 +277,18 @@ mod tests {
         let restored: GraphicConfig = serde_json::from_value(json).unwrap();
 
         assert!(!restored.apply_fog_to_all_sprites);
+    }
+
+    #[test]
+    fn old_profiles_enable_native_refresh_presentation() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut()
+            .expect("graphics config serializes as an object")
+            .remove("native_refresh_presentation");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert!(restored.native_refresh_presentation);
     }
 
     #[test]

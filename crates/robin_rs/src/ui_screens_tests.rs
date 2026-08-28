@@ -528,14 +528,14 @@ fn graphics_screen_ok_cancel() {
     let config = GraphicConfig::default();
     let mut screen = GraphicsScreen::new(config);
 
-    screen.on_resolution(ResolutionPreset::High);
+    screen.on_resolution(ResolutionPreset::Low);
     assert!(screen.changed);
     assert!(screen.resolution_changed());
 
     screen.on_cancel();
     assert!(screen.closed);
     assert!(!screen.accepted);
-    assert_eq!(screen.config.resolution_x, 800.0); // reverted
+    assert_eq!(screen.config.resolution_x, 1024.0); // reverted
 }
 
 #[test]
@@ -551,6 +551,8 @@ fn graphics_screen_toggle() {
     assert!(screen.config.apply_fog_to_all_sprites);
     screen.on_toggle(GraphicsOption::FogTintAllSprites);
     assert!(!screen.config.apply_fog_to_all_sprites);
+    screen.on_toggle(GraphicsOption::NativeRefreshPresentation);
+    assert!(!screen.config.native_refresh_presentation);
 }
 
 // -- SoundsScreen -------------------------------------------------------

@@ -309,7 +309,7 @@ pub async fn show_buy_blazons(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if screen.purchased {

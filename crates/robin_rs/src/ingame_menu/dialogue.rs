@@ -490,7 +490,7 @@ pub async fn show_dialogue(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     #[allow(clippy::needless_option_as_deref)]

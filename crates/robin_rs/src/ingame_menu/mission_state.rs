@@ -57,7 +57,7 @@ pub async fn show_mission_state_popup(
         ) {
             return result;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

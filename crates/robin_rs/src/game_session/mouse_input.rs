@@ -116,6 +116,11 @@ pub(super) fn handle_mouse_input(
                         | GameEvent::MouseUp(..)
                         | GameEvent::MouseMove { .. }
                         | GameEvent::ViewportPan { .. }
+                        | GameEvent::PointerCancel
+                        | GameEvent::TouchMotionStop
+                        | GameEvent::TouchTransformStart { .. }
+                        | GameEvent::TouchTransform { .. }
+                        | GameEvent::TouchTransformEnd { .. }
                 )
             {
                 continue;
@@ -125,6 +130,10 @@ pub(super) fn handle_mouse_input(
                 // `run_mission`'s always-on view-input pass so middle-
                 // drag panning works during replay; nothing to do here.
                 GameEvent::ViewportPan { .. } => {}
+                GameEvent::TouchMotionStop => {}
+                GameEvent::PointerCancel => {
+                    cancel_left_pointer(engine, host, assets, frame_cmds);
+                }
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
                     on_left_mouse_down(
                         engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
@@ -169,6 +178,36 @@ pub(super) fn handle_mouse_input(
             }
         }
     }
+}
+
+/// Tear down a touch-originated left drag without running any release action.
+/// In particular this must not box-select, perform a sword gesture, center the
+/// minimap, or dispatch a world click when a second finger takes over.
+fn cancel_left_pointer(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+) {
+    if host.engine_display.minimap().drag_start() {
+        dispatch_local_command(
+            host,
+            engine,
+            frame_cmds,
+            assets,
+            &PlayerCommand::MinimapMouseUp { on_minimap: false },
+        );
+    }
+    host.input.left_mouse_down = false;
+    host.input.is_dragging = false;
+    host.input.target_drag = None;
+    host.input.left_double_click_pending = false;
+    host.input.next_left_double_is_simple = false;
+    host.input.ignore_next_drag = false;
+    host.input.ignore_next_left_click = false;
+    host.input.cancel_multi_selection();
+    host.input.cancel_multi_unselection();
+    host.mouse_way.clear();
 }
 
 // ─── Per-event handlers ─────────────────────────────────────────────
@@ -1566,6 +1605,17 @@ pub(super) async fn handle_pause_menu_events(
                         }
 
                         host.control_allied_soldiers = gameplay_config.control_allied_soldiers;
+                        host.touch_camera_gestures = gameplay_config.touch_camera_gestures;
+                        host.native_refresh_presentation =
+                            graphic_config.native_refresh_presentation;
+                        event_pump.set_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                        );
+                        renderer.configure_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                            event_pump.surface_config.width,
+                            event_pump.surface_config.height,
+                        );
                         if !host.control_allied_soldiers {
                             dispatch_local_command(
                                 host,

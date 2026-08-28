@@ -150,6 +150,7 @@ web-sys = { version = "0.3", features = [
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
 gloo-timers = { version = "0.4", features = ["futures"] }
+gloo-render = "0.3"
 # Enable `crypto.getRandomValues` for the `getrandom` major version
 # used by the wasm dependency graph.
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }

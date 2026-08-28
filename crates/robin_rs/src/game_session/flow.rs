@@ -277,6 +277,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
+        let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
         runtime.begin_presentation();
         runtime.trace(FrameContractStage::Presentation);
 
@@ -298,6 +299,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             0
         };
 
+        let mut fixed_tick_presented = false;
         if draw_result == 0 {
             pre_render_engine_setup(manager, host, assets.as_ref(), &mut presentation.renderer);
             update_mouse_and_cursor(
@@ -364,13 +366,35 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
 
             let display_snapshot = host.engine_display.clone();
-            render_frame(
+            let saved_camera = CameraPresentationPose::capture(host);
+            let saved_draw_order = host.draw_order.clone();
+            let interpolation_enabled = host.native_refresh_presentation
+                && !args.fast_forward
+                && !manager.engine.is_fast_forward()
+                && !rewind_active;
+            native_refresh_interpolation.prepare_fixed_tick(
                 &manager.engine,
+                saved_camera,
+                frame.started_at_ms,
+                interpolation_enabled,
+            );
+            let sampled_camera = native_refresh_interpolation
+                .sample(crate::window::process_uptime_ms())
+                .unwrap_or(saved_camera);
+            sampled_camera.apply(host);
+            let render_engine = native_refresh_interpolation
+                .engine()
+                .unwrap_or(&manager.engine);
+            host.draw_order = render_engine.compute_display_order();
+            sync_render_camera(host);
+            render_frame(
+                render_engine,
                 &display_snapshot,
                 host,
                 &assets,
                 &dev,
                 &mut render_ctx,
+                RenderCadence::FixedTick,
             );
 
             // PrintScreen keybind — capture the composited frame
@@ -383,24 +407,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
 
             render_ctx.present();
-            if let Some(mut fade) = host.fade_to_black {
-                host.fade_to_black = fade.advance_presented_frame().then_some(fade);
-            }
+            fixed_tick_presented = true;
+            saved_camera.apply(host);
+            host.draw_order = saved_draw_order;
+            sync_render_camera(host);
             post_render_engine_cleanup(&mut frame, host);
-        } // end if draw_result == 0 (skip render in fast-forward)
-
-        // Transient-message countdown: the render pass drew the
-        // message for this frame if `message_delay` was non-zero;
-        // tick down now so next frame sees one less frame remaining,
-        // and drop the text when the counter reaches zero.  Runs
-        // outside the render block so `ctx.game: &game` is out of
-        // scope and we can mutably re-borrow `game`.
-        if game.message_delay > 0 {
-            game.message_delay -= 1;
-            if game.message_delay == 0 {
-                game.message_text.clear();
-            }
+        } else {
+            native_refresh_interpolation.clear();
         }
+        // end if draw_result == 0 (skip render in fast-forward)
         super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
 
         // Original RHgame.cpp ordering is Refresh (including Draw/Flip),
@@ -432,7 +447,74 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
 
         let phase_start = super::frame_perf::start(profiling);
-        pace_interactive_frame(runtime, host, manager, &frame, args).await;
+        let display_snapshot = host.engine_display.clone();
+        let render_view_state = RenderViewState {
+            shift_held,
+            rewind_active,
+            display_info_elapsed_secs:
+                <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
+                    callbacks,
+                    manager.engine.campaign(),
+                ),
+        };
+        pace_interactive_frame(runtime, host, manager, &frame, args, |host, now_ms| {
+            let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
+                return presentation.renderer.present_cached();
+            };
+            let render_engine = native_refresh_interpolation
+                .engine()
+                .expect("sampled native-refresh interpolation has a working engine");
+            let saved_camera = CameraPresentationPose::capture(host);
+            let saved_draw_order = host.draw_order.clone();
+            sampled_camera.apply(host);
+            host.draw_order = render_engine.compute_display_order();
+            sync_render_camera(host);
+            let mut render_ctx =
+                presentation.render_context(resources, hud, input, ui, game, render_view_state);
+            render_frame(
+                render_engine,
+                &display_snapshot,
+                host,
+                &assets,
+                &dev,
+                &mut render_ctx,
+                RenderCadence::DisplayRefresh,
+            );
+            render_ctx.present();
+            saved_camera.apply(host);
+            host.draw_order = saved_draw_order;
+            sync_render_camera(host);
+            true
+        })
+        .await;
+
+        // Presentation transients advance once per fixed tick after every
+        // physical-display sample has consumed the same state.
+        if fixed_tick_presented {
+            if host.input.increment_cursor_animation {
+                presentation.sprites.cursor_renderer.advance_animation();
+            }
+            if host.input.is_dragging
+                && crate::game_input::is_selected_unit_swordfighting(
+                    &manager.engine,
+                    host.transport.local_seat,
+                )
+                && !host.mouse_way.is_empty()
+                && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
+            {
+                trail.advance(&mut host.mouse_way);
+            }
+            host.input.marked_pc_ids.clear();
+            if let Some(mut fade) = host.fade_to_black {
+                host.fade_to_black = fade.advance_presented_frame().then_some(fade);
+            }
+        }
+        if game.message_delay > 0 {
+            game.message_delay -= 1;
+            if game.message_delay == 0 {
+                game.message_text.clear();
+            }
+        }
         super::frame_perf::record(super::frame_perf::Phase::Pacing, phase_start);
     }
 }
@@ -582,6 +664,71 @@ fn run_interactive_post_initialize(
     }
 }
 
+/// A non-blocking surface may otherwise spin until the deadline without host
+/// time visibly advancing. This guard permits up to 10 kHz, well beyond real
+/// displays, and scales with slow-motion's larger presentation budget.
+const MIN_GUARD_PRESENT_COST_US: u64 = 100;
+
+/// Deadline guard for display-rate presentation samples between fixed
+/// simulation steps. The observed cost comes from actual
+/// `get_current_texture`/present back-pressure, so 90/120/144 Hz displays need
+/// no hard-coded refresh list.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct RefreshPresentationSchedule {
+    started_at_us: u64,
+    budget_us: u64,
+    observed_present_cost_us: u64,
+    presents: u32,
+    max_presents: u32,
+}
+
+impl RefreshPresentationSchedule {
+    fn new(started_at_us: u64, budget_us: u64, observed_present_cost_us: u64) -> Self {
+        Self {
+            started_at_us,
+            budget_us,
+            observed_present_cost_us,
+            presents: 0,
+            max_presents: budget_us
+                .div_ceil(MIN_GUARD_PRESENT_COST_US)
+                .min(u64::from(u32::MAX)) as u32,
+        }
+    }
+
+    fn should_present(&self, now_us: u64) -> bool {
+        if self.presents >= self.max_presents {
+            return false;
+        }
+        let elapsed_us = now_us.saturating_sub(self.started_at_us);
+        elapsed_us < self.budget_us
+            && elapsed_us.saturating_add(self.observed_present_cost_us) <= self.budget_us
+    }
+
+    fn record_present(&mut self, started_at_us: u64, finished_at_us: u64) {
+        self.presents = self.presents.saturating_add(1);
+        let cost_us = finished_at_us.saturating_sub(started_at_us);
+        if cost_us > 0 {
+            self.observed_present_cost_us = cost_us;
+        } else {
+            // A prior long stall (window move, compositor hiccup) must not
+            // permanently throttle a recovered high-refresh surface. An
+            // immediate acquisition lowers the estimate; a later blocking
+            // acquisition in this same budget will replace it with a fresh
+            // measured interval.
+            self.observed_present_cost_us /= 2;
+        }
+    }
+
+    fn observed_present_cost_us(self) -> u64 {
+        self.observed_present_cost_us
+    }
+
+    fn remaining_us(self, now_us: u64) -> u64 {
+        self.budget_us
+            .saturating_sub(now_us.saturating_sub(self.started_at_us))
+    }
+}
+
 /// Apply graphical cadence, host-clock correction, and authoritative hash
 /// publication after presentation and PostInitialize complete.
 async fn pace_interactive_frame(
@@ -590,6 +737,7 @@ async fn pace_interactive_frame(
     manager: &mut robin_engine::engine_manager::EngineManager,
     frame: &MissionFrame,
     args: &crate::main_entry::CliArgs,
+    mut present_refresh_sample: impl FnMut(&mut Host, u32) -> bool,
 ) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
@@ -667,14 +815,50 @@ async fn pace_interactive_frame(
         );
         net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
     }
-    if remaining_sleep_ms > 0 {
-        crate::window::sleep_ms(remaining_sleep_ms as u64).await;
+    // Hash publication and other pacing-tail work happened after the frame
+    // outcome was planned. Charge it against the same fixed-step deadline
+    // instead of blindly sleeping the stale original remainder.
+    let pacing_tail_ms = crate::window::process_uptime_ms().saturating_sub(frame_end_ms);
+    let remaining_wait_ms = remaining_sleep_ms.saturating_sub(pacing_tail_ms);
+    if remaining_wait_ms > 0 {
+        let refresh_presentation = host.native_refresh_presentation
+            && target >= engine_api::FRAME_TIME_MS
+            && !host.skip_render;
+        if refresh_presentation {
+            // FIFO back-pressure is the refresh-rate clock. Each callback
+            // recomposes an absolute interpolation sample from immutable
+            // fixed-tick snapshots; deterministic and transient UI state do
+            // not advance. A generous cap guards broken surface
+            // implementations that return immediately without back-pressure.
+            let presentation_start_us = crate::window::process_uptime_us();
+            let mut schedule = RefreshPresentationSchedule::new(
+                presentation_start_us,
+                u64::from(remaining_wait_ms) * 1_000,
+                host.native_refresh_present_cost_us,
+            );
+            while schedule.should_present(crate::window::process_uptime_us()) {
+                let present_start_us = crate::window::process_uptime_us();
+                if !present_refresh_sample(host, crate::window::process_uptime_ms()) {
+                    break;
+                }
+                crate::window::yield_to_display_refresh().await;
+                let present_end_us = crate::window::process_uptime_us();
+                schedule.record_present(present_start_us, present_end_us);
+            }
+            host.native_refresh_present_cost_us = schedule.observed_present_cost_us();
+            let residual_us = schedule.remaining_us(crate::window::process_uptime_us());
+            if residual_us > 0 {
+                crate::window::sleep_ms(residual_us.div_ceil(1_000)).await;
+            }
+        } else {
+            crate::window::sleep_ms(remaining_wait_ms as u64).await;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameControl, MissionExit};
+    use super::{FrameControl, MissionExit, RefreshPresentationSchedule};
     use robin_engine::game_operation::GameCode;
 
     #[test]
@@ -690,5 +874,84 @@ mod tests {
             serde_json::from_str(&encoded).expect("deserialize frame controls");
 
         assert_eq!(decoded, controls);
+    }
+
+    fn simulate_refresh(refresh_millihertz: u64) -> (u32, u64, u64) {
+        let period_us = 1_000_000_000 / refresh_millihertz;
+        let mut schedule = RefreshPresentationSchedule::new(0, 40_000, period_us);
+        let mut now_us = 0;
+        while schedule.should_present(now_us) {
+            let started_at_us = now_us;
+            now_us += period_us;
+            schedule.record_present(started_at_us, now_us);
+        }
+        (schedule.presents, now_us, schedule.remaining_us(now_us))
+    }
+
+    #[test]
+    fn refresh_present_scheduler_supports_common_high_refresh_rates() {
+        for (refresh_millihertz, expected_cached_presents) in
+            [(60_000, 2), (90_000, 3), (120_000, 4), (144_000, 5)]
+        {
+            let (presents, elapsed_us, residual_us) = simulate_refresh(refresh_millihertz);
+            assert_eq!(
+                presents, expected_cached_presents,
+                "{refresh_millihertz} mHz"
+            );
+            assert!(elapsed_us <= 40_000, "{refresh_millihertz} mHz");
+            assert!(residual_us < 17_000, "{refresh_millihertz} mHz");
+        }
+    }
+
+    #[test]
+    fn refresh_present_scheduler_caps_non_blocking_surfaces() {
+        let mut schedule = RefreshPresentationSchedule::new(10, 40_000, 0);
+        while schedule.should_present(10) {
+            schedule.record_present(10, 10);
+        }
+
+        assert_eq!(schedule.presents, 400);
+        assert_eq!(schedule.remaining_us(10), 40_000);
+    }
+
+    #[test]
+    fn slow_motion_budget_does_not_cap_240_hz_presentation() {
+        let period_us = 1_000_000 / 240;
+        let mut schedule = RefreshPresentationSchedule::new(0, 400_000, period_us);
+        let mut now_us = 0;
+        while schedule.should_present(now_us) {
+            let started_at_us = now_us;
+            now_us += period_us;
+            schedule.record_present(started_at_us, now_us);
+        }
+
+        assert_eq!(schedule.presents, 96);
+        assert!(now_us <= 400_000);
+    }
+
+    #[test]
+    fn display_rate_scheduler_only_invokes_the_presentation_callback() {
+        let source = include_str!("flow.rs");
+        let start = source
+            .find("async fn pace_interactive_frame(")
+            .expect("pace_interactive_frame source");
+        let end = source[start..]
+            .find("\n#[cfg(test)]")
+            .map(|offset| start + offset)
+            .expect("end of pacing source");
+        let pacing = &source[start..end];
+
+        assert!(pacing.contains("present_refresh_sample(host"));
+        for forbidden in [
+            "render_frame(",
+            "update_mouse_and_cursor(",
+            "advance_frame(",
+            "run_interactive_post_initialize(",
+        ] {
+            assert!(
+                !pacing.contains(forbidden),
+                "display-rate presentation must not call {forbidden}"
+            );
+        }
     }
 }

@@ -474,14 +474,14 @@ pub(crate) async fn show_multiplayer_menu(
             &status,
         );
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
-        cursor_renderer.advance_animation();
+        cursor_renderer.advance_ui_animation();
         ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             renderer,
             transform,
             &input_state,
         );
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

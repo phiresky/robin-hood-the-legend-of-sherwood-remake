@@ -120,6 +120,12 @@ pub(crate) async fn show_main_menu_options(
         );
     }
     renderer.set_shader_preset(graphic.shader_preset.clone());
+    event_pump.set_native_refresh_presentation(graphic.native_refresh_presentation);
+    renderer.configure_native_refresh_presentation(
+        graphic.native_refresh_presentation,
+        event_pump.surface_config.width,
+        event_pump.surface_config.height,
+    );
 
     if outcome.changed {
         application_context

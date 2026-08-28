@@ -29,6 +29,15 @@ pub struct GameplayConfig {
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default)]
     pub control_allied_soldiers: bool,
+
+    /// Enable world-camera pan, pinch zoom, and inertial motion for touch
+    /// input. Tap and drag emulation remains available when this is off.
+    #[serde(default = "default_touch_camera_gestures")]
+    pub touch_camera_gestures: bool,
+}
+
+const fn default_touch_camera_gestures() -> bool {
+    true
 }
 
 impl Default for GameplayConfig {
@@ -36,6 +45,7 @@ impl Default for GameplayConfig {
         Self {
             fix_hard_reaction_times: true,
             control_allied_soldiers: false,
+            touch_camera_gestures: true,
         }
     }
 }
@@ -54,5 +64,6 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_allied_soldiers);
+        assert!(config.touch_camera_gestures);
     }
 }
