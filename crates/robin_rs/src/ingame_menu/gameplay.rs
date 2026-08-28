@@ -17,7 +17,7 @@ use robin_engine::gameplay_config::GameplayConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt,
+    enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -161,12 +161,12 @@ pub async fn show_gameplay(
             draw_screen_background(renderer, &bg);
         }
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(title);
-            render_text_virt(renderer, font, transform, title, (490 - tw) / 2, 20);
+            render_text_virt_font(renderer, font, transform, title, (490 - tw) / 2, 20);
         }
-        if let Some(font) = resources.label_font() {
-            render_text_virt(renderer, font, transform, "Gameplay Tweaks", 30, 80);
+        if let Some(font) = resources.label_font_any() {
+            render_text_virt_font(renderer, font, transform, "Gameplay Tweaks", 30, 80);
         }
 
         for i in 0..OPTION_LABELS.len() as u32 {

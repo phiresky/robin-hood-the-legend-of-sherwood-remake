@@ -318,7 +318,7 @@ fn lcid_to_iso(lcid: &str) -> &'static str {
         "1046" => "pt-BR",
         "1049" => "ru-RU",
         "1054" => "th-TH",
-        "2047" => "neutral",
+        "2047" => "und",
         "2052" => "zh-CN",
         "2070" => "pt-PT",
         "3082" => "es-ES",
@@ -348,16 +348,25 @@ fn resolve_locale_data_dir(root: &Path, lcid: &str) -> Option<PathBuf> {
     None
 }
 
+fn resolve_data_file(data_dir: &Path, relative: &str) -> Option<PathBuf> {
+    let candidate = data_dir.join(relative);
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    resolve_case_insensitive(&candidate).filter(|path| path.is_file())
+}
+
 /// A locale alternate source dir + the ISO name used for its output subtree.
 #[derive(Debug, Clone)]
 struct LocaleSource {
     data_dir: PathBuf,
+    lcid: &'static str,
     iso: &'static str,
 }
 
-/// Detect locale data dirs alongside `data_in`, mirroring the runtime logic
-/// in `main_entry::add_language_folder`: always probe the English fallback
-/// (`1033`), then the first existing entry from `LANGUAGE_FOLDERS`.
+/// Detect every locale data dir alongside `data_in`. English remains first to
+/// preserve the legacy default-resolution order, but shipping conversion must
+/// not collapse later installed packs into that first language.
 fn detect_locale_data_dirs(data_in: &Path) -> Vec<LocaleSource> {
     let Some(root) = data_in.parent() else {
         return Vec::new();
@@ -366,6 +375,7 @@ fn detect_locale_data_dirs(data_in: &Path) -> Vec<LocaleSource> {
     if let Some(d) = resolve_locale_data_dir(root, FALLBACK_LOCALE_FOLDER) {
         sources.push(LocaleSource {
             data_dir: d,
+            lcid: FALLBACK_LOCALE_FOLDER,
             iso: lcid_to_iso(FALLBACK_LOCALE_FOLDER),
         });
     }
@@ -373,9 +383,9 @@ fn detect_locale_data_dirs(data_in: &Path) -> Vec<LocaleSource> {
         if let Some(d) = resolve_locale_data_dir(root, folder) {
             sources.push(LocaleSource {
                 data_dir: d,
+                lcid: folder,
                 iso: lcid_to_iso(folder),
             });
-            break;
         }
     }
     sources
@@ -996,12 +1006,14 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 mod tests {
     use super::{
         AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
-        animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
-        level_asset_rel_existing, normalize_robin_profile_index, positional_pair_map,
-        prepare_shipping_payload, transcode_audio_to_opus,
+        animation_rhs_rel_existing, detect_locale_data_dirs, exclamation_dat_filename,
+        insert_standalone_audio, lcid_to_iso, level_asset_rel_existing,
+        normalize_robin_profile_index, positional_pair_map, prepare_shipping_payload,
+        transcode_audio_to_opus,
     };
     use robin_assets::shipping_datadir::ShippingMission;
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
+    use std::fs;
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -1226,6 +1238,28 @@ mod tests {
                 .windows(b"robinhood-web-shipping".len())
                 .any(|window| window == b"robinhood-web-shipping")
         );
+    }
+
+    #[test]
+    fn locale_detection_preserves_every_installed_pack() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("Data");
+        fs::create_dir(&base).unwrap();
+        for lcid in ["1033", "1031", "1036", "2047"] {
+            fs::create_dir_all(temp.path().join(lcid).join("Data")).unwrap();
+        }
+
+        let detected = detect_locale_data_dirs(&base);
+        let identities = detected
+            .iter()
+            .map(|source| (source.lcid, source.iso))
+            .collect::<Vec<_>>();
+        assert_eq!(identities[0], ("1033", "en-US"));
+        assert!(identities.contains(&("1031", "de-DE")));
+        assert!(identities.contains(&("1036", "fr-FR")));
+        assert!(identities.contains(&("2047", "und")));
+        assert_eq!(identities.len(), 4);
+        assert_eq!(lcid_to_iso("2047"), "und");
     }
 }
 
@@ -1542,7 +1576,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 
 use robin_assets::shipping_datadir::{
     RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
-    ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
+    ShippingLocale, ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
+    canonical_shipping_asset_key,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1833,27 +1868,33 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     let locale_dirs = detect_locale_data_dirs(&data_in);
     for src in &locale_dirs {
         tracing::info!("Locale data dir [{}]: {}", src.iso, src.data_dir.display());
+        let mut aliases = BTreeSet::from([src.lcid.to_owned(), src.iso.to_owned()]);
+        if src.iso == "und" {
+            aliases.insert("neutral".to_owned());
+        }
+        let locale = ShippingLocale {
+            source_lcid: Some(src.lcid.to_owned()),
+            aliases,
+            ..ShippingLocale::default()
+        };
+        if dd.locales.insert(src.iso.to_owned(), locale).is_some() {
+            bail!(
+                "multiple locale directories resolve to canonical locale {}",
+                src.iso
+            );
+        }
     }
 
-    // Shipping output is keyed by rel path only (the runtime's
-    // `ShippingDatadir` has no locale dimension — each install ships
-    // one locale), so we resolve via data_in first and fall back to the
-    // locale alt-dirs, matching the runtime `SbFile::open` chain.
+    // Top-level fields retain the v4 default-resolution behavior for existing
+    // consumers: base Data first, English fallback, then the remaining locale
+    // dirs. Explicit per-locale maps below never use this fallback closure.
     let in_path = |rel: &str| -> Option<PathBuf> {
-        let candidate = data_in.join(rel);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if let Some(resolved) = resolve_case_insensitive(&candidate).filter(|p| p.is_file()) {
+        if let Some(resolved) = resolve_data_file(&data_in, rel) {
             return Some(resolved);
         }
         for alt in &locale_dirs {
-            let c = alt.data_dir.join(rel);
-            if c.is_file() {
-                return Some(c);
-            }
-            if let Some(r) = resolve_case_insensitive(&c).filter(|p| p.is_file()) {
-                return Some(r);
+            if let Some(resolved) = resolve_data_file(&alt.data_dir, rel) {
+                return Some(resolved);
             }
         }
         None
@@ -1864,6 +1905,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // table and loading-screen bundle.
     for rel in [
         "Interface/DEFAULT.RES",
+        "Interface/Start.sxt",
+        "Text/actors.res",
         "Text/Level.res",
         "Sounds/Exclamations/actors.res",
     ] {
@@ -1885,6 +1928,42 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
             mgr.disable_recovery_for_shipping();
             dd.res_files.insert(rel.into(), mgr);
+        }
+    }
+    for source in &locale_dirs {
+        let locale = dd
+            .locales
+            .get_mut(source.iso)
+            .expect("detected shipping locale was initialized");
+        for rel in [
+            "Interface/DEFAULT.RES",
+            "Interface/Start.sxt",
+            "Text/actors.res",
+            "Text/Level.res",
+            "Sounds/Exclamations/actors.res",
+        ] {
+            let Some(path) = resolve_data_file(&source.data_dir, rel) else {
+                continue;
+            };
+            let mut mgr = ResourceManager::new();
+            mgr.attach_resource_file(&path.to_string_lossy())?;
+            if is_interface_path(rel)
+                && let Some(quality) = opts.interface_image_format.jxl_quality()
+            {
+                let encoded = mgr.encode_pictures_for_shipping(|picture| {
+                    Ok(EncodedPicture::jxl_rgba565_keyed(
+                        transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
+                    ))
+                })?;
+                tracing::info!(
+                    locale = source.iso,
+                    "interface res {rel}: encoded {encoded} pictures as JXL {}",
+                    jxl_quality_label(quality)
+                );
+            }
+            locale
+                .res_files
+                .insert(canonical_shipping_asset_key(rel), mgr);
         }
     }
     if let Some(p) = in_path("Interface/Loading.pak")
@@ -1948,6 +2027,20 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     dd.raw.extend(boot_audio.raw);
     dd.audio_durations_ms.extend(boot_audio.audio_durations_ms);
 
+    if opts.interface_image_format != InterfaceImageFormat::Raw {
+        for source in &locale_dirs {
+            let Some(path) = resolve_data_file(&source.data_dir, "Interface/Loading.pak") else {
+                continue;
+            };
+            let pictures = read_pak_pictures(&path)?;
+            let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
+            dd.locales
+                .get_mut(source.iso)
+                .expect("detected shipping locale was initialized")
+                .pak_files
+                .insert("interface/loading.pak".into(), encoded);
+        }
+    }
     // ── profile.cpf (root index) ───────────────────────────────────────
     let cpf_path =
         in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;
@@ -2237,6 +2330,24 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .insert(mp.mission_filename.clone(), parsed);
         } else {
             tracing::warn!("missing: {}", scb_rel);
+        }
+        if let Some(p) = in_path(&red_rel) {
+            let desc = res_descr::load(&p.to_string_lossy())?;
+            dd.red_files.insert(res_descr::red_filename(mp.id), desc);
+        }
+        for source in &locale_dirs {
+            let Some(path) = resolve_data_file(&source.data_dir, &red_rel) else {
+                continue;
+            };
+            let descriptors = res_descr::load(&path.to_string_lossy())?;
+            dd.locales
+                .get_mut(source.iso)
+                .expect("detected shipping locale was initialized")
+                .red_files
+                .insert(
+                    canonical_shipping_asset_key(&res_descr::red_filename(mp.id)),
+                    descriptors,
+                );
         }
         mission_builds.insert(mp.mission_filename.clone(), build);
     }
@@ -2930,6 +3041,27 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         );
     }
     dd.profiles = Some(cpf);
+    for source in &locale_dirs {
+        let Some(path) = resolve_data_file(&source.data_dir, "Configuration/profile.cpf") else {
+            continue;
+        };
+        let mut file = SbFile::open(&path.to_string_lossy(), SB_FILE_READ)
+            .map_err(|error| anyhow!("open locale {} cpf: {error}", source.iso))?;
+        let mut profiles = ProfileManager::new();
+        profiles
+            .load_all_legacy_cpf(&mut file)
+            .map_err(|error| anyhow!("parse locale {} cpf: {error}", source.iso))?;
+        if let Some(level_dir) = resolve_case_insensitive(&data_in.join("Levels"))
+            .filter(|path| path.is_dir())
+            .map(|path| path.to_string_lossy().into_owned())
+        {
+            profiles.import_beam_mes(&level_dir);
+        }
+        dd.locales
+            .get_mut(source.iso)
+            .expect("detected shipping locale was initialized")
+            .profiles = Some(profiles);
+    }
 
     // Bundle the small-file types the engine opens by exact path — these
     // are the items that would otherwise fan out to hundreds of tiny HTTP
@@ -2943,7 +3075,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         // Fonts
         "bfn", "tfn", "fnt", // Menu / cursor / interface configuration
         "cfg", "ini", // Resource bundles (text tables, cursors, loading screens)
-        "res", "pak", "red", // Small shared resource bundles
+        "res", "sxt", "pak", "red", // Small shared resource bundles
         "cpf",
     ];
     walk_and_bundle_small(
@@ -2959,6 +3091,23 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             &alt.data_dir,
             &alt.data_dir,
             BOOT_FILE_EXTS,
+            opts.interface_image_format,
+        )?;
+    }
+    // The v5 locale dimension is complete rather than boot-file-only: voice,
+    // dialogue, and cinematics are language assets too. Keeping each overlay
+    // self-contained lets the same in-memory VFS bundle work on desktop,
+    // browser, and Android. The top-level compatibility maps above retain the
+    // historical compact/default-language view for old consumers.
+    for source in &locale_dirs {
+        let locale = dd
+            .locales
+            .get_mut(source.iso)
+            .expect("detected shipping locale was initialized");
+        walk_and_bundle_locale(
+            locale,
+            &source.data_dir,
+            &source.data_dir,
             opts.interface_image_format,
         )?;
     }
@@ -4345,7 +4494,7 @@ fn walk_and_bundle_small(
         let bytes = match ext.as_str() {
             "pak" => transcode_pak_drop_bzip(&path)
                 .with_context(|| format!("transcode pak {}: keeping raw bytes", path.display()))?,
-            "res" => transcode_res_drop_bzip(&path)
+            "res" | "sxt" => transcode_res_drop_bzip(&path)
                 .with_context(|| format!("transcode res {}: keeping raw bytes", path.display()))?,
             "bfn" => transcode_bfn_drop_bzip(&path)
                 .with_context(|| format!("transcode bfn {}", path.display()))?,
@@ -4353,6 +4502,103 @@ fn walk_and_bundle_small(
                 .with_context(|| format!("walk_and_bundle_small: read {}", path.display()))?,
         };
         dd.raw.insert(rel, bytes);
+    }
+    Ok(())
+}
+
+/// Recursively preserve one complete locale overlay. Unlike the top-level
+/// boot bundle this intentionally includes large speech/cinematic assets: a
+/// browser or Android build cannot reach loose host files after switching.
+fn walk_and_bundle_locale(
+    locale: &mut ShippingLocale,
+    root: &Path,
+    src: &Path,
+    interface_image_format: InterfaceImageFormat,
+) -> Result<()> {
+    for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_and_bundle_locale(locale, root, &path, interface_image_format)?;
+            continue;
+        }
+        if !path.is_file() {
+            tracing::warn!("skipping non-file locale asset {}", path.display());
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(root)
+            .with_context(|| {
+                format!(
+                    "locale asset {} is outside root {}",
+                    path.display(),
+                    root.display()
+                )
+            })?
+            .to_string_lossy();
+        let key = canonical_shipping_asset_key(&rel);
+        if locale.raw.contains_key(&key) {
+            bail!("duplicate locale asset key {key}");
+        }
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase);
+
+        if matches!(extension.as_deref(), Some("res" | "sxt"))
+            && !locale.res_files.contains_key(&key)
+        {
+            let mut resources = ResourceManager::new();
+            resources
+                .attach_resource_file(&path.to_string_lossy())
+                .with_context(|| format!("parse locale resource {}", path.display()))?;
+            if is_interface_path(&key)
+                && let Some(quality) = interface_image_format.jxl_quality()
+            {
+                resources.encode_pictures_for_shipping(|picture| {
+                    Ok(EncodedPicture::jxl_rgba565_keyed(
+                        transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
+                    ))
+                })?;
+            }
+            locale.res_files.insert(key.clone(), resources);
+        }
+        if extension.as_deref() == Some("red") {
+            let filename = key.rsplit('/').next().unwrap_or(&key).to_owned();
+            if !locale.red_files.contains_key(&filename) {
+                locale.red_files.insert(
+                    filename,
+                    res_descr::load(&path.to_string_lossy())
+                        .with_context(|| format!("parse locale descriptor {}", path.display()))?,
+                );
+            }
+        }
+
+        if interface_image_format != InterfaceImageFormat::Raw
+            && is_interface_path(&key)
+            && extension.as_deref() == Some("pak")
+        {
+            let pictures = read_pak_pictures(&path)?;
+            locale.pak_files.insert(
+                key,
+                encode_interface_pak_pictures(&pictures, interface_image_format)?,
+            );
+            continue;
+        }
+
+        let bytes = match extension.as_deref() {
+            Some("pak") => transcode_pak_drop_bzip(&path)
+                .with_context(|| format!("transcode locale pak {}", path.display()))?,
+            Some("res" | "sxt") => transcode_res_drop_bzip(&path)
+                .with_context(|| format!("transcode locale res {}", path.display()))?,
+            Some("bfn") => transcode_bfn_drop_bzip(&path)
+                .with_context(|| format!("transcode locale bfn {}", path.display()))?,
+            _ => {
+                fs::read(&path).with_context(|| format!("read locale asset {}", path.display()))?
+            }
+        };
+        locale.raw.insert(key, bytes);
     }
     Ok(())
 }

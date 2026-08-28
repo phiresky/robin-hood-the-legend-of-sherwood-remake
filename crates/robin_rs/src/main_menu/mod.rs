@@ -53,6 +53,9 @@ pub(crate) mod save_load;
 /// What the player chose from the main menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainMenuChoice {
+    /// Reconstruct all eager menu labels/fonts after a host language change,
+    /// then reopen Options at the same navigation depth.
+    RedisplayOptions,
     Start,
     Multiplayer(multiplayer_menu::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
@@ -180,6 +183,7 @@ pub(crate) async fn show_main_menu(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
+    open_options_initially: bool,
 ) -> Result<MainMenuChoice, String> {
     let shipping = application_context.shipping()?;
     let initial_profile = application_context
@@ -318,6 +322,19 @@ pub(crate) async fn show_main_menu(
     // stale target. The session layer follows the same rule by constructing
     // callbacks only after the menu returns.
     let mut save_manager = SaveGameManager::open_for_context(application_context);
+
+    if open_options_initially
+        && options::show_main_menu_options(
+            application_context,
+            window,
+            &mut renderer,
+            &menu_resources,
+            &mut cursor_renderer,
+        )
+        .await
+    {
+        return Ok(MainMenuChoice::RedisplayOptions);
+    }
 
     // ── Event-loop state ─────────────────────────────────────────────
     let mut input_state = ModalInputState::new();
@@ -663,7 +680,7 @@ async fn dispatch_click(
             None
         }
         ClickAction::Options => {
-            options::show_main_menu_options(
+            let language_changed = options::show_main_menu_options(
                 application_context,
                 event_pump,
                 renderer,
@@ -671,6 +688,9 @@ async fn dispatch_click(
                 cursor_renderer,
             )
             .await;
+            if language_changed {
+                return Some(MainMenuChoice::RedisplayOptions);
+            }
             let profile = application_context
                 .active_profile_snapshot()
                 .unwrap_or_else(|error| panic!("Options removed the active profile: {error}"));
@@ -718,19 +738,25 @@ fn render_text_layer(
     let profile_info_lines = build_profile_info_lines(resources, &profile);
 
     let name_font = resources
-        .edit_field_font()
-        .or_else(|| resources.title_font());
+        .edit_field_font_any()
+        .or_else(|| resources.title_font_any());
     let info_font = resources
-        .menu_text_font()
-        .or_else(|| resources.edit_field_font());
-    let enabled_font = resources.menu_button_font(true);
-    let disabled_font = resources.menu_button_font(false);
+        .menu_text_font_any()
+        .or_else(|| resources.edit_field_font_any());
+    let enabled_font = resources.menu_button_font_any(true);
+    let disabled_font = resources.menu_button_font_any(false);
 
     // ── Profile info block (left side) ──────────────────────────────
     if let (Some(name), Some(font)) = (profile_name.as_deref(), name_font) {
         let tw = font.text_width(name);
         let x = PROFILE_INFO_BOX_X + (PROFILE_INFO_BOX_W - tw) / 2;
-        renderer.render_text_argb(font, name, x, PROFILE_NAME_Y);
+        crate::ingame_menu::layout::render_text_screen_font(
+            renderer,
+            font,
+            name,
+            x,
+            PROFILE_NAME_Y,
+        );
     }
     if let Some(font) = info_font {
         let line_h = font.height() as i32;
@@ -738,7 +764,7 @@ fn render_text_layer(
             let tw = font.text_width(line);
             let x = PROFILE_INFO_BOX_X + (PROFILE_INFO_BOX_W - tw) / 2;
             let y = PROFILE_INFO_Y + i as i32 * line_h;
-            renderer.render_text_argb(font, line, x, y);
+            crate::ingame_menu::layout::render_text_screen_font(renderer, font, line, x, y);
         }
     }
 
@@ -746,7 +772,7 @@ fn render_text_layer(
     if let Some(font) = info_font {
         let line = update_status_line();
         let y = MENU_H - font.height() as i32 - 4;
-        renderer.render_text_argb(font, &line, 8, y);
+        crate::ingame_menu::layout::render_text_screen_font(renderer, font, &line, 8, y);
     }
 
     // ── Button labels ───────────────────────────────────────────────
@@ -772,7 +798,7 @@ fn render_text_layer(
         let th = font.height() as i32;
         let tx = bx + (bw - tw) / 2;
         let ty = by + (bh - th) / 2;
-        renderer.render_text_argb(font, &base.text, tx, ty);
+        crate::ingame_menu::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
         // Keyboard-selected widget keyboard-only: the hover sprite is
         // already handled by `button_sprite_state` in the sprite pass,
         // so no extra work here.

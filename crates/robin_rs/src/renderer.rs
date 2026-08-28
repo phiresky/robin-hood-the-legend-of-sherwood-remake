@@ -1958,6 +1958,13 @@ impl Renderer {
         self.resources.ensure_font_atlas(&self.gpu, font_id, font)
     }
 
+    /// Invalidate pointer-keyed bitmap font atlases before replacing eager
+    /// font owners. Allocators may reuse an old address for a different
+    /// locale's font; retaining that atlas would render stale glyphs.
+    pub fn clear_font_atlas_cache(&mut self) {
+        self.resources.clear_font_atlas_cache();
+    }
+
     /// Public helper for callers that own their own wgpu textures
     /// (titbit_renderer, campaign_map background) and want to enqueue
     /// them through the renderer's draw queue. The caller is

@@ -702,7 +702,83 @@ pub(super) fn setup_mission_audio(
         .sound_cache
         .finalize_sound_sources(&engine.sound_sim().sources);
     timer.step("bank registration");
-    populate_sound_duration_tables(host, assets, profiles, sound_dir);
+    let installed_languages = host
+        .application_context
+        .installed_languages()
+        .unwrap_or_else(|error| panic!("speech timing lost localization service: {error}"));
+    let canonical_voice_pack = if let Some(authoritative_locale) =
+        host.transport.speech_timing_locale.as_deref()
+    {
+        Some(
+            installed_languages
+                .into_iter()
+                .find(|pack| pack.has_voice && pack.locale == authoritative_locale)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "authoritative multiplayer speech timing pack `{authoritative_locale}` is not installed or has no voice data"
+                    )
+                }),
+        )
+    } else {
+        installed_languages
+            .into_iter()
+            .filter(|pack| pack.has_voice)
+            .min_by_key(|pack| (pack.locale != "en-US", pack.locale.clone()))
+    };
+    let (canonical_base, canonical_loader, canonical_speech_cache) = match canonical_voice_pack {
+        Some(pack) => {
+            let base = if pack.data_root.is_empty() {
+                std::path::PathBuf::from(format!(
+                    "__shipping_language_pack__/{}/{}",
+                    pack.locale, sound_dir
+                ))
+            } else {
+                std::path::PathBuf::from(&pack.data_root).join(sound_dir)
+            };
+            let loader = crate::audio_backend::create_language_pack_sample_loader(
+                std::path::PathBuf::from(sound_dir),
+                pack.clone(),
+                host.shipping.clone(),
+            );
+            let mut cache = engine_sound_cache::SoundCache::new();
+            let canonical_exclamations =
+                crate::process_asset_cache::build_exclamations_for_language(
+                    &pack,
+                    host.shipping.as_deref(),
+                    profiles,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "authoritative speech timing pack `{}` is incomplete: {error}",
+                        pack.locale
+                    )
+                });
+            for exclamations in canonical_exclamations {
+                cache.initialize_exclamations_for_profile(&exclamations);
+            }
+            (base, loader, cache.speech_cache)
+        }
+        None => {
+            tracing::warn!(
+                "No validated voice pack is installed; speech timing uses the active/base audio data"
+            );
+            (
+                std::path::PathBuf::from(sound_dir),
+                crate::audio_backend::create_sample_loader(std::path::PathBuf::from(sound_dir)),
+                host.audio.sound.sound_cache.speech_cache.clone(),
+            )
+        }
+    };
+    populate_sound_duration_tables(
+        host,
+        assets,
+        profiles,
+        &loader,
+        sound_dir,
+        &canonical_loader,
+        &canonical_base,
+        &canonical_speech_cache,
+    );
     timer.step("sound duration tables");
 
     // Per-entry sample validation block.  When
@@ -736,6 +812,9 @@ fn populate_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     sound_dir: &str,
+    canonical_speech_loader: &engine_sound_cache::SampleLoader,
+    canonical_speech_dir: &std::path::Path,
+    canonical_speech_cache: &engine_sound_cache::IndexedCache,
 ) {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -750,24 +829,20 @@ fn populate_sound_duration_tables(
     let sound_base = std::path::PathBuf::from(sound_dir);
     let probe = move |name: &str| crate::audio_backend::sample_duration_ms(&sound_base, name);
 
-    // Every distinct sample the tables below will ask about, derived once.
-    let speech_cache = &host.audio.sound.sound_cache.speech_cache;
-    let needed = speech_cache
-        .groups
+    // Ordinary sound-source timing remains tied to the active/base sound
+    // directory. Logical speech timing is resolved independently below from
+    // the canonical pack selected by the multiplayer handshake.
+    let needed = host
+        .audio
+        .sound
+        .sound_cache
+        .source_cache
+        .entries
         .values()
-        .flat_map(|group| group.entry_indices.iter())
-        .filter_map(|&idx| speech_cache.entries.get(idx))
-        .map(|entry| entry.file_name.clone())
-        .chain(
-            host.audio
-                .sound
-                .sound_cache
-                .source_cache
-                .entries
-                .values()
-                .map(|entry| entry.file_name.clone()),
-        );
+        .map(|entry| entry.file_name.clone());
     let durations = duration_cache.durations_for(&sample_base, needed, &probe);
+    let canonical_speech_base =
+        crate::audio_duration_cache::SampleResolver::new(canonical_speech_dir);
 
     fn frames_from_ms(ms: u32) -> u32 {
         ((ms.saturating_add(39)) / 40).max(1)
@@ -806,18 +881,33 @@ fn populate_sound_duration_tables(
     }
 
     let mut exclamation_durations = BTreeMap::new();
-    for (&group_id, group) in &speech_cache.groups {
+    for (&group_id, group) in &canonical_speech_cache.groups {
         let profile_prefix = group_id & 0xFFFF_0000;
         let exclamation_id = (group_id & 0xFFFF) as u16;
         let duration_ms = group
             .entry_indices
             .iter()
-            .filter_map(|&idx| speech_cache.entries.get(idx))
-            .filter_map(|entry| durations.get(&entry.file_name).copied())
-            .max();
-        let Some(duration_ms) = duration_ms else {
-            continue;
-        };
+            .map(|&index| {
+                let entry = canonical_speech_cache.entries.get(index).unwrap_or_else(|| {
+                    panic!(
+                        "authoritative speech group {group_id} references missing cache entry {index}"
+                    )
+                });
+                duration_cache
+                    .duration_ms(
+                        &canonical_speech_base,
+                        &entry.file_name,
+                        canonical_speech_loader,
+                    )
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "authoritative speech sample `{}` for group {group_id} is unavailable",
+                            entry.file_name
+                        )
+                    })
+            })
+            .max()
+            .unwrap_or_else(|| panic!("authoritative speech group {group_id} has no samples"));
         let frames = frames_from_ms(duration_ms);
         for (&profile_id, groups) in &groups_by_profile {
             if profile_id & 0xFFFF_0000 != profile_prefix {
@@ -841,7 +931,6 @@ fn populate_sound_duration_tables(
         exclamations = exclamation_durations.len(),
         sources = source_durations.len(),
         "Populated deterministic sound duration tables"
-    );
     assets.exclamation_durations = Arc::new(exclamation_durations);
     assets.source_durations = Arc::new(source_durations);
 }
@@ -1124,7 +1213,7 @@ pub(super) fn pre_decode_maps_and_resources(
         let mission_id = descriptor_mission_id(campaign, profiles);
         let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
-            && let Some(desc) = dd.red_files.get(&filename)
+            && let Some(desc) = dd.localized_level_descriptors(&filename)
         {
             tracing::info!(
                 "Level descriptors {filename}: loaded from shipping datadir ({} dialogues)",

@@ -531,7 +531,11 @@ fn finish_interactive_audio(
     frontend: &mut InteractiveFrontend,
     callbacks: &mut RustCallbacks,
 ) {
-    let MissionAudioPhase { host, manager } = world.audio_phase();
+    let MissionAudioPhase {
+        host,
+        manager,
+        assets,
+    } = world.audio_phase();
     execute_app_effects(
         &mut callbacks.app_effects,
         &mut host.audio.sound,
@@ -543,7 +547,7 @@ fn finish_interactive_audio(
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
     runtime.trace(FrameContractStage::AppEffects);
-    if let Some(boundary) = frontend.audio.tick(manager, host) {
+    if let Some(boundary) = frontend.audio.tick(manager, host, assets) {
         runtime.queue_sound_boundary(boundary);
     }
     runtime.trace(FrameContractStage::Audio);

@@ -79,7 +79,7 @@ pub(super) async fn run_lost_sherwood_gate(
         let filename = assets_res_descr::red_filename(last_id);
         host.shipping
             .as_deref()
-            .and_then(|datadir| datadir.red_files.get(&filename).cloned())
+            .and_then(|datadir| datadir.localized_level_descriptors(&filename).cloned())
             .or_else(|| {
                 let path = format!("Data/Text/{filename}");
                 assets_res_descr::load(&path)

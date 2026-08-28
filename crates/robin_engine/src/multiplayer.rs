@@ -76,6 +76,9 @@ pub enum NetMsg {
         mission_id: String,
         mission_seed: u64,
         sim_config: crate::engine::SimConfig,
+        /// Host-selected presentation pack used only to derive stable logical
+        /// speech durations. Each peer still plays its own active language.
+        speech_timing_locale: Option<String>,
         host_nickname: String,
     },
     /// Client → server: an input the client wants applied this tick,
@@ -159,6 +162,7 @@ pub enum NetEvent {
         mission_id: String,
         rng_seed: u64,
         sim_config: crate::engine::SimConfig,
+        speech_timing_locale: Option<String>,
     },
     /// Unrecoverable transport/session compatibility failure.
     Fatal(String),
@@ -401,6 +405,7 @@ mod tests {
             mission_id: "Dem_Lei_MP".into(),
             mission_seed: 42,
             sim_config: crate::engine::SimConfig::default(),
+            speech_timing_locale: Some("en-US".into()),
             host_nickname: "host".into(),
         };
         let h = decode_msg(&encode_msg(&hello)).unwrap();
@@ -416,6 +421,7 @@ mod tests {
                     mission_id,
                     mission_seed,
                     sim_config,
+                    speech_timing_locale,
                     host_nickname,
                 },
             ) => {
@@ -425,6 +431,7 @@ mod tests {
                 assert_eq!(mission_id, "Dem_Lei_MP");
                 assert_eq!(mission_seed, 42);
                 assert_eq!(sim_config, crate::engine::SimConfig::default());
+                assert_eq!(speech_timing_locale.as_deref(), Some("en-US"));
                 assert_eq!(host_nickname, "host");
             }
             _ => panic!("wrong variants"),

@@ -126,6 +126,20 @@ A list of which additional features we have added, which ones we might still wan
   Windows system font in the original build too. See
   `assets/core-datadir/README.md`.
 
+- **Runtime language switching.** Options discovers and validates every
+  installed retail locale and offers an application-global `Automatic` or
+  explicit language choice without restarting the game. Applying a language
+  atomically replaces loose-datadir or shipping-bundle lookup, rebuilds eager
+  menu, mission-text, font, portrait-name, speech, and cinematic presentation
+  caches, and returns to the Options menu. Text never silently falls through
+  to a different language; only missing recorded speech and cinematics may use
+  an installed English pack. Shipping format v5 preserves complete per-locale
+  overlays for native, Android, and browser packages while still reading v4
+  manifests. Generated character names and persisted save labels remain
+  frozen, multiplayer mission text and playback are client-local, and logical
+  speech timing comes from a stable canonical voice pack rather than the
+  client's active presentation language.
+
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
   `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,
@@ -402,7 +416,6 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Allow switching language in settings mid-game.
 - More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).

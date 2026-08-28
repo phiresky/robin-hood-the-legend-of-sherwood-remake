@@ -461,7 +461,7 @@ pub async fn show_dialogue(
         }
         portrait_fade.tick();
 
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             render_dropped_initial_text(
                 renderer,
                 font,
@@ -482,7 +482,7 @@ pub async fn show_dialogue(
         // see `super::layout::TooltipState`.
         let mouse_pt = engine_coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
         tooltip.update(&frame, mouse_pt);
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             tooltip.draw(renderer, font, transform, &frame, mouse_pt);
         }
 
@@ -835,7 +835,7 @@ impl DialogueModalState {
         }
         self.portrait_fade.tick();
 
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             render_dropped_initial_text(
                 renderer,
                 font,
@@ -853,7 +853,7 @@ impl DialogueModalState {
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             self.tooltip
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
         }
@@ -1014,7 +1014,7 @@ fn update_mouth(
 #[allow(clippy::too_many_arguments)]
 fn render_dropped_initial_text(
     renderer: &mut Renderer,
-    font: &crate::native_font::NativeFont,
+    font: &crate::native_font::Font,
     transform: MenuTransform,
     text: &str,
     box_x: i32,
@@ -1042,7 +1042,7 @@ fn render_dropped_initial_text(
     // First pass — beside the drop cap, narrower box on the LEFT.
     let beside_h = (di_lines as i32 * line_h).min(box_h);
     let beside_w = (box_w - DROP_CAP_W).max(0);
-    let remainder = super::layout::render_text_in_box(
+    let remainder = super::layout::render_text_in_box_font(
         renderer,
         font,
         transform,
@@ -1059,7 +1059,7 @@ fn render_dropped_initial_text(
         let below_y = box_y + beside_h;
         let below_h = (box_h - beside_h).max(0);
         if below_h > 0 {
-            let _ = super::layout::render_text_in_box(
+            let _ = super::layout::render_text_in_box_font(
                 renderer,
                 font,
                 transform,

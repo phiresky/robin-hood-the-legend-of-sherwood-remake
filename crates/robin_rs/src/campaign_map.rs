@@ -4,12 +4,13 @@
 //! for a location selection.
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::host::ApplicationContext;
 use crate::ingame_menu::blazon_set;
 use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
 use crate::ingame_menu::resources::{IngameMenuResources, MenuSurface};
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::menu::{CampaignMapState, LOCATION_POSITIONS, mission_location_from_index};
-use crate::native_font::{self, NativeFont};
+use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
@@ -124,7 +125,7 @@ struct CampaignMapAssets {
     close: Option<MenuSurface>,
     tooltip_bg: Option<MenuSurface>,
     lifetime: [Option<MenuSurface>; 5],
-    font: Option<NativeFont>,
+    font: Option<Font>,
 }
 
 struct ShortMissionDescriptionWindow {
@@ -183,6 +184,7 @@ impl CampaignMapAssets {
 /// Display the campaign map with available missions and wait for selection.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn show_campaign_map(
+    application_context: &ApplicationContext,
     window: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     game: &mut crate::game::Game,
@@ -196,7 +198,14 @@ pub(crate) async fn show_campaign_map(
     pseudo_debrief_pending: bool,
 ) -> Result<CampaignMapChoice, String> {
     let mut menu_resources = menu_resources;
-    let items = campaign_map_items(campaign, profiles, campaign_map, text_resources, shipping);
+    let items = campaign_map_items(
+        application_context,
+        campaign,
+        profiles,
+        campaign_map,
+        text_resources,
+        shipping,
+    );
     if items.is_empty() {
         tracing::warn!("No missions on campaign map — this shouldn't happen");
     }
@@ -344,6 +353,7 @@ pub(crate) async fn show_campaign_map(
 }
 
 fn campaign_map_items(
+    application_context: &ApplicationContext,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     campaign_map: &CampaignMapState,
@@ -361,7 +371,8 @@ fn campaign_map_items(
             let mission_idx = loc.mission_idx?;
             let mission = campaign.missions.get(mission_idx)?;
             let profile = mission.profile(profiles);
-            let name = profile.mission_name.clone();
+            let name =
+                application_context.localized_mission_name(profile.id, &profile.mission_name);
             let location = mission_location_from_index(loc_idx).unwrap_or(MissionLocation::Nowhere);
             if matches!(
                 location,
@@ -394,7 +405,7 @@ fn load_level_descriptors(
 ) -> Option<LevelDescriptors> {
     let filename = res_descr::red_filename(mission_id);
     shipping
-        .and_then(|dd| dd.red_files.get(&filename).cloned())
+        .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
         .or_else(|| {
             let path = format!("Data/Text/{filename}");
             res_descr::load(&path).ok()
@@ -620,7 +631,7 @@ fn render_tooltip(
     input: &ModalInputState,
 ) {
     let Some(font) = resources
-        .and_then(|r| r.fonts.popup_scroll.as_ref())
+        .and_then(IngameMenuResources::popup_font_any)
         .or(assets.font.as_ref())
     else {
         return;
@@ -814,12 +825,9 @@ fn campaign_surface_for_resource(
     }
 }
 
-fn load_campaign_font() -> Option<NativeFont> {
+fn load_campaign_font() -> Option<Font> {
     let config = native_font::load_font_config().ok()?;
-    match native_font::load_font_by_name(&config, "Default").ok()? {
-        native_font::Font::Native(font) => Some(font),
-        native_font::Font::TrueType(_) => None,
-    }
+    native_font::load_font_by_name_for_active_locale(&config, "Default").ok()
 }
 
 fn draw_marker(renderer: &mut Renderer, transform: MenuTransform, x: i32, y: i32, blinking: bool) {

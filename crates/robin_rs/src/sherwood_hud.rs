@@ -27,7 +27,7 @@ use robin_engine::sprite as engine_sprite;
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
 };
-use crate::native_font::NativeFont;
+use crate::native_font::Font;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids::{
@@ -557,8 +557,8 @@ pub fn draw_tooltip(
     renderer: &mut Renderer,
     tracker: &SherwoodTooltipTracker,
     tooltip_text: impl Fn(SherwoodButton) -> Option<String>,
-    font: &NativeFont,
-    shadow: Option<&NativeFont>,
+    font: &Font,
+    shadow: Option<&Font>,
     mouse_x: i32,
     mouse_y: i32,
     cursor_size: (i32, i32),

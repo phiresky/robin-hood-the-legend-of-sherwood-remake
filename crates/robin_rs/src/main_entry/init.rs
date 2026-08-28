@@ -82,6 +82,12 @@ pub enum InitError {
     #[error("Failed to apply soldier profile patch {path}: {message}")]
     ContentSoldierProfilePatch { path: String, message: String },
 
+    #[error("localization: {source}")]
+    ContentLocalization {
+        #[source]
+        source: crate::localization::LocalizationError,
+    },
+
     #[error("{message}")]
     PlayerProfileState {
         save_directory: std::path::PathBuf,
@@ -109,7 +115,8 @@ impl InitError {
             | Self::ContentProfilesJson { .. }
             | Self::ContentProfilesOpen { .. }
             | Self::ContentProfilesRead { .. }
-            | Self::ContentSoldierProfilePatch { .. } => InitErrorCategory::Content,
+            | Self::ContentSoldierProfilePatch { .. }
+            | Self::ContentLocalization { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
             Self::PlatformShippingDatadirInstall { .. } => InitErrorCategory::Platform,
         }
@@ -331,8 +338,6 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
     }
 
     add_overlay_data_dirs();
-    add_language_folder();
-
     Ok(())
 }
 
@@ -366,7 +371,6 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
         return Err(InitError::DataDirectoryAndroidAssetsMissing { cwd });
     }
 
-    add_language_folder();
     Ok(())
 }
 
@@ -376,7 +380,6 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
 /// bootstrap language-folder detection.
 #[cfg(target_arch = "wasm32")]
 fn setup_data_dir(_data_dir_override: Option<&Path>) -> Result<(), InitError> {
-    add_language_folder();
     Ok(())
 }
 
@@ -433,6 +436,8 @@ pub fn rust_init_with_shipping(
 fn rust_init_finish(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, InitError> {
+    let localization = crate::localization::LocalizationService::initialize(shipping.as_deref())
+        .map_err(|source| InitError::ContentLocalization { source })?;
     let options = engine_api::GlobalOptions::default();
     let profiles = std::sync::Arc::new(load_profiles(shipping.as_deref(), &options)?);
     tracing::info!(
@@ -447,13 +452,17 @@ fn rust_init_finish(
         load_player_profile_manager(&player_profile_directory);
     let key_configs = load_key_config_store(&player_profile_directory, player_profiles_regenerated);
 
-    let application_context =
-        ApplicationContext::complete(options, player_profiles, key_configs, shipping).map_err(
-            |message| InitError::PlayerProfileState {
-                save_directory: player_profile_directory,
-                message,
-            },
-        )?;
+    let application_context = ApplicationContext::complete_with_localization(
+        options,
+        player_profiles,
+        key_configs,
+        shipping,
+        localization,
+    )
+    .map_err(|message| InitError::PlayerProfileState {
+        save_directory: player_profile_directory,
+        message,
+    })?;
 
     let campaign = Campaign::create(&profiles, application_context.sim_config().difficulty);
 
@@ -479,9 +488,9 @@ fn load_profiles(
     options: &engine_api::GlobalOptions,
 ) -> Result<ProfileManager, InitError> {
     if let Some(dd) = shipping
-        && let Some(p) = &dd.profiles
+        && let Some(p) = dd.profiles.as_ref()
     {
-        tracing::info!("Profiles: loaded from shipping datadir");
+        tracing::info!("Profiles: loaded from language-independent shipping datadir index");
         // Shipping profiles are baked at `convert_datadir` time
         // (`convert_shipping` calls `import_beam_mes` before storing
         // `dd.profiles`), so the per-mission `number_of_beam_mes` /

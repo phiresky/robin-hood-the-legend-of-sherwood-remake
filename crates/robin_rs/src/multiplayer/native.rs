@@ -242,6 +242,7 @@ struct ServerContext {
     mission_id: String,
     mission_seed: u64,
     sim_config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<String>,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
     cancellation: Arc<AtomicBool>,
@@ -264,6 +265,7 @@ pub fn start_server(
     mission_id: String,
     mission_seed: u64,
     sim_config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<String>,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     frame_cursor: FrameCursor,
@@ -277,6 +279,7 @@ pub fn start_server(
         mission_id,
         mission_seed,
         sim_config,
+        speech_timing_locale,
         incoming_tx,
         outgoing_rx,
         frame_cursor,
@@ -294,6 +297,7 @@ pub fn start_server_with_key(
     mission_id: String,
     mission_seed: u64,
     sim_config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<String>,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     frame_cursor: FrameCursor,
@@ -315,6 +319,7 @@ pub fn start_server_with_key(
         mission_id,
         mission_seed,
         sim_config,
+        speech_timing_locale,
         frame_cursor,
         initial_snapshot,
         cancellation: Arc::clone(&cancellation),
@@ -656,6 +661,7 @@ async fn handle_incoming_peer(
                     mission_id: context.mission_id.clone(),
                     mission_seed: context.mission_seed,
                     sim_config: context.sim_config,
+                    speech_timing_locale: context.speech_timing_locale.clone(),
                     host_nickname: context.host_nickname.clone(),
                 })
                 .map_err(|_| "writer queue closed before Welcome")?;
@@ -827,6 +833,7 @@ pub struct ClientHandle {
     /// rolls match the host's.
     pub mission_seed: Option<u64>,
     pub mission_sim_config: Option<robin_engine::engine::SimConfig>,
+    pub speech_timing_locale: Option<String>,
     pub mission_id: Option<String>,
     cancellation: Arc<AtomicBool>,
     io_thread: Option<JoinHandle<()>>,
@@ -839,6 +846,10 @@ impl ClientHandle {
 
     pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
         self.mission_sim_config
+    }
+
+    pub fn speech_timing_locale(&self) -> Option<String> {
+        self.speech_timing_locale.clone()
     }
 
     pub fn mission_id(&self) -> Option<&str> {
@@ -921,21 +932,22 @@ pub fn connect_client(
             }
         })?;
 
-    let (your_seat, mission_id, mission_seed, sim_config) = match handshake_rx.recv() {
-        Ok(Ok(result)) => result,
-        Ok(Err(err)) => {
-            cancellation.store(true, Ordering::Release);
-            let _ = io_thread.join();
-            return Err(std::io::Error::other(format!("initial handshake: {err}")));
-        }
-        Err(e) => {
-            cancellation.store(true, Ordering::Release);
-            let _ = io_thread.join();
-            return Err(std::io::Error::other(format!(
-                "initial handshake channel closed: {e}"
-            )));
-        }
-    };
+    let (your_seat, mission_id, mission_seed, sim_config, speech_timing_locale) =
+        match handshake_rx.recv() {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                cancellation.store(true, Ordering::Release);
+                let _ = io_thread.join();
+                return Err(std::io::Error::other(format!("initial handshake: {err}")));
+            }
+            Err(e) => {
+                cancellation.store(true, Ordering::Release);
+                let _ = io_thread.join();
+                return Err(std::io::Error::other(format!(
+                    "initial handshake channel closed: {e}"
+                )));
+            }
+        };
     tracing::info!(
         addr = %addr_display,
         ?your_seat,
@@ -947,6 +959,7 @@ pub fn connect_client(
         assigned_seat,
         mission_seed: Some(mission_seed),
         mission_sim_config: Some(sim_config),
+        speech_timing_locale,
         mission_id: Some(mission_id),
         cancellation,
         io_thread: Some(io_thread),
@@ -962,6 +975,15 @@ struct ClientSession {
     recv: RecvStream,
 }
 
+type Handshake = (
+    ClientSession,
+    PlayerId,
+    String,
+    u64,
+    robin_engine::engine::SimConfig,
+    Option<String>,
+);
+
 /// One round of (connect → open stream → Hello → Welcome).  Used both
 /// for the initial handshake and for the auto-retry path after
 /// disconnects.
@@ -969,16 +991,7 @@ async fn handshake_async(
     endpoint: &Endpoint,
     server_addr: &EndpointAddr,
     nickname: &str,
-) -> Result<
-    (
-        ClientSession,
-        PlayerId,
-        String,
-        u64,
-        robin_engine::engine::SimConfig,
-    ),
-    String,
-> {
+) -> Result<Handshake, String> {
     let conn = endpoint
         .connect(server_addr.clone(), GAME_ALPN)
         .await
@@ -1004,6 +1017,7 @@ async fn handshake_async(
             mission_id,
             mission_seed,
             sim_config,
+            speech_timing_locale,
             host_nickname,
         }) => {
             tracing::info!(
@@ -1022,6 +1036,7 @@ async fn handshake_async(
                 mission_id,
                 mission_seed,
                 sim_config,
+                speech_timing_locale,
             ))
         }
         Some(other) => Err(format!("expected Welcome, got {other:?}")),
@@ -1034,18 +1049,7 @@ async fn handshake_or_cancel(
     server_addr: &EndpointAddr,
     nickname: &str,
     cancellation: &AtomicBool,
-) -> Option<
-    Result<
-        (
-            ClientSession,
-            PlayerId,
-            String,
-            u64,
-            robin_engine::engine::SimConfig,
-        ),
-        String,
-    >,
-> {
+) -> Option<Result<Handshake, String>> {
     tokio::select! {
         result = handshake_async(endpoint, server_addr, nickname) => Some(result),
         _ = wait_for_cancel(cancellation) => None,
@@ -1056,13 +1060,19 @@ fn validate_reconnect_state(
     expected_mission_id: &str,
     expected_seed: u64,
     expected_config: robin_engine::engine::SimConfig,
+    expected_speech_timing_locale: Option<&str>,
     mission_id: &str,
     seed: u64,
     config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<&str>,
 ) -> Result<(), String> {
-    if mission_id != expected_mission_id || seed != expected_seed || config != expected_config {
+    if mission_id != expected_mission_id
+        || seed != expected_seed
+        || config != expected_config
+        || speech_timing_locale != expected_speech_timing_locale
+    {
         return Err(format!(
-            "reconnect joined incompatible mission `{mission_id}` seed {seed} config {config:?}; expected mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?}"
+            "reconnect joined incompatible mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?}; expected mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?}"
         ));
     }
     Ok(())
@@ -1078,7 +1088,16 @@ async fn run_client_io_async(
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
-        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+        Result<
+            (
+                PlayerId,
+                String,
+                u64,
+                robin_engine::engine::SimConfig,
+                Option<String>,
+            ),
+            String,
+        >,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
@@ -1114,11 +1133,20 @@ async fn run_client_io_inner(
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
-        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+        Result<
+            (
+                PlayerId,
+                String,
+                u64,
+                robin_engine::engine::SimConfig,
+                Option<String>,
+            ),
+            String,
+        >,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let (mut session, your_seat, mission_id, mission_seed, sim_config) = {
+    let (mut session, your_seat, mission_id, mission_seed, sim_config, speech_timing_locale) = {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut backoff = std::time::Duration::from_millis(50);
         loop {
@@ -1156,12 +1184,14 @@ async fn run_client_io_inner(
         mission_id: mission_id.clone(),
         rng_seed: mission_seed,
         sim_config,
+        speech_timing_locale: speech_timing_locale.clone(),
     });
     let _ = initial_handshake_tx.send(Ok((
         your_seat,
         mission_id.clone(),
         mission_seed,
         sim_config,
+        speech_timing_locale.clone(),
     )));
 
     let mut backoff = std::time::Duration::from_millis(500);
@@ -1193,14 +1223,23 @@ async fn run_client_io_inner(
                 return;
             };
             match handshake {
-                Ok((new_session, new_seat, new_mission_id, new_seed, new_config)) => {
+                Ok((
+                    new_session,
+                    new_seat,
+                    new_mission_id,
+                    new_seed,
+                    new_config,
+                    new_speech_timing_locale,
+                )) => {
                     if let Err(message) = validate_reconnect_state(
                         &mission_id,
                         mission_seed,
                         sim_config,
+                        speech_timing_locale.as_deref(),
                         &new_mission_id,
                         new_seed,
                         new_config,
+                        new_speech_timing_locale.as_deref(),
                     ) {
                         let _ = incoming_tx.send(NetEvent::Fatal(message));
                         return;
@@ -1213,6 +1252,7 @@ async fn run_client_io_inner(
                         mission_id: new_mission_id,
                         rng_seed: new_seed,
                         sim_config: new_config,
+                        speech_timing_locale: new_speech_timing_locale,
                     });
                     backoff = std::time::Duration::from_millis(500);
                     break new_session;
@@ -1396,12 +1436,59 @@ mod tests {
     fn reconnect_rejects_wrong_mission_or_config() {
         let expected = robin_engine::engine::SimConfig::default();
         assert!(
-            validate_reconnect_state("MissionA", 7, expected, "MissionB", 7, expected).is_err()
+            validate_reconnect_state(
+                "MissionA",
+                7,
+                expected,
+                Some("en-US"),
+                "MissionB",
+                7,
+                expected,
+                Some("en-US"),
+            )
+            .is_err()
         );
 
         let mut changed = expected;
         changed.amount_of_speaking = 9;
-        assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, changed).is_err());
-        assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, expected).is_ok());
+        assert!(
+            validate_reconnect_state(
+                "MissionA",
+                7,
+                expected,
+                Some("en-US"),
+                "MissionA",
+                7,
+                changed,
+                Some("en-US"),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_reconnect_state(
+                "MissionA",
+                7,
+                expected,
+                Some("en-US"),
+                "MissionA",
+                7,
+                expected,
+                Some("de-DE"),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_reconnect_state(
+                "MissionA",
+                7,
+                expected,
+                Some("en-US"),
+                "MissionA",
+                7,
+                expected,
+                Some("en-US"),
+            )
+            .is_ok()
+        );
     }
 }

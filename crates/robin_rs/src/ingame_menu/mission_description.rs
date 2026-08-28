@@ -29,7 +29,6 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
-use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::ui_screens::{
     MissionChoice, MissionDescriptionButton, MissionDescriptionScreen, center_horizontally_x,
@@ -42,9 +41,9 @@ use robin_assets::resource_manager::ResourceManager;
 use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsOutcome, show_buy_blazons};
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TextFontTable, TextWidgetState, TooltipState, VAlign,
-    dim_screen, draw_background, enter_modal_gpu_phase, render_text_in_box_aligned_font,
-    render_text_in_box_font, render_text_in_box_with_drop_cap,
+    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
+    enter_modal_gpu_phase, render_text_in_box_aligned_font, render_text_in_box_font,
+    render_text_in_box_with_drop_cap_font,
 };
 use super::resources::IngameMenuResources;
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -450,38 +449,19 @@ pub async fn show_mission_description(
                     layout_consts::DESCRIPTION_BOTTOM - layout_consts::DESCRIPTION_TOP_NO_BLAZONS;
                 let (drop_cap_w, drop_cap_h) =
                     screen.description_drop_cap(pic_w, pic_h).unwrap_or((0, 0));
-                match font {
-                    Font::Native(native) => {
-                        let fonts = TextFontTable::uniform(Some(native));
-                        let _leftover = render_text_in_box_with_drop_cap(
-                            renderer,
-                            &fonts,
-                            TextWidgetState::Default,
-                            transform,
-                            &screen.description,
-                            win_x + layout_consts::DESCRIPTION_X,
-                            win_y + layout_consts::DESCRIPTION_TOP_NO_BLAZONS,
-                            desc_w,
-                            desc_h,
-                            drop_cap_w,
-                            drop_cap_h,
-                            TextAlign::Justified,
-                        );
-                    }
-                    Font::TrueType(_) => {
-                        let _leftover = render_text_in_box_font(
-                            renderer,
-                            font,
-                            transform,
-                            &screen.description,
-                            win_x + layout_consts::DESCRIPTION_X,
-                            win_y + layout_consts::DESCRIPTION_TOP_NO_BLAZONS,
-                            desc_w,
-                            desc_h,
-                            TextAlign::Justified,
-                        );
-                    }
-                }
+                let _leftover = render_text_in_box_with_drop_cap_font(
+                    renderer,
+                    font,
+                    transform,
+                    &screen.description,
+                    win_x + layout_consts::DESCRIPTION_X,
+                    win_y + layout_consts::DESCRIPTION_TOP_NO_BLAZONS,
+                    desc_w,
+                    desc_h,
+                    drop_cap_w,
+                    drop_cap_h,
+                    TextAlign::Justified,
+                );
             }
         }
 
@@ -496,7 +476,7 @@ pub async fn show_mission_description(
         // Tooltip near the cursor.  Button tooltips win over blazon
         // tooltips when both are tracked — blazons are kept out of the
         // focus manager so button focus always takes priority.
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             tooltip.draw(renderer, font, transform, &frame, mouse_virt);
             if tooltip.hover_widget().is_none() && blazon_state.is_some() {
                 blazon_tooltip.draw(

@@ -21,6 +21,7 @@ pub struct ClientHandle {
     pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
     pub mission_seed: Rc<RefCell<Option<u64>>>,
     pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
+    pub speech_timing_locale: Rc<RefCell<Option<String>>>,
     pub mission_id: Rc<RefCell<Option<String>>>,
 }
 
@@ -35,6 +36,10 @@ impl ClientHandle {
 
     pub fn mission_id(&self) -> Option<String> {
         self.mission_id.borrow().clone()
+    }
+
+    pub fn speech_timing_locale(&self) -> Option<String> {
+        self.speech_timing_locale.borrow().clone()
     }
 
     pub fn shutdown(&mut self) {}

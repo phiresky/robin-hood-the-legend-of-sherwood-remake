@@ -731,6 +731,19 @@ pub fn measure_text_height_in_box(font: &NativeFont, text: &str, box_w: i32, box
     wrap.lines.len() as i32 * line_h
 }
 
+pub fn measure_text_height_in_box_font(font: &Font, text: &str, box_w: i32, box_h: i32) -> i32 {
+    if text.is_empty() || box_w <= 0 || box_h <= 0 {
+        return 0;
+    }
+    let line_h = font.height() as i32;
+    if line_h <= 0 {
+        return 0;
+    }
+    let max_lines = (box_h / line_h) as usize;
+    let wrap = wrap_text_for_box_font(font, text, box_w, max_lines);
+    wrap.lines.len() as i32 * line_h
+}
+
 /// Render text inside a virtual box, with horizontal alignment and a
 /// configurable maximum height in lines.  Returns the unrendered
 /// remainder for callers implementing pagination.  Defaults to
@@ -917,6 +930,54 @@ pub fn render_text_in_box_with_drop_cap(
     )
 }
 
+/// Polymorphic-font version of [`render_text_in_box_with_drop_cap`].
+#[allow(clippy::too_many_arguments)]
+pub fn render_text_in_box_with_drop_cap_font(
+    renderer: &mut Renderer,
+    font: &Font,
+    transform: MenuTransform,
+    text: &str,
+    box_x: i32,
+    box_y: i32,
+    box_w: i32,
+    box_h: i32,
+    drop_cap_w: i32,
+    drop_cap_h: i32,
+    align: TextAlign,
+) -> String {
+    if drop_cap_w <= 0 || drop_cap_h <= 0 {
+        return render_text_in_box_font(
+            renderer, font, transform, text, box_x, box_y, box_w, box_h, align,
+        );
+    }
+
+    let line_h = font.height() as i32;
+    if line_h <= 0 {
+        return text.to_string();
+    }
+    let carveout_lines = (drop_cap_h + line_h - 1) / line_h;
+    let carveout_h = (carveout_lines * line_h).min(box_h);
+    let narrow_w = (box_w - drop_cap_w).max(0);
+    let remainder = if narrow_w > 0 && carveout_h > 0 {
+        render_text_in_box_font(
+            renderer, font, transform, text, box_x, box_y, narrow_w, carveout_h, align,
+        )
+    } else {
+        text.to_string()
+    };
+    if remainder.is_empty() {
+        return String::new();
+    }
+    let below_y = box_y + carveout_h;
+    let below_h = (box_h - carveout_h).max(0);
+    if below_h == 0 {
+        return remainder;
+    }
+    render_text_in_box_font(
+        renderer, font, transform, &remainder, box_x, below_y, box_w, below_h, align,
+    )
+}
+
 /// Like [`render_text_in_box`] but with an explicit vertical alignment.
 ///
 /// `VAlign::Center` uses the font baseline (baseline at
@@ -1074,7 +1135,11 @@ pub fn render_text_in_box_aligned_font(
         VAlign::Center => font.text_width(text).max(inner_w),
         VAlign::Top => inner_w,
     };
-    let wrap = wrap_text_font(font, text, wrap_w, max_lines);
+    let wrap = if valign == VAlign::Top && any_word_wider_than_font(font, text, inner_w) {
+        wrap_text_per_char_font(font, text, inner_w, max_lines)
+    } else {
+        wrap_text_font(font, text, wrap_w, max_lines)
+    };
     let baseline = font.baseline() as i32;
     let first_line_y = match valign {
         VAlign::Top => box_y,
@@ -1199,6 +1264,106 @@ pub fn wrap_text_font(font: &Font, text: &str, box_w: i32, max_lines: usize) -> 
         String::new()
     } else {
         text[consumed_chars..].trim_start().to_string()
+    };
+    WrapResult {
+        remaining,
+        lines,
+        paragraph_end,
+    }
+}
+
+/// Wrap polymorphic-font text for a bounded box, falling back to glyph-level
+/// breaks when the locale uses an unspaced script or a single word cannot fit.
+pub fn wrap_text_for_box_font(font: &Font, text: &str, box_w: i32, max_lines: usize) -> WrapResult {
+    if any_word_wider_than_font(font, text, box_w) {
+        wrap_text_per_char_font(font, text, box_w, max_lines)
+    } else {
+        wrap_text_font(font, text, box_w, max_lines)
+    }
+}
+
+fn any_word_wider_than_font(font: &Font, text: &str, max_w: i32) -> bool {
+    text.split_whitespace()
+        .any(|word| font.text_width(word) > max_w)
+}
+
+/// Polymorphic counterpart to [`wrap_text_per_char`]. This is required
+/// for locale-selected TrueType fonts because Japanese, Chinese, and
+/// other unspaced scripts otherwise become one overflowing "word".
+pub fn wrap_text_per_char_font(
+    font: &Font,
+    text: &str,
+    box_w: i32,
+    max_lines: usize,
+) -> WrapResult {
+    let mut lines = Vec::new();
+    let mut paragraph_end = Vec::new();
+    if max_lines == 0 || box_w <= 0 {
+        return WrapResult {
+            remaining: text.to_string(),
+            lines,
+            paragraph_end,
+        };
+    }
+
+    let mut current = String::new();
+    let mut current_w = 0i32;
+    let mut consumed_bytes = 0usize;
+    let push_line = |lines: &mut Vec<String>,
+                     paragraph_end: &mut Vec<bool>,
+                     line: &mut String,
+                     width: &mut i32,
+                     is_paragraph_end: bool| {
+        lines.push(std::mem::take(line));
+        paragraph_end.push(is_paragraph_end);
+        *width = 0;
+    };
+
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            push_line(
+                &mut lines,
+                &mut paragraph_end,
+                &mut current,
+                &mut current_w,
+                true,
+            );
+            consumed_bytes = idx + ch.len_utf8();
+            if lines.len() >= max_lines {
+                break;
+            }
+            continue;
+        }
+
+        let mut encoded = [0u8; 4];
+        let char_w = font.text_width(ch.encode_utf8(&mut encoded));
+        if current_w + char_w > box_w && !current.is_empty() {
+            push_line(
+                &mut lines,
+                &mut paragraph_end,
+                &mut current,
+                &mut current_w,
+                false,
+            );
+            consumed_bytes = idx;
+            if lines.len() >= max_lines {
+                break;
+            }
+        }
+        current.push(ch);
+        current_w += char_w;
+    }
+
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(std::mem::take(&mut current));
+        paragraph_end.push(true);
+        consumed_bytes = text.len();
+    }
+
+    let remaining = if consumed_bytes >= text.len() {
+        String::new()
+    } else {
+        text[consumed_bytes..].to_string()
     };
     WrapResult {
         remaining,
@@ -1402,7 +1567,7 @@ impl TooltipState {
     pub fn draw(
         &self,
         renderer: &mut Renderer,
-        font: &NativeFont,
+        font: &Font,
         transform: MenuTransform,
         frame: &crate::widget::FrameWnd,
         mouse_virt: engine_coordinates::ScreenPoint,
@@ -1432,7 +1597,7 @@ impl TooltipState {
 /// overflow the 640x480 virtual menu screen.
 pub fn draw_tooltip(
     renderer: &mut Renderer,
-    font: &NativeFont,
+    font: &Font,
     transform: MenuTransform,
     text: &str,
     mouse_virt_x: i32,
@@ -1460,7 +1625,7 @@ pub fn draw_tooltip(
     let needs_wrap = text.contains('\n') || single_line_tw + 2 * PAD_X > MENU_W;
     let (lines, longest_line_w) = if needs_wrap {
         let wrap_w = (max_box_w).max(line_h);
-        let wrap = wrap_text(font, text, wrap_w, usize::MAX);
+        let wrap = wrap_text_for_box_font(font, text, wrap_w, usize::MAX);
         let widest = wrap
             .lines
             .iter()
@@ -1489,7 +1654,7 @@ pub fn draw_tooltip(
         let line_x = box_x + PAD_X;
         let line_y = box_y + PAD_Y + idx as i32 * line_h;
         let (tx, ty) = transform.to_screen(line_x, line_y);
-        render_text_screen(renderer, font, line, tx, ty);
+        render_text_screen_font(renderer, font, line, tx, ty);
     }
 }
 

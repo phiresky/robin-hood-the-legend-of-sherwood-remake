@@ -33,7 +33,7 @@ use jiff::{Timestamp, tz::TimeZone};
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_fallback_panel,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
@@ -782,7 +782,7 @@ fn draw_input_field(
         draw_fallback_panel(renderer, transform, &INPUT_RECT);
     }
 
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
 
@@ -833,7 +833,7 @@ fn draw_input_field(
     } else {
         format!("{left_text}{right_text}")
     };
-    render_text_virt(
+    render_text_virt_font(
         renderer,
         font,
         transform,
