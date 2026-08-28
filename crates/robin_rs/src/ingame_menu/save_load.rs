@@ -1046,10 +1046,9 @@ fn draw_preview(
     text: &impl SaveMetadataText,
 ) {
     let slot = match selected {
-        Some(ListRow::Existing(v)) => match visible.get(v) {
-            Some(&s) => s,
-            None => return,
-        },
+        Some(ListRow::Existing(v)) => *visible
+            .get(v)
+            .expect("selected visible row must resolve to a save slot"),
         _ => return,
     };
 
@@ -1078,9 +1077,9 @@ fn draw_preview(
         );
     }
 
-    let Some(save) = save_manager.get(slot) else {
-        return;
-    };
+    let save = save_manager
+        .get(slot)
+        .expect("selected visible slot must resolve to a save");
     let Some(font) = resources.list_font(false, true) else {
         return;
     };
@@ -1192,10 +1191,13 @@ fn row_label(
         ListRow::New => text.new_save_label(),
         ListRow::Existing(v_idx) => {
             let slot = visible[v_idx];
-            match save_manager.get(slot) {
-                Some(save) if save.is_autosave() => format!("Autosave - {}", save.text),
-                Some(save) => save.text.clone(),
-                None => format!("<invalid slot {slot}>"),
+            let save = save_manager
+                .get(slot)
+                .expect("visible slot must resolve to a save");
+            if save.is_autosave() {
+                format!("Autosave - {}", save.text)
+            } else {
+                save.text.clone()
             }
         }
     }
@@ -1227,9 +1229,9 @@ fn row_detail_lines(
         ListRow::New => [text.new_save_hint(), String::new()],
         ListRow::Existing(v_idx) => {
             let slot = visible[v_idx];
-            let Some(save) = save_manager.get(slot) else {
-                return [String::new(), String::new()];
-            };
+            let save = save_manager
+                .get(slot)
+                .expect("visible slot must resolve to a save");
 
             let mission = metadata_value(&save.mission_name, text);
             let player = metadata_value(&save.player_name, text);

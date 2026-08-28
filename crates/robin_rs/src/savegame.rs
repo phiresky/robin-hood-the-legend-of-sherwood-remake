@@ -323,7 +323,7 @@ impl SaveGameManager {
                 self.ensure_special_slot(save_file::special_slots::EX_QUICK, "Previous Quick Save");
             self.copy_files(quick_idx, ex_idx)
                 .map_err(|e| anyhow::anyhow!(e))?;
-            self.copy_display_metadata(quick_idx, ex_idx);
+            self.copy_display_metadata(quick_idx, ex_idx)?;
         }
         let idx = self.ensure_special_slot(save_file::special_slots::QUICK, "Quick Save");
         self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
@@ -732,13 +732,16 @@ impl SaveGameManager {
         Ok(())
     }
 
-    fn copy_display_metadata(&mut self, src: usize, dst: usize) {
-        let Some(src) = self.saves.get(src).cloned() else {
-            return;
-        };
-        let Some(dst) = self.saves.get_mut(dst) else {
-            return;
-        };
+    fn copy_display_metadata(&mut self, src: usize, dst: usize) -> Result<()> {
+        let src = self
+            .saves
+            .get(src)
+            .with_context(|| format!("cannot copy metadata from missing save slot {src}"))?
+            .clone();
+        let dst = self
+            .saves
+            .get_mut(dst)
+            .with_context(|| format!("cannot copy metadata to missing save slot {dst}"))?;
 
         dst.mission_id = src.mission_id;
         dst.version = src.version;
@@ -753,6 +756,7 @@ impl SaveGameManager {
         dst.ransom = src.ransom;
         dst.blazons = src.blazons;
         dst.amulets = src.amulets;
+        Ok(())
     }
 
     /// Write a full save file (engine + campaign) to the given slot.
@@ -1015,6 +1019,26 @@ mod tests {
         assert_eq!(mgr.get(0).unwrap().filename, "Savegame_000");
         assert_eq!(mgr.find_by_name("My Save"), Some(0));
         assert_eq!(mgr.find_by_name("Nope"), None);
+    }
+
+    #[test]
+    fn display_metadata_copy_rejects_missing_slots() {
+        let mut mgr = SaveGameManager::new("/tmp/test_saves".into());
+        let slot = mgr.create("My Save".into(), 42);
+
+        let missing_source = mgr.copy_display_metadata(usize::MAX, slot).unwrap_err();
+        assert!(
+            missing_source
+                .to_string()
+                .contains("cannot copy metadata from missing save slot")
+        );
+
+        let missing_destination = mgr.copy_display_metadata(slot, usize::MAX).unwrap_err();
+        assert!(
+            missing_destination
+                .to_string()
+                .contains("cannot copy metadata to missing save slot")
+        );
     }
 
     #[test]
