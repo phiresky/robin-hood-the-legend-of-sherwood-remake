@@ -83,7 +83,8 @@ const THUMB_RECT: MenuRect = MenuRect {
     w: 180,
     h: 135,
 };
-const DETAIL_ROW_HEIGHT: i32 = 52;
+const COMPACT_ROW_HEIGHT: i32 = 36;
+const DETAILED_ROW_HEIGHT: i32 = 52;
 const DETAIL_LINE_HEIGHT: i32 = 16;
 
 /// Units passed through the save-metadata localization seam. The original
@@ -122,6 +123,13 @@ pub(crate) trait SaveMetadataText {
     fn just_now(&self) -> String;
     fn elapsed(&self, value: u64, unit: RelativeTimeUnit) -> String;
     fn future(&self, value: u64, unit: RelativeTimeUnit) -> String;
+    fn compact_saved(&self, value: &str) -> String;
+    fn compact_campaign_progress(&self, progress: u32) -> String;
+    fn compact_missions(&self, done: usize, total: usize) -> String;
+    fn compact_gang_size(&self, size: usize) -> String;
+    fn compact_ransom(&self, value: i32) -> String;
+    fn compact_blazons(&self, value: i32) -> String;
+    fn compact_amulets(&self, value: i32) -> String;
 }
 
 /// English fallback used until the port-wide language catalog supplies an
@@ -228,6 +236,34 @@ impl SaveMetadataText for EnglishSaveMetadataText {
     fn future(&self, value: u64, unit: RelativeTimeUnit) -> String {
         format!("in {}", Self::quantity(value, unit))
     }
+
+    fn compact_saved(&self, value: &str) -> String {
+        format!("Saved {value}")
+    }
+
+    fn compact_campaign_progress(&self, progress: u32) -> String {
+        format!("{progress}% campaign")
+    }
+
+    fn compact_missions(&self, done: usize, total: usize) -> String {
+        format!("{done}/{total} missions")
+    }
+
+    fn compact_gang_size(&self, size: usize) -> String {
+        format!("Gang {size}")
+    }
+
+    fn compact_ransom(&self, value: i32) -> String {
+        format!("Ransom {value}")
+    }
+
+    fn compact_blazons(&self, value: i32) -> String {
+        format!("Blazons {value}")
+    }
+
+    fn compact_amulets(&self, value: i32) -> String {
+        format!("Amulets {value}")
+    }
 }
 
 /// Longest allowed save name — passed to the input field as its
@@ -259,6 +295,7 @@ pub async fn show_save_load(
     save_manager: &mut SaveGameManager,
     mission_id: u32,
     profiles: Option<&ProfileManager>,
+    detailed_metadata: bool,
     mode: SaveLoadMode,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
@@ -270,6 +307,11 @@ pub async fn show_save_load(
     let list_rect = match mode {
         SaveLoadMode::Load => LOAD_LIST_RECT,
         SaveLoadMode::Save => SAVE_LIST_RECT,
+    };
+    let row_height = if detailed_metadata {
+        DETAILED_ROW_HEIGHT
+    } else {
+        COMPACT_ROW_HEIGHT
     };
     let (btn_w, btn_h) = resources.button_dimensions();
     let load_save_label = resources.menu_text.get(match mode {
@@ -320,7 +362,7 @@ pub async fn show_save_load(
     // chronological order rather than insertion order.
     save_manager.sort_by_time();
     let mut visible = collect_visible_slots(save_manager, mode);
-    let visible_rows = (list_rect.h / DETAIL_ROW_HEIGHT).max(1) as usize;
+    let visible_rows = (list_rect.h / row_height).max(1) as usize;
     let mut scroll_offset: usize = 0;
 
     // Name-entry state lives on a `WidgetInputField` kept in
@@ -516,8 +558,7 @@ pub async fn show_save_load(
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
                     if list_rect.contains_virt(vx, vy) {
-                        let row_offset =
-                            ((vy - list_rect.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
+                        let row_offset = ((vy - list_rect.y - 4) / row_height).max(0) as usize;
                         let new_selection = row_at(mode, scroll_offset + row_offset, visible.len());
                         if new_selection != selected {
                             selected = new_selection;
@@ -762,15 +803,19 @@ pub async fn show_save_load(
 
         // Rows. Re-read the wall clock while the modal is open so relative
         // text crosses second/minute/hour boundaries without reopening it.
-        let now_unix = match crate::save_file::unix_timestamp_now() {
-            Ok(now) => Some(now),
-            Err(error) => {
-                if !clock_error_reported {
-                    tracing::warn!("Save menu relative time is unavailable: {error:#}");
-                    clock_error_reported = true;
+        let now_unix = if detailed_metadata {
+            match crate::save_file::unix_timestamp_now() {
+                Ok(now) => Some(now),
+                Err(error) => {
+                    if !clock_error_reported {
+                        tracing::warn!("Save menu relative time is unavailable: {error:#}");
+                        clock_error_reported = true;
+                    }
+                    None
                 }
-                None
             }
+        } else {
+            None
         };
         let total = total_rows(mode, visible.len());
         let scrollbar_w = list_scrollbar_width(resources);
@@ -786,8 +831,7 @@ pub async fn show_save_load(
         // virtual menu coords, so we hit-test against the active list
         // rect directly.
         let hovered_row = if list_rect.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32) {
-            let row_offset =
-                ((mouse_virt.y as i32 - list_rect.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
+            let row_offset = ((mouse_virt.y as i32 - list_rect.y - 4) / row_height).max(0) as usize;
             row_at(mode, scroll_offset + row_offset, visible.len())
         } else {
             None
@@ -799,7 +843,7 @@ pub async fn show_save_load(
                 break;
             }
             let row = row_at_unchecked(mode, row_index, visible.len());
-            let row_y = list_rect.y + 4 + row_offset as i32 * DETAIL_ROW_HEIGHT;
+            let row_y = list_rect.y + 4 + row_offset as i32 * row_height;
             let is_selected = selected == Some(row);
             let is_focused = hovered_row == Some(row);
             let label = row_label(row, save_manager, &visible, &metadata_text);
@@ -810,6 +854,7 @@ pub async fn show_save_load(
                 now_unix,
                 local_time_zone.as_ref(),
                 &metadata_text,
+                detailed_metadata,
             );
 
             let Some(font) = resources.list_font(is_focused, is_selected) else {
@@ -862,6 +907,7 @@ pub async fn show_save_load(
             now_unix,
             local_time_zone.as_ref(),
             &metadata_text,
+            detailed_metadata,
         );
 
         // Buttons.
@@ -1044,6 +1090,7 @@ fn draw_preview(
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
     text: &impl SaveMetadataText,
+    detailed_metadata: bool,
 ) {
     let slot = match selected {
         Some(ListRow::Existing(v)) => *visible
@@ -1075,6 +1122,10 @@ fn draw_preview(
             i32::from(cache.height),
             true,
         );
+    }
+
+    if !detailed_metadata {
+        return;
     }
 
     let save = save_manager
@@ -1224,6 +1275,7 @@ fn row_detail_lines(
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
     text: &impl SaveMetadataText,
+    detailed_metadata: bool,
 ) -> [String; 2] {
     match row {
         ListRow::New => [text.new_save_hint(), String::new()],
@@ -1232,6 +1284,13 @@ fn row_detail_lines(
             let save = save_manager
                 .get(slot)
                 .expect("visible slot must resolve to a save");
+
+            if !detailed_metadata {
+                return [
+                    compact_row_detail(save, local_time_zone, text),
+                    String::new(),
+                ];
+            }
 
             let mission = metadata_value(&save.mission_name, text);
             let player = metadata_value(&save.player_name, text);
@@ -1243,6 +1302,37 @@ fn row_detail_lines(
             ]
         }
     }
+}
+
+fn compact_row_detail(
+    save: &SaveGame,
+    local_time_zone: Option<&TimeZone>,
+    text: &impl SaveMetadataText,
+) -> String {
+    let exact = format_compact_saved_time(&save.timestamp, local_time_zone, text);
+    let mut parts = vec![text.compact_saved(&exact)];
+    if !save.mission_name.is_empty() && save.text.trim() != save.mission_name.trim() {
+        parts.push(save.mission_name.clone());
+    }
+    if let Some(progress) = save.campaign_progress {
+        parts.push(text.compact_campaign_progress(progress));
+    }
+    if let (Some(done), Some(total)) = (save.missions_done, save.missions_total) {
+        parts.push(text.compact_missions(done, total));
+    }
+    if let Some(gang) = save.gang_size {
+        parts.push(text.compact_gang_size(gang));
+    }
+    if let Some(ransom) = save.ransom {
+        parts.push(text.compact_ransom(ransom));
+    }
+    if let Some(blazons) = save.blazons {
+        parts.push(text.compact_blazons(blazons));
+    }
+    if let Some(amulets) = save.amulets {
+        parts.push(text.compact_amulets(amulets));
+    }
+    parts.join(" | ")
 }
 
 fn selected_metadata_lines(
@@ -1346,6 +1436,29 @@ fn format_exact_saved_time(
     timestamp
         .to_zoned(time_zone.clone())
         .strftime("%Y-%m-%d %H:%M:%S %Z")
+        .to_string()
+}
+
+fn format_compact_saved_time(
+    timestamp: &str,
+    time_zone: Option<&TimeZone>,
+    text: &impl SaveMetadataText,
+) -> String {
+    let Ok(seconds) = parse_save_timestamp(timestamp) else {
+        return text.invalid_timestamp();
+    };
+    let Ok(seconds) = i64::try_from(seconds) else {
+        return text.invalid_timestamp();
+    };
+    let Ok(timestamp) = Timestamp::from_second(seconds) else {
+        return text.invalid_timestamp();
+    };
+    let Some(time_zone) = time_zone else {
+        return text.local_time_unavailable();
+    };
+    timestamp
+        .to_zoned(time_zone.clone())
+        .strftime("%Y-%m-%d %H:%M")
         .to_string()
 }
 
@@ -1666,6 +1779,7 @@ mod tests {
             Some(3_700),
             Some(&TimeZone::UTC),
             &text,
+            true,
         );
         assert_eq!(lines[0], "Mission: The Silver Arrow | Player: Alice");
         assert!(lines[1].starts_with("Saved: 1 hour ago | Date: "));
@@ -1685,8 +1799,38 @@ mod tests {
             Some(100),
             Some(&TimeZone::UTC),
             &text,
+            true,
         );
         assert!(lines[0].contains("Mission: unavailable (legacy save)"));
         assert!(lines[0].contains("Player: unavailable (legacy save)"));
+    }
+
+    #[test]
+    fn compact_mode_restores_the_pre_metadata_row() {
+        let text = EnglishSaveMetadataText;
+        let mut manager = SaveGameManager::new("/tmp/test_saves".into());
+        let mut save = saved_at("3600");
+        save.campaign_progress = Some(25);
+        manager.saves.push(save);
+
+        let lines = row_detail_lines(
+            ListRow::Existing(0),
+            &manager,
+            &[0],
+            None,
+            Some(&TimeZone::UTC),
+            &text,
+            false,
+        );
+
+        assert_eq!(
+            lines,
+            [
+                "Saved 1970-01-01 01:00 | The Silver Arrow | 25% campaign".to_string(),
+                String::new(),
+            ]
+        );
+        assert!(!lines[0].contains("Player:"));
+        assert!(!lines[0].contains("ago"));
     }
 }

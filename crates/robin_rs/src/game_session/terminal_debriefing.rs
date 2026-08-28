@@ -230,6 +230,15 @@ async fn render_terminal_debriefing_and_picker(
                     &mut context.resources.cursor,
                     &mut context.presentation.renderer,
                 ));
+                let detailed_metadata = context
+                    .host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("debriefing load requires an active profile: {error}")
+                    })
+                    .gameplay_config
+                    .detailed_save_metadata;
                 let picker_outcome = crate::ingame_menu::show_save_load(
                     context.window,
                     &mut context.presentation.renderer,
@@ -238,6 +247,7 @@ async fn render_terminal_debriefing_and_picker(
                     &mut context.callbacks.save_manager,
                     page.mission_id,
                     Some(&context.assets.profile_manager),
+                    detailed_metadata,
                     SaveLoadMode::Load,
                     Some(&mut context.host.audio.sound),
                     context

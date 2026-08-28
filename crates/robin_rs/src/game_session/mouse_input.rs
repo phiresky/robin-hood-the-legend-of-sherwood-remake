@@ -1775,6 +1775,14 @@ pub(super) async fn handle_pause_menu_events(
                     required_menu_resources(&mission_resources.menu, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
+                let detailed_metadata = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("pause-menu save/load requires an active profile: {error}")
+                    })
+                    .gameplay_config
+                    .detailed_save_metadata;
                 let cursor = Some(default_modal_cursor(
                     cursor_renderer,
                     &mut mission_resources.cursor,
@@ -1788,6 +1796,7 @@ pub(super) async fn handle_pause_menu_events(
                     &mut callbacks.save_manager,
                     mission_id,
                     Some(&assets.profile_manager),
+                    detailed_metadata,
                     mode,
                     Some(&mut host.audio.sound),
                     audio_backend

@@ -319,6 +319,13 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     #[state_hash(skip)]
     pub autosave_enabled: bool,
+
+    /// Show mission/player provenance, relative age, and the expanded
+    /// selected-save panel in save/load pickers. Disabling this is strictly a
+    /// presentation choice: every native save still stores full provenance.
+    #[serde(default = "enabled_by_default")]
+    #[state_hash(skip)]
+    pub detailed_save_metadata: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -336,6 +343,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
@@ -368,6 +376,7 @@ impl GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: true,

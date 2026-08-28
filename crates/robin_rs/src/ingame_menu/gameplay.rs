@@ -27,6 +27,7 @@ const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 const AUTOSAVE_OPTION_INDEX: usize = 17;
+const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
 
 /// Toggle rows shown on the screen, in display order.
 const OPTION_LABELS: &[&str] = &[
@@ -63,6 +64,7 @@ const OPTION_LABELS: &[&str] = &[
     "Preview Ale Effect",
     "Preview Purse Effect",
     "Preview Wasp Area",
+    "Detailed Save Metadata",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -99,6 +101,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
     "Explain purse value and money-interest conditions.",
     "Show wasp acquisition range and target eligibility.",
+    "Show mission and player provenance, relative age, and expanded save details.",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -361,6 +364,9 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => {
+            config.detailed_save_metadata = !config.detailed_save_metadata
+        }
         _ => {}
     }
 }
@@ -403,6 +409,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         30 => config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
         _ => false,
     }
 }
