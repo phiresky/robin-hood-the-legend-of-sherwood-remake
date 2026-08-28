@@ -1175,3 +1175,16 @@ behind a disabled PROMOTE_AT. Exclusion remains the main decode cost
 (~2x over no-exclusion for ~3% ratio); revisit only when decode time
 becomes a shipping constraint — chunk-level parallel decode at install is
 the cheaper lever.
+
+### RDO tile assignment: closed (2026-08-29, subagent)
+
+Tested whether re-pointing grid tiles at identical/near-identical dictionary
+entries reduces entropy (`sprite_probe_rdo.rs`). The premise is false for
+this data: the original VQ quantizer produced clean dictionaries — RobinTown
+0 / Knight01 1 / Guard A00 0 duplicate entries (lossless canonicalization:
+exactly 0 bytes), and <3% of tiles have any neighbor within max-channel
+delta 2 (transparent/shadow keys exact-match only). Greedy RDO with the real
+codec: eps=1 -0.003..0.031%, eps=2 -0.089..0.252% (11 KB across three
+characters), visually indistinguishable in side-by-side renders but noise at
+corpus scale. Not productionized; k-means dictionary re-quantization is
+capped by the same histogram at ~3% of entries and was not pursued.
