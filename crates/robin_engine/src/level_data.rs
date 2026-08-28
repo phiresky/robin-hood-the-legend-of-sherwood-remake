@@ -793,6 +793,11 @@ pub struct BeamMeActions {
 }
 
 /// Raw soldier data from the EVIL/BORG sub-chunk.
+///
+/// Original AI initializes both patrol identifiers to `0xFFFF`; zero is a
+/// valid hiking-path index and must never be used to mean "no patrol".
+pub const NO_HIKING_PATH_ID: u16 = u16::MAX;
+
 #[derive(
     Debug,
     Clone,
@@ -2217,8 +2222,8 @@ impl LoadedLevel {
                     drunk_level: 0,
                     money: 0,
                     subordinate_ids: Vec::new(),
-                    path_id: 0,
-                    alert_path_id: 0,
+                    path_id: NO_HIKING_PATH_ID,
+                    alert_path_id: NO_HIKING_PATH_ID,
                     script_class: None,
                 })
             })
@@ -4741,6 +4746,10 @@ mod tests {
         assert_eq!(level.mission.soldiers.len(), 2);
         assert_eq!(level.mission.soldiers[0].allegiance, Some(2));
         assert_eq!(level.mission.soldiers[1].allegiance, Some(9));
+        assert!(level.mission.soldiers.iter().all(|soldier| {
+            soldier.path_id == NO_HIKING_PATH_ID && soldier.alert_path_id == NO_HIKING_PATH_ID
+        }));
+        assert!(crate::ai::PathId::new(level.mission.soldiers[0].path_id).is_none());
         assert_eq!(level.mission.pcs_to_rescue[0].allegiance, Some(7));
         assert!(level.mission.pcs_to_rescue[0].autonomous);
         assert!(level.mission.pcs_to_rescue[0].aggressive_combat);

@@ -367,6 +367,61 @@ mod tests {
             "direct-control lock must not queue a halt behind the new movement"
         );
     }
+
+    #[test]
+    fn completed_allied_move_replaces_the_ai_guard_post() {
+        let mut engine = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorSoldier,
+            active: true,
+            ..Default::default()
+        };
+        let position = MapPoint::new(321.0, 654.0);
+        let sector = crate::position_interface::SectorHandle::new(7);
+        element.sprite.apply_placement(
+            position,
+            3,
+            sector,
+            5,
+            crate::element::GameMaterial::Ground,
+            None,
+            None,
+        );
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        engine.store_allied_current_position_as_post(soldier);
+
+        let entity = engine.get_entity(soldier).unwrap();
+        let Entity::Soldier(soldier) = entity else {
+            unreachable!();
+        };
+        assert_eq!(soldier.npc.initial_position_x, position.x);
+        assert_eq!(soldier.npc.initial_position_y, position.y);
+        assert_eq!(soldier.npc.initial_position_sector, sector);
+        assert_eq!(soldier.npc.initial_position_level, 3);
+        let ai = soldier.npc.ai_brain.base().unwrap();
+        assert_eq!(ai.initial_position.x, position.x);
+        assert_eq!(ai.initial_position.y, position.y);
+        assert_eq!(ai.initial_position.sector, sector);
+        assert_eq!(ai.initial_position.level, 3);
+    }
+
     #[test]
     fn selected_player_strike_discards_preexisting_ai_combat_work() {
         let mut npc = crate::element::NpcData {
@@ -989,6 +1044,55 @@ impl EngineInner {
         ai.detach_patrol_path(None, false);
     }
 
+    /// Make the soldier's reached direct-control destination its new guard
+    /// post before autonomous AI resumes. Original `ReturnToDuty` walks to
+    /// `RHElementActorNPC::mposInitialPosition` (`RHartificialintelligence.cpp`
+    /// 2206-2238), so retaining the mission-start snapshot here would make an
+    /// aggressive ally undo every completed player move.
+    fn store_allied_current_position_as_post(&mut self, id: EntityId) {
+        let entity = self
+            .get_entity_mut(id)
+            .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
+        let Entity::Soldier(soldier) = entity else {
+            panic!("controlled allied soldier {id:?} changed entity kind");
+        };
+        let position = soldier.element.position_map();
+        let sector = soldier.element.sector();
+        let level = soldier.element.layer();
+        let direction = soldier
+            .element
+            .sprite
+            .position_iface
+            .get_direction()
+            .as_u8() as i16;
+        let direction_vector = crate::shadow_polygon::sector_to_direction(direction);
+
+        soldier.npc.initial_position_x = position.x;
+        soldier.npc.initial_position_y = position.y;
+        soldier.npc.initial_position_sector = sector;
+        soldier.npc.initial_position_level = level;
+        soldier.npc.initial_view_direction.x = direction_vector[0];
+        soldier.npc.initial_view_direction.y = direction_vector[1];
+
+        let ai = soldier
+            .npc
+            .ai_brain
+            .base_mut()
+            .expect("controlled allied soldier has no AI controller");
+        ai.initial_position = crate::ai::Position {
+            x: position.x,
+            y: position.y,
+            sector,
+            level,
+        };
+        ai.initial_view_direction =
+            u16::try_from(crate::position_interface::vector_to_sector_0_to_15(
+                direction_vector[0] * crate::position_interface::ASPECT_RATIO,
+                direction_vector[1],
+            ))
+            .expect("0-to-15 direction must fit u16");
+    }
+
     fn allied_formation_slots(
         &self,
         assets: &LevelAssets,
@@ -1498,6 +1602,9 @@ impl EngineInner {
                 AlliedDuty::Patrol { .. } | AlliedDuty::Follow { .. } => false,
             };
             let ai_locked = allied_order_locks_ai(&order, threatened, reached_hold_anchor);
+            if was_ai_locked && !ai_locked && reached_hold_anchor {
+                self.store_allied_current_position_as_post(id);
+            }
             self.set_allied_ai_locked(id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
