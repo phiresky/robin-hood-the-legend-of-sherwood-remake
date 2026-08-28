@@ -42,6 +42,24 @@ pub fn resolve_left_click(
     ctrl_held: bool,
     is_double: bool,
 ) -> Vec<PlayerCommand> {
+    resolve_left_click_with_planning(
+        host, engine, assets, map_pt, shift_held, shift_held, ctrl_held, is_double,
+    )
+}
+
+/// Resolve a click with Original physical-Shift behaviour separated from the
+/// post-port planning modifier.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_left_click_with_planning(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    map_pt: MapPoint,
+    shift_held: bool,
+    planning_held: bool,
+    ctrl_held: bool,
+    is_double: bool,
+) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat;
     let selected = engine.hero_selection(local_seat);
     let num_selected = selected.len();
@@ -75,8 +93,8 @@ pub fn resolve_left_click(
     // "no PCs selected" case is implicit: `selected_action_for_seat`
     // returns `NoAction` when nothing is selected, so the `!= NoAction`
     // gate already excludes it.
-    if is_double && !shift_held && num_selected > 0 {
-        let pending_action = if shift_held {
+    if is_double && !planning_held && num_selected > 0 {
+        let pending_action = if planning_held {
             engine.planned_action_for_seat(local_seat)
         } else {
             engine.selected_action_for_seat(local_seat)
@@ -92,7 +110,7 @@ pub fn resolve_left_click(
 
     // Action-specific click dispatch
     if num_selected > 0 {
-        let selected_action = if shift_held {
+        let selected_action = if planning_held {
             engine.planned_action_for_seat(local_seat)
         } else {
             engine.selected_action_for_seat(local_seat)
@@ -131,7 +149,7 @@ pub fn resolve_left_click(
                 local_seat,
                 selected_action,
                 is_double,
-                shift_held,
+                planning_held,
             );
             return cmds;
         } else if is_double && (engine.is_alt_effective(&host.input) || engine.view_locked()) {
@@ -482,6 +500,7 @@ pub fn queue_shift_click_commands(
         .into_iter()
         .filter_map(|command| match command {
             command @ (PlayerCommand::GroupMove { .. }
+            | PlayerCommand::MoveTacticalUnits { .. }
             | PlayerCommand::LaunchInteraction { .. }
             | PlayerCommand::LaunchGroundTarget { .. }
             | PlayerCommand::DropAleAt { .. }
@@ -489,6 +508,7 @@ pub fn queue_shift_click_commands(
             | PlayerCommand::LaunchScrollRead { .. }
             | PlayerCommand::EnterSwordfight { .. }
             | PlayerCommand::SwordStrikeCmd { .. }
+            | PlayerCommand::RaiseShieldWithDanger { .. }
             | PlayerCommand::CrouchDown
             | PlayerCommand::StandUp) => Some(PlayerCommand::QueueQuickAction {
                 action,
@@ -507,6 +527,7 @@ pub fn queue_shift_click_commands(
             command @ (PlayerCommand::SelectPc { .. }
             | PlayerCommand::TogglePcSelection { .. }
             | PlayerCommand::SelectTacticalUnits { .. }
+            | PlayerCommand::SelectPlannedShieldProtected { .. }
             | PlayerCommand::ClearTacticalSelection
             | PlayerCommand::UnselectAllPcs
             | PlayerCommand::StopRecordingMacro) => Some(command),
@@ -912,17 +933,21 @@ fn resolve_action_left_click(
             ];
         }
         Action::Shield | Action::BigShield => {
-            // Planning never enters the live two-click shield prompt: that
-            // prompt mutates shared ShieldState before an action exists. A
-            // planned click records the same protectee interaction used by
-            // portrait targeting, leaving both the actor and prompt intact.
             if is_planning {
-                if let Some(target_id) = engine.find_focusable_pc(assets, map_pt, Focus::Shield) {
-                    return vec![PlayerCommand::LaunchInteraction {
+                if let Some(protected_pc) =
+                    engine.planned_shield_protected_for_seat(local_seat, pc_id)
+                {
+                    return vec![PlayerCommand::RaiseShieldWithDanger {
                         actor: pc_id,
-                        target: target_id,
-                        command: Command::RaiseShield,
-                        running: false,
+                        protected_pc,
+                        danger_point: convert_to_3d(map_pt),
+                        danger_point_layer: selected_layer,
+                    }];
+                }
+                if let Some(target_id) = engine.find_focusable_pc(assets, map_pt, Focus::Shield) {
+                    return vec![PlayerCommand::SelectPlannedShieldProtected {
+                        actor: pc_id,
+                        protected_pc: target_id,
                     }];
                 }
                 return vec![];

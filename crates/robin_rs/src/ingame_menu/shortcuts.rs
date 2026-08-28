@@ -11,7 +11,7 @@ use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
-use crate::key_config::{KeyConfig, REAL_KEY_COUNT};
+use crate::key_config::{KeyConfig, PLAN_QUICK_ACTIONS_INDEX, REAL_KEY_COUNT, TOGGLE_CLOAK_INDEX};
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
@@ -369,7 +369,11 @@ pub async fn show_shortcuts(
                 break;
             }
             let row_top = LIST_RECT.y + 4 + row_offset as i32 * row_height;
-            let action_label = resources.menu_text.get(MT_STR_SHORTCUT_00 + row_index);
+            let action_label = match u16::try_from(row_index).expect("shortcut row fits u16") {
+                PLAN_QUICK_ACTIONS_INDEX => "Plan Quick Actions".to_owned(),
+                TOGGLE_CLOAK_INDEX => "Toggle Cloak".to_owned(),
+                _ => resources.menu_text.get(MT_STR_SHORTCUT_00 + row_index),
+            };
             let key_value = working.get_key_by_index(row_index as u16);
             let key_label = key_display_name(&resources.menu_text, key_value);
 
@@ -518,9 +522,20 @@ fn assign_key_with_conflict_resolution(
     let Some(key) = key else {
         return;
     };
-    let conflict = cfg.get_index_for_key(key);
-    if conflict != 0xFFFF && conflict != target_index {
-        cfg.set_key_by_index(conflict, None);
+    const SHOW_DOORS_INDEX: u16 = 16;
+    for conflict in 0..REAL_KEY_COUNT {
+        if conflict == target_index || cfg.get_key_by_index(conflict) != Some(key) {
+            continue;
+        }
+        let intentional_shared_shift = matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight)
+            && matches!(
+                (conflict, target_index),
+                (SHOW_DOORS_INDEX, PLAN_QUICK_ACTIONS_INDEX)
+                    | (PLAN_QUICK_ACTIONS_INDEX, SHOW_DOORS_INDEX)
+            );
+        if !intentional_shared_shift {
+            cfg.set_key_by_index(conflict, None);
+        }
     }
     cfg.set_key_by_index(target_index, Some(key));
 }
@@ -791,6 +806,47 @@ mod tests {
         assign_key_with_conflict_resolution(&mut cfg, action1_idx, key);
 
         assert_eq!(cfg.get_key_by_index(action1_idx), key);
+    }
+
+    #[test]
+    fn plan_and_cloak_rows_remain_distinct() {
+        let cfg = KeyConfig::default_preset();
+        assert_eq!(
+            cfg.get_key_by_index(PLAN_QUICK_ACTIONS_INDEX),
+            Some(KeyCode::ShiftLeft)
+        );
+        assert_eq!(
+            cfg.get_key_by_index(TOGGLE_CLOAK_INDEX),
+            Some(KeyCode::KeyV)
+        );
+    }
+
+    #[test]
+    fn conflict_resolution_only_keeps_intentional_planning_shift_pair() {
+        const SHOW_DOORS_INDEX: u16 = 16;
+        const CROUCH_INDEX: u16 = 14;
+        let mut cfg = KeyConfig::default_preset();
+        assign_key_with_conflict_resolution(
+            &mut cfg,
+            PLAN_QUICK_ACTIONS_INDEX,
+            Some(KeyCode::ShiftLeft),
+        );
+        assert_eq!(
+            cfg.get_key_by_index(SHOW_DOORS_INDEX),
+            Some(KeyCode::ShiftLeft)
+        );
+
+        cfg.set_key_by_index(CROUCH_INDEX, Some(KeyCode::ShiftLeft));
+        assign_key_with_conflict_resolution(
+            &mut cfg,
+            PLAN_QUICK_ACTIONS_INDEX,
+            Some(KeyCode::ShiftLeft),
+        );
+        assert_eq!(cfg.get_key_by_index(CROUCH_INDEX), None);
+        assert_eq!(
+            cfg.get_key_by_index(SHOW_DOORS_INDEX),
+            Some(KeyCode::ShiftLeft)
+        );
     }
 
     #[test]

@@ -232,6 +232,13 @@ pub struct GameplayConfig {
     #[serde(default, alias = "control_allied_soldiers")]
     pub control_tactical_units: bool,
 
+    /// Enable the post-port automatic quick-action planning queue.
+    ///
+    /// This is on for new and existing profiles. Original-parity replay
+    /// sessions override it host-side without rewriting the profile.
+    #[serde(default = "enabled_by_default")]
+    pub plan_quick_actions: bool,
+
     /// Allow a PC with the Tie contextual action to release a tied NPC.
     ///
     /// The original shipped an unused `RHCOMMAND_UNTIE` slot but exposed no
@@ -376,6 +383,7 @@ impl Default for GameplayConfig {
         Self {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
+            plan_quick_actions: true,
             enable_unbinding: true,
             autosave_enabled: true,
             detailed_save_metadata: true,
@@ -417,6 +425,7 @@ impl GameplayConfig {
         Self {
             fix_hard_reaction_times: false,
             control_tactical_units: false,
+            plan_quick_actions: true,
             enable_unbinding: true,
             autosave_enabled: true,
             detailed_save_metadata: true,
@@ -465,6 +474,7 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
+        assert!(config.plan_quick_actions);
         assert!(config.enable_unbinding);
         assert!(config.autosave_enabled);
         assert!(config.touch_camera_gestures);

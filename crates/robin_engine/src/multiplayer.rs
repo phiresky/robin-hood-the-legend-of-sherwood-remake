@@ -49,8 +49,10 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
-/// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 34;
+/// handshake; mismatches abort the connection. Version 35 adds completed
+/// planned quick-action payloads, per-seat shield prompts, and deterministic
+/// tactical queue formations to the authoritative version-34 state.
+pub const NET_PROTOCOL_VERSION: u32 = 35;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -932,17 +934,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_all_version_34_authority_rules() {
-        // Version 34 combines typed nullable runtime handles, exact spatial
+    fn protocol_version_includes_all_version_35_authority_rules() {
+        // Version 35 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
         // rebalanced item rules, deterministic achievements, authoritative
         // Sherwood trading, resolved Legendary/Custom difficulty, and
         // deterministic authored timer/ambience state and commands, mission
         // diplomacy state and relationship-change commands, plus
-        // authoritative combat-gesture rules and commands. Older
-        // peers fail before decoding incompatible wire or snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 34);
+        // authoritative combat-gesture rules and commands, completed planned
+        // quick actions, per-seat shield prompts, and deterministic tactical
+        // queue formations. Older peers fail before decoding incompatible
+        // wire or snapshot bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 35);
     }
 
     #[test]

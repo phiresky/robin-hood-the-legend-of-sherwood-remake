@@ -1596,8 +1596,18 @@ fn cursor_for_shield(
         };
         let is_big = action == Action::BigShield;
 
-        // Check the shield-protected flag.
-        if shift_held || engine.shield().is_protected {
+        let choosing_protectee = if shift_held {
+            engine
+                .hero_selection(host.transport.local_seat)
+                .first()
+                .and_then(|&actor| {
+                    engine.planned_shield_protected_for_seat(host.transport.local_seat, actor)
+                })
+                .is_none()
+        } else {
+            engine.shield().is_protected
+        };
+        if choosing_protectee {
             let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);

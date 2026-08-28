@@ -901,7 +901,11 @@ pub(super) fn update_mouse_and_cursor(
     // against the world `mouse_map`) so the cursor reflects whether
     // the portrait's PC is a valid target.
     let local_seat = host.transport.local_seat;
-    let armed = manager.engine.selected_action_for_seat(local_seat);
+    let armed = if shift_held {
+        manager.engine.planned_action_for_seat(local_seat)
+    } else {
+        manager.engine.selected_action_for_seat(local_seat)
+    };
     if matches!(
         armed,
         engine_profiles::Action::Heal
@@ -1142,7 +1146,13 @@ pub(super) fn render_frame(
     // ── GPU phase: door / jump zone alpha overlays ──
     // Includes the shift-held `DisplayAllDoorsAndJumpZones` path and
     // the patch-FX overlay.
-    render_door_overlays(host, engine, assets, renderer, shift_held);
+    let physical_shift_held = threaded_input.keyboard_state().keys.iter().any(|key| {
+        matches!(
+            key,
+            winit::keyboard::KeyCode::ShiftLeft | winit::keyboard::KeyCode::ShiftRight
+        )
+    });
+    render_door_overlays(host, engine, assets, renderer, physical_shift_held);
 
     // Draw rotating selection circles BELOW the characters' feet for
     // every selected hero and directly controlled ally. C++ draws selection marks after
@@ -1385,6 +1395,9 @@ pub(super) fn render_frame(
         Some(titbit_renderer),
         shift_held,
     );
+    if host.plan_quick_actions {
+        crate::touch_plan_hud::render(renderer, hud_fonts, host.touch_plan_quick_actions);
+    }
 
     // ── GPU phase: blazon-bar / requirements icon strips ──
     // Top-of-screen icon strips rebuilt each frame from campaign

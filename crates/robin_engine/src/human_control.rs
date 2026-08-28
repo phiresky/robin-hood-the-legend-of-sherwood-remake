@@ -7,7 +7,8 @@
 //! independent axes without changing the legacy entity/profile variants.
 //!
 //! The fields backed by these enums enter serialized engine state at
-//! SAVE56/NET23/REPLAY16.
+//! The pre-merge tactical schema first used SAVE56/NET23/REPLAY16; the combined
+//! tactical/planned-action graph is SAVE57/NET24/REPLAY17.
 
 use serde::{Deserialize, Serialize};
 

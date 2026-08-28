@@ -53,6 +53,12 @@ pub enum TacticalTargetMode {
     },
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QueueStripAnimation {
+    pub previous_count: usize,
+    pub fall_offset: i32,
+}
+
 /// Mutable application services shared by clones of one
 /// [`ApplicationContext`]. Separate contexts allocate separate service sets,
 /// which makes tests, headless sessions, and future multi-instance hosts
@@ -87,6 +93,7 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    plan_quick_actions: bool,
     touch_camera_gestures: bool,
     native_refresh_presentation: bool,
     diplomacy_visuals: bool,
@@ -148,7 +155,9 @@ impl ApplicationContext {
         // keeps the host-side key type in a parallel store keyed by the same
         // profile id.
         for profile in &player_profiles.profiles {
-            key_configs.entry_or_default(profile.id);
+            let entry = key_configs.entry_or_default(profile.id);
+            entry.active.migrate_post_port_bindings();
+            entry.custom.migrate_post_port_bindings();
         }
 
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
@@ -492,6 +501,7 @@ impl ApplicationContext {
             key_config,
             custom_key_config,
             control_tactical_units: active_profile.gameplay_config.control_tactical_units,
+            plan_quick_actions: active_profile.gameplay_config.plan_quick_actions,
             touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
             native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
             diplomacy_visuals: active_profile.graphic_config.diplomacy_visuals,
@@ -895,6 +905,20 @@ pub struct HostFrontend {
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
+
+    /// Active profile's master switch for automatic action planning.
+    pub plan_quick_actions: bool,
+    /// Session policy used by replay/legacy parity capture; options cannot
+    /// re-enable planning until a normal mission constructs a new host.
+    pub plan_quick_actions_forced_off: bool,
+
+    /// Sticky touch equivalent of holding the Plan Quick Actions binding.
+    pub touch_plan_quick_actions: bool,
+    /// Suppresses the world MouseUp paired with a touch HUD press.
+    pub touch_plan_pointer_captured: bool,
+
+    /// Per-portrait cosmetic easing for the independent automatic queue strip.
+    pub queue_strip_animations: HashMap<EntityId, QueueStripAnimation>,
 
     /// Active profile's local relationship colour/legend preference.
     pub diplomacy_visuals: bool,
@@ -1485,6 +1509,7 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                plan_quick_actions: snapshot.plan_quick_actions,
                 touch_camera_gestures: snapshot.touch_camera_gestures,
                 native_refresh_presentation: snapshot.native_refresh_presentation,
                 diplomacy_visuals: snapshot.diplomacy_visuals,
@@ -1506,6 +1531,7 @@ impl Host {
                     has_focus: true,
                     ..Default::default()
                 },
+                plan_quick_actions: true,
                 ..Default::default()
             },
             ..Default::default()

@@ -133,6 +133,7 @@ fn dispatch_gameplay_action(
         ctrl: ctrl_held,
         shift: shift_held,
         alt: _,
+        plan: planning_held,
     } = modifiers;
 
     match action {
@@ -166,9 +167,29 @@ fn dispatch_gameplay_action(
         GameAction::SelectAction { index } => {
             let selected = manager.engine.hero_selection(host.transport.local_seat);
             if selected.len() == 1 {
-                let command = PlayerCommand::SelectAction {
-                    pc_id: selected[0],
-                    action_index: *index as u32,
+                let pc_id = selected[0];
+                let command = if planning_held {
+                    let Some(action) = manager
+                        .engine
+                        .get_entity(pc_id)
+                        .and_then(|entity| entity.pc_data())
+                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                        .and_then(|profile| profile.actions.get(*index as usize))
+                        .copied()
+                    else {
+                        tracing::warn!(
+                            ?pc_id,
+                            index,
+                            "planned action shortcut has no profile action"
+                        );
+                        return;
+                    };
+                    PlayerCommand::SelectPlannedAction { pc_id, action }
+                } else {
+                    PlayerCommand::SelectAction {
+                        pc_id,
+                        action_index: *index as u32,
+                    }
                 };
                 dispatch_local_command(
                     host,
@@ -222,25 +243,45 @@ fn dispatch_gameplay_action(
         }
         GameAction::CrouchDown => {
             let pre_command_stature = manager.engine.retrieve_stature(None);
+            let command = if planning_held {
+                PlayerCommand::QueueQuickAction {
+                    action: robin_engine::profiles::Action::NoAction,
+                    command: robin_engine::player_command::QueuedQuickActionCommand::CrouchDown,
+                }
+            } else {
+                PlayerCommand::CrouchDown
+            };
             dispatch_local_command(
                 host,
                 &mut manager.engine,
                 &mut frame.commands,
                 assets,
-                &PlayerCommand::CrouchDown,
+                &command,
             );
-            game.stature_focus.latch_crouch_down(pre_command_stature);
+            if !planning_held {
+                game.stature_focus.latch_crouch_down(pre_command_stature);
+            }
         }
         GameAction::StandUp => {
             let pre_command_stature = manager.engine.retrieve_stature(None);
+            let command = if planning_held {
+                PlayerCommand::QueueQuickAction {
+                    action: robin_engine::profiles::Action::NoAction,
+                    command: robin_engine::player_command::QueuedQuickActionCommand::StandUp,
+                }
+            } else {
+                PlayerCommand::StandUp
+            };
             dispatch_local_command(
                 host,
                 &mut manager.engine,
                 &mut frame.commands,
                 assets,
-                &PlayerCommand::StandUp,
+                &command,
             );
-            game.stature_focus.latch_stand_up(pre_command_stature);
+            if !planning_held {
+                game.stature_focus.latch_stand_up(pre_command_stature);
+            }
         }
         GameAction::ToggleCloak => {
             // Resolve selection into per-actor commands before recording.
@@ -372,7 +413,7 @@ pub(super) async fn drive_live_gameplay_input(
         .manager
         .engine
         .planned_action_for_seat(context.host.transport.local_seat);
-    if should_cancel_planned_action(modifiers.shift, planned_action) {
+    if should_cancel_planned_action(modifiers.plan, planned_action) {
         dispatch_local_command(
             context.host,
             &mut context.manager.engine,
@@ -458,16 +499,17 @@ pub(super) async fn drive_live_gameplay_input(
         context.ui.pause_menu.as_ref(),
         *pause_closed_this_frame,
         modifiers.shift,
+        modifiers.plan,
         modifiers.ctrl,
     );
     HandlerAction::Proceed
 }
 
 fn should_cancel_planned_action(
-    shift_is_held: bool,
+    planning_is_active: bool,
     planned_action: robin_engine::profiles::Action,
 ) -> bool {
-    !shift_is_held && planned_action != robin_engine::profiles::Action::NoAction
+    !planning_is_active && planned_action != robin_engine::profiles::Action::NoAction
 }
 
 #[cfg(test)]

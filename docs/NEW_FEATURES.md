@@ -245,18 +245,26 @@ A list of which additional features we have added, which ones we might still wan
   work on the loading screen, and keeps decoded PCM in Web Audio buffers rather
   than wasm linear memory. Native and Android artifacts retain source audio.
 
-- **Shift-click quick-action queue.** Holding Shift switches the portrait
+- **Planned quick-action queue.** Holding the rebindable `Plan Quick Actions`
+  control (Shift by default) switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise
   mutate the live PC. World clicks use the QA macro system and execute in
-  order, with no three-action queue limit. The first action starts as soon as
-  the actor's existing work finishes; its slot is consumed immediately, while
-  the next three actions remain visible above the portrait. Shift-double-click upgrades
+  order, with no three-action queue limit and without consuming the Original
+  three explicit macro slots. The first action starts as soon as the actor's
+  existing work finishes; its slot is consumed immediately, while pending work
+  remains visible in an independently animated strip. Plan-double-click upgrades
   the newest pending movement to a run. Planned actions may be selected even
-  when their live ammo is empty, and releasing Shift or Shift-right-clicking
+  when their live ammo is empty, and releasing the control or plan-right-clicking
   clears the planned action without touching the live PC. Bow arcs are previewed from the last
   queued or live movement destination, so targets can be planned from the
-  position the hero will actually occupy.
+  position the hero will actually occupy. Shield and Big Shield retain their
+  exact protectee-then-danger-point interaction. When the separate tactical-unit
+  control extension is enabled, directly controlled units can queue formation
+  movement and combat, with group-portrait queue feedback. Touch-capable builds
+  expose a sticky plan/cancel HUD button. The per-profile
+  Gameplay setting disables all live planning UI/input and defaults on;
+  Original-parity replay forces it off.
 
 - **Self-updating native packages.** Installed Windows and Linux Velopack
   builds check the public GitHub Releases feed in the background. Stable
@@ -689,7 +697,14 @@ A list of which additional features we have added, which ones we might still wan
   rows for every declared PC profile: the full Linux data has 10/10 available
   and eligible tracks; the Leicester demo has 5/5 available tracks eligible
   (its CPF also declares five full-game profiles whose RHS files are absent).
-- improvements to quick actions: shift-click should queue an action
+- Quick-action planning is implemented as an independent, default-on Gameplay
+  setting. A rebindable Plan modifier (Shift in both presets) queues resolved
+  actions per hero without consuming the Original game's three manual quick
+  action slots. Shield planning keeps each player's two-click prompt in
+  deterministic seat state, while tactical formations retain exact queued
+  destinations. Portrait queue strips and a sticky touch/portrait-safe HUD
+  expose the queue; replay and Original-parity sessions force new live
+  planning input off while recorded commands remain authoritative.
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.
 ### Additive hackable sprite mods

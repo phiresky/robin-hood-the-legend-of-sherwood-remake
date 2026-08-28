@@ -4943,6 +4943,14 @@ impl EngineInner {
     }
 
     pub(crate) fn update_recording_after_selection_change(&mut self) {
+        for seat in &mut self.players.seats {
+            if seat
+                .planned_shield_target
+                .is_some_and(|(actor, _)| !seat.selection.contains(&actor))
+            {
+                seat.planned_shield_target = None;
+            }
+        }
         if self.players.qa_recording_for.is_empty() {
             return;
         }

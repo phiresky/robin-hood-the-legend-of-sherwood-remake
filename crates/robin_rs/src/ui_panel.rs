@@ -1540,7 +1540,54 @@ fn render_allied_portrait_layer(
     }
 }
 
+fn render_auto_queue_ticks(
+    host: &mut Host,
+    renderer: &mut Renderer,
+    engine: &Engine,
+    members: &[EntityId],
+    x: u16,
+    base_y: i32,
+) {
+    let animation_key = *members
+        .first()
+        .expect("automatic queue strip cannot have an empty member list");
+    let queue_count: usize = members
+        .iter()
+        .map(|member| engine.automatic_quick_action_count(*member))
+        .sum();
+    let animation = host
+        .queue_strip_animations
+        .entry(animation_key)
+        .or_default();
+    if queue_count < animation.previous_count {
+        animation.fall_offset = 10;
+    }
+    animation.previous_count = queue_count;
+    let fall_offset = animation.fall_offset;
+    animation.fall_offset = animation.fall_offset.saturating_sub(2);
+    if queue_count == 0 {
+        return;
+    }
+    let color = Renderer::create_color_16(238, 192, 55);
+    let visible = queue_count.min(12);
+    for index in 0..visible {
+        // Original `RHWidgetFallingButton::SetFall` offsets the surviving
+        // quick-action icon horizontally, then reduces that elevation on
+        // every refresh. Keep the automatic strip independent, but preserve
+        // the same right-to-left tetris collapse.
+        let left = i32::from(x) + 5 + index as i32 * 8 + fall_offset;
+        let height = if index == 11 && queue_count > 12 {
+            8
+        } else {
+            5
+        };
+        renderer.draw_line_screen(left, base_y, left, base_y + height, color);
+        renderer.draw_line_screen(left + 1, base_y, left + 1, base_y + height, color);
+    }
+}
+
 fn render_allied_portrait(
+    host: &mut Host,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     engine: &Engine,
@@ -1644,6 +1691,19 @@ fn render_allied_portrait(
             pin_y + ALLIED_PIN_ICON_SIZE,
         )),
         BlendMode::Blend,
+    );
+
+    // Automatic work is separate from Original's three macro slots. Give
+    // tactical group portraits an unambiguous pending-work strip: one gold tick
+    // per queued soldier action, capped to the portrait width with a final
+    // longer overflow tick.
+    render_auto_queue_ticks(
+        host,
+        renderer,
+        engine,
+        &item.members,
+        x,
+        i32::from(sh - top_scroll + 4),
     );
 
     if selected {
@@ -2037,7 +2097,7 @@ pub fn draw_panel(
                 .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
                 .map(|(_, button)| button);
             render_allied_portrait(
-                renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
+                host, renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
             );
             continue;
         }
@@ -2441,6 +2501,14 @@ pub fn draw_panel(
                     }
                 }
             }
+            render_auto_queue_ticks(
+                host,
+                renderer,
+                engine,
+                std::slice::from_ref(&pc_id),
+                x,
+                i32::from(qa_strip_y.saturating_sub(8)),
+            );
 
             // The trumpet widget is only enabled on death, so it never
             // appears on a living PC — nothing to draw in this branch.
