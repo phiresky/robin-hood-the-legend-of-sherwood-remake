@@ -52,13 +52,6 @@ zip.workspace = true
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
 gilrs = "0.11"
 
-# GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
-# browsers that don't yet expose WebGPU (most non-Chrome desktops as
-# of 2026).  Adds a few KiB to native; harmless to keep on.
-# `static-dxc` links DXC into the exe so the DX12 backend can compile
-# shader-model-6 features (our binding_array needs SM5.1+, which the FXC
-# fallback cannot do); only affects Windows targets.
-wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 pollster = "1.0"
 
 # Async plumbing for the ApplicationHandler ↔ game-loop bridge.
@@ -74,6 +67,10 @@ web-time.workspace = true
 # Native-only runtime integrations (Lua, filesystem/process services, and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Keep wgpu's native defaults/backends. `static-dxc` lets the DX12 backend
+# compile shader-model-6 features, while `webgl` preserves the existing native
+# feature graph for tooling that also targets a browser from a host build.
+wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 robin_lua.workspace = true
 mlua.workspace = true
 rayon = "1"
@@ -131,6 +128,10 @@ jni = "0.22.4"
 # Wasm-only: wasm-bindgen + web-sys glue, plus a JS-backed timer for
 # async pacing inside the game loop.  Single-threaded — no `wasm-bindgen-rayon`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser runtime explicitly requests the WebGL backend and all in-tree
+# shaders are WGSL. Avoid wgpu's defaults here: they also enable WebGPU and
+# native backend features that cannot be selected by this runtime.
+wgpu = { version = "30", default-features = false, features = ["std", "webgl", "wgsl"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
