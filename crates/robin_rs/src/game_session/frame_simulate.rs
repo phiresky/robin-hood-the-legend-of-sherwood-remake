@@ -8,6 +8,7 @@ use super::flow::{FrameControl, MissionServices};
 use super::interactive::{MissionPresentation, MissionResources};
 use super::runtime::FrameContractStage;
 use super::terminal_debriefing::{TerminalDebriefingContext, drive_tick_exit_modals};
+use super::ui_task_state::UiTaskOutcome;
 use super::*;
 use crate::game::Game;
 use crate::host::HostSignal;
@@ -464,6 +465,7 @@ impl InteractiveFrameSimulation {
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let presentation = &mut frontend.presentation;
+        let input = &mut frontend.input;
         let Self { mut frame, flags } = this;
         let FrameSimulationFlags {
             rewind_active,
@@ -474,6 +476,31 @@ impl InteractiveFrameSimulation {
             step_forward_pressed,
             step_back_pressed,
         } = flags;
+
+        // HTTP stepping is automation-first and defaults to dismissing local
+        // UI. Resolve conservatively: never accept a save/load/quit/settings
+        // mutation, and leave pause-owned tasks on the pause surface.
+        if crate::http_server::has_pending_steps()
+            && let Some(mut task) = ui.active_ui_task.take()
+        {
+            let kind = task.kind();
+            let outcome = task.auto_dismiss();
+            task.cleanup();
+            debug_assert!(matches!(
+                outcome,
+                UiTaskOutcome::ReturnToPause | UiTaskOutcome::QuickLoadCancelled
+            ));
+            if let Some(menu) = ui.pause_menu.as_mut() {
+                menu.reset_after_side_menu();
+                menu.seed_mouse_from_window(
+                    window,
+                    presentation.renderer.screen_width() as i32,
+                    presentation.renderer.screen_height() as i32,
+                );
+            }
+            input.reset_after_modal();
+            tracing::debug!(?kind, "HTTP step: auto-dismissed cooperative UI task");
+        }
 
         let tick_exit_code = Self::advance_timeline(
             runtime,
@@ -548,6 +575,7 @@ impl InteractiveFrameSimulation {
         let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
+        let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
         let SimulationModalState {
             mut frame,
@@ -565,6 +593,341 @@ impl InteractiveFrameSimulation {
         } else {
             ScriptedModalMode::Interactive
         };
+        let mut ui_task_exit_requested = false;
+
+        // Pause-side UI is a cooperative process state just like scripted
+        // modals: it receives one event batch, draws once, and returns control
+        // to the mission loop. A script modal has priority and cancels the
+        // local task so deterministic dialogue cannot be obscured.
+        if ui.active_ui_task.is_some()
+            && (ui.active_modal.is_some() || modal_state_pending(host) || auto_dismiss_modals)
+        {
+            // A cross-mission QuickLoad already owns an exact decoded save;
+            // suspend it behind scripted dialogue rather than dropping the
+            // request. Pause-side pages are local and are cancelled when an
+            // authoritative modal takes over.
+            if !ui
+                .active_ui_task
+                .as_ref()
+                .is_some_and(|task| task.is_quick_load())
+            {
+                if let Some(mut task) = ui.active_ui_task.take() {
+                    task.cleanup();
+                }
+                if ui.close_pause(input, presentation) {
+                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                    if host.transport.net.is_none() {
+                        callbacks.start_play_time();
+                    }
+                }
+            }
+        } else if let Some(mut task) = ui.active_ui_task.take() {
+            let scene_screenshots =
+                crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
+            if !scene_screenshots.is_empty() {
+                pre_render_engine_setup(manager, host, assets.as_ref(), &mut presentation.renderer);
+                update_mouse_and_cursor(
+                    manager,
+                    host,
+                    assets.as_ref(),
+                    dev,
+                    &mut frame.post_external_actions,
+                    &mut presentation.renderer,
+                    &mut resources.cursor,
+                    &mut presentation.sprites.cursor_renderer,
+                    &input.threaded,
+                    &presentation.sprites.portrait_cache,
+                    shift_held,
+                    &mut hud.last_cursor_id,
+                );
+                let display_snapshot = host.engine_display.clone();
+                let mut render_context = presentation.render_context(
+                    resources,
+                    hud,
+                    input,
+                    ui,
+                    game,
+                    RenderViewState {
+                        shift_held,
+                        rewind_active,
+                        display_info_elapsed_secs:
+                            <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
+                                callbacks,
+                                manager.engine.campaign(),
+                            ),
+                    },
+                );
+                drain_screenshot_requests(
+                    scene_screenshots,
+                    &manager.engine,
+                    &display_snapshot,
+                    host,
+                    assets.as_ref(),
+                    dev,
+                    &mut render_context,
+                );
+                post_render_engine_cleanup(&mut frame, host);
+            }
+            let menu_resources =
+                required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
+            let cursor = default_modal_cursor(
+                &mut presentation.sprites.cursor_renderer,
+                &mut resources.cursor,
+                &mut presentation.renderer,
+            );
+            let task_outcome = task.tick(
+                window,
+                &mut presentation.renderer,
+                menu_resources,
+                Some(&cursor),
+                &mut callbacks.save_manager,
+                Some(profiles),
+                Some(&mut host.audio.sound),
+                audio
+                    .backend
+                    .as_mut()
+                    .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+                Some(&audio.sample_loader),
+            );
+            modal_rendered_this_frame = true;
+            drain_presented_ui_screenshots(runtime.frame_number(), &presentation.renderer);
+
+            if let Some(outcome) = task_outcome {
+                task.cleanup();
+                match outcome {
+                    UiTaskOutcome::ReturnToPause => {
+                        if let Some(menu) = ui.pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                            menu.seed_mouse_from_window(
+                                window,
+                                presentation.renderer.screen_width() as i32,
+                                presentation.renderer.screen_height() as i32,
+                            );
+                        }
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::OptionsAccepted(result) => {
+                        if result.changed {
+                            host.application_context
+                                .with_player_profiles_mut(|manager| {
+                                    let profile = manager
+                                        .profiles
+                                        .iter_mut()
+                                        .find(|profile| profile.id == result.profile_id)
+                                        .expect(
+                                            "Options profile disappeared while side task was open",
+                                        );
+                                    profile.graphic_config = result.graphic_config.clone();
+                                    profile.gameplay_config = result.gameplay_config;
+                                    profile.sound_config = result.sound_config;
+                                    if let Err(error) = manager.save() {
+                                        tracing::error!(
+                                            "Options: failed to save profile manager: {error:#}"
+                                        );
+                                    }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options profile update failed: {error}")
+                                });
+                        }
+
+                        host.frontend.key_config = result.key_config.clone();
+                        host.frontend.custom_key_config = result.custom_key_config.clone();
+                        host.control_tactical_units = result.gameplay_config.control_tactical_units;
+                        if !host.control_tactical_units {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::ReleaseTacticalControl,
+                            );
+                        }
+                        if result.sound_config.amount_of_speaking
+                            != result.original_amount_of_speaking
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetAmountOfSpeaking {
+                                    amount: result.sound_config.amount_of_speaking,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.fix_hard_reaction_times
+                            != result.original_gameplay_config.fix_hard_reaction_times
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetFixHardReactionTimes {
+                                    enabled: result.gameplay_config.fix_hard_reaction_times,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.enable_unbinding
+                            != result.original_gameplay_config.enable_unbinding
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetUnbindingEnabled {
+                                    enabled: result.gameplay_config.enable_unbinding,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.reusable_cloaks
+                            != result.original_gameplay_config.reusable_cloaks
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetReusableCloaks {
+                                    enabled: result.gameplay_config.reusable_cloaks,
+                                },
+                            );
+                        }
+
+                        presentation
+                            .renderer
+                            .set_scale_mode(result.graphic_config.scale_mode);
+                        presentation
+                            .renderer
+                            .set_shader_preset(result.graphic_config.shader_preset.clone());
+                        if let Some(backend) = audio.backend.as_mut() {
+                            host.audio.sound.apply_sound_settings(
+                                false,
+                                backend,
+                                &result.sound_config,
+                                None,
+                            );
+                        } else {
+                            host.audio.sound.apply_volumes(&result.sound_config);
+                        }
+
+                        if result.resolution_changed {
+                            let width = result.graphic_config.resolution_x;
+                            let height = result.graphic_config.resolution_y;
+                            let width_u16 = width.round() as u16;
+                            let height_u16 = height.round() as u16;
+                            window.set_logical_size(width_u16 as u32, height_u16 as u32);
+                            host.viewport.set_screen_size(width, height);
+                            presentation.renderer.resize(width_u16, height_u16);
+                            input.resize(width_u16 as u32, height_u16 as u32, &result.key_config);
+                            hud.resize(width_u16 as u32, height_u16 as u32);
+                            if host.minimap_corner_size.x > 0.0 {
+                                dispatch_local_command(
+                                    host,
+                                    &mut manager.engine,
+                                    &mut frame.post_commands,
+                                    assets.as_ref(),
+                                    &PlayerCommand::MinimapResize {
+                                        base: engine_coordinates::ScreenPoint::new(
+                                            width - 83.0,
+                                            38.0,
+                                        ),
+                                        corner_size: host.minimap_corner_size,
+                                    },
+                                );
+                            }
+                            game.reshow_campaign_map();
+                        } else if result.key_config_changed {
+                            input
+                                .translator
+                                .load_bindings_from_keyconfig(&result.key_config);
+                        }
+
+                        if result.key_config_changed {
+                            host.application_context
+                                .with_key_configs_mut(|store| {
+                                    let entry = store.entry_or_default(result.profile_id);
+                                    entry.active = result.key_config.clone();
+                                    entry.custom = result.custom_key_config.clone();
+                                    if let Err(error) = store.save() {
+                                        tracing::error!(
+                                            "Options: failed to save key configs: {error:#}"
+                                        );
+                                    }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options key-config update failed: {error}")
+                                });
+                            host.minimap_fast_key =
+                                input.translator.get_binding(GameKey::DisplayMap);
+                        }
+                        if let Some(menu) = ui.pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                            menu.seed_mouse_from_window(
+                                window,
+                                presentation.renderer.screen_width() as i32,
+                                presentation.renderer.screen_height() as i32,
+                            );
+                        }
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::SaveLoadSelected {
+                        mode,
+                        filename,
+                        mission_id,
+                    } => {
+                        let slot = callbacks
+                            .save_manager
+                            .find_by_filename(&filename)
+                            .unwrap_or_else(|| {
+                                panic!("selected save slot '{filename}' disappeared")
+                            });
+                        callbacks.pending = Some(match mode {
+                            SaveLoadMode::Save => SaveLoadRequest::Save {
+                                slot: Some(slot),
+                                mission_id,
+                            },
+                            SaveLoadMode::Load => SaveLoadRequest::Load {
+                                slot: Some(slot),
+                                mission_id,
+                                save: None,
+                            },
+                        });
+                        ui.pause_menu = None;
+                        presentation.renderer.clear_frozen_scene();
+                        input.reset_after_modal();
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                        if host.transport.net.is_none() {
+                            callbacks.start_play_time();
+                        }
+                    }
+                    UiTaskOutcome::QuickLoadAccepted {
+                        slot,
+                        mission_id,
+                        save,
+                    } => {
+                        callbacks.pending = Some(SaveLoadRequest::Load {
+                            slot: Some(slot),
+                            mission_id,
+                            save: Some(*save),
+                        });
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::QuickLoadCancelled => {
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                        ui_task_exit_requested = true;
+                    }
+                }
+            } else {
+                ui.active_ui_task = Some(task);
+            }
+        }
+
         if auto_dismiss_modals {
             let dismissed = dismiss_pending_modals(host);
             let active_dismissed = usize::from(ui.active_modal.take().is_some());
@@ -620,6 +983,39 @@ impl InteractiveFrameSimulation {
             shift_held,
         );
         reset_input_after_tick_request(host, input);
+
+        if ui_task_exit_requested {
+            let mut display = std::mem::take(&mut host.engine_display);
+            let post_initialized = runtime.cross_post_initialize(|| {
+                crate::sim_timeline::run_post_initialize_stage_with_actions(
+                    host,
+                    &mut display,
+                    assets,
+                    &mut manager.engine,
+                    dev,
+                    frame.unapplied_post_external_actions(),
+                    &frame.post_commands.commands,
+                    frame.run_post_initialize,
+                )
+            });
+            frame.run_post_initialize = post_initialized;
+            host.engine_display = display;
+            if history_commit_pending {
+                runtime.commit_simulation_history(
+                    host,
+                    manager,
+                    &frame,
+                    FrameCommitPolicy {
+                        store_rewind_commands: !consumed_buffered,
+                    },
+                );
+            }
+            runtime.finish_recording(&mut frame);
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
+                GameCode::Quit,
+            )));
+        }
 
         if drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,

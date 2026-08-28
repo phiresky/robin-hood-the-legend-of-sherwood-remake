@@ -12,6 +12,7 @@ use super::setup::{
     LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
 use super::tick::tick_audio;
+use super::ui_task_state::ActiveUiTask;
 use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{CornerButtonSprites, CornerHudLayout, CornerTooltipTracker};
@@ -127,6 +128,7 @@ pub(super) struct MissionResources {
 /// Stateful menus and overlays which survive across interactive frames.
 pub(super) struct MissionUi {
     pub(super) pause_menu: Option<PauseMenu>,
+    pub(super) active_ui_task: Option<ActiveUiTask>,
     pub(super) active_modal: Option<ActiveModal>,
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
@@ -137,6 +139,7 @@ impl MissionUi {
     pub(super) fn new(restart_allowed: bool) -> Self {
         Self {
             pause_menu: None,
+            active_ui_task: None,
             active_modal: None,
             console_overlay: ConsoleOverlay::new(),
             // The map model itself is populated lazily when the overlay is

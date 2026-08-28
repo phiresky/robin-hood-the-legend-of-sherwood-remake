@@ -5,6 +5,7 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
+use super::ui_task_state::{ActiveUiTask, OptionsTaskState, SaveLoadTaskState};
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
@@ -20,21 +21,18 @@ use crate::gfx_types::GameEvent;
 use crate::host::{Host, TacticalTargetMode};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
-    self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
-    mission_description, resources,
+    self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, mission_description,
+    resources,
 };
 use crate::input::ThreadedInput;
-use crate::input_translator::{GameKey, InputTranslator};
+use crate::input_translator::InputTranslator;
 use crate::main_entry::{RustCallbacks, SaveLoadRequest, current_mission_id};
 use crate::menu::CampaignMapState;
 use crate::renderer::Renderer;
-use crate::sherwood_hud::{
-    SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
-};
+use crate::sherwood_hud::{SherwoodButton, SherwoodButtonEnable, SherwoodHudLayout};
 use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
-use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
@@ -1381,29 +1379,26 @@ fn on_right_mouse_up(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_pause_menu_events(
+pub(super) fn handle_pause_menu_events(
     pause_menu: &mut Option<PauseMenu>,
+    active_ui_task: &mut Option<ActiveUiTask>,
     pause_closed_this_frame: &mut bool,
     host: &mut Host,
     manager: &mut engine_manager_api::EngineManager,
-    game: &mut Game,
     assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
     input_translator: &mut InputTranslator,
-    sherwood_layout: &mut SherwoodHudLayout,
-    zoom_layout: &mut ZoomHudLayout,
-    zoom_sprites: &ZoomButtonSprites,
-    frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
 ) -> HandlerAction {
+    if active_ui_task.is_some() {
+        return HandlerAction::Proceed;
+    }
     let engine = &mut manager.engine;
     // ── Pause menu event handling ──
     // The menu state machine owns all keyboard/mouse input while the
@@ -1443,6 +1438,9 @@ pub(super) async fn handle_pause_menu_events(
                 threaded_input.reset_input_state();
                 input_translator.reset_state();
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                if host.transport.net.is_none() {
+                    callbacks.start_play_time();
+                }
                 // Forward a MSG_MOUSE_MOVED at the current cursor
                 // position so HUD hover state is re-evaluated on the
                 // first frame after the menu closes.
@@ -1450,192 +1448,25 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
-                if let Some(resources) = menu_resources.as_ref() {
-                    // Snapshot profile-backed settings before entering the
-                    // async modal. No ApplicationContext lock crosses await.
-                    let profile = host
-                        .application_context
-                        .active_profile_snapshot()
-                        .unwrap_or_else(|error| {
-                            panic!("in-game Options requires an active profile: {error}")
-                        });
-                    let profile_settings = Some((
-                        profile.id,
-                        profile.graphic_config,
-                        profile.gameplay_config,
-                        profile.sound_config,
-                    ));
-
-                    if let Some((
-                        profile_id,
-                        mut graphic_config,
-                        mut gameplay_config,
-                        mut sound_config,
-                    )) = profile_settings
-                    {
-                        // Replay headers and multiplayer snapshots own the
-                        // active simulation value. A local profile can differ,
-                        // so seed this deterministic option from the mission
-                        // rather than showing a stale local preference.
-                        gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
-                        gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
-                        let profile_amount_of_speaking = sound_config.amount_of_speaking;
-                        let profile_fix_hard_reaction_times =
-                            gameplay_config.fix_hard_reaction_times;
-                        let simulation_enable_unbinding = gameplay_config.enable_unbinding;
-                        let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        let options_outcome = ingame_menu::show_options(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor,
-                            &mut graphic_config,
-                            &mut gameplay_config,
-                            &mut sound_config,
-                            &mut host.frontend.key_config,
-                            &mut host.frontend.custom_key_config,
-                            Some(&mut host.audio.sound),
-                            audio_backend
-                                .as_mut()
-                                .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                            Some(sample_loader),
-                        )
-                        .await;
-
-                        // Reacquire only after the await and write back to the
-                        // profile we opened with. Do not silently redirect
-                        // changes if active-profile state changed reentrantly.
-                        if options_outcome.changed {
-                            host.application_context
-                                .with_player_profiles_mut(|mgr| {
-                                    let profile = mgr
-                                        .profiles
-                                        .iter_mut()
-                                        .find(|profile| profile.id == profile_id)
-                                        .expect("Options profile disappeared while modal was open");
-                                    profile.graphic_config = graphic_config.clone();
-                                    profile.gameplay_config = gameplay_config;
-                                    profile.sound_config = sound_config;
-                                    if let Err(err) = mgr.save() {
-                                        tracing::error!(
-                                            "Options: failed to save profile manager: {err:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options profile update failed: {error}")
-                                });
-                        }
-
-                        host.control_tactical_units = gameplay_config.control_tactical_units;
-                        if !host.control_tactical_units {
-                            dispatch_local_command(
-                                host,
-                                engine,
-                                frame_cmds,
-                                assets,
-                                &PlayerCommand::ReleaseTacticalControl,
-                            );
-                        }
-
-                        if sound_config.amount_of_speaking != profile_amount_of_speaking {
-                            let cmd = PlayerCommand::SetAmountOfSpeaking {
-                                amount: sound_config.amount_of_speaking,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.fix_hard_reaction_times
-                            != profile_fix_hard_reaction_times
-                        {
-                            let cmd = PlayerCommand::SetFixHardReactionTimes {
-                                enabled: gameplay_config.fix_hard_reaction_times,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.enable_unbinding != simulation_enable_unbinding {
-                            let cmd = PlayerCommand::SetUnbindingEnabled {
-                                enabled: gameplay_config.enable_unbinding,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.reusable_cloaks != simulation_reusable_cloaks {
-                            let cmd = PlayerCommand::SetReusableCloaks {
-                                enabled: gameplay_config.reusable_cloaks,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-
-                        let new_resolution = options_outcome.resolution_changed;
-
-                        // On resolution change, switch the draw surface,
-                        // update input clipping, and resize the engine.
-                        if new_resolution {
-                            event_pump.set_logical_resolution_policy(&graphic_config);
-                            renderer.sync_window_size(event_pump);
-                            let (logical_w, logical_h) = event_pump.logical_size();
-                            let w_u16 = logical_w as u16;
-                            let h_u16 = logical_h as u16;
-                            let w = logical_w as f32;
-                            let h = logical_h as f32;
-                            host.viewport.set_screen_size(w, h);
-                            game.set_resolution(w_u16, h_u16);
-                            threaded_input.set_clipping(
-                                robin_engine::coordinates::ScreenBBox::from_coords(0.0, 0.0, w, h),
-                            );
-                            *input_translator = InputTranslator::new(w, h);
-                            input_translator.load_bindings_from_keyconfig(&host.key_config);
-                            input_translator.install_hud_dead_zones();
-                            if host.minimap_corner_size.x > 0.0 {
-                                let cmd = PlayerCommand::MinimapResize {
-                                    base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
-                                    corner_size: host.minimap_corner_size,
-                                };
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            }
-                            *sherwood_layout = SherwoodHudLayout::for_resolution(
-                                w_u16 as u32,
-                                h_u16 as u32,
-                                &SherwoodButtonSprites::default(),
-                            );
-                            *zoom_layout = ZoomHudLayout::for_resolution(
-                                w_u16 as u32,
-                                h_u16 as u32,
-                                zoom_sprites,
-                            );
-                            game.reshow_campaign_map();
-                        }
-
-                        if options_outcome.key_config_changed {
-                            host.application_context
-                                .with_key_configs_mut(|store| {
-                                    let entry = store.entry_or_default(profile_id);
-                                    entry.active = host.key_config.clone();
-                                    entry.custom = host.custom_key_config.clone();
-                                    if let Err(err) = store.save() {
-                                        tracing::error!(
-                                            "Options: failed to save key configs after change: {err:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options key-config update failed: {error}")
-                                });
-                            input_translator.load_bindings_from_keyconfig(&host.key_config);
-                            host.minimap_fast_key =
-                                input_translator.get_binding(GameKey::DisplayMap);
-                        }
-                    } else {
-                        tracing::error!("Options: cannot open without an active player profile");
-                    }
-                }
-                if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
-                }
+                let resources = required_menu_resources(menu_resources, "pause-menu Options");
+                let profile = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("in-game Options requires an active profile: {error}")
+                    });
+                *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
+                    event_pump,
+                    renderer,
+                    resources,
+                    profile.id,
+                    profile.graphic_config,
+                    profile.gameplay_config,
+                    profile.sound_config,
+                    host.frontend.key_config.clone(),
+                    host.frontend.custom_key_config.clone(),
+                    host.audio.sound.can_3d_sound(),
+                )));
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
                 let mode = if outcome == PauseMenuOutcome::OpenLoad {
@@ -1643,60 +1474,18 @@ pub(super) async fn handle_pause_menu_events(
                 } else {
                     SaveLoadMode::Save
                 };
-                let mut close_pause_menu = false;
                 let resources =
                     required_menu_resources(menu_resources, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                let picker_outcome = ingame_menu::show_save_load(
+                *active_ui_task = Some(ActiveUiTask::SaveLoad(SaveLoadTaskState::new(
                     event_pump,
                     renderer,
                     resources,
-                    cursor,
                     &mut callbacks.save_manager,
                     mission_id,
-                    Some(&assets.profile_manager),
                     mode,
-                    Some(&mut host.audio.sound),
-                    audio_backend
-                        .as_mut()
-                        .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                    Some(sample_loader),
-                )
-                .await;
-                if let SaveLoadOutcome::Slot(slot) = picker_outcome {
-                    callbacks.pending = Some(match mode {
-                        SaveLoadMode::Save => SaveLoadRequest::Save {
-                            slot: Some(slot),
-                            mission_id,
-                        },
-                        SaveLoadMode::Load => SaveLoadRequest::Load {
-                            slot: Some(slot),
-                            mission_id,
-                            save: None,
-                        },
-                    });
-                    // When the picker returns a slot, close the
-                    // pause-menu modal so the outer game loop
-                    // processes the save/load and resumes.  Only
-                    // the cancel branch falls through to restore
-                    // the menu.
-                    close_pause_menu = true;
-                }
-                if close_pause_menu {
-                    *pause_menu = None;
-                    *pause_closed_this_frame = true;
-                    renderer.clear_frozen_scene();
-                    threaded_input.reset_input_state();
-                    input_translator.reset_state();
-                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                } else if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
-                }
+                )));
             }
             PauseMenuOutcome::Restart => {
                 // Reload the same mission.
@@ -1708,19 +1497,9 @@ pub(super) async fn handle_pause_menu_events(
                 let resources =
                     required_menu_resources(menu_resources, "pause-menu Quit confirmation");
                 let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                let confirmed =
-                    ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
-                if confirmed {
-                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    return HandlerAction::Exit(GameCode::Quit);
-                }
-                if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
-                }
+                *active_ui_task = Some(ActiveUiTask::Quit(ingame_menu::YesNoModalState::new(
+                    event_pump, renderer, resources, msg,
+                )));
             }
         }
     }

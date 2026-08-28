@@ -11,9 +11,8 @@ use robin_engine::multiplayer::NetChannels as EngineNetChannels;
 #[cfg(test)]
 use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
-    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, ModalInstanceId, MultiplayerSessionId,
-    NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, STATE_HASH_INTERVAL, decode_msg,
-    encode_msg,
+    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, MultiplayerSessionId, NET_PROTOCOL_VERSION,
+    NetEvent, NetMsg, NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg,
 };
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};

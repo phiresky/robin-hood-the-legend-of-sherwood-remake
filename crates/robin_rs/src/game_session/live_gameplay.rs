@@ -5,7 +5,7 @@
 
 use super::event_hud::InputModifiers;
 use super::interactive::{
-    MissionAudio, MissionHud, MissionInput, MissionPresentation, MissionResources, MissionUi,
+    MissionAudio, MissionInput, MissionPresentation, MissionResources, MissionUi,
 };
 use super::*;
 use crate::game::Game;
@@ -24,7 +24,6 @@ pub(super) struct LiveGameplayContext<'a> {
     pub(super) audio: &'a mut MissionAudio,
     pub(super) input: &'a mut MissionInput,
     pub(super) ui: &'a mut MissionUi,
-    pub(super) hud: &'a mut MissionHud,
     pub(super) frame: &'a mut MissionFrame,
 }
 
@@ -52,11 +51,15 @@ fn toggle_pause_menu(context: &mut LiveGameplayContext<'_>, pause_closed: &mut b
         debug_assert!(ui.close_pause(input, presentation));
         *pause_closed = true;
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-        callbacks.start_play_time();
+        if host.transport.net.is_none() {
+            callbacks.start_play_time();
+        }
         return;
     }
 
-    callbacks.suspend_play_time();
+    if host.transport.net.is_none() {
+        callbacks.suspend_play_time();
+    }
     if let Some(menu_resources) = resources.menu.as_ref() {
         ui.pause_menu = Some(PauseMenu::new(menu_resources, ui.restart_allowed));
     } else {
@@ -381,29 +384,21 @@ pub(super) async fn drive_live_gameplay_input(
 
     match handle_pause_menu_events(
         &mut context.ui.pause_menu,
+        &mut context.ui.active_ui_task,
         pause_closed_this_frame,
         context.host,
         context.manager,
-        context.game,
         context.assets,
         context.callbacks,
         context.window,
         &mut context.presentation.renderer,
-        &mut context.resources.cursor,
-        &mut context.presentation.sprites.cursor_renderer,
         &context.resources.menu,
         &mut context.audio.backend,
         &context.audio.sample_loader,
         &mut context.input.threaded,
         &mut context.input.translator,
-        &mut context.hud.sherwood_layout,
-        &mut context.hud.zoom_layout,
-        &context.hud.zoom_sprites,
-        &mut context.frame.commands,
         events,
-    )
-    .await
-    {
+    ) {
         HandlerAction::Continue => return HandlerAction::Continue,
         HandlerAction::Exit(code) => {
             execute_app_effects(

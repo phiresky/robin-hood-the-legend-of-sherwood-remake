@@ -308,6 +308,10 @@ fn pre_tick_is_paused(sources: PreTickPauseSources) -> bool {
     sources.pause_menu || sources.manual || sources.multiplayer_clock || sources.modal
 }
 
+fn local_pause_stops_timeline(menu_open: bool, multiplayer: bool) -> bool {
+    menu_open && !multiplayer
+}
+
 /// A modal freezes the authoritative timeline but not the dense replay host
 /// record cursor. Recording emits stationary records while the modal remains
 /// open, including the later record carrying its dismissal. Explicit user or
@@ -647,7 +651,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                     audio,
                     input,
                     ui,
-                    hud,
                     frame: &mut frame,
                 },
                 LiveGameplayInput {
@@ -672,26 +675,24 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 HandlerAction::Proceed => {}
             }
         }
-        // ── Cross-mission QuickLoad confirmation modal ──
+        // ── Cross-mission QuickLoad confirmation task ──
         // Quick-load prompts the
         // player with `MSG_REALLY_LOAD_QUICKSAVE` whenever the quicksave
         // header's mission ID differs from the running mission.  Run
-        // the modal here, before the thumbnail capture and state-machine
-        // drain — the helper either drops the pending request (No) or
-        // rewrites it into a `Load` so the existing cross-mission
-        // routing performs the mission swap (Yes).
-        confirm_quickload_cross_mission(
-            callbacks,
-            &manager.engine,
-            profiles,
-            host,
-            &mut *window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &resources.menu,
-        )
-        .await;
+        // the task here, before the save/load drain. It then advances one
+        // frame at a time alongside the mission loop.
+        if ui.active_ui_task.is_none()
+            && let Some(task) = prepare_quickload_cross_mission(
+                callbacks,
+                &manager.engine,
+                profiles,
+                &mut *window,
+                &mut presentation.renderer,
+                &resources.menu,
+            )
+        {
+            ui.active_ui_task = Some(task);
+        }
 
         runtime.trace(FrameContractStage::InputAndMenus);
 
@@ -992,7 +993,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         process_pre_tick_state_hash(runtime, host, manager);
 
         let pause_sources = PreTickPauseSources {
-            pause_menu: ui.pause_menu.is_some(),
+            // A local menu cannot stop an authoritative multiplayer clock.
+            // It still owns local input and presentation, but peers and the
+            // local simulation continue underneath it.
+            pause_menu: local_pause_stops_timeline(
+                ui.pause_menu.is_some() || ui.active_ui_task.is_some(),
+                host.transport.net.is_some(),
+            ),
             manual: *manual_pause,
             multiplayer_clock: mp_clock_pause,
             modal: modal_pause,
@@ -1045,7 +1052,17 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
 #[cfg(test)]
 mod tests {
-    use super::{PreTickPauseSources, pre_tick_is_paused, replay_cursor_is_paused};
+    use super::{
+        PreTickPauseSources, local_pause_stops_timeline, pre_tick_is_paused,
+        replay_cursor_is_paused,
+    };
+
+    #[test]
+    fn local_pause_only_stops_single_player_timeline() {
+        assert!(local_pause_stops_timeline(true, false));
+        assert!(!local_pause_stops_timeline(true, true));
+        assert!(!local_pause_stops_timeline(false, false));
+    }
 
     #[test]
     fn pre_tick_pause_combines_all_graphical_pause_sources() {

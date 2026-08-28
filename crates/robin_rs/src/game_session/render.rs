@@ -19,6 +19,7 @@ use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
 use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
+use crate::renderer::Renderer;
 use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
 use crate::sherwood_hud::{self, SherwoodButtonEnable, SherwoodTooltipTracker};
 use crate::sound::MusicMode;
@@ -291,11 +292,26 @@ pub(super) fn drain_screenshots(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
+    let pending = crate::http_server::take_pending_screenshots(sim_frame);
+    drain_screenshot_requests(pending, engine, display, host, assets, dev, ctx);
+}
+
+/// Render an already-partitioned set of screenshot requests. Cooperative UI
+/// tasks use this for full-map, scene-only, and debug-override captures before
+/// fulfilling ordinary screenshots from the presented UI framebuffer.
+pub(super) fn drain_screenshot_requests(
+    pending: Vec<crate::http_server::PendingScreenshot>,
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    ctx: &mut RenderContext<'_>,
+) {
     // This is the normal frame's update boundary even when there are no HTTP
     // requests. The live draw later in the loop only reads the snapshot.
     update_zoom_presentation(engine, display, host, ctx);
 
-    let pending = crate::http_server::take_pending_screenshots(sim_frame);
     if pending.is_empty() {
         return;
     }
@@ -308,6 +324,27 @@ pub(super) fn drain_screenshots(
         // Clear the offscreen target so the next render (another
         // screenshot or the live frame) starts from a clean slate.
         ctx.renderer.reset_render_target();
+    }
+}
+
+/// Fulfil ordinary viewport screenshots from the already-presented topmost
+/// pause-side UI. Specialized requests remain queued for `drain_screenshots`.
+pub(super) fn drain_presented_ui_screenshots(sim_frame: u32, renderer: &Renderer) {
+    let pending = crate::http_server::take_pending_ui_screenshots(sim_frame);
+    if pending.is_empty() {
+        return;
+    }
+    match renderer.capture_presented_frame_rgba() {
+        Some((width, height, rgba)) => {
+            for screenshot in pending {
+                screenshot.respond(width, height, &rgba);
+            }
+        }
+        None => {
+            for screenshot in pending {
+                screenshot.respond_err("failed to read the presented pause UI framebuffer");
+            }
+        }
     }
 }
 

@@ -15,6 +15,7 @@ use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
+use super::ModalScreenOutcome;
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
     enter_modal_gpu_phase, render_text_virt,
@@ -45,80 +46,120 @@ pub async fn show_gameplay(
     cursor: Option<ModalCursor<'_>>,
     config: &mut GameplayConfig,
 ) -> bool {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
-    let mut working = *config;
-    let mut dirty = false;
-
-    // ── OK / Cancel (bottom-right) ─────────────────────────────────
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
-
-    // ── Option toggle buttons stacked from (30,100) ───────────────
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let mut opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
-        .iter()
-        .enumerate()
-        .map(|(i, label)| super::layout::MenuButton {
-            label: label.to_string(),
-            enabled: true,
-            x: 30,
-            y: if i == 0 { 100 } else { 0 },
-            w: field_w,
-            h: field_h,
-        })
-        .collect();
-    align_on_first_widget(&mut opt_layout, 2);
-
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
-
-    for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_OPT_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
+    let mut state = GameplayScreenState::new(event_pump, renderer, resources, config);
+    loop {
+        if let Some(outcome) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
+            if let ModalScreenOutcome::Accepted(next) = outcome {
+                let changed = next != *config;
+                *config = next;
+                return changed;
+            }
+            return false;
+        }
+        crate::window::sleep_ms(16).await;
     }
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
+}
 
-    let title = "Gameplay";
+/// Owned, one-frame state for the gameplay settings page.
+pub struct GameplayScreenState {
+    working: GameplayConfig,
+    original: GameplayConfig,
+    frame: FrameWnd,
+    input_state: ModalInputState,
+    transform: MenuTransform,
+}
 
-    let mut done = false;
-    let mut accepted = false;
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+impl GameplayScreenState {
+    pub fn new(
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        config: &GameplayConfig,
+    ) -> Self {
+        let sw = renderer.screen_width() as i32;
+        let sh = renderer.screen_height() as i32;
+        let transform = MenuTransform::centered(sw, sh);
 
-    while !done {
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            input_state.update_from_event(&event, transform);
+        let working = *config;
+
+        // ── OK / Cancel (bottom-right) ─────────────────────────────────
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let ok_label = resources.menu_text.get(MT_BTN_OK);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
+        let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
+
+        // ── Option toggle buttons stacked from (30,100) ───────────────
+        let (field_w, field_h) = resources.input_field_dimensions();
+        let mut opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
+            .iter()
+            .enumerate()
+            .map(|(i, label)| super::layout::MenuButton {
+                label: label.to_string(),
+                enabled: true,
+                x: 30,
+                y: if i == 0 { 100 } else { 0 },
+                w: field_w,
+                h: field_h,
+            })
+            .collect();
+        align_on_first_widget(&mut opt_layout, 2);
+
+        let mut frame = FrameWnd::default();
+        frame.enabled = true;
+        frame.input_enabled = true;
+
+        for (i, mb) in opt_layout.iter().enumerate() {
+            frame.add_widget_absolute(widget_bridge::make_button(
+                ID_OPT_BASE + i as u32,
+                &mb.label,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
+            ));
+        }
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_OK,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+
+        let mut input_state = ModalInputState::new();
+        input_state.seed_mouse_from_window(event_pump, transform);
+
+        Self {
+            working,
+            original: *config,
+            frame,
+            input_state,
+            transform,
+        }
+    }
+
+    pub fn tick(
+        &mut self,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        cursor: Option<&ModalCursor<'_>>,
+    ) -> Option<ModalScreenOutcome<GameplayConfig>> {
+        let mut outcome = None;
+        for event in event_pump.poll_events() {
+            self.input_state.update_from_event(&event, self.transform);
             match event {
-                GameEvent::Quit => done = true,
+                GameEvent::Quit => outcome = Some(ModalScreenOutcome::ExitRequested),
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -127,31 +168,28 @@ pub async fn show_gameplay(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    accepted = true;
-                    done = true;
+                    outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Escape,
                     ..
-                } => done = true,
+                } => outcome = Some(ModalScreenOutcome::Cancelled),
                 _ => {}
             }
         }
 
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
 
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_OK => {
-                    accepted = true;
-                    done = true;
+                    outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
-                ID_CANCEL => done = true,
+                ID_CANCEL => outcome = Some(ModalScreenOutcome::Cancelled),
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
-                    apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
-                    dirty = true;
+                    apply_option_toggle(&mut self.working, (id - ID_OPT_BASE) as usize);
                 }
                 _ => {}
             }
@@ -165,21 +203,28 @@ pub async fn show_gameplay(
         }
 
         if let Some(font) = resources.title_font() {
-            let tw = font.text_width(title);
-            render_text_virt(renderer, font, transform, title, (490 - tw) / 2, 20);
+            let tw = font.text_width("Gameplay");
+            render_text_virt(
+                renderer,
+                font,
+                self.transform,
+                "Gameplay",
+                (490 - tw) / 2,
+                20,
+            );
         }
         if let Some(font) = resources.label_font() {
-            render_text_virt(renderer, font, transform, "Gameplay Tweaks", 30, 80);
+            render_text_virt(renderer, font, self.transform, "Gameplay Tweaks", 30, 80);
         }
 
         for i in 0..OPTION_LABELS.len() as u32 {
-            if let Some(w) = frame.widget(ID_OPT_BASE + i) {
+            if let Some(w) = self.frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
                     resources,
-                    transform,
+                    self.transform,
                     w,
-                    is_option_selected(&working, i as usize),
+                    is_option_selected(&self.working, i as usize),
                 );
             }
         }
@@ -187,33 +232,30 @@ pub async fn show_gameplay(
             render_text_virt(
                 renderer,
                 font,
-                transform,
-                working.campaign_presentation.label(),
+                self.transform,
+                self.working.campaign_presentation.label(),
                 315,
-                opt_layout[5].y + 7,
+                100 + 5 * (resources.input_field_dimensions().1 + 2) + 7,
             );
         }
 
-        if let Some(w) = frame.widget(ID_OK) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
+        if let Some(w) = self.frame.widget(ID_OK) {
+            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
         }
-        if let Some(w) = frame.widget(ID_CANCEL) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
+        if let Some(w) = self.frame.widget(ID_CANCEL) {
+            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
         }
 
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+        if let Some(c) = cursor {
+            c.draw(renderer, self.transform, &self.input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        outcome
     }
 
-    if accepted && dirty && working != *config {
-        *config = working;
-        true
-    } else {
-        false
+    pub fn changed(&self) -> bool {
+        self.working != self.original
     }
 }
 

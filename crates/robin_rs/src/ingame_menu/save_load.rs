@@ -43,7 +43,7 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 use super::yesno::show_yesno;
 
 /// Which flavour of slot picker to show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SaveLoadMode {
     Save,
     Load,

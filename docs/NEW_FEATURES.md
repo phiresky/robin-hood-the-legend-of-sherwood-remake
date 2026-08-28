@@ -4,6 +4,20 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Cooperative pause side screens.** Options (including Graphics, Sounds,
+  Shortcuts, and Gameplay), Save/Load,
+  overwrite/delete prompts, and Quit confirmation now run as one-frame
+  `ActiveUiTask` states owned by the mission loop instead of nested blocking
+  async loops. Networking, HTTP control, replay bookkeeping, and frame
+  stepping therefore keep reaching their normal outer-loop boundaries.
+  Single-player retains the original paused-timeline behavior; a local menu
+  in multiplayer captures only local input/presentation and does not stop the
+  authoritative simulation. Window close propagates to mission exit, nested
+  confirmations retain the picker underneath, stable save filenames protect
+  selection across list mutations, and ordinary HTTP screenshots capture the
+  presented topmost pause UI. The native desktop data-folder chooser remains
+  a synchronous OS dialog launched from the cooperative Options state.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -394,16 +408,6 @@ A list of which additional features we have added, which ones we might still wan
     rollback into one shared timeline/history subsystem.
   - Keep flattening blocking modal flows so network events, replay commands,
     frame stepping, and modal dismissal all pass through the same outer loop.
-
-- **Pause side-menu task state**. The pause menu itself is already driven once
-  per frame from the mission loop, but its side screens still run blocking
-  async modal loops from `handle_pause_menu_events`: Options, Save/Load, save
-  overwrite/delete confirmations, and the quit confirmation. If we want HTTP
-  requests, replay commands, networking, frame stepping, and pause UI to keep
-  sharing the same outer loop, replace those `show_*().await` calls with one
-  small `ActiveUiTask` / `UiTaskOutcome` state machine. The gameplay modal stack
-  already does this with `ActiveModal`; this would apply the same pattern to
-  pause side screens.
 
 - **Level selection tree**
   - Show campaign progress: completed missions, stats, and other information

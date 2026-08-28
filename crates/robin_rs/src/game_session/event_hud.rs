@@ -212,9 +212,13 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
 
     // Active graphical modals own the raw event queue. Do not drain it from
     // underneath them or allow global gameplay shortcuts to fire.
-    let modal_input_active = ui.active_modal.is_some() || modal_state_pending(host);
+    let scripted_modal_input_active = ui.active_modal.is_some() || modal_state_pending(host);
+    let modal_input_active = scripted_modal_input_active || ui.active_ui_task.is_some();
     let mut pause_closed_this_frame = false;
-    if modal_input_active && ui.close_pause(input, presentation) {
+    if scripted_modal_input_active && ui.close_pause(input, presentation) {
+        if let Some(mut task) = ui.active_ui_task.take() {
+            task.cleanup();
+        }
         pause_closed_this_frame = true;
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
     }

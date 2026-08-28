@@ -185,7 +185,7 @@ pub struct ScreenshotRequest {
 /// Debug-overlay overrides for a single screenshot.  None of these
 /// mutate the live `DevState`; they're merged into a `Cow<DevState>`
 /// that exists only for the duration of one `render_frame` call.
-#[derive(Clone, Default, Debug, serde::Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(default)]
 pub struct ScreenshotFlags {
     pub view_cones: Option<bool>,
@@ -1917,6 +1917,17 @@ pub fn take_pending_steps() -> Vec<PendingStep> {
     std::mem::take(&mut *pending_steps().lock().expect("step queue poisoned"))
 }
 
+/// Whether the mission loop has an automation step waiting to run.
+///
+/// Cooperative local UI tasks use this non-consuming probe to cancel back to
+/// their owning pause surface before [`crate::game_session`] drains the step.
+pub fn has_pending_steps() -> bool {
+    !pending_steps()
+        .lock()
+        .expect("step queue poisoned")
+        .is_empty()
+}
+
 /// Drain every screenshot request queued since the last call.  Safe to
 /// call from the main render loop once per frame — returns an empty
 /// `Vec` when nothing is pending.
@@ -1930,6 +1941,38 @@ pub fn take_pending_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
         .partition(|pending| pending.request.frame.is_none_or(|frame| sim_frame >= frame));
     *queue = waiting;
     ready
+}
+
+/// Drain ready screenshots which can faithfully use the already-presented UI
+/// framebuffer. Requests that need a scene-only/full-map/debug override stay
+/// queued for the normal dedicated render path.
+pub fn take_pending_ui_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
+    take_pending_screenshots_matching(sim_frame, can_capture_presented_ui)
+}
+
+/// Drain ready screenshots that require a dedicated scene render while a
+/// cooperative UI surface owns normal presentation.
+pub fn take_pending_scene_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
+    take_pending_screenshots_matching(sim_frame, |request| !can_capture_presented_ui(request))
+}
+
+fn take_pending_screenshots_matching(
+    sim_frame: u32,
+    predicate: impl Fn(&ScreenshotRequest) -> bool,
+) -> Vec<PendingScreenshot> {
+    let mut queue = pending_screenshots()
+        .lock()
+        .expect("screenshot queue poisoned");
+    let requests = std::mem::take(&mut *queue);
+    let (ready, waiting) = requests.into_iter().partition(|pending| {
+        pending.request.frame.is_none_or(|frame| sim_frame >= frame) && predicate(&pending.request)
+    });
+    *queue = waiting;
+    ready
+}
+
+fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
+    !request.hide_ui && !request.full_map && request.flags == ScreenshotFlags::default()
 }
 
 /// Merge a request's `Some(x)` overrides onto `debug`, mutating in
@@ -2145,6 +2188,33 @@ mod tests {
     fn screenshot_dimensions_reject_zero_bounds() {
         let req = screenshot_request(Some(0), Some(720));
         assert!(screenshot_target_dimensions(1024, 768, &req).is_err());
+    }
+
+    #[test]
+    fn only_plain_ui_screenshots_use_presented_modal_frame() {
+        let plain = ScreenshotRequest::default();
+        assert!(can_capture_presented_ui(&plain));
+
+        let hidden = ScreenshotRequest {
+            hide_ui: true,
+            ..plain.clone()
+        };
+        assert!(!can_capture_presented_ui(&hidden));
+
+        let full_map = ScreenshotRequest {
+            full_map: true,
+            ..plain.clone()
+        };
+        assert!(!can_capture_presented_ui(&full_map));
+
+        let overridden = ScreenshotRequest {
+            flags: ScreenshotFlags {
+                view_cones: Some(true),
+                ..ScreenshotFlags::default()
+            },
+            ..plain
+        };
+        assert!(!can_capture_presented_ui(&overridden));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
