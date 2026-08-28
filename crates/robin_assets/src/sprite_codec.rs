@@ -11,12 +11,14 @@
 //!   standalone: (above, left) -> above -> order-0 -> uniform
 //!   vs base:    (base, above) -> base -> above -> order-0 -> uniform
 //!
-//! Escapes use PPMC (escape weight = number of distinct symbols seen in the
-//! context) with full exclusion: symbols ruled out by an escape at a more
-//! specific level cost no probability mass further down (measured ~-3%).
-//! Counts update at every level on each symbol, and each context halves its
-//! counts when they saturate, which keeps the model adaptive and the
-//! range-coder totals well inside precision.
+//! Escape mass is estimated adaptively (SEE: learned hit/escape ratios
+//! bucketed by chain level, context size, maturity, and top-symbol skew —
+//! measured -1..4% over PPMC's fixed distinct-count heuristic), with full
+//! exclusion: symbols ruled out by an escape at a more specific level cost
+//! no probability mass further down (measured ~-3%). Counts update at every
+//! level on each symbol, and each context halves its counts when they
+//! saturate, which keeps the model adaptive and the range-coder totals well
+//! inside precision.
 //!
 //! The entropy stage is a carry-aware LZMA-style range coder rather than
 //! rANS: rANS emits symbols last-in-first-out, which fights adaptive

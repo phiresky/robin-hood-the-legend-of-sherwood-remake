@@ -96,6 +96,12 @@ struct Cli {
     #[arg(long)]
     verify_shipping: Option<PathBuf>,
 
+    /// Context-mixing prototype (PAQ-lite): binary-decompose tile indices
+    /// and code each bit with a logistic mix of order-2/order-1/order-0
+    /// adaptive predictors. Exact cost accounting, no bitstream.
+    #[arg(long)]
+    mix: Vec<String>,
+
     /// Output directory for --streams / --atlas files.
     #[arg(long, default_value = "/tmp/sprite_streams")]
     out: PathBuf,
@@ -1563,6 +1569,132 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// PAQ-lite context-mixing cost simulation over the VQ index grid.
+///
+/// Each 12-bit tile index is coded MSB-first through per-model adaptive
+/// probability tables; per bit, model outputs are combined by an online
+/// logistic mixer (weights per bit-tree node class). Cost is accounted
+/// exactly (sum of -log2 p), which equals real arithmetic-coded size to
+/// within coder overhead (~0.01%).
+fn mix(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+    const PROB_BITS: u32 = 12;
+    const PROB_ONE: u32 = 1 << PROB_BITS;
+    const TABLE_BITS: u32 = 22;
+    const TABLE_MASK: usize = (1 << TABLE_BITS) - 1;
+
+    let (_, ids) = char_frame_ids(data_dir, name)?;
+
+    fn stretch(p: f32) -> f32 {
+        (p / (1.0 - p)).ln()
+    }
+    fn squash(x: f32) -> f32 {
+        1.0 / (1.0 + (-x).exp())
+    }
+    #[inline]
+    fn hash3(a: u64, b: u64, c: u64) -> usize {
+        let mut h = a
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(b)
+            .wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            .wrapping_add(c)
+            .wrapping_mul(0x1656_67B1_9E37_79F9);
+        h ^= h >> 29;
+        (h as usize) & TABLE_MASK
+    }
+
+    // Three hashed predictor tables (order-2, order-1 above, order-1 left)
+    // plus a small direct order-0 table indexed by tree node. Count-based
+    // (n0, n1) statistics are far better calibrated than shift counters.
+    let mut t2 = vec![(0u16, 0u16); 1 << TABLE_BITS];
+    let mut ta = vec![(0u16, 0u16); 1 << TABLE_BITS];
+    let mut tl = vec![(0u16, 0u16); 1 << TABLE_BITS];
+    let mut t0 = vec![(0u16, 0u16); 4096];
+    let prob = |t: &[(u16, u16)], i: usize| -> f32 {
+        let (n0, n1) = t[i];
+        (n1 as f32 + 0.4) / (n0 as f32 + n1 as f32 + 0.8)
+    };
+    // Mixer weights per (bit index, predictor-agreement bucket, model).
+    let mut w = [[[0.3f32; 4]; 3]; 12];
+    let lr = 0.015f32;
+
+    let mut bits_total = 0.0f64;
+    let mut n_tiles = 0u64;
+    for &id in &ids {
+        let s = &holder.sprites()[id as usize];
+        if s.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(pd) = holder.packed_data(id) else {
+            continue;
+        };
+        let cols = (s.width / 4) as usize;
+        for (i, &x) in pd.iter().enumerate() {
+            let above = if i >= cols {
+                pd[i - cols] as u64
+            } else {
+                0xFFFF
+            };
+            let left = if i % cols > 0 {
+                pd[i - 1] as u64
+            } else {
+                0xFFFF
+            };
+            n_tiles += 1;
+            // Bit-tree walk, MSB first. `node` = 1-rooted prefix path.
+            let mut node = 1usize;
+            for k in (0..12).rev() {
+                let bit = (x >> k) & 1;
+                let i2 = hash3(above, left, node as u64);
+                let ia = hash3(above, 0x1_0000, node as u64);
+                let il = hash3(left, 0x2_0000, node as u64);
+                let i0 = node & 4095;
+                let probs = [prob(&t2, i2), prob(&ta, ia), prob(&tl, il), prob(&t0, i0)];
+                let st: [f32; 4] =
+                    std::array::from_fn(|m| stretch(probs[m].clamp(1e-4, 1.0 - 1e-4)));
+                // Agreement bucket: do the strongest predictors agree?
+                let agree = match (probs[0] > 0.5, probs[1] > 0.5) {
+                    (true, true) => 0,
+                    (false, false) => 1,
+                    _ => 2,
+                };
+                let wk = &mut w[k as usize][agree];
+                let mixed =
+                    squash((0..4).map(|m| wk[m] * st[m]).sum::<f32>()).clamp(1e-5, 1.0 - 1e-5);
+                let p_bit = if bit == 1 { mixed } else { 1.0 - mixed };
+                bits_total -= (p_bit as f64).log2();
+                // Mixer update (logistic gradient), then per-model updates.
+                let err = bit as f32 - mixed;
+                for m in 0..4 {
+                    wk[m] += lr * err * st[m];
+                }
+                let upd = |t: &mut [(u16, u16)], idx: usize| {
+                    let slot = &mut t[idx];
+                    if bit == 1 {
+                        slot.1 += 1;
+                    } else {
+                        slot.0 += 1;
+                    }
+                    if slot.0 + slot.1 >= 60000 {
+                        slot.0 /= 2;
+                        slot.1 /= 2;
+                    }
+                };
+                upd(&mut t2, i2);
+                upd(&mut ta, ia);
+                upd(&mut tl, il);
+                upd(&mut t0, i0);
+                node = (node << 1) | bit as usize;
+            }
+        }
+    }
+    println!(
+        "## mix {name}: {n_tiles} tiles, {:.3} bits/tile -> {:.0} bytes",
+        bits_total / n_tiles as f64,
+        bits_total / 8.0,
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let data_dir_s = cli.data_dir.to_str().unwrap();
@@ -1622,6 +1754,9 @@ fn main() -> Result<()> {
     }
     if let Some(dir) = &cli.verify_shipping {
         verify_shipping(&holder, dir)?;
+    }
+    for name in &cli.mix {
+        mix(&holder, &cli.data_dir, name)?;
     }
     Ok(())
 }

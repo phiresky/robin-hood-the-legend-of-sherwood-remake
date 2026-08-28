@@ -1074,7 +1074,17 @@ Model experiments, all measured on real data (kept ✓ / rejected ✗):
 ✗ order-3 context (diag / base+above+left)     ±1% wash, more memory/time
 ✗ PPMD-style escape (distinct/2)               +1.3..1.9% standalone,
                                                -0.3..0.5% variants: net loss
+✗ LZMA-style match layer (adaptive "equals     +2.6..11.6% — the (primary,
+  above/base?" bit with run context, then       second) contexts already code
+  PPM with the predictor excluded)              the identity case with more
+                                                specificity than any flat
+                                                match-bit context; the CM
+                                                subsumes copy-above/copy-base
 ```
+
+Note on layering: the codec's range-coded output is effectively
+incompressible, so an outer zstd/xz pass is a no-op — all composition has to
+happen inside the model (transforms feeding contexts), not behind it.
 
 Speeds are research-grade and untuned (RobinTown: enc ~4s, dec ~9s; decode
 optimization deferred by scope — the escape path rescans large order-1
@@ -1125,3 +1135,40 @@ target/release/examples/sprite_compression_probe --data-dir datadirs/fullgame_li
 target/release/examples/sprite_compression_probe \
     --data-dir datadirs/demo_leicester_ecoste --verify-shipping /tmp/ship/Data
 ```
+
+## Codec model research round 2: SEE, mixing, perf (2026-08-29)
+
+Continued experiments on `sprite_codec` (all real coder, bit-exact roundtrips):
+
+```
+✓ SEE (secondary escape estimation): adaptive escape mass bucketed by
+  (chain level, log2 distinct, log2 sum, top-symbol skew quartile) replaces
+  PPMC's fixed "escape = distinct" mass.
+      RobinTown  2,072,062 -> 1,994,346  (-3.8%; -35.4% vs zstd-22)
+      Knight01   2,984,055 -> 2,892,434  (-3.1%)
+      Guard A01    466,297 ->   458,952  (-1.6%)
+      Knight02     977,814 ->   968,626  (-0.9%)
+  Bucketing matters: level+distinct alone REGRESSED variants (+3.3%);
+  adding the skew quartile fixed standalone; adding log2(sum) (context
+  maturity) made it a win everywhere.
+
+✗ Context mixing (PAQ-lite prototype, --mix in the probe): 12-bit indices
+  binary-decomposed MSB-first; per-bit logistic mix of hashed order-2 /
+  order-1(above) / order-1(left) / order-0 count-based predictors with
+  agreement-bucketed adaptive weights. Exact cost accounting.
+      RobinTown  2,017,059  (+1.1% vs PPM+SEE)
+      Knight01   3,081,887  (+6.5%)
+  (A first shift-counter version was +7..14%.) The PPM's exact-keyed
+  order-2 contexts and symbol-level exclusion beat hashed bitwise models;
+  closing the gap would need exact keys + SSE + more models, plus a
+  fixed-point mixer for cross-platform determinism. Not pursued.
+
+Decode-speed work (measured under background load; re-verify when quiet):
+frequency-bubbled symbol lists + early-terminating fast paths + single-scan
+exclusion + foldhash: Knight01 decode 13.4s -> ~6.5s, bytes unchanged.
+A dense flat-count/Fenwick context representation regressed (hot contexts
+are skew-dominated; the bubbled head answers in one cache line) and is kept
+behind a disabled PROMOTE_AT. Exclusion remains the main decode cost
+(~2x over no-exclusion for ~3% ratio); revisit only when decode time
+becomes a shipping constraint — chunk-level parallel decode at install is
+the cheaper lever.
