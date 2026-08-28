@@ -638,7 +638,10 @@ pub fn wav_duration_ms(data: &[u8]) -> Option<u32> {
         }
     }
 
-    (data_size * 1000).checked_div(byte_rate)
+    let duration_ms = u64::from(data_size)
+        .checked_mul(1000)?
+        .checked_div(u64::from(byte_rate))?;
+    u32::try_from(duration_ms).ok()
 }
 
 pub fn ogg_duration_ms(data: &[u8]) -> Option<u32> {
@@ -786,5 +789,26 @@ mod tests {
     fn wav_duration_invalid() {
         assert_eq!(wav_duration_ms(b"not a wav"), None);
         assert_eq!(wav_duration_ms(&[]), None);
+    }
+
+    #[test]
+    fn wav_duration_handles_samples_larger_than_u32_milliseconds_product() {
+        let byte_rate = 88_200u32;
+        let data_size = 10_000_000u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_size).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&44_100u32.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+
+        assert_eq!(wav_duration_ms(&wav), Some(113_378));
     }
 }

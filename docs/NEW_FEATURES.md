@@ -39,6 +39,13 @@ A list of which additional features we have added, which ones we might still wan
   mission. Per-RHS grouping deliberately preserves the strong within-character
   zstd matches measured in `docs/COMPRESSION.md`.
 
+- **Browser-native shipping audio.** Web shipping conversion transcodes voice,
+  effects, and music to deterministic Opus dependencies while retaining exact
+  source-duration metadata for simulation timing. The browser fetches and
+  decodes only boot audio plus the selected mission's closure, reports that
+  work on the loading screen, and keeps decoded PCM in Web Audio buffers rather
+  than wasm linear memory. Native and Android artifacts retain source audio.
+
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise

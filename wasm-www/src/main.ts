@@ -192,7 +192,7 @@ async function main(): Promise<void> {
 
     logOk('[wasm module ready, fetching datadir]');
 
-    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v5-q80.rhdata.zst`;
+    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst`;
     const resp = await fetch(dataUrl, {
         cache: build.source === 'latest' ? 'no-cache' : 'force-cache',
     });

@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -84,6 +85,11 @@ struct Args {
     /// for wasm32 targets (32-bit zstd builds can't decode long=31 streams).
     #[arg(long, default_value_t = 31)]
     zstd_window_log: u32,
+
+    /// Shipping audio representation. `opus` is intended for browser
+    /// artifacts; native/loose datadirs keep their source formats.
+    #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
+    audio_format: AudioFormat,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -98,6 +104,14 @@ enum MapFormat {
     JxlQ85,
     /// Shipping transcodes `.map` files to JXL quality 80.
     JxlQ80,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AudioFormat {
+    /// Preserve source WAV or Ogg/Vorbis bytes.
+    Source,
+    /// Transcode all selected audio to deterministic Ogg/Opus.
+    Opus,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -168,6 +182,7 @@ fn main() -> Result<()> {
             ShippingOpts {
                 map_format: args.map_format,
                 interface_image_format: args.interface_image_format,
+                audio_format: args.audio_format,
                 zstd_window_log: args.zstd_window_log,
                 resume: args.resume,
             },
@@ -179,6 +194,7 @@ fn main() -> Result<()> {
 struct ShippingOpts {
     map_format: MapFormat,
     interface_image_format: InterfaceImageFormat,
+    audio_format: AudioFormat,
     zstd_window_log: u32,
     resume: bool,
 }
@@ -891,8 +907,9 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_character_action_rhs_profiles, animation_rhs_paths, animation_rhs_rel_existing,
-        exclamation_dat_filename, prepare_shipping_payload,
+        AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
+        animation_rhs_rel_existing, exclamation_dat_filename, prepare_shipping_payload,
+        transcode_audio_to_opus,
     };
     use robin_assets::shipping_datadir::ShippingMission;
     use robin_engine::profiles::Action;
@@ -983,6 +1000,42 @@ mod tests {
         let (_, compressed) =
             prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
         assert!(compressed.is_some());
+    }
+
+    #[test]
+    #[ignore = "requires ffmpeg with libopus"]
+    fn opus_transcode_is_byte_deterministic() {
+        let sample_rate = 8_000u32;
+        let sample_count = 800u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + sample_count * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(sample_count * 2).to_le_bytes());
+        wav.resize(wav.len() + (sample_count * 2) as usize, 0);
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("determinism-fixture.wav");
+        std::fs::write(&source, wav).unwrap();
+        let first = transcode_audio_to_opus(&source, AudioKind::Voice).unwrap();
+        let second = transcode_audio_to_opus(&source, AudioKind::Voice).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(b"OggS"));
+        assert!(first.windows(8).any(|window| window == b"OpusHead"));
+        assert!(
+            first
+                .windows(b"robinhood-web-shipping".len())
+                .any(|window| window == b"robinhood-web-shipping")
+        );
     }
 }
 
@@ -1309,6 +1362,7 @@ struct ShippingMissionBuild {
     required_rhs_profiles: std::collections::BTreeMap<String, BTreeSet<String>>,
     required_exclamation_ids: BTreeSet<u32>,
     music_names: BTreeSet<String>,
+    dialogue_samples: BTreeSet<String>,
     map_names: BTreeSet<String>,
     proto_filename: String,
 }
@@ -1381,6 +1435,54 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
         dd.pak_files.insert("interface/loading.pak".into(), encoded);
     }
+    // Menu sounds are part of the data artifact, not the wasm executable.
+    // Keep them in the boot manifest because they are needed before any
+    // mission dependency is selected.
+    let mut boot_audio = ShippingMission::default();
+    let mut menu_roots = vec![data_in.join("Sounds/Menu")];
+    menu_roots.extend(
+        locale_dirs
+            .iter()
+            .map(|locale| locale.data_dir.join("Sounds/Menu")),
+    );
+    for root in menu_roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_files_recursive(&root, &mut files)?;
+        files.sort();
+        for path in files {
+            let filename = path
+                .strip_prefix(&root)
+                .expect("menu audio must remain below its collection root");
+            let relative = Path::new("Sounds/Menu").join(filename);
+            insert_shipping_audio(
+                &mut boot_audio,
+                &relative.to_string_lossy(),
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
+        }
+    }
+    if let Some((relative, path)) = ["wav", "ogg"].into_iter().find_map(|extension| {
+        let relative = format!("Musics/Menu.{extension}");
+        in_path(&relative).map(|path| (relative, path))
+    }) {
+        insert_shipping_audio(
+            &mut boot_audio,
+            &relative,
+            &path,
+            AudioKind::Music,
+            opts.audio_format,
+        )?;
+    } else {
+        bail!("required menu music Musics/Menu.{{wav,ogg}} is missing");
+    }
+    dd.raw.extend(boot_audio.raw);
+    dd.audio_durations_ms.extend(boot_audio.audio_durations_ms);
+
     // ── profile.cpf (root index) ───────────────────────────────────────
     let cpf_path =
         in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;
@@ -1425,6 +1527,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
     }
 
+    // Dialogue descriptors refer to WAVE tables in the localized Level.res.
+    // Resolve those tables while building each mission's dependency closure;
+    // shipping every locale's dialogue at boot would defeat split loading.
+    let level_res_path =
+        in_path("Text/Level.res").ok_or_else(|| anyhow!("Text/Level.res missing"))?;
+    let mut level_res = ResourceManager::new();
+    level_res.attach_resource_file(&level_res_path.to_string_lossy())?;
+
     for mp in &cpf.missions {
         if mp.proto_level_filename.is_empty() || mp.mission_filename.is_empty() {
             continue;
@@ -1453,6 +1563,29 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .filter(|name| !name.is_empty())
                 .cloned(),
         );
+        let red_filename = res_descr::red_filename(mp.id);
+        if let Some(descriptors) = dd.red_files.get(&red_filename) {
+            for (dialogue_index, dialogue) in descriptors.dialogues.iter().enumerate() {
+                for sentence_index in 0..dialogue.portrait_ids.len() {
+                    match level_res.get_sample(dialogue.sound_table_id, sentence_index) {
+                        Ok(sample) if !sample.is_empty() => {
+                            build
+                                .dialogue_samples
+                                .insert(format!("Text/{}", sample.replace('\\', "/")));
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "resolve dialogue sample for mission {} dialogue {dialogue_index} sentence {sentence_index}",
+                                    mp.mission_filename
+                                )
+                            });
+                        }
+                    }
+                }
+            }
+        }
         let required_rhs_profiles = &mut build.required_rhs_profiles;
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
@@ -1953,7 +2086,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if relative.starts_with("menu/") || relative.starts_with("exclamations/") {
                 continue;
             }
-            insert_shipping_raw(&mut common_audio, &format!("Sounds/{relative}"), &path)?;
+            insert_shipping_audio(
+                &mut common_audio,
+                &format!("Sounds/{relative}"),
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
         }
     }
     let common_audio_file = write_shipping_dependency(
@@ -2061,7 +2200,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             let sample_path = in_path(sample_rel).ok_or_else(|| {
                 anyhow!("shared exclamation sample disappeared during conversion: {sample_rel}")
             })?;
-            insert_shipping_raw(&mut exclamation_metadata, sample_rel, &sample_path)?;
+            insert_shipping_audio(
+                &mut exclamation_metadata,
+                sample_rel,
+                &sample_path,
+                AudioKind::Voice,
+                opts.audio_format,
+            )?;
         }
     }
     let exclamation_metadata_file = write_shipping_dependency(
@@ -2080,7 +2225,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         })?;
         for (sample_rel, sample_path) in samples {
             if sample_profile_counts.get(&sample_rel).copied().unwrap_or(0) == 1 {
-                insert_shipping_raw(&mut actor_audio, &sample_rel, &sample_path)?;
+                insert_shipping_audio(
+                    &mut actor_audio,
+                    &sample_rel,
+                    &sample_path,
+                    AudioKind::Voice,
+                    opts.audio_format,
+                )?;
             }
         }
         if let Some(relative) = write_shipping_dependency(
@@ -2118,6 +2269,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_rhs_profiles,
                     required_exclamation_ids,
                     music_names,
+                    dialogue_samples,
                     ..
                 } = build;
                 let (filename, compressed) = prepare_shipping_payload(
@@ -2136,6 +2288,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_rhs_profiles,
                     required_exclamation_ids,
                     music_names,
+                    dialogue_samples,
                 ))
             })
             .collect::<Vec<Result<_>>>()
@@ -2148,6 +2301,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             required_rhs_profiles,
             required_exclamation_ids,
             music_names,
+            dialogue_samples,
         ) = encoded?;
         let relative = format!("missions/{filename}");
         let mut files = vec![relative.clone()];
@@ -2168,6 +2322,30 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 files.push(file.clone());
             }
         }
+        let mut dialogue_audio = ShippingMission::default();
+        for sample_rel in &dialogue_samples {
+            let sample_path = in_path(sample_rel).ok_or_else(|| {
+                anyhow!(
+                    "shipping mission {mission_name} references missing dialogue sample {sample_rel}"
+                )
+            })?;
+            insert_shipping_audio(
+                &mut dialogue_audio,
+                sample_rel,
+                &sample_path,
+                AudioKind::Voice,
+                opts.audio_format,
+            )?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-dialogue",
+            &dialogue_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
+        }
         let mut music_audio = ShippingMission::default();
         for name in &music_names {
             // SoundManager requests `.wav`, but the Linux release ships Ogg
@@ -2184,7 +2362,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                         "shipping mission {mission_name} references missing music Musics/{name}.{{wav,ogg}}"
                     )
                 })?;
-            insert_shipping_raw(&mut music_audio, &relative, &path)?;
+            insert_shipping_audio(
+                &mut music_audio,
+                &relative,
+                &path,
+                AudioKind::Music,
+                opts.audio_format,
+            )?;
         }
         if let Some(file) = write_shipping_dependency(
             &audio_dir,
@@ -2217,10 +2401,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         robin_assets::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
     fs::write(&out_file, compressed).with_context(|| format!("write {}", out_file.display()))?;
     tracing::info!(
-        "wrote {} (windowLog={}, map={:?})",
+        "wrote {} (windowLog={}, map={:?}, audio={:?})",
         out_file.display(),
         opts.zstd_window_log,
-        opts.map_format
+        opts.map_format,
+        opts.audio_format
     );
     Ok(())
 }
@@ -2348,6 +2533,188 @@ fn insert_shipping_raw(payload: &mut ShippingMission, relative: &str, path: &Pat
         payload.raw.insert(relative, bytes);
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AudioKind {
+    Voice,
+    Effect,
+    Music,
+}
+
+impl AudioKind {
+    fn bitrate_kbps(self) -> u32 {
+        match self {
+            Self::Voice => 24,
+            Self::Effect => 48,
+            Self::Music => 64,
+        }
+    }
+
+    fn opus_application(self) -> &'static str {
+        match self {
+            Self::Voice => "voip",
+            Self::Effect | Self::Music => "audio",
+        }
+    }
+}
+
+fn insert_shipping_audio(
+    payload: &mut ShippingMission,
+    relative: &str,
+    path: &Path,
+    kind: AudioKind,
+    format: AudioFormat,
+) -> Result<()> {
+    let is_audio = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("wav") || extension.eq_ignore_ascii_case("ogg")
+        });
+    if !is_audio {
+        return insert_shipping_raw(payload, relative, path);
+    }
+
+    let source = fs::read(path).with_context(|| format!("read audio {}", path.display()))?;
+    let duration_ms = robin_rs::audio_backend::wav_duration_ms(&source).ok_or_else(|| {
+        anyhow!(
+            "cannot derive authoritative audio duration for {}",
+            path.display()
+        )
+    })?;
+    let (relative, bytes) = match format {
+        AudioFormat::Source => (relative.to_owned(), source),
+        AudioFormat::Opus => (
+            Path::new(relative)
+                .with_extension("opus")
+                .to_string_lossy()
+                .into_owned(),
+            transcode_audio_to_opus(path, kind)?,
+        ),
+    };
+    let relative = relative.replace('\\', "/").to_ascii_lowercase();
+    if let Some(previous) = payload.raw.get(&relative) {
+        if previous != &bytes {
+            bail!("conflicting shipping audio sources for {relative}");
+        }
+    } else {
+        payload.raw.insert(relative.clone(), bytes);
+    }
+    match payload.audio_durations_ms.entry(relative) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(duration_ms);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if *entry.get() == duration_ms => {}
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!(
+                "conflicting source durations for shipping audio {}: {} vs {duration_ms}",
+                entry.key(),
+                entry.get()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Encode through FFmpeg's mature libopus integration, then remux the packets
+/// with a fixed Ogg stream serial and vendor packet. FFmpeg randomizes Ogg
+/// serials, which would otherwise make content-addressed shipping chunks and
+/// `--resume` nondeterministic even when the encoded Opus packets are equal.
+fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Result<Vec<u8>> {
+    use std::io::Cursor;
+
+    let bitrate = format!("{}k", kind.bitrate_kbps());
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(source_path)
+        .args([
+            "-map_metadata",
+            "-1",
+            "-vn",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            &bitrate,
+            "-vbr",
+            "on",
+            "-compression_level",
+            "10",
+            "-frame_duration",
+            "20",
+            "-application",
+            kind.opus_application(),
+            "-f",
+            "ogg",
+            "pipe:1",
+        ])
+        .output()
+        .context("run ffmpeg with libopus support (is ffmpeg installed?)")?;
+    if !output.status.success() {
+        bail!(
+            "ffmpeg Opus encode failed for {} ({}): {}",
+            source_path.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let mut reader = ogg::PacketReader::new(Cursor::new(output.stdout));
+    let mut packets = Vec::new();
+    while let Some(packet) = reader
+        .read_packet()
+        .with_context(|| format!("parse ffmpeg Ogg output for {}", source_path.display()))?
+    {
+        packets.push(packet);
+    }
+    if packets
+        .first()
+        .is_none_or(|packet| !packet.data.starts_with(b"OpusHead"))
+    {
+        bail!(
+            "ffmpeg produced non-Opus Ogg output for {}",
+            source_path.display()
+        );
+    }
+    if packets.len() < 3 {
+        bail!(
+            "ffmpeg produced incomplete Opus stream for {}",
+            source_path.display()
+        );
+    }
+    packets[1].data = deterministic_opus_tags();
+
+    let mut remuxed = Cursor::new(Vec::new());
+    {
+        use ogg::writing::{PacketWriteEndInfo, PacketWriter};
+        let mut writer = PacketWriter::new(&mut remuxed);
+        for packet in packets {
+            let absgp = packet.absgp_page();
+            let end = if packet.last_in_stream() {
+                PacketWriteEndInfo::EndStream
+            } else if packet.last_in_page() {
+                PacketWriteEndInfo::EndPage
+            } else {
+                PacketWriteEndInfo::NormalPacket
+            };
+            writer
+                .write_packet(packet.data, 0x5248_4f50, end, absgp)
+                .with_context(|| {
+                    format!("write deterministic Ogg for {}", source_path.display())
+                })?;
+        }
+    }
+    Ok(remuxed.into_inner())
+}
+
+fn deterministic_opus_tags() -> Vec<u8> {
+    const VENDOR: &[u8] = b"robinhood-web-shipping";
+    let mut tags = Vec::with_capacity(16 + VENDOR.len());
+    tags.extend_from_slice(b"OpusTags");
+    tags.extend_from_slice(&(VENDOR.len() as u32).to_le_bytes());
+    tags.extend_from_slice(VENDOR);
+    tags.extend_from_slice(&0u32.to_le_bytes());
+    tags
 }
 
 fn write_shipping_dependency(

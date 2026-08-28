@@ -42,6 +42,8 @@ pub struct ShippingDatadir {
     /// Terrain bitmaps and other not-yet-parsed binary blobs, keyed by
     /// relative path (e.g. `Levels/Day/leicester.map`).
     pub raw: std::collections::BTreeMap<String, Vec<u8>>,
+    /// Source-authoritative durations for boot audio stored in `raw`.
+    pub audio_durations_ms: BTreeMap<String, u32>,
     /// Independently compressed payload to fetch before starting each mission.
     pub missions: BTreeMap<String, ShippingMissionRef>,
     /// Content-addressed RHS payloads required when a character profile can
@@ -102,6 +104,7 @@ impl Default for ShippingDatadir {
             rhs_files: BTreeMap::new(),
             sprite_bank: None,
             raw: BTreeMap::new(),
+            audio_durations_ms: BTreeMap::new(),
             missions: BTreeMap::new(),
             character_rhs_files: BTreeMap::new(),
             character_audio_files: BTreeMap::new(),
@@ -133,6 +136,12 @@ pub struct ShippingMission {
     pub rhs_files: BTreeMap<String, RhsData>,
     pub sprite_bank: Option<ShippingSpriteBank>,
     pub raw: BTreeMap<String, Vec<u8>>,
+    /// Exact durations from the source assets, keyed like `raw`.
+    ///
+    /// Web shipping may transcode WAV/Vorbis to Opus. Simulation timing must
+    /// continue to use the authoritative source duration rather than codec
+    /// delay, resampling, or a browser decoder's rounded duration.
+    pub audio_durations_ms: BTreeMap<String, u32>,
     /// Runtime shared-byte view of `raw`. Installation moves the decoded
     /// vectors here so the VFS and mission payload share the same allocation.
     #[serde(skip)]
@@ -443,6 +452,51 @@ impl ShippingDatadir {
             .collect()
     }
 
+    /// Return the source-authoritative duration for boot or active-mission
+    /// audio. Web artifacts use `.opus` keys even though legacy metadata asks
+    /// for `.wav` or `.ogg`, so resolution includes that target extension.
+    pub fn active_audio_duration_ms(&self, path: &Path) -> Option<u32> {
+        self.active_audio_metadata(path)
+            .map(|(_, duration)| duration)
+    }
+
+    /// Return encoded byte size and source duration without copying the VFS
+    /// asset. The wasm sound cache only needs this bookkeeping because Web
+    /// Audio owns both decoding and PCM playback storage.
+    pub fn active_audio_metadata(&self, path: &Path) -> Option<(u32, u32)> {
+        let key = robin_util::asset_fs::bundle_key(path);
+        let opus = Path::new(&key)
+            .with_extension("opus")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mission = self
+            .active_mission_name()
+            .and_then(|mission| self.loaded_mission(&mission))
+            .and_then(|payload| {
+                let duration = payload
+                    .audio_durations_ms
+                    .get(&key)
+                    .or_else(|| payload.audio_durations_ms.get(&opus))
+                    .copied()?;
+                let bytes = payload.raw_bundle.get()?.get(&key).or_else(|| {
+                    payload
+                        .raw_bundle
+                        .get()
+                        .and_then(|bundle| bundle.get(&opus))
+                })?;
+                Some((u32::try_from(bytes.len()).ok()?, duration))
+            });
+        mission.or_else(|| {
+            let duration = self
+                .audio_durations_ms
+                .get(&key)
+                .or_else(|| self.audio_durations_ms.get(&opus))
+                .copied()?;
+            let bytes = self.raw_asset(&key).or_else(|| self.raw_asset(&opus))?;
+            Some((u32::try_from(bytes.len()).ok()?, duration))
+        })
+    }
+
     /// Borrow one boot asset whether installation has moved it into the VFS
     /// shared-byte bundle or this manifest is still in converter/tool form.
     pub fn raw_asset(&self, key: &str) -> Option<&[u8]> {
@@ -456,6 +510,16 @@ impl ShippingDatadir {
 }
 
 impl ShippingMission {
+    /// Borrow an installed raw asset without copying its encoded bytes.
+    pub fn raw_asset(&self, key: &str) -> Option<&[u8]> {
+        self.raw.get(key).map(Vec::as_slice).or_else(|| {
+            self.raw_bundle
+                .get()
+                .and_then(|bundle| bundle.get(key))
+                .map(|bytes| bytes.as_ref())
+        })
+    }
+
     /// Move-merge one independently decoded dependency into this payload.
     /// Loaders use this incrementally so compressed/decoded part shells can be
     /// released as soon as each bounded fetch completes.
@@ -468,6 +532,11 @@ impl ShippingMission {
         merge_unique_owned(&mut self.scripts, source.scripts, "script")?;
         merge_unique_owned(&mut self.rhs_files, source.rhs_files, "RHS")?;
         merge_unique_owned(&mut self.raw, source.raw, "raw asset")?;
+        merge_unique_owned(
+            &mut self.audio_durations_ms,
+            source.audio_durations_ms,
+            "audio duration",
+        )?;
         let Some(mut source_bank) = source.sprite_bank.take() else {
             return Ok(());
         };
@@ -526,10 +595,10 @@ where
     Ok(())
 }
 
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT5";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN02";
-pub const SHIPPING_DATADIR_VERSION: u32 = 5;
-pub const SHIPPING_MISSION_VERSION: u32 = 2;
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT6";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN03";
+pub const SHIPPING_DATADIR_VERSION: u32 = 6;
+pub const SHIPPING_MISSION_VERSION: u32 = 3;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -757,6 +826,9 @@ mod tests {
     fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
         let mut datadir = ShippingDatadir::default();
         datadir.raw.insert("test.bin".into(), vec![1, 2, 3]);
+        datadir
+            .audio_durations_ms
+            .insert("musics/menu.opus".into(), 9_876);
         datadir.missions.insert(
             "MissionOne".into(),
             ShippingMissionRef {
@@ -776,9 +848,14 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
+        assert_eq!(&encoded[..8], b"RHDDNAT6");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
+        assert_eq!(
+            decoded.audio_durations_ms.get("musics/menu.opus"),
+            Some(&9_876)
+        );
         assert_eq!(
             decoded.mission_ref("MissionOne").unwrap().files,
             vec!["missions/mission-one.rhmission.zst"]
@@ -815,10 +892,18 @@ mod tests {
         mission
             .raw
             .insert("levels/day/map.min".into(), vec![9, 8, 7]);
+        mission
+            .audio_durations_ms
+            .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
+        assert_eq!(&encoded[..8], b"RHMISN03");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));
+        assert_eq!(
+            decoded.audio_durations_ms.get("sounds/arrow.opus"),
+            Some(&1_234)
+        );
     }
 
     #[test]
@@ -868,6 +953,12 @@ mod tests {
         datadir
             .raw
             .insert("shared.dat".to_string(), b"shipping".to_vec());
+        datadir
+            .raw
+            .insert("sounds/menu.opus".to_string(), vec![1, 2, 3, 4]);
+        datadir
+            .audio_durations_ms
+            .insert("sounds/menu.opus".to_string(), 250);
         let installed = ShippingAssets::install(Arc::new(datadir), vfs.clone()).unwrap();
 
         assert!(Arc::ptr_eq(installed.vfs(), &vfs));
@@ -875,6 +966,12 @@ mod tests {
         assert_eq!(
             installed.datadir().raw_asset("shared.dat"),
             Some(&b"shipping"[..])
+        );
+        assert_eq!(
+            installed
+                .datadir()
+                .active_audio_metadata(Path::new("Data/Sounds/Menu.wav")),
+            Some((4, 250))
         );
         assert_eq!(installed.vfs().read("shared.dat").unwrap(), b"shipping");
     }

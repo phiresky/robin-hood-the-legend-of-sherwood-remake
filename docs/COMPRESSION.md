@@ -83,17 +83,20 @@ saved by interface jxl after sprite trim                        2,435,771 B
 saved vs v2 q80                                                 7,229,849 B
 ```
 
-The production converter path for the artifact named `v5-q80.rhdata.zst` is:
+The browser converter path for the artifact named `v6-web-opus-q80.rhdata.zst` is:
 
 ```
 convert_datadir --format shipping \
   --map-format jxl-q80 \
+  --audio-format opus \
   --zstd-window-log 30
 ```
 
 Only map quality is lossy. Interface pictures are left in the raw RGB565
 shipping representation so transparent/keyed UI art remains exact. The
-generated v4 artifact is 35 213 242 B.
+Opus is web-only; native and Android artifacts retain the default
+`--audio-format source`. Historical size figures below describe their named
+schema and remain as measurement provenance.
 
 ### Demo mission sprite trim
 
@@ -654,6 +657,71 @@ Primary references for the candidates: the
 [Khronos WebGL S3TC extension](https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_s3tc/),
 [WebGPU feature guarantees](https://gpuweb.github.io/gpuweb/#adapter-capability-guarantees),
 and the [zstd dictionary API](https://facebook.github.io/zstd/zstd_manual.html#Chapter5).
+
+## Schema-v6 web audio (2026-08-28)
+
+Browser shipping now uses `convert_datadir --audio-format opus`. FFmpeg's
+libopus encoder runs offline with 20 ms VBR frames and complexity 10: localized
+exclamations and dialogue use 24 kbit/s `voip`, ordinary effects use 48 kbit/s
+`audio`, and music uses 64 kbit/s `audio`. Native and Android conversion keeps
+the default `source` representation; this is intentionally a web-only codec
+change.
+
+FFmpeg randomizes Ogg stream serials, so the converter parses its output and
+remuxes the Opus packets with a fixed serial and canonical `OpusTags`. This is
+required for reproducible content hashes and useful `--resume` behavior. Menu
+audio is part of the shipping boot manifest rather than the wasm executable;
+mission effects, actor voices, dialogue, and music remain independently loaded
+dependencies. Dialogue WAVE-table references are resolved per `.red` mission
+descriptor, fixing the earlier omission of later-mission
+`Data/Text/Dialogues/*.ogg` files. H01 has no descriptor dialogue and is
+unchanged by that particular correction.
+
+Wasm no longer includes Kira, CPAL, or a Rust audio decoder. It calls Web
+Audio's `decodeAudioData` at the asynchronous boot and mission boundaries and
+keeps decoded PCM exclusively in browser-owned `AudioBuffer`s. Encoded Opus
+stays once in the mounted VFS bundle; the engine sound cache retains an empty
+loaded sentinel plus encoded size and duration instead of cloning the bytes.
+Decode concurrency is bounded to eight and appears as its own loading-screen
+component. Legacy `.wav`/`.ogg` names resolve the corresponding `.opus` key.
+
+Each boot/mission payload records the exact source duration before transcoding.
+Gameplay timing therefore does not depend on Opus pre-skip, resampling, end
+trimming, or browser rounding. This changes the top-level shipping schema to
+v6 (`RHDDNAT6`) and mission chunks to v3 (`RHMISN03`); older generated data
+must be rebuilt. The two Ogg/Theora cinematics still contain their original
+Vorbis tracks because changing them is a separate video-remux pipeline task.
+
+The completed raw-map full-game conversion measures `H01_Lin_VL` as follows.
+This is directly comparable to the schema-v5 raw-map numbers above; production
+JXL changes the map-heavy mission core but not these audio totals.
+
+```
+boot manifest                 9,653,475 B
+mission core                 18,363,808 B
+55 parsed RHS chunks         27,093,080 B
+shared effects                6,644,383 B
+13 voice chunks               2,928,975 B
+mission music                 1,573,054 B
+exclamation metadata              1,454 B
+mission boundary total       56,604,754 B (72 files)
+boot + first mission         66,258,229 B
+```
+
+The mission boundary is 65,878,381 B smaller than schema v5 (-53.8%). The
+parsed mission/RHS data is effectively unchanged; nearly all of the reduction
+is the authoritative audio changing from 77,026,200 B to 11,147,866 B. The
+boot manifest grows by 383,639 B because it now owns the transcoded menu audio
+that the publish workflow previously shipped as a separate eager preload.
+
+With the same shell accounting as the schema-v5 browser measurement, the
+optimized raw-map cold load through the first mission is **79,926,218 B**:
+12,746,082 B wasm, 164,302 B wasm-bindgen JS, 486,683 B core overlay, 3,067 B
+preload manifest, 267,855 B shell, and the 66,258,229 B boot/mission data above.
+That is 66,401,671 B smaller than the previous 146,327,889 B total (-45.4%).
+HTTP content encoding can further reduce the wasm/JS/shell portion; the
+already-zstd-compressed data and Opus streams should not be counted on for a
+similar secondary reduction.
 
 ## Reproducing
 

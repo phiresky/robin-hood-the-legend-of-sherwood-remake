@@ -132,7 +132,7 @@ same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
     /wasm/<short-hash>/robin_bg.wasm
     /wasm/<short-hash>/manifest.json
     /wasm/latest.json
-    /datadirs/demo-leicester/v5-q80.rhdata.zst
+    /datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
     /datadirs/demo-leicester/audio/*.rhmission.zst
@@ -141,14 +141,14 @@ The shell fetches `/wasm/latest.json` when no query parameter is present.  With
 `?replay=rhrec-<hash>-...`, it extracts `<hash>` and loads that exact
 artifact directory. The game data is not rebuilt by CI. Build it locally and
 publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v5-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
 browser initially fetches only the manifest, then fetches the selected
 mission's bounded core, RHS, and audio dependency closure concurrently.
-Audio and the required Rust UI/font overlay assets are published beside the
-wasm artifact and listed in `/wasm/<short-hash>/preload-assets.json`; the shell
-preloads those files into Rust before `wasm_boot` starts the synchronous game
-loop.
+All web audio is deterministic Opus inside the shipping data. Only the required
+Rust UI/font overlay assets remain beside the wasm artifact and are listed in
+`/wasm/<short-hash>/preload-assets.json`; the shell preloads those files before
+`wasm_boot` starts the game loop.
 Replay delivery itself remains handled by the existing browser/RPC path.
 Wasm logging defaults to `info`; add `?wasm-log=debug` (or `trace`,
 `warn`, `error`) to the URL to override it for browser sessions.
@@ -165,7 +165,8 @@ Android builds use winit's `android-activity` NativeActivity glue. The
 Android entry point is exported from the `robin_rs` cdylib, the
 packaging manifest lives at `android/AndroidManifest.xml`, and the
 Leicester demo shipping datadir is bundled under `android/assets/Data/`:
-`datadir.bin` comes from the published `v5-q80.rhdata.zst`, and the generated
+`datadir.bin` must be generated separately with the converter's default
+`--audio-format source`; do not use the web-only Opus artifact. Its generated
 `missions/`, `rhs/`, and `audio/` directories must be copied alongside it.
 Android reads selected payloads directly through `AAssetManager`.
 
