@@ -1,13 +1,12 @@
 //! Authoritative reusable-cloak command admission and runtime controls.
 
-use crate::element::{ActionState, Command, Entity, Human, Posture};
+use crate::element::{ActionState, Command, Entity, Posture};
 use crate::entity_id::EntityId;
-use crate::level_assets::LevelAssets;
 use crate::order::OrderType;
 use crate::player_command::PlayerCommand;
 use crate::sequence::{Sequence, SequenceElement};
 
-use super::EngineInner;
+use super::{EngineInner, LevelAssets};
 
 impl EngineInner {
     /// Resolve the cloak hotkey into ordinary, replayable per-actor commands.
