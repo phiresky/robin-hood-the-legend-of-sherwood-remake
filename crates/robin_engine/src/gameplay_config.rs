@@ -23,19 +23,20 @@ pub struct GameplayConfig {
     #[serde(default)]
     pub fix_hard_reaction_times: bool,
 
-    /// Allow direct selection and command of Royalist soldier NPCs.
+    /// Enable high-level commands for actors authored with the tactical
+    /// command interface, regardless of archetype or allegiance.
     ///
     /// This defaults off so existing profiles and original-parity sessions
     /// retain the shipped game's input behaviour until the player opts in.
-    #[serde(default)]
-    pub control_allied_soldiers: bool,
+    #[serde(default, alias = "control_allied_soldiers")]
+    pub control_tactical_units: bool,
 }
 
 impl Default for GameplayConfig {
     fn default() -> Self {
         Self {
             fix_hard_reaction_times: true,
-            control_allied_soldiers: false,
+            control_tactical_units: false,
         }
     }
 }
@@ -53,6 +54,13 @@ mod tests {
     fn profiles_without_the_setting_retain_original_reaction_times() {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
-        assert!(!config.control_allied_soldiers);
+        assert!(!config.control_tactical_units);
+    }
+
+    #[test]
+    fn previous_allied_control_setting_name_remains_loadable() {
+        let config: GameplayConfig = serde_json::from_str(r#"{"control_allied_soldiers":true}"#)
+            .expect("legacy gameplay config");
+        assert!(config.control_tactical_units);
     }
 }

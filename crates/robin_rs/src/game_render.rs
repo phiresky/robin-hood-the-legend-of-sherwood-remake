@@ -144,7 +144,7 @@ pub(crate) fn render_door_overlays(
 
     // ── 1. Selected PCs inside buildings (runs unconditionally) ──
     let local_seat = host.transport.local_seat;
-    for &pc_id in engine.seat_selection(local_seat) {
+    for &pc_id in engine.hero_selection(local_seat) {
         let Some(entity) = engine.get_entity(pc_id) else {
             continue;
         };
@@ -204,7 +204,7 @@ pub(crate) fn render_door_overlays(
         return;
     }
     let first_selected_posture = engine
-        .seat_selection(local_seat)
+        .hero_selection(local_seat)
         .first()
         .and_then(|&id| engine.get_entity(id))
         .map(|e| e.element_data().posture);
@@ -311,7 +311,7 @@ pub(crate) fn render_door_overlays(
             && !sector.points.is_empty()
         {
             let mut paint = false;
-            for &pc_id in engine.seat_selection(local_seat) {
+            for &pc_id in engine.hero_selection(local_seat) {
                 if !engine.selected_pc_has_contextual_action(assets, Some(pc_id), Action::Jump) {
                     continue;
                 }
@@ -1621,11 +1621,11 @@ pub(crate) fn render_selection_outlines_gpu(
             continue;
         }
 
-        let is_selected_allied = host.control_allied_soldiers
+        let is_selected_tactical = host.control_tactical_units
             && engine
-                .allied_selection(host.transport.local_seat)
+                .tactical_selection(host.transport.local_seat)
                 .contains(&entity_id);
-        let outline_color_565 = if is_selected_allied && hulk_running && !is_focused {
+        let outline_color_565 = if is_selected_tactical && hulk_running && !is_focused {
             robin_engine::element_kinds::outline_colors::pc_default()
         } else if is_focused || is_action_marked {
             elem.outline_colors[OutlineColorName::Default as usize]

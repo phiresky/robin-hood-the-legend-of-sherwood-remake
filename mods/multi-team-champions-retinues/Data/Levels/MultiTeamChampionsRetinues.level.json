@@ -181,8 +181,10 @@
       "profile": 0,
       "allegiance": 2,
       "direction": 8,
-      "autonomous": true,
-      "aggressive_combat": true,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
       "ai_profile": "soldier_b04"
     },
     {
@@ -193,8 +195,10 @@
       "profile": 2,
       "allegiance": 3,
       "direction": 0,
-      "autonomous": true,
-      "aggressive_combat": true,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
       "ai_profile": "soldier_b04"
     },
     {
@@ -205,8 +209,10 @@
       "profile": 3,
       "allegiance": 4,
       "direction": 4,
-      "autonomous": true,
-      "aggressive_combat": true,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
       "ai_profile": "soldier_b04"
     },
     {
@@ -217,8 +223,10 @@
       "profile": 4,
       "allegiance": 5,
       "direction": 12,
-      "autonomous": true,
-      "aggressive_combat": true,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
       "ai_profile": "soldier_b04"
     }
   ]

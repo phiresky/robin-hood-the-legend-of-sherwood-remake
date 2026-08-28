@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    allied_control::AlliedControlState,
     element::EntityId,
     engine::SeatState,
     macro_store::{AutoQueueStore, MacroStore},
     profiles::Action,
+    tactical_control::TacticalControlState,
 };
 
 /// Deterministic per-player selection, input-mode, and quick-action state.
@@ -37,7 +37,10 @@ pub(crate) struct PlayerRuntime {
     /// PCs whose Shift-click queue is waiting for its currently dispatched
     /// action (or pre-existing live work) to finish.
     pub(crate) auto_queue_active: Vec<EntityId>,
-    pub(crate) allied: AlliedControlState,
+    /// High-level command state for any actor exposing `TacticalOrders`.
+    /// The serialized name preserves existing saves and replay snapshots.
+    #[serde(rename = "allied")]
+    pub(crate) tactical: TacticalControlState,
 }
 
 impl PlayerRuntime {
@@ -53,7 +56,7 @@ impl PlayerRuntime {
             qa_recording_slot: 0,
             action_before_recording_macro: Action::NoAction,
             auto_queue_active: Vec::new(),
-            allied: AlliedControlState::default(),
+            tactical: TacticalControlState::default(),
         }
     }
 }

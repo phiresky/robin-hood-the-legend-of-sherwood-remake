@@ -28,7 +28,6 @@ use crate::widget::blazon_bar;
 use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
 use robin_engine::ai::{DetachedPatrolPathStatus, PathId, PatrolPath};
-use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::element::Posture;
@@ -39,6 +38,7 @@ use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
+use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,9 +102,9 @@ fn selected_allied_patrol_routes(
     let mut routes = Vec::new();
     let mut shown_authored_paths = HashSet::new();
 
-    for &soldier_id in engine.allied_selection(seat) {
-        if let Some(order) = engine.allied_order(soldier_id)
-            && let AlliedDuty::Patrol { points, next } = &order.duty
+    for &soldier_id in engine.tactical_selection(seat) {
+        if let Some(order) = engine.tactical_order(soldier_id)
+            && let TacticalDuty::Patrol { points, next } = &order.duty
         {
             routes.push(PatrolRouteOverlay {
                 points: points.to_vec(),
@@ -190,9 +190,9 @@ fn allied_portrait_tooltip(
     hit: PortraitHit,
 ) -> String {
     let members: Vec<_> = match hit.target {
-        PortraitTarget::AlliedSelection => engine.allied_selection(seat).to_vec(),
+        PortraitTarget::AlliedSelection => engine.tactical_selection(seat).to_vec(),
         PortraitTarget::AlliedGroup(group_id) => engine
-            .allied_pinned_groups(seat)
+            .tactical_pinned_groups(seat)
             .iter()
             .find(|group| group.id == group_id)
             .unwrap_or_else(|| panic!("tooltip references missing allied group {group_id}"))
@@ -202,19 +202,20 @@ fn allied_portrait_tooltip(
     };
     let order = members
         .first()
-        .and_then(|soldier| engine.allied_order(*soldier));
+        .and_then(|soldier| engine.tactical_order(*soldier));
     match hit.area {
         PortraitHitArea::AlliedAction(0) => {
-            let stance = order.map_or(AlliedStance::Defensive, |order| order.stance);
+            let stance = order.map_or(CombatStance::Defensive, |order| order.stance);
             let name = match stance {
-                AlliedStance::Hold => "Hold position",
-                AlliedStance::Defensive => "Defensive",
-                AlliedStance::Aggressive => "Aggressive",
+                CombatStance::Hold => "Hold position",
+                CombatStance::Defensive => "Defensive",
+                CombatStance::Aggressive => "Aggressive",
             };
             format!("Stance: {name} - click to change")
         }
         PortraitHitArea::AlliedAction(1) => {
-            let active = order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
+            let active =
+                order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. }));
             if active {
                 "Patrol: active - click, then choose a new route point".to_owned()
             } else {
@@ -222,12 +223,12 @@ fn allied_portrait_tooltip(
             }
         }
         PortraitHitArea::AlliedAction(2) => {
-            let formation = order.map_or(AlliedFormation::Line, |order| order.formation);
+            let formation = order.map_or(TacticalFormation::Line, |order| order.formation);
             let name = match formation {
-                AlliedFormation::Line => "Line (officer center, melee front, ranged rear)",
-                AlliedFormation::Box => "Box (officer center, ranged protected inside)",
-                AlliedFormation::Staggered => "Staggered rows (officer leads)",
-                AlliedFormation::Flank => "Flank (officer center, two wings)",
+                TacticalFormation::Line => "Line (officer center, melee front, ranged rear)",
+                TacticalFormation::Box => "Box (officer center, ranged protected inside)",
+                TacticalFormation::Staggered => "Staggered rows (officer leads)",
+                TacticalFormation::Flank => "Flank (officer center, two wings)",
             };
             format!("Formation: {name} - click to change")
         }
@@ -1072,9 +1073,9 @@ pub(super) fn render_frame(
     // ShowDetectionPolygon and before ground marks/entities.  Skipped when
     // the PC is inside a building or in POSTURE_FLYING.
     for &pc_id in engine
-        .seat_selection(local_seat)
+        .hero_selection(local_seat)
         .iter()
-        .chain(engine.allied_selection(local_seat))
+        .chain(engine.tactical_selection(local_seat))
     {
         if !engine.pc_draws_selection_mark(pc_id) {
             continue;

@@ -3146,20 +3146,23 @@ impl EngineInner {
             // Original: RHEngine::PerformHourglass checks the PC's explicit
             // IsPlayable() flag and guard state. Death paths are responsible
             // for clearing playability; do not substitute an HP/posture test.
-            // An all-autonomous custom battle has no player party to defeat.
-            // Keep the legacy rule for ordinary missions, including missions
-            // containing only non-playable rescue PCs.
-            let has_non_autonomous_pc = self.world.pc_ids.iter().any(|&pc_id| {
+            // Only actors authored as player-party members participate in
+            // the ordinary party-defeat rule. Controller, allegiance, and
+            // hero body type are deliberately independent from this role.
+            let has_player_party = self.world.pc_ids.iter().any(|&pc_id| {
                 matches!(
                     self.world.entities.get(pc_id),
-                    Some(Entity::Pc(pc)) if !pc.pc.autonomous
+                    Some(Entity::Pc(pc))
+                        if pc.pc.mission_role == crate::human_control::MissionRole::PlayerParty
                 )
             });
-            if has_non_autonomous_pc {
+            if has_player_party {
                 let any_playable_and_free = self.world.pc_ids.iter().any(|&pc_id| {
                     if let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) {
                         let guarded = pc.pc.guard.is_some();
-                        pc.pc.playable && !guarded
+                        pc.pc.mission_role == crate::human_control::MissionRole::PlayerParty
+                            && pc.pc.playable
+                            && !guarded
                     } else {
                         false
                     }
@@ -3654,7 +3657,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        self.tick_allied_control(sim, assets);
+        self.tick_tactical_control(sim, assets);
 
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
@@ -3763,7 +3766,7 @@ impl EngineInner {
         // The hulk state-machine block runs during the per-element
         // refresh pass.
         self.refresh_pc_selection_hulk();
-        self.refresh_allied_selection_hulks();
+        self.refresh_tactical_selection_hulks();
 
         // Tick the cheat-teleport hulk-rebuild fade counter on every
         // PC.  Decrementing here (rather than from the per-PC render
@@ -3981,7 +3984,7 @@ impl EngineInner {
                     sector = request.sector,
                     "path scheduling barrier: pathfind FAILED",
                 );
-                if let Some(fallback) = self.allied_path_failure_fallback(request.owner) {
+                if let Some(fallback) = self.tactical_path_failure_fallback(request.owner) {
                     if let Some(element) = self
                         .orders
                         .sequence_manager

@@ -43,7 +43,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
     }
 
     // Each selected PC currently swordfighting — bars for PC + all opponents.
-    for &pc_id in engine.seat_selection(host.transport.local_seat) {
+    for &pc_id in engine.hero_selection(host.transport.local_seat) {
         let Some(pc) = engine.get_entity(pc_id) else {
             continue;
         };

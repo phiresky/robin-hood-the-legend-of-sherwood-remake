@@ -17,7 +17,7 @@ use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks};
 use crate::gfx_types::GameEvent;
-use crate::host::{AlliedTargetMode, Host};
+use crate::host::{Host, TacticalTargetMode};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
@@ -37,7 +37,6 @@ use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
-use robin_engine::allied_control::{AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
@@ -51,6 +50,7 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::Action;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
 use robin_engine::sound_cache::SampleLoader;
+use robin_engine::tactical_control::{CombatStance, TacticalFormation};
 
 /// Per-frame mouse-input dispatch.
 ///
@@ -246,7 +246,7 @@ fn on_left_mouse_down(
             match selected_action {
                 Action::HelpToClimb => {
                     let posture_ok = engine
-                        .seat_selection(local_seat)
+                        .hero_selection(local_seat)
                         .first()
                         .and_then(|&id| engine.get_entity(id))
                         .map(|e| e.element_data().posture)
@@ -494,18 +494,18 @@ fn on_left_mouse_up(
                 shift: shift_held,
             };
             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-            if host.control_allied_soldiers {
-                let allied_cmd = PlayerCommand::BoxSelectAlliedSoldiers {
+            if host.control_tactical_units {
+                let tactical_cmd = PlayerCommand::BoxSelectTacticalUnits {
                     pt1: host.input.multi_selection_pt1,
                     pt2: host.input.multi_selection_pt2,
                     shift: shift_held,
                 };
-                dispatch_local_command(host, engine, frame_cmds, assets, &allied_cmd);
+                dispatch_local_command(host, engine, frame_cmds, assets, &tactical_cmd);
             }
             tracing::info!(
                 "Box-select: {} PCs and {} allied soldiers selected",
-                engine.seat_selection(local_seat).len(),
-                engine.allied_selection(local_seat).len(),
+                engine.hero_selection(local_seat).len(),
+                engine.tactical_selection(local_seat).len(),
             );
         } else {
             // Single click (drag too small or no drag started — e.g. panel clicks
@@ -586,16 +586,16 @@ fn on_portrait_click(
         } else {
             1
         };
-        let cmd = PlayerCommand::PageAlliedPortraits { delta };
+        let cmd = PlayerCommand::PageTacticalPortraits { delta };
         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
         return true;
     }
 
     if !matches!(hit.target, PortraitTarget::Pc(_)) {
         let members = match hit.target {
-            PortraitTarget::AlliedSelection => engine.allied_selection(local_seat).to_vec(),
+            PortraitTarget::AlliedSelection => engine.tactical_selection(local_seat).to_vec(),
             PortraitTarget::AlliedGroup(group_id) => engine
-                .allied_pinned_groups(local_seat)
+                .tactical_pinned_groups(local_seat)
                 .iter()
                 .find(|group| group.id == group_id)
                 .unwrap_or_else(|| panic!("portrait references missing allied group {group_id}"))
@@ -606,9 +606,9 @@ fn on_portrait_click(
         match hit.area {
             PortraitHitArea::Pin => {
                 let cmd = match hit.target {
-                    PortraitTarget::AlliedSelection => PlayerCommand::PinAlliedSelection,
+                    PortraitTarget::AlliedSelection => PlayerCommand::PinTacticalSelection,
                     PortraitTarget::AlliedGroup(group_id) => {
-                        PlayerCommand::UnpinAlliedGroup { group_id }
+                        PlayerCommand::UnpinTacticalGroup { group_id }
                     }
                     PortraitTarget::Pc(_) => unreachable!(),
                 };
@@ -617,10 +617,10 @@ fn on_portrait_click(
             PortraitHitArea::AlliedAction(0) => {
                 let stance = members
                     .first()
-                    .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedStance::Defensive, |order| order.stance)
+                    .and_then(|id| engine.tactical_order(*id))
+                    .map_or(CombatStance::Defensive, |order| order.stance)
                     .next();
-                let cmd = PlayerCommand::SetAlliedStance {
+                let cmd = PlayerCommand::SetCombatStance {
                     soldiers: members,
                     stance,
                 };
@@ -629,9 +629,9 @@ fn on_portrait_click(
             PortraitHitArea::AlliedAction(1) => {
                 let formation = members
                     .first()
-                    .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Line, |order| order.formation);
-                host.allied_target_mode = Some(AlliedTargetMode::Patrol {
+                    .and_then(|id| engine.tactical_order(*id))
+                    .map_or(TacticalFormation::Line, |order| order.formation);
+                host.tactical_target_mode = Some(TacticalTargetMode::Patrol {
                     soldiers: members,
                     formation,
                 });
@@ -639,10 +639,10 @@ fn on_portrait_click(
             PortraitHitArea::AlliedAction(2) => {
                 let formation = members
                     .first()
-                    .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Line, |order| order.formation)
+                    .and_then(|id| engine.tactical_order(*id))
+                    .map_or(TacticalFormation::Line, |order| order.formation)
                     .next();
-                let cmd = PlayerCommand::SetAlliedFormation {
+                let cmd = PlayerCommand::SetTacticalFormation {
                     soldiers: members,
                     formation,
                 };
@@ -660,7 +660,7 @@ fn on_portrait_click(
                     hit.area,
                 );
                 if let PortraitTarget::AlliedGroup(group_id) = hit.target {
-                    let cmd = PlayerCommand::SelectAlliedGroup {
+                    let cmd = PlayerCommand::SelectTacticalGroup {
                         group_id,
                         append: shift_held || ctrl_held,
                     };
@@ -742,7 +742,7 @@ fn on_portrait_click(
                         .and_then(|e| e.pc_data())
                         .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100);
                     if can_heal {
-                        if let Some(&healer_id) = engine.seat_selection(local_seat).first() {
+                        if let Some(&healer_id) = engine.hero_selection(local_seat).first() {
                             let cmds = vec![
                                 PlayerCommand::LaunchInteraction {
                                     actor: healer_id,
@@ -784,7 +784,7 @@ fn on_portrait_click(
                             .and_then(|e| e.pc_data())
                             .is_some_and(|pc| pc.life_points > 0);
                     if can_shield {
-                        if let Some(&shielder_id) = engine.seat_selection(local_seat).first() {
+                        if let Some(&shielder_id) = engine.hero_selection(local_seat).first() {
                             let cmds = vec![
                                 PlayerCommand::LaunchInteraction {
                                     actor: shielder_id,
@@ -930,7 +930,7 @@ fn on_portrait_click(
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         host.input.portrait_action_countdown = 5;
                         host.input.portrait_action_pc =
-                            engine.seat_selection(local_seat).first().copied();
+                            engine.hero_selection(local_seat).first().copied();
 
                         // Action-button click only arms
                         // the action; the fire-on-target step
@@ -1142,12 +1142,12 @@ fn on_world_click(
             .viewport
             .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
     {
-        if let Some(AlliedTargetMode::Patrol {
+        if let Some(TacticalTargetMode::Patrol {
             soldiers,
             formation,
-        }) = host.allied_target_mode.take()
+        }) = host.tactical_target_mode.take()
         {
-            let cmd = PlayerCommand::SetAlliedPatrol {
+            let cmd = PlayerCommand::SetTacticalPatrol {
                 soldiers,
                 destination: map_pt,
                 formation,
@@ -1204,7 +1204,7 @@ fn on_right_mouse_up(
             return;
         }
 
-        if host.allied_target_mode.take().is_some() {
+        if host.tactical_target_mode.take().is_some() {
             host.input.cancel_multi_unselection();
             return;
         }
@@ -1243,7 +1243,7 @@ fn on_right_mouse_up(
             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
             tracing::info!(
                 "Box-deselect: {} PCs remain selected",
-                engine.selected_pc_ids().len()
+                engine.selected_hero_ids().len()
             );
         } else if engine.is_alt_effective(&host.input) && host.selected_view_element.is_some() {
             // Alt+right-click while the view cone overlay
@@ -1284,9 +1284,9 @@ fn on_right_mouse_up(
                 if !matches!(hit.target, PortraitTarget::Pc(_)) {
                     let cmd = match hit.target {
                         PortraitTarget::AlliedGroup(group_id) => {
-                            PlayerCommand::UnpinAlliedGroup { group_id }
+                            PlayerCommand::UnpinTacticalGroup { group_id }
                         }
-                        PortraitTarget::AlliedSelection => PlayerCommand::ClearAlliedSelection,
+                        PortraitTarget::AlliedSelection => PlayerCommand::ClearTacticalSelection,
                         PortraitTarget::Pc(_) => unreachable!(),
                     };
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -1374,7 +1374,7 @@ fn on_right_mouse_up(
                     // pointer.  Emit CancelAction for any
                     // non-`ActionButton` area while an action
                     // is armed.
-                    if let Some(&actor_id) = engine.seat_selection(local_seat).first() {
+                    if let Some(&actor_id) = engine.hero_selection(local_seat).first() {
                         let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         tracing::info!(
@@ -1384,7 +1384,7 @@ fn on_right_mouse_up(
                         );
                     }
                 } else if !hit.is_burned
-                    && engine.seat_selection(local_seat).contains(&pc_id)
+                    && engine.hero_selection(local_seat).contains(&pc_id)
                     && matches!(
                         hit.area,
                         PortraitHitArea::TopScroll
@@ -1565,14 +1565,14 @@ pub(super) async fn handle_pause_menu_events(
                                 });
                         }
 
-                        host.control_allied_soldiers = gameplay_config.control_allied_soldiers;
-                        if !host.control_allied_soldiers {
+                        host.control_tactical_units = gameplay_config.control_tactical_units;
+                        if !host.control_tactical_units {
                             dispatch_local_command(
                                 host,
                                 engine,
                                 frame_cmds,
                                 assets,
-                                &PlayerCommand::ReleaseAlliedControl,
+                                &PlayerCommand::ReleaseTacticalControl,
                             );
                         }
 
@@ -1768,7 +1768,7 @@ pub(super) fn dispatch_corner_button_left_click(
     let local_seat = host.transport.local_seat;
     match btn {
         CornerButton::Clock => {
-            if manager.engine.seat_selection(local_seat).is_empty() {
+            if manager.engine.hero_selection(local_seat).is_empty() {
                 return;
             }
             if !manager.engine.is_recording_macro() {
@@ -1837,7 +1837,7 @@ pub(super) fn choose_recording_place(
     engine: &Engine,
     local_seat: engine_player_command::PlayerId,
 ) -> u8 {
-    let selected = engine.seat_selection(local_seat);
+    let selected = engine.hero_selection(local_seat);
     for slot in 0..robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u8 {
         let taken = selected.iter().any(|&pc| engine.has_quick_action(pc, slot));
         if !taken {

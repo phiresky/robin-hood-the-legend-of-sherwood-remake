@@ -610,7 +610,7 @@ fn get_transition_flags_pc(ctx: &TransitionCtx) -> (EX, CP, EA) {
             CP::MUST_BE_UPRIGHT | CP::CAN_BE_CROUCHED,
             EA::empty(),
         ),
-        // Rust-authored autonomous PCs reuse the enemy NPC overview AI.
+        // Rust-authored AI-controlled heroes reuse the enemy NPC overview AI.
         // Original never dispatched these commands to a PC, so apply the
         // soldier transition contract explicitly for that extension.
         LookLeft | LookRight => (

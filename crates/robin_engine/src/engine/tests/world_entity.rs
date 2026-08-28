@@ -183,7 +183,7 @@ fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiContro
 }
 
 #[test]
-fn autonomous_pc_speech_completion_clears_enemy_ai_latch() {
+fn enemy_ai_hero_speech_completion_clears_enemy_ai_latch() {
     use crate::ai::Remark;
     use crate::element::{ActorPc, AiActorData, AiBrain, ElementData, ElementKind, PcData};
 
@@ -199,8 +199,9 @@ fn autonomous_pc_speech_completion_clears_enemy_ai_latch() {
         actor: Default::default(),
         human: Default::default(),
         pc: PcData {
-            autonomous: true,
-            aggressive_combat: true,
+            command_interface: crate::human_control::CommandInterface::None,
+            mission_role: crate::human_control::MissionRole::Combatant,
+            combat_stance: crate::human_control::CombatStance::Aggressive,
             ai: Some(Box::new(AiActorData {
                 ai_brain: AiBrain::Enemy(Box::new(enemy)),
                 ..AiActorData::default()
@@ -224,7 +225,7 @@ fn autonomous_pc_speech_completion_clears_enemy_ai_latch() {
         engine
             .get_entity(owner)
             .and_then(Entity::ai_controller)
-            .expect("autonomous PC retains its AI")
+            .expect("AI-controlled hero retains its AI")
             .current_remark,
         Remark::TheSoundOfSilence
     );
@@ -3973,41 +3974,42 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
 }
 
 #[test]
-fn autonomous_pc_cross_owner_combat_neighbours_preserve_pc_kind() {
+fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
     use crate::ai::CrossNpcAction;
     use crate::element::{AiActorData, AiBrain};
 
     let mut engine = EngineInner::new();
     // EnemyAi reserves raw handle zero as its null human pointer.
     let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let make_autonomous_pc = || {
+    let make_enemy_ai_hero = || {
         let mut entity = make_test_pc(crate::element::Posture::Upright);
         let Entity::Pc(pc) = &mut entity else {
             unreachable!()
         };
         pc.element.active = true;
-        pc.pc.autonomous = true;
-        pc.pc.aggressive_combat = true;
+        pc.pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+        pc.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
         pc.pc.ai = Some(Box::new(AiActorData {
             ai_brain: AiBrain::Enemy(Box::default()),
             ..AiActorData::default()
         }));
         entity
     };
-    let owner = engine.add_entity(make_autonomous_pc());
-    let left = engine.add_entity(make_autonomous_pc());
+    let owner = engine.add_entity(make_enemy_ai_hero());
+    let left = engine.add_entity(make_enemy_ai_hero());
     for id in [owner, left] {
         engine
             .get_entity_mut(id)
             .and_then(Entity::enemy_ai_mut)
-            .expect("autonomous PC has EnemyAi")
+            .expect("AI-controlled hero has EnemyAi")
             .base
             .me = id.index();
     }
     engine
         .get_entity_mut(owner)
         .and_then(Entity::ai_controller_mut)
-        .expect("autonomous PC has AI controller")
+        .expect("AI-controlled hero has AI controller")
         .outbox
         .reentrant
         .cross_npc_actions
@@ -4038,34 +4040,35 @@ fn autonomous_pc_cross_owner_combat_neighbours_preserve_pc_kind() {
 }
 
 #[test]
-fn autonomous_pc_death_detaches_pc_combat_neighbours() {
+fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
     use crate::element::{AiActorData, AiBrain};
 
     let mut engine = EngineInner::new();
     let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let make_autonomous_pc = || {
+    let make_enemy_ai_hero = || {
         let mut entity = make_test_pc(crate::element::Posture::Upright);
         let Entity::Pc(pc) = &mut entity else {
             unreachable!()
         };
         pc.element.active = true;
         pc.pc.life_points = 100;
-        pc.pc.autonomous = true;
-        pc.pc.aggressive_combat = true;
+        pc.pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+        pc.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
         pc.pc.ai = Some(Box::new(AiActorData {
             ai_brain: AiBrain::Enemy(Box::default()),
             ..AiActorData::default()
         }));
         entity
     };
-    let left = engine.add_entity(make_autonomous_pc());
-    let victim = engine.add_entity(make_autonomous_pc());
-    let right = engine.add_entity(make_autonomous_pc());
+    let left = engine.add_entity(make_enemy_ai_hero());
+    let victim = engine.add_entity(make_enemy_ai_hero());
+    let right = engine.add_entity(make_enemy_ai_hero());
     for id in [left, victim, right] {
         engine
             .get_entity_mut(id)
             .and_then(Entity::enemy_ai_mut)
-            .expect("autonomous PC has EnemyAi")
+            .expect("AI-controlled hero has EnemyAi")
             .base
             .me = id.index();
     }

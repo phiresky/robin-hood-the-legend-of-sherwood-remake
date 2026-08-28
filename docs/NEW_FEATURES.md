@@ -15,7 +15,7 @@ A list of which additional features we have added, which ones we might still wan
   Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
   soldier `profile` values may use readable CPF-filename identifiers such as
   `guard_a01` (legacy numeric indices remain accepted);
-  autonomous PCs with `aggressive_combat: true` run through the normal enemy
+  AI-controlled heroes with `decision_policy: "enemy_ai"` run through the normal enemy
   perception, pursuit, target-reacquisition, and battle-decision lifecycle
   instead of receiving one-off mission-start pairings. Their required readable
   `ai_profile` (for example `soldier_b04`) selects the behavior personality;
@@ -30,6 +30,20 @@ A list of which additional features we have added, which ones we might still wan
   soldier retinues.
   Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.
+
+- **Orthogonal human-actor roles and control.** `Pc`, `Soldier`, and
+  `Civilian` now describe body/profile archetypes only. Runtime and hackable
+  level data independently describe decision ownership (`player_directed`,
+  `enemy_ai`, `friendly_ai`, or `scripted`), the player command surface
+  (`hero_actions`, `tactical_orders`, or `none`), mission bookkeeping role,
+  combat stance, and allegiance. This permits AI heroes and tactically
+  commandable soldiers or villains without pretending that body type or camp
+  determines control. Legacy RHM Royalist troop commandability and the old
+  custom-level `autonomous`/`aggressive_combat` fields are translated once at
+  load time. Existing replay command names and structured snapshot keys remain
+  readable for compatibility. Rescue heroes explicitly transition from
+  `rescue_target`/no commands to `player_party`/hero actions when the original
+  `CharacterAvailable(true)` sequence fires.
 
 - **Mission-selective shipping data.** Converted shipping datadirs now contain
   a compact boot manifest plus independently compressed mission cores and
@@ -105,8 +119,9 @@ A list of which additional features we have added, which ones we might still wan
   mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
   with `--proto <map>` when the mission and proto-level basenames differ.
 
-- **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
-  game option enables direct control of active green/Royalist soldiers. Click
+- **Optional tactical-unit control.** A persistent `Control Tactical Units`
+  game option enables high-level control of actors whose level data exposes
+  `command_interface: "tactical_orders"`, independently of allegiance. Click
   or drag a selection box to create a temporary portrait beside the heroes;
   its illustrated pin button preserves an individual or group portrait.
   Named soldier profiles can supply dedicated 112x50 visage art; Guy of

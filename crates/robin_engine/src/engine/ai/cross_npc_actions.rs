@@ -8,7 +8,7 @@ impl EngineInner {
     ) -> &mut crate::ai_enemy::EnemyAi {
         // Original combat-neighbour APIs take RHElementActorHuman pointers.
         // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
-        // autonomous PC therefore has to retain its ActorPc entity kind here.
+        // AI-controlled hero therefore has to retain its ActorPc entity kind here.
         let target_id = self.expect_human_id_for_ai_handle(target, operation);
         self.world
             .entities

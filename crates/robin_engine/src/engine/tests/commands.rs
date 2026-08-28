@@ -1959,7 +1959,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 }
 
 #[test]
-fn all_autonomous_pc_battle_does_not_trigger_default_loss() {
+fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let mut assets = LevelAssets::new();
@@ -1977,7 +1977,8 @@ fn all_autonomous_pc_battle_does_not_trigger_default_loss() {
             human: Default::default(),
             pc: crate::element::PcData {
                 playable: false,
-                autonomous: true,
+                command_interface: crate::human_control::CommandInterface::None,
+                mission_role: crate::human_control::MissionRole::Combatant,
                 life_points: 100,
                 ..Default::default()
             },

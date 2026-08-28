@@ -72,7 +72,7 @@ pub struct ReplayHeader {
 /// incompatible pre-merge formats independently used version 14, so neither is
 /// accepted by this build. There is deliberately no Rust-schema compatibility
 /// adapter: earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 15;
+pub const REPLAY_SCHEMA_VERSION: u32 = 16;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 15);
+        assert_eq!(REPLAY_SCHEMA_VERSION, 16);
     }
 
     fn unique_replay_path(label: &str) -> String {
