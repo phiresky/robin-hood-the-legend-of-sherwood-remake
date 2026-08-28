@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
+use rayon::prelude::*;
 use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
 use robin_assets::picture::Picture;
 use robin_assets::res_descr;
@@ -27,7 +28,7 @@ use robin_engine::level_data::{
     ChunkReader, LevelFormat, LoadedMission, LoadedProtoLevel, load_mission, load_proto_level,
 };
 use robin_engine::order::OrderType;
-use robin_engine::profiles::{CivilianType, ProfileManager};
+use robin_engine::profiles::{Action, CivilianType, ProfileManager};
 use robin_engine::sbfile::{SB_FILE_READ, SbFile, resolve_case_insensitive};
 use robin_engine::sprite_script;
 use robin_rs::main_entry::{FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS};
@@ -56,8 +57,14 @@ struct Args {
     format: OutFormat,
 
     /// Overwrite `output` if it exists.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "resume")]
     force: bool,
+
+    /// Shipping: keep a partial output directory and reuse every existing
+    /// content chunk whose decoded payload exactly matches this conversion.
+    /// Useful after an interrupted max-compression run.
+    #[arg(long, conflicts_with = "force")]
+    resume: bool,
 
     /// Shipping: how to encode `.map` / `.min` terrain bitmaps.
     /// `raw` keeps the original bzip2-RGB565 bytes (current behavior);
@@ -135,11 +142,13 @@ fn main() -> Result<()> {
     if args.output.exists() {
         if args.force {
             fs::remove_dir_all(&args.output)?;
-        } else {
+        } else if !args.resume {
             bail!(
-                "output exists (pass --force to overwrite): {}",
+                "output exists (pass --force to overwrite or --resume to validate and reuse chunks): {}",
                 args.output.display()
             );
+        } else {
+            tracing::info!(output = %args.output.display(), "resuming shipping conversion");
         }
     }
     fs::create_dir_all(&args.output)?;
@@ -149,6 +158,9 @@ fn main() -> Result<()> {
     fs::create_dir_all(&data_out)?;
 
     match args.format {
+        OutFormat::Hackable if args.resume => {
+            bail!("--resume is supported only with --format shipping")
+        }
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
         OutFormat::Shipping => convert_shipping(
             data_in,
@@ -157,6 +169,7 @@ fn main() -> Result<()> {
                 map_format: args.map_format,
                 interface_image_format: args.interface_image_format,
                 zstd_window_log: args.zstd_window_log,
+                resume: args.resume,
             },
         ),
     }
@@ -167,6 +180,7 @@ struct ShippingOpts {
     map_format: MapFormat,
     interface_image_format: InterfaceImageFormat,
     zstd_window_log: u32,
+    resume: bool,
 }
 
 /// Locate the game data directory inside the input folder.
@@ -876,7 +890,12 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::{animation_rhs_paths, animation_rhs_rel_existing};
+    use super::{
+        add_character_action_rhs_profiles, animation_rhs_paths, animation_rhs_rel_existing,
+        exclamation_dat_filename, prepare_shipping_payload,
+    };
+    use robin_assets::shipping_datadir::ShippingMission;
+    use robin_engine::profiles::Action;
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -907,6 +926,63 @@ mod tests {
             animation_rhs_rel_existing(8, "river", &exists),
             "Animations/Day/river.rhs"
         );
+    }
+
+    #[test]
+    fn exclamation_id_maps_to_original_actor_table_name() {
+        assert_eq!(
+            exclamation_dat_filename(u32::from_le_bytes(*b"PCRH")),
+            "actorPCRH.dat"
+        );
+    }
+
+    #[test]
+    fn character_actions_add_projectile_and_pickup_rhs_capabilities() {
+        let mut required = std::collections::BTreeMap::new();
+        add_character_action_rhs_profiles(
+            &mut required,
+            [Action::Bow, Action::Purse, Action::WaspNest],
+        );
+        for path in [
+            "Characters/ACCESSORIES_Arrow.rhs",
+            "Characters/BONUS_Arrows.rhs",
+            "Characters/ACCESSORIES_MoneyBag.rhs",
+            "Characters/ACCESSORIES_Coin.rhs",
+            "Characters/BONUS_MoneyBag.rhs",
+            "Characters/ACCESSORIES_Wasp.rhs",
+            "Characters/ACCESSORIES_WaspSting.rhs",
+            "Characters/BONUS_WaspsNest.rhs",
+        ] {
+            assert!(required.contains_key(path), "missing {path}");
+        }
+        assert!(!required.contains_key("Characters/RELIC_Crown.rhs"));
+    }
+
+    #[test]
+    fn resume_reuses_only_an_exact_decoded_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut payload = ShippingMission::default();
+        payload.raw.insert("one.bin".into(), vec![1, 2, 3]);
+        let (filename, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, false).unwrap();
+        std::fs::write(temp.path().join(&filename), compressed.unwrap()).unwrap();
+
+        let (reused_filename, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
+        assert_eq!(reused_filename, filename);
+        assert!(compressed.is_none());
+
+        let (_, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 29, true).unwrap();
+        assert!(
+            compressed.is_some(),
+            "a different zstd window must not reuse"
+        );
+
+        payload.raw.insert("two.bin".into(), vec![4]);
+        let (_, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
+        assert!(compressed.is_some());
     }
 }
 
@@ -1231,6 +1307,8 @@ use robin_engine::level_data::LoadedLevel;
 struct ShippingMissionBuild {
     payload: ShippingMission,
     required_rhs_profiles: std::collections::BTreeMap<String, BTreeSet<String>>,
+    required_exclamation_ids: BTreeSet<u32>,
+    music_names: BTreeSet<String>,
     map_names: BTreeSet<String>,
     proto_filename: String,
 }
@@ -1273,7 +1351,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // table and loading-screen bundle.
     for rel in [
         "Interface/DEFAULT.RES",
-        "Text/actors.res",
         "Text/Level.res",
         "Sounds/Exclamations/actors.res",
     ] {
@@ -1293,6 +1370,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     jxl_quality_label(q)
                 );
             }
+            mgr.disable_recovery_for_shipping();
             dd.res_files.insert(rel.into(), mgr);
         }
     }
@@ -1314,6 +1392,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .map_err(|e| anyhow!("parse cpf: {e}"))?;
         mgr
     };
+    let character_exclamation_ids: Vec<u32> = cpf
+        .characters
+        .iter()
+        .map(|profile| profile.exclamation_id)
+        .collect();
     for (i, c) in cpf.civilians.iter().enumerate() {
         if c.civilian_type == CivilianType::Beggar {
             beggar_ids.insert(i as u32);
@@ -1323,6 +1406,25 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // Missions → .rhp/.rhm/.scb/.red, also follow level sprite refs.
     let mut mission_builds = std::collections::BTreeMap::<String, ShippingMissionBuild>::new();
 
+    // Mission descriptors are authoritative campaign/UI data even when the
+    // profile deliberately points at the non-loadable `Impossible_mission`
+    // sentinel. Parse them independently from the RHP/RHM payload loop.
+    for mp in &cpf.missions {
+        let filename = res_descr::red_filename(mp.id);
+        let red_rel = format!("Text/{filename}");
+        if let Some(red_path) = in_path(&red_rel) {
+            dd.red_files
+                .insert(filename, res_descr::load(&red_path.to_string_lossy())?);
+        } else {
+            // Some stock profiles have no descriptor in the source install.
+            // Preserve that absence; never synthesize authoritative UI data.
+            tracing::warn!(
+                profile_id = mp.id,
+                "source mission descriptor is absent: {red_rel}"
+            );
+        }
+    }
+
     for mp in &cpf.missions {
         if mp.proto_level_filename.is_empty() || mp.mission_filename.is_empty() {
             continue;
@@ -1330,7 +1432,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let rhp_rel = format!("Levels/{}.rhp", mp.proto_level_filename);
         let rhm_rel = format!("Levels/{}.rhm", mp.mission_filename);
         let scb_rel = format!("Levels/{}.scb", mp.mission_filename);
-        let red_rel = format!("Text/{}", res_descr::red_filename(mp.id));
 
         let Some(rhp_path) = in_path(&rhp_rel) else {
             tracing::warn!("missing: {}", rhp_rel);
@@ -1346,6 +1447,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             proto_filename: mp.proto_level_filename.clone(),
             ..ShippingMissionBuild::default()
         };
+        build.music_names.extend(
+            [&mp.green_music, &mp.yellow_music, &mp.red_music]
+                .into_iter()
+                .filter(|name| !name.is_empty())
+                .cloned(),
+        );
         let required_rhs_profiles = &mut build.required_rhs_profiles;
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
@@ -1381,6 +1488,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 idx as usize,
                 &in_path,
             );
+            if let Some(profile) = cpf.characters.get(idx as usize)
+                && profile.exclamation_id != 0
+            {
+                build
+                    .required_exclamation_ids
+                    .insert(profile.exclamation_id);
+            }
         }
         for p in &mission.mission_patches {
             add_required_animation_rhs_profile(
@@ -1391,11 +1505,18 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             );
         }
         for target in &mission.targets {
-            add_required_rhs_rel(
-                required_rhs_profiles,
-                animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path),
-                &target.profile_name,
-            );
+            let rel =
+                animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path);
+            if in_path(&rel).is_some() {
+                add_required_rhs_rel(required_rhs_profiles, rel, &target.profile_name);
+            } else {
+                // TODO: Determine why a few stock level records name an RHS
+                // that does not exist in any original animation directory.
+                tracing::warn!(
+                    mission = mp.mission_filename,
+                    "source target RHS is absent: {rel}"
+                );
+            }
         }
         for mobile in &mission.mobile_elements {
             for fx in &mobile.sprites {
@@ -1409,6 +1530,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for soldier in &mission.soldiers {
             if let Some(profile) = cpf.soldiers.get(soldier.profile_number as usize) {
+                if profile.exclamation_id != 0 {
+                    build
+                        .required_exclamation_ids
+                        .insert(profile.exclamation_id);
+                }
                 add_required_rhs_rel(
                     required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
@@ -1418,6 +1544,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for civilian in &mission.civilians {
             if let Some(profile) = cpf.civilians.get(civilian.profile_number as usize) {
+                if profile.exclamation_id != 0 {
+                    build
+                        .required_exclamation_ids
+                        .insert(profile.exclamation_id);
+                }
                 add_required_rhs_rel(
                     required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
@@ -1432,6 +1563,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 pc.profile_index as usize,
                 &in_path,
             );
+            if let Some(profile) = cpf.characters.get(pc.profile_index as usize)
+                && profile.exclamation_id != 0
+            {
+                build
+                    .required_exclamation_ids
+                    .insert(profile.exclamation_id);
+            }
         }
         for bonus in &mission.bonuses {
             if let Some((file, profile)) = bonus_type_to_sprite_asset_for_shipping(bonus.bonus_type)
@@ -1455,8 +1593,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 "BONUS Trefle",
             );
         }
-        add_common_object_rhs_profiles(required_rhs_profiles);
         add_required_rhs_rel(required_rhs_profiles, "Characters/Blip00.rhs", "Blip 00");
+        // The original engine creates every object master at level load.
+        // These payloads are tiny and must be present now that parsed RHS is
+        // authoritative and no raw-file fallback exists.
+        add_all_saved_world_object_rhs_profiles(required_rhs_profiles);
 
         build
             .payload
@@ -1472,12 +1613,39 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         } else {
             tracing::warn!("missing: {}", scb_rel);
         }
-        if let Some(p) = in_path(&red_rel) {
-            let desc = res_descr::load(&p.to_string_lossy())?;
-            dd.red_files.insert(res_descr::red_filename(mp.id), desc);
-        }
         mission_builds.insert(mp.mission_filename.clone(), build);
     }
+
+    // Runtime party composition is not known during conversion. Build a
+    // manifest index for every character profile so the mission boundary can
+    // fetch only the selected team plus eligible reinforcement candidates.
+    // Each entry also carries the projectile/pickup masters enabled by that
+    // profile's actions; those objects can be created during a tick and cannot
+    // perform asynchronous loading themselves.
+    let mut character_rhs_requirements = std::collections::BTreeMap::<
+        u32,
+        std::collections::BTreeMap<String, BTreeSet<String>>,
+    >::new();
+    for (index, profile) in cpf.characters.iter().enumerate() {
+        let profile_index = u32::try_from(index).context("character profile index exceeds u32")?;
+        let required = character_rhs_requirements.entry(profile_index).or_default();
+        add_required_character_rhs_profiles_for_index(required, &cpf, index, &in_path);
+        add_character_action_rhs_profiles(
+            required,
+            profile
+                .actions
+                .into_iter()
+                .chain(profile.contextual_actions),
+        );
+    }
+
+    // A decoded save can contain a live object which is neither authored by
+    // the destination mission nor implied by its current party. Until exact
+    // saved-world object types are threaded into this boundary, keep the full
+    // object-master closure explicit and load it only for save launches.
+    let mut saved_world_rhs_requirements =
+        std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    add_all_saved_world_object_rhs_profiles(&mut saved_world_rhs_requirements);
 
     // Load the source bank once. Each RHS gets one shared payload containing
     // its metadata and reachable bank slots; missions reference these files
@@ -1490,7 +1658,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     dd.sprite_bank = Some(ShippingSpriteBank {
         signature: holder.signature(),
         dictionaries: holder.dictionaries().to_vec(),
-        sprites: vec![None; holder.sprites().len()],
+        sprite_count: holder.sprites().len() as u32,
+        sprites: Vec::new(),
     });
     let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     for build in mission_builds.values() {
@@ -1501,15 +1670,27 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .extend(profiles.iter().cloned());
         }
     }
+    for required in character_rhs_requirements.values() {
+        for (rel, profiles) in required {
+            rhs_requirements
+                .entry(rel.clone())
+                .or_default()
+                .extend(profiles.iter().cloned());
+        }
+    }
+    for (rel, profiles) in &saved_world_rhs_requirements {
+        rhs_requirements
+            .entry(rel.clone())
+            .or_default()
+            .extend(profiles.iter().cloned());
+    }
     let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
     for (rel, required_profiles) in &rhs_requirements {
         if rel.is_empty() {
             continue;
         }
-        let Some(path) = in_path(rel) else {
-            tracing::warn!("missing shared RHS {rel}");
-            continue;
-        };
+        let path = in_path(rel)
+            .ok_or_else(|| anyhow!("required authoritative shipping RHS is missing: {rel}"))?;
         let mut used_sprite_ids = BTreeSet::<u32>::new();
         let (signature, profiles) =
             sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
@@ -1526,9 +1707,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for required in required_profiles {
             if !required.is_empty() && !matched_profiles.contains(required) {
-                tracing::warn!("rhs {rel} missing required profile '{required}'");
+                bail!("authoritative shipping RHS {rel} is missing required profile '{required}'");
             }
         }
+        let profiles = profiles
+            .into_iter()
+            .filter(|(name, _)| all_profiles_required || matched_profiles.contains(name))
+            .collect();
         let mut payload = ShippingMission::default();
         payload.rhs_files.insert(
             rel.clone(),
@@ -1537,31 +1722,34 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 profiles,
             },
         );
-        payload.raw.insert(
-            rel.to_ascii_lowercase(),
-            fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        );
-        let sprites = holder
-            .sprites()
+        let sprites = used_sprite_ids
             .iter()
-            .enumerate()
-            .map(|(idx, sprite)| {
-                used_sprite_ids
-                    .contains(&(idx as u32))
-                    .then(|| ShippingSprite {
+            .map(|&idx| {
+                let sprite = holder.sprites().get(idx as usize).ok_or_else(|| {
+                    anyhow!("RHS {rel} references sprite {idx} beyond the shipping bank")
+                })?;
+                let packed_data = match holder.packed_data(idx) {
+                    Some(packed) => packed.to_vec(),
+                    None if sprite.width == 0 || sprite.height == 0 => Vec::new(),
+                    None => bail!(
+                        "RHS {rel} references non-empty sprite {idx} with no packed bank data"
+                    ),
+                };
+                Ok((
+                    idx,
+                    ShippingSprite {
                         width: sprite.width,
                         height: sprite.height,
                         dictionary_index: sprite.dictionary_index,
-                        packed_data: holder
-                            .packed_data(idx as u32)
-                            .map(<[u16]>::to_vec)
-                            .unwrap_or_default(),
-                    })
+                        packed_data: Arc::new(packed_data),
+                    },
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         payload.sprite_bank = Some(ShippingSpriteBank {
             signature: holder.signature(),
             dictionaries: Vec::new(),
+            sprite_count: holder.sprites().len() as u32,
             sprites,
         });
         tracing::info!(
@@ -1684,29 +1872,328 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // shared RHS files avoid duplicating heroes/accessories across missions.
     let mission_dir = data_out.join("missions");
     let rhs_dir = data_out.join("rhs");
+    let audio_dir = data_out.join("audio");
     fs::create_dir_all(&mission_dir)?;
     fs::create_dir_all(&rhs_dir)?;
+    fs::create_dir_all(&audio_dir)?;
+    // Max-level zstd is deliberately expensive and memory hungry. Bound the
+    // worker count and write each completed chunk in its worker so the result
+    // vector retains only small manifest metadata, not every compressed RHS.
+    let compression_workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(4);
+    let compression_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(compression_workers)
+        .thread_name(|index| format!("shipping-zstd-{index}"))
+        .build()
+        .context("create bounded shipping compression pool")?;
+    let encoded_rhs = compression_pool.install(|| {
+        rhs_payloads
+            .into_par_iter()
+            .map(|(rel, payload)| {
+                let (filename, compressed) = prepare_shipping_payload(
+                    &rhs_dir,
+                    &rel,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                write_prepared_shipping_payload(&rhs_dir, &filename, compressed)?;
+                Ok((rel, filename))
+            })
+            .collect::<Vec<Result<(String, String)>>>()
+    });
     let mut rhs_files = std::collections::BTreeMap::<String, String>::new();
-    for (rel, payload) in rhs_payloads {
-        let compressed = encode_shipping_payload(&payload, opts.zstd_window_log)?;
-        let filename = shipping_payload_filename(&rel, &compressed);
+    for encoded in encoded_rhs {
+        let (rel, filename) = encoded?;
         let relative = format!("rhs/{filename}");
-        let path = rhs_dir.join(&filename);
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
         rhs_files.insert(rel, relative);
     }
-    for (mission_name, build) in mission_builds {
-        let compressed = encode_shipping_payload(&build.payload, opts.zstd_window_log)?;
-        let filename = shipping_payload_filename(&mission_name, &compressed);
+    for (profile_index, requirements) in character_rhs_requirements {
+        let mut files = Vec::with_capacity(requirements.len());
+        for rel in requirements.keys() {
+            let file = rhs_files.get(rel).ok_or_else(|| {
+                anyhow!(
+                    "character profile {profile_index} requires missing shipping RHS payload {rel}"
+                )
+            })?;
+            files.push(file.clone());
+        }
+        files.sort();
+        files.dedup();
+        dd.character_rhs_files.insert(profile_index, files);
+    }
+    for rel in saved_world_rhs_requirements.keys() {
+        let file = rhs_files.get(rel).ok_or_else(|| {
+            anyhow!("saved-world compatibility requires missing shipping RHS payload {rel}")
+        })?;
+        dd.saved_world_rhs_files.push(file.clone());
+    }
+    dd.saved_world_rhs_files.sort();
+    dd.saved_world_rhs_files.dedup();
+
+    // Audio is read synchronously by the legacy sound cache, so each selected
+    // mission must mount its complete audio closure before setup begins. Keep
+    // the large common FX set shared, and split localized speech by actor so a
+    // mission does not download the full locale's voice library.
+    let mut common_audio = ShippingMission::default();
+    let sounds_root = data_in.join("Sounds");
+    if sounds_root.is_dir() {
+        let mut files = Vec::new();
+        collect_files_recursive(&sounds_root, &mut files)?;
+        files.sort();
+        for path in files {
+            let relative = path
+                .strip_prefix(&sounds_root)
+                .expect("collected sound must remain below Sounds")
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            if relative.starts_with("menu/") || relative.starts_with("exclamations/") {
+                continue;
+            }
+            insert_shipping_raw(&mut common_audio, &format!("Sounds/{relative}"), &path)?;
+        }
+    }
+    let common_audio_file = write_shipping_dependency(
+        &audio_dir,
+        "common-sfx",
+        &common_audio,
+        opts.zstd_window_log,
+        opts.resume,
+    )?;
+
+    let required_exclamation_ids: BTreeSet<u32> = mission_builds
+        .values()
+        .flat_map(|build| build.required_exclamation_ids.iter().copied())
+        .chain(
+            character_exclamation_ids
+                .iter()
+                .copied()
+                .filter(|id| *id != 0),
+        )
+        .collect();
+    let mut exclamation_metadata = ShippingMission::default();
+    let exclamation_root = data_in.join("Sounds/Exclamations");
+    if exclamation_root.is_dir() {
+        let mut files = Vec::new();
+        collect_files_recursive(&exclamation_root, &mut files)?;
+        files.sort();
+        for path in files {
+            // actors.res is already represented authoritatively in
+            // `ShippingDatadir::res_files`; voice WAVs are actor chunks below.
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or_default();
+            if extension.eq_ignore_ascii_case("dat") {
+                let relative = path
+                    .strip_prefix(&data_in)
+                    .expect("base exclamation metadata must remain below Data")
+                    .to_string_lossy();
+                insert_shipping_raw(&mut exclamation_metadata, &relative, &path)?;
+            }
+        }
+    }
+    // A localized install may put actor tables in its locale overlay rather
+    // than the base Exclamations directory. Ensure every referenced table is
+    // mounted under the logical path used by the runtime.
+    for exclamation_id in &required_exclamation_ids {
+        let dat_rel = format!(
+            "Sounds/Exclamations/{}",
+            exclamation_dat_filename(*exclamation_id)
+        );
+        if let Some(path) = in_path(&dat_rel) {
+            insert_shipping_raw(&mut exclamation_metadata, &dat_rel, &path)?;
+        }
+    }
+    let actors_res_path = in_path("Sounds/Exclamations/actors.res")
+        .ok_or_else(|| anyhow!("Sounds/Exclamations/actors.res missing"))?;
+    let mut actors_res = ResourceManager::new();
+    actors_res.attach_resource_file(&actors_res_path.to_string_lossy())?;
+    let mut actor_samples = std::collections::BTreeMap::<u32, Vec<(String, PathBuf)>>::new();
+    let mut sample_profile_counts = std::collections::BTreeMap::<String, usize>::new();
+    for &exclamation_id in &required_exclamation_ids {
+        let dat_filename = exclamation_dat_filename(exclamation_id);
+        let dat_rel = format!("Sounds/Exclamations/{dat_filename}");
+        let dat_path = in_path(&dat_rel).ok_or_else(|| {
+            anyhow!(
+                "required exclamation profile {exclamation_id:#010x} is missing metadata {dat_rel}"
+            )
+        })?;
+        let dat = fs::read(&dat_path)
+            .with_context(|| format!("read exclamation metadata {}", dat_path.display()))?;
+        let prefix_id = exclamation_id & 0xffff_0000;
+        let (table_id, exclamations) =
+            robin_engine::sound_cache::parse_exclamation_file(&dat, prefix_id)
+                .map_err(|error| anyhow!("parse exclamation metadata {dat_filename}: {error}"))?;
+        let variant_indices: BTreeSet<u32> = exclamations
+            .into_iter()
+            .flat_map(|(_, variants)| variants)
+            .collect();
+        let mut samples = Vec::with_capacity(variant_indices.len());
+        for variant_index in variant_indices {
+            let sample = actors_res
+                .get_sample(table_id as i32, variant_index as usize)
+                .with_context(|| {
+                    format!("resolve exclamation {exclamation_id:#010x} variant {variant_index}")
+                })?
+                .replace('\\', "/");
+            let sample_rel = format!("Sounds/Exclamations/{sample}");
+            let sample_path = in_path(&sample_rel).ok_or_else(|| {
+                anyhow!(
+                    "required exclamation profile {exclamation_id:#010x} variant {variant_index} references missing sample {sample_rel}"
+                )
+            })?;
+            samples.push((sample_rel.clone(), sample_path));
+            *sample_profile_counts.entry(sample_rel).or_default() += 1;
+        }
+        actor_samples.insert(exclamation_id, samples);
+    }
+
+    // A handful of generic samples (notably x_empty.wav) are referenced by
+    // multiple actor tables. Store those once in the shared exclamation
+    // payload rather than downloading duplicate bytes or mounting duplicate
+    // VFS keys from several actor chunks.
+    for (sample_rel, profile_count) in &sample_profile_counts {
+        if *profile_count > 1 {
+            let sample_path = in_path(sample_rel).ok_or_else(|| {
+                anyhow!("shared exclamation sample disappeared during conversion: {sample_rel}")
+            })?;
+            insert_shipping_raw(&mut exclamation_metadata, sample_rel, &sample_path)?;
+        }
+    }
+    let exclamation_metadata_file = write_shipping_dependency(
+        &audio_dir,
+        "exclamation-metadata",
+        &exclamation_metadata,
+        opts.zstd_window_log,
+        opts.resume,
+    )?;
+
+    let mut actor_voice_files = std::collections::BTreeMap::<u32, String>::new();
+    for exclamation_id in required_exclamation_ids {
+        let mut actor_audio = ShippingMission::default();
+        let samples = actor_samples.remove(&exclamation_id).ok_or_else(|| {
+            anyhow!("missing resolved sample set for exclamation profile {exclamation_id:#010x}")
+        })?;
+        for (sample_rel, sample_path) in samples {
+            if sample_profile_counts.get(&sample_rel).copied().unwrap_or(0) == 1 {
+                insert_shipping_raw(&mut actor_audio, &sample_rel, &sample_path)?;
+            }
+        }
+        if let Some(relative) = write_shipping_dependency(
+            &audio_dir,
+            &format!("voice-{exclamation_id:08x}"),
+            &actor_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            actor_voice_files.insert(exclamation_id, relative);
+        }
+    }
+
+    for (profile_index, exclamation_id) in character_exclamation_ids.into_iter().enumerate() {
+        let profile_index =
+            u32::try_from(profile_index).context("character profile index exceeds u32")?;
+        let files = actor_voice_files
+            .get(&exclamation_id)
+            .cloned()
+            .into_iter()
+            .collect();
+        dd.character_audio_files.insert(profile_index, files);
+        if exclamation_id != 0 {
+            dd.character_exclamation_ids
+                .insert(profile_index, exclamation_id);
+        }
+    }
+
+    let encoded_missions = compression_pool.install(|| {
+        mission_builds
+            .into_par_iter()
+            .map(|(mission_name, build)| {
+                let ShippingMissionBuild {
+                    payload,
+                    required_rhs_profiles,
+                    required_exclamation_ids,
+                    music_names,
+                    ..
+                } = build;
+                let (filename, compressed) = prepare_shipping_payload(
+                    &mission_dir,
+                    &mission_name,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                let compressed_len =
+                    write_prepared_shipping_payload(&mission_dir, &filename, compressed)?;
+                Ok((
+                    mission_name,
+                    filename,
+                    compressed_len,
+                    required_rhs_profiles,
+                    required_exclamation_ids,
+                    music_names,
+                ))
+            })
+            .collect::<Vec<Result<_>>>()
+    });
+    for encoded in encoded_missions {
+        let (
+            mission_name,
+            filename,
+            compressed_len,
+            required_rhs_profiles,
+            required_exclamation_ids,
+            music_names,
+        ) = encoded?;
         let relative = format!("missions/{filename}");
-        let compressed_len = compressed.len();
-        let path = mission_dir.join(&filename);
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
         let mut files = vec![relative.clone()];
-        for rel in build.required_rhs_profiles.keys() {
-            if let Some(file) = rhs_files.get(rel) {
+        for rel in required_rhs_profiles.keys() {
+            let file = rhs_files.get(rel).ok_or_else(|| {
+                anyhow!("shipping mission {mission_name} requires missing RHS payload {rel}")
+            })?;
+            files.push(file.clone());
+        }
+        if let Some(file) = common_audio_file.as_ref() {
+            files.push(file.clone());
+        }
+        if let Some(file) = exclamation_metadata_file.as_ref() {
+            files.push(file.clone());
+        }
+        for exclamation_id in &required_exclamation_ids {
+            if let Some(file) = actor_voice_files.get(exclamation_id) {
                 files.push(file.clone());
             }
+        }
+        let mut music_audio = ShippingMission::default();
+        for name in &music_names {
+            // SoundManager requests `.wav`, but the Linux release ships Ogg
+            // and the audio backend deliberately falls back between them.
+            // Preserve whichever real file the source datadir provides.
+            let (relative, path) = ["wav", "ogg"]
+                .into_iter()
+                .find_map(|extension| {
+                    let relative = format!("Musics/{name}.{extension}");
+                    in_path(&relative).map(|path| (relative, path))
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "shipping mission {mission_name} references missing music Musics/{name}.{{wav,ogg}}"
+                    )
+                })?;
+            insert_shipping_raw(&mut music_audio, &relative, &path)?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-music",
+            &music_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
         }
         tracing::info!(
             mission = mission_name,
@@ -1714,6 +2201,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             dependencies = files.len(),
             file = relative,
             "wrote shipping mission payload"
+        );
+        dd.mission_exclamation_ids.insert(
+            mission_name.clone(),
+            required_exclamation_ids.iter().copied().collect(),
         );
         dd.missions
             .insert(mission_name, ShippingMissionRef { files });
@@ -1746,19 +2237,158 @@ fn shipping_file_stem(name: &str) -> String {
         .collect()
 }
 
-fn shipping_payload_filename(name: &str, compressed: &[u8]) -> String {
+fn shipping_payload_filename(name: &str, window_log: u32, compressed: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     let digest = Sha256::digest(compressed);
     let hash: String = digest[..6]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    format!("{}-{hash}.rhmission.zst", shipping_file_stem(name))
+    format!(
+        "{}-w{window_log}-{hash}.rhmission.zst",
+        shipping_file_stem(name)
+    )
 }
 
 fn encode_shipping_payload(payload: &ShippingMission, window_log: u32) -> Result<Vec<u8>> {
     let encoded = robin_assets::shipping_datadir::encode_mission_native(payload);
     robin_assets::shipping_datadir::zstd_compress_with_window(&encoded, window_log)
+}
+
+fn write_prepared_shipping_payload(
+    output_dir: &Path,
+    filename: &str,
+    compressed: Option<Vec<u8>>,
+) -> Result<usize> {
+    let path = output_dir.join(filename);
+    if let Some(compressed) = compressed {
+        let len = compressed.len();
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        Ok(len)
+    } else {
+        Ok(fs::metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?
+            .len() as usize)
+    }
+}
+
+/// Return a validated existing content filename, or freshly compressed bytes
+/// and their content-addressed filename. Reuse compares the complete decoded
+/// native-bitcode payload, so an interrupted run cannot accidentally mix
+/// schemas, source data, or converter options.
+fn prepare_shipping_payload(
+    output_dir: &Path,
+    label: &str,
+    payload: &ShippingMission,
+    window_log: u32,
+    resume: bool,
+) -> Result<(String, Option<Vec<u8>>)> {
+    if resume {
+        let prefix = format!("{}-w{window_log}-", shipping_file_stem(label));
+        let expected = robin_assets::shipping_datadir::encode_mission_native(payload);
+        let mut candidates = fs::read_dir(output_dir)
+            .with_context(|| format!("read_dir {}", output_dir.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(&prefix) && name.ends_with(".rhmission.zst")
+                    })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        for path in candidates {
+            let compressed = match fs::read(&path) {
+                Ok(compressed) => compressed,
+                Err(_) => continue,
+            };
+            let decoded =
+                match robin_assets::shipping_datadir::decode_mission_compressed(&compressed) {
+                    Ok(decoded) => decoded,
+                    Err(_) => continue,
+                };
+            if robin_assets::shipping_datadir::encode_mission_native(&decoded) == expected {
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("candidate shipping filename was valid UTF-8")
+                    .to_owned();
+                tracing::info!(label, filename, "reused validated shipping payload");
+                return Ok((filename, None));
+            }
+        }
+    }
+
+    let compressed = encode_shipping_payload(payload, window_log)?;
+    let filename = shipping_payload_filename(label, window_log, &compressed);
+    Ok((filename, Some(compressed)))
+}
+
+fn collect_files_recursive(src: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn insert_shipping_raw(payload: &mut ShippingMission, relative: &str, path: &Path) -> Result<()> {
+    let relative = relative.replace('\\', "/").to_ascii_lowercase();
+    let bytes = fs::read(path).with_context(|| format!("read audio {}", path.display()))?;
+    if let Some(previous) = payload.raw.get(&relative) {
+        if previous != &bytes {
+            bail!("conflicting shipping audio sources for {relative}");
+        }
+    } else {
+        payload.raw.insert(relative, bytes);
+    }
+    Ok(())
+}
+
+fn write_shipping_dependency(
+    output_dir: &Path,
+    label: &str,
+    payload: &ShippingMission,
+    window_log: u32,
+    resume: bool,
+) -> Result<Option<String>> {
+    if payload.raw.is_empty() {
+        return Ok(None);
+    }
+    let (filename, compressed) =
+        prepare_shipping_payload(output_dir, label, payload, window_log, resume)?;
+    let path = output_dir.join(&filename);
+    let compressed_len = if let Some(compressed) = compressed {
+        let compressed_len = compressed.len();
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        compressed_len
+    } else {
+        fs::metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?
+            .len() as usize
+    };
+    tracing::info!(
+        label,
+        files = payload.raw.len(),
+        bytes = compressed_len,
+        "wrote shipping audio dependency"
+    );
+    Ok(Some(format!("audio/{filename}")))
+}
+
+fn exclamation_dat_filename(exclamation_id: u32) -> String {
+    let suffix: String = exclamation_id
+        .to_le_bytes()
+        .into_iter()
+        .filter(|byte| *byte != 0)
+        .map(char::from)
+        .collect();
+    format!("actor{suffix}.dat")
 }
 
 /// Decode an `SBPictureSixteen` (`.map`) file and re-encode it as JXL via
@@ -1784,6 +2414,23 @@ fn is_interface_path(path: &str) -> bool {
         || normalized == "interface/loading.pak"
         || normalized.starts_with("interface/")
         || normalized.contains("/data/interface/")
+}
+
+/// Files represented authoritatively by parsed shipping fields, plus a legacy
+/// launcher slideshow that the Rust runtime never consumes. Keeping these raw
+/// copies doubles their decoded wasm heap cost without providing a fallback.
+fn omit_boot_raw(path: &str) -> bool {
+    matches!(
+        path.replace('\\', "/").to_ascii_lowercase().as_str(),
+        "interface/default.res"
+            | "text/level.res"
+            | "text/actors.res"
+            | "sounds/exclamations/actors.res"
+            | "configuration/profile.cpf"
+            | "configuration/keyset1.cfg"
+            | "configuration/keyset2.cfg"
+            | "interface/slideshow_in.pak"
+    )
 }
 
 fn encode_interface_pak_pictures(
@@ -1965,6 +2612,14 @@ fn walk_and_bundle_small(
             .to_string_lossy()
             .replace('\\', "/")
             .to_ascii_lowercase();
+        if omit_boot_raw(&rel) {
+            continue;
+        }
+        if ext == "red" {
+            // Every mission descriptor was parsed into `dd.red_files` above;
+            // raw fallback would duplicate it and undermine that invariant.
+            continue;
+        }
         if ext == "pak"
             && rel.starts_with("levels/")
             && !exts.iter().any(|candidate| *candidate == "rhm")
@@ -2145,11 +2800,14 @@ fn add_required_animation_rhs_profile(
     if sprite.frame_profile_name.is_empty() || sprite.profile_name.is_empty() {
         return;
     }
-    add_required_rhs_rel(
-        required,
-        animation_rhs_rel_existing(ambiance, &sprite.frame_profile_name, in_path),
-        &sprite.profile_name,
-    );
+    let rel = animation_rhs_rel_existing(ambiance, &sprite.frame_profile_name, in_path);
+    if in_path(&rel).is_some() {
+        add_required_rhs_rel(required, rel, &sprite.profile_name);
+    } else {
+        // TODO: Determine why a few stock level records name an RHS that is
+        // absent from every original animation directory.
+        tracing::warn!("source animation RHS is absent: {rel}");
+    }
 }
 
 fn animation_rhs_rel_existing(
@@ -2286,7 +2944,53 @@ fn bonus_type_to_sprite_asset_for_shipping(
     }
 }
 
-fn add_common_object_rhs_profiles(
+fn add_character_action_rhs_profiles(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
+    actions: impl IntoIterator<Item = Action>,
+) {
+    for action in actions {
+        let assets: &[(&str, &str)] = match action {
+            Action::Bow => &[
+                ("ACCESSORIES_Arrow", "ACCESSOIRES Fleche"),
+                ("BONUS_Arrows", "BONUS Fleches"),
+            ],
+            Action::Stone => &[
+                ("ACCESSORIES_Stone", "ACCESSOIRES Cailloux"),
+                ("BONUS_Stones", "BONUS Cailloux"),
+            ],
+            Action::Apple => &[
+                ("ACCESSORIES_Apple", "ACCESSOIRES Pomme"),
+                ("BONUS_Apples", "BONUS Pommes"),
+            ],
+            Action::Ale => &[
+                ("ACCESSORIES_Ale", "ACCESSOIRES Ale"),
+                ("BONUS_Ale", "BONUS Ale"),
+            ],
+            Action::Eat | Action::Guzzle => &[("BONUS_LegOfLamb", "BONUS Gigots")],
+            Action::Heal => &[("BONUS_Plants", "BONUS Plantes")],
+            Action::Net => &[
+                ("ACCESSORIES_Net", "ACCESSOIRES Filet"),
+                ("BONUS_Nets", "BONUS Filets"),
+            ],
+            Action::WaspNest => &[
+                ("ACCESSORIES_Wasp", "ACCESSOIRES Guepes"),
+                ("ACCESSORIES_WaspSting", "Guepe"),
+                ("BONUS_WaspsNest", "BONUS Guepes"),
+            ],
+            Action::Purse => &[
+                ("ACCESSORIES_MoneyBag", "ACCESSOIRES Bourse d'argent"),
+                ("ACCESSORIES_Coin", "ACCESSOIRES Piece d'or"),
+                ("BONUS_MoneyBag", "BONUS Bourses d'argent"),
+            ],
+            _ => &[],
+        };
+        for &(file, profile) in assets {
+            add_required_rhs_rel(required, format!("Characters/{file}.rhs"), profile);
+        }
+    }
+}
+
+fn add_all_saved_world_object_rhs_profiles(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
 ) {
     for (file, profile) in [

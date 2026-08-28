@@ -5981,6 +5981,7 @@ dependencies = [
  "pollster 1.0.1",
  "qoi",
  "rand 0.10.2",
+ "rayon",
  "rfd",
  "robin_assets",
  "robin_engine",

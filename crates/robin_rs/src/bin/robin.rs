@@ -215,8 +215,7 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
     let mut dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
     dd.set_remote_base_url(data_base_url);
-    let dd = std::sync::Arc::new(dd);
-    assets_shipping_datadir::install_global(dd.clone()).map_err(|e| {
+    let dd = assets_shipping_datadir::install_global(std::sync::Arc::new(dd)).map_err(|e| {
         wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
     })?;
     robin_rs::http_server::start_global(0)

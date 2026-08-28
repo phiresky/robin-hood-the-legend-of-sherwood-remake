@@ -217,7 +217,7 @@ pub fn pre_decode_background_map(
     let mut picture = None;
     if let Some(dd) = shipping {
         for key in &shipping_keys {
-            if let Some(bytes) = dd.raw.get(key) {
+            if let Some(bytes) = dd.raw_asset(key) {
                 tracing::info!(
                     "Loading background map from shipping datadir: {} ({} bytes)",
                     key,
@@ -368,7 +368,7 @@ pub fn pre_decode_minimap(
     ];
     if let Some(dd) = shipping {
         for key in &shipping_keys {
-            if let Some(bytes) = dd.raw.get(key) {
+            if let Some(bytes) = dd.raw_asset(key) {
                 tracing::info!("Loading minimap from shipping datadir: {key}");
                 match Picture::load_terrain_from_bytes(bytes) {
                     Ok(p) => {

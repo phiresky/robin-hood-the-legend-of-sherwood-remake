@@ -8,13 +8,82 @@
 //! and sound data.  A conversion table maps action IDs ([`OrderType`]
 //! discriminants) to row indices.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
 use crate::order::OrderType;
 use crate::sbfile::SbFile;
+
+#[derive(Debug)]
+struct ShippingRhs {
+    signature: u32,
+    profiles: Vec<(String, SpriteInfo)>,
+}
+
+static SHIPPING_RHS: OnceLock<RwLock<BTreeMap<String, ShippingRhs>>> = OnceLock::new();
+
+fn shipping_rhs_registry() -> &'static RwLock<BTreeMap<String, ShippingRhs>> {
+    SHIPPING_RHS.get_or_init(|| RwLock::new(BTreeMap::new()))
+}
+
+fn normalized_rhs_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    normalized
+        .strip_prefix("data/")
+        .unwrap_or(&normalized)
+        .trim_start_matches("./")
+        .to_owned()
+}
+
+/// Replace the parsed RHS files visible to sprite loading.
+///
+/// Shipping mission activation calls this before level construction. Loose
+/// datadirs never populate the registry and continue through `SbFile`.
+pub fn replace_shipping_rhs<'a>(
+    files: impl IntoIterator<Item = (&'a str, u32, &'a [(String, SpriteInfo)])>,
+) {
+    let replacement = files
+        .into_iter()
+        .map(|(path, signature, profiles)| {
+            (
+                normalized_rhs_path(path),
+                ShippingRhs {
+                    signature,
+                    // SpriteInfo's large scripts/conversion arrays are Arc
+                    // backed, so this clone only duplicates profile names and
+                    // the small vector shell.
+                    profiles: profiles.to_vec(),
+                },
+            )
+        })
+        .collect();
+    *shipping_rhs_registry()
+        .write()
+        .expect("shipping RHS registry lock poisoned") = replacement;
+}
+
+fn shipping_rhs_profile(path: &str, profile_name: &str) -> Option<(u32, Option<SpriteInfo>)> {
+    let registry = shipping_rhs_registry()
+        .read()
+        .expect("shipping RHS registry lock poisoned");
+    let rhs = registry.get(&normalized_rhs_path(path))?;
+    let info = rhs
+        .profiles
+        .iter()
+        .find(|(name, _)| name == profile_name)
+        .map(|(_, info)| info.clone());
+    Some((rhs.signature, info))
+}
+
+fn shipping_rhs_exists(path: &str) -> bool {
+    shipping_rhs_registry()
+        .read()
+        .expect("shipping RHS registry lock poisoned")
+        .contains_key(&normalized_rhs_path(path))
+}
 
 // ---------------------------------------------------------------------------
 // FrameKind
@@ -424,7 +493,7 @@ impl SpriteScriptor {
 
                 // Try current ambiance
                 let path = format!("{base_dir}{}{filename}.rhs", amb.directory_suffix());
-                if SbFile::exists(&path) {
+                if shipping_rhs_exists(&path) || SbFile::exists(&path) {
                     return Ok(path);
                 }
 
@@ -434,14 +503,14 @@ impl SpriteScriptor {
                         "{base_dir}{}{filename}.rhs",
                         Ambiance::Day.directory_suffix()
                     );
-                    if SbFile::exists(&path) {
+                    if shipping_rhs_exists(&path) || SbFile::exists(&path) {
                         return Ok(path);
                     }
                 }
 
                 // Fall back to base directory (no ambiance)
                 let path = format!("{base_dir}/{filename}.rhs");
-                if SbFile::exists(&path) {
+                if shipping_rhs_exists(&path) || SbFile::exists(&path) {
                     return Ok(path);
                 }
 
@@ -466,6 +535,21 @@ impl SpriteScriptor {
         validate_file: impl FnOnce(&mut SbFile) -> Result<(), String>,
     ) -> Result<&SpriteInfo, String> {
         if self.cache.contains_key(cache_key) {
+            return Ok(&self.cache[cache_key]);
+        }
+
+        if let Some((signature, info)) = shipping_rhs_profile(path, profile_name) {
+            // Preserve the caller's bank-signature validation without
+            // reconstructing or retaining a legacy RHS byte stream.
+            let mut signature_file = SbFile::from_owned_bytes(
+                signature.to_le_bytes().to_vec(),
+                format!("parsed shipping RHS {path}"),
+            );
+            validate_file(&mut signature_file)?;
+            let info = info.ok_or_else(|| {
+                format!("Unable to find profile '{profile_name}' in parsed RHS {path}")
+            })?;
+            self.cache.insert(cache_key.to_owned(), info);
             return Ok(&self.cache[cache_key]);
         }
 
@@ -901,5 +985,35 @@ mod tests {
             .expect("the original cache is shared across frame kinds");
 
         assert_eq!(info.size, SpriteSize::new(12.0, 8.0));
+    }
+
+    #[test]
+    fn parsed_shipping_rhs_loads_without_legacy_file() {
+        let info = SpriteInfo {
+            scripts: std::sync::Arc::new(Vec::new()),
+            conversion: std::sync::Arc::new(vec![UNMAPPED; NONANIMATION_END]),
+            size: SpriteSize::new(12.0, 8.0),
+            center: SpriteAnchor::new(2.0, 3.0),
+        };
+        let profiles = vec![("Robin".to_owned(), info)];
+        replace_shipping_rhs([("Characters/Robin.rhs", 0x1234_5678, profiles.as_slice())]);
+
+        let path = "Data/Characters/Robin.rhs";
+        assert!(shipping_rhs_exists(path));
+        let mut scriptor = SpriteScriptor::new();
+        let loaded = scriptor
+            .load(path, "Robin", "Robin/Robin", FrameKind::Character, |file| {
+                let mut signature = 0;
+                file.serialize_u32(&mut signature)
+                    .map_err(|error| format!("signature: {error}"))?;
+                (signature == 0x1234_5678)
+                    .then_some(())
+                    .ok_or_else(|| format!("wrong signature {signature:#x}"))
+            })
+            .expect("load parsed shipping RHS")
+            .clone();
+        assert_eq!(loaded.size, SpriteSize::new(12.0, 8.0));
+
+        replace_shipping_rhs(std::iter::empty());
     }
 }

@@ -44,6 +44,7 @@ const BINARIES_BASE =
 const WASM_BUILDS_BASE = `${BINARIES_BASE}/wasm`;
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const COMPACT_REPLAY_RE = /^rhrec-([0-9a-f]{7,40})-/i;
+const PRELOAD_FETCH_CONCURRENCY = 12;
 
 const logEl = document.querySelector<HTMLDivElement>('#log');
 if (logEl === null) {
@@ -191,7 +192,7 @@ async function main(): Promise<void> {
 
     logOk('[wasm module ready, fetching datadir]');
 
-    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v4-q80.rhdata.zst`;
+    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v5-q80.rhdata.zst`;
     const resp = await fetch(dataUrl, {
         cache: build.source === 'latest' ? 'no-cache' : 'force-cache',
     });
@@ -244,6 +245,7 @@ async function preloadAssets(
     if (wasm.wasm_preload_asset === undefined) {
         return;
     }
+    const preloadAsset = wasm.wasm_preload_asset;
     const manifestUrl = `${buildBase}/preload-assets.json`;
     const manifestResp = await fetch(manifestUrl, {
         cache: noCache ? 'no-cache' : 'force-cache',
@@ -258,25 +260,67 @@ async function preloadAssets(
     if (!Array.isArray(raw)) {
         throw new Error(`${manifestUrl} must be a JSON array`);
     }
-    for (const entry of raw as PreloadEntry[]) {
+    const entries = (raw as PreloadEntry[]).map((entry, index) => {
         const path = typeof entry === 'string' ? entry : String(entry.path ?? '');
         const url = typeof entry === 'string' ? `${buildBase}/${entry}` : String(entry.url ?? path);
         if (path.length === 0 || url.length === 0) {
-            throw new Error(`${manifestUrl} contains an invalid preload entry`);
+            throw new Error(`${manifestUrl} contains an invalid preload entry at index ${index}`);
         }
         const assetUrl = new URL(
             url,
             buildBase.endsWith('/') ? buildBase : `${buildBase}/`,
         ).toString();
-        const assetResp = await fetch(assetUrl, {
-            cache: noCache ? 'no-cache' : 'force-cache',
-        });
-        if (!assetResp.ok) {
-            throw new Error(`fetch ${assetUrl}: HTTP ${assetResp.status}`);
+        return { path, assetUrl };
+    });
+
+    // Fetch and install in the same bounded worker. Keeping every completed
+    // ArrayBuffer until all requests finish doubles the preload peak: JS owns
+    // all downloads while wasm_preload_asset copies them into Rust.
+    await forEachConcurrent(
+        entries,
+        PRELOAD_FETCH_CONCURRENCY,
+        async ({ path, assetUrl }) => {
+            const assetResp = await fetch(assetUrl, {
+                cache: noCache ? 'no-cache' : 'force-cache',
+            });
+            if (!assetResp.ok) {
+                throw new Error(`fetch ${assetUrl}: HTTP ${assetResp.status}`);
+            }
+            const bytes = new Uint8Array(await assetResp.arrayBuffer());
+            preloadAsset(path, bytes);
+            logOk(`[preloaded ${path}: ${bytes.byteLength} bytes]`);
+        },
+    );
+}
+
+async function forEachConcurrent<T>(
+    items: readonly T[],
+    concurrency: number,
+    action: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+        throw new Error(`preload concurrency must be a positive integer, got ${concurrency}`);
+    }
+    const errors = new Array<Error | undefined>(items.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+        for (;;) {
+            const index = next++;
+            if (index >= items.length) {
+                return;
+            }
+            try {
+                await action(items[index] as T, index);
+            } catch (error) {
+                errors[index] = error instanceof Error ? error : new Error(String(error));
+            }
         }
-        const bytes = new Uint8Array(await assetResp.arrayBuffer());
-        wasm.wasm_preload_asset(path, bytes);
-        logOk(`[preloaded ${path}: ${bytes.byteLength} bytes]`);
+    };
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    const firstError = errors.find((error): error is Error => error !== undefined);
+    if (firstError !== undefined) {
+        throw firstError;
     }
 }
 

@@ -6,6 +6,7 @@
 //! first file wins.
 
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -25,8 +26,60 @@ pub enum AssetError {
     },
 }
 
+/// Cheaply cloned immutable asset bytes.
+///
+/// Shipping missions keep one copy of each file in their mounted bundle. An
+/// asset open clones only this `Arc`, rather than duplicating the complete
+/// file into every `SbFile` cursor.
+#[derive(Clone, Debug)]
+pub struct AssetBytes(Arc<Vec<u8>>);
+
+impl AssetBytes {
+    pub fn into_vec(self) -> Vec<u8> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+}
+
+impl From<Vec<u8>> for AssetBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(Arc::new(bytes))
+    }
+}
+
+impl From<&[u8]> for AssetBytes {
+    fn from(bytes: &[u8]) -> Self {
+        bytes.to_vec().into()
+    }
+}
+
+impl AsRef<[u8]> for AssetBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl Deref for AssetBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl PartialEq<[u8]> for AssetBytes {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_ref() == other
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for AssetBytes {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_ref() == other.as_slice()
+    }
+}
+
 /// Pre-bundled bytes keyed by a path relative to the game-data root.
-pub type Bundle = BTreeMap<String, Vec<u8>>;
+pub type Bundle = BTreeMap<String, AssetBytes>;
 
 #[derive(Debug)]
 enum Mount {
@@ -43,6 +96,7 @@ enum Mount {
 /// prevents a symlink inside a mount from escaping it.
 #[derive(Debug, Default)]
 pub struct AssetVfs {
+    active_bundle: RwLock<Option<Arc<Bundle>>>,
     mounts: RwLock<Vec<Mount>>,
 }
 
@@ -74,6 +128,20 @@ impl AssetVfs {
         Ok(())
     }
 
+    /// Replace the one high-priority runtime bundle.
+    ///
+    /// Mission activation uses this slot so changing missions releases the
+    /// previous VFS reference instead of permanently stacking one mount per
+    /// visited mission. Static boot and loose-data mounts remain untouched.
+    pub fn replace_active_bundle(&self, bundle: Arc<Bundle>) -> Result<(), AssetError> {
+        validate_bundle(&bundle)?;
+        *self
+            .active_bundle
+            .write()
+            .expect("active asset bundle poisoned") = Some(bundle);
+        Ok(())
+    }
+
     /// Append a native directory mount.
     ///
     /// Installation validates and canonicalizes the root immediately, so a
@@ -96,10 +164,19 @@ impl AssetVfs {
         Ok(())
     }
 
-    pub fn read(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, AssetError> {
+    pub fn read_shared(&self, path: impl AsRef<Path>) -> Result<AssetBytes, AssetError> {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        if let Some(bytes) = self
+            .active_bundle
+            .read()
+            .expect("active asset bundle poisoned")
+            .as_ref()
+            .and_then(|bundle| bundle.get(&key))
+        {
+            return Ok(bytes.clone());
+        }
         let mounts = self.mounts.read().expect("asset VFS mounts poisoned");
         for mount in mounts.iter() {
             match mount {
@@ -118,14 +195,23 @@ impl AssetVfs {
                     if !resolved.is_file() {
                         continue;
                     }
-                    return std::fs::read(&resolved).map_err(|source| AssetError::Io {
-                        path: resolved,
-                        source,
-                    });
+                    return std::fs::read(&resolved)
+                        .map(AssetBytes::from)
+                        .map_err(|source| AssetError::Io {
+                            path: resolved,
+                            source,
+                        });
                 }
             }
         }
         Err(AssetError::NotFound(requested.display().to_string()))
+    }
+
+    /// Read an owned buffer for compatibility with consumers that mutate or
+    /// retain the bytes independently. Stream readers should prefer
+    /// [`Self::read_shared`] to avoid copying memory-mounted assets.
+    pub fn read(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, AssetError> {
+        self.read_shared(path).map(AssetBytes::into_vec)
     }
 
     /// Check for an asset while preserving invalid-path and I/O errors.
@@ -133,6 +219,15 @@ impl AssetVfs {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        if self
+            .active_bundle
+            .read()
+            .expect("active asset bundle poisoned")
+            .as_ref()
+            .is_some_and(|bundle| bundle.contains_key(&key))
+        {
+            return Ok(true);
+        }
         let mounts = self.mounts.read().expect("asset VFS mounts poisoned");
         for mount in mounts.iter() {
             match mount {
@@ -282,15 +377,20 @@ pub fn install_preloaded_asset<P: AsRef<Path>>(path: P, bytes: Vec<u8>) -> Resul
     preloaded()
         .write()
         .expect("preloaded asset bundle poisoned")
-        .insert(bundle_key_from_normalized(&normalized), bytes);
+        .insert(bundle_key_from_normalized(&normalized), bytes.into());
     Ok(())
 }
 
 /// Read through the runtime mounts, then fall back to a direct host path on
 /// native for call sites that have not yet been migrated to virtual paths.
 pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, AssetError> {
+    read_shared(path).map(AssetBytes::into_vec)
+}
+
+/// Read through the runtime mounts without copying memory-mounted bytes.
+pub fn read_shared<P: AsRef<Path>>(path: P) -> Result<AssetBytes, AssetError> {
     let path = path.as_ref();
-    match global().read(path) {
+    match global().read_shared(path) {
         Ok(bytes) => return Ok(bytes),
         Err(AssetError::NotFound(_)) | Err(AssetError::InvalidPath(_)) => {}
         Err(error) => return Err(error),
@@ -303,7 +403,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, AssetError> {
     {
         return Ok(bytes.clone());
     }
-    imp::read(path)
+    imp::read(path).map(AssetBytes::from)
 }
 
 /// Compatibility boolean for legacy callers. New code should use
@@ -414,7 +514,7 @@ mod tests {
         Arc::new(
             entries
                 .iter()
-                .map(|(path, bytes)| ((*path).to_string(), bytes.to_vec()))
+                .map(|(path, bytes)| ((*path).to_string(), AssetBytes::from(*bytes)))
                 .collect(),
         )
     }
@@ -438,6 +538,28 @@ mod tests {
         assert_eq!(first.read("only.dat").unwrap(), b"only");
         assert_eq!(isolated.read("shared.dat").unwrap(), b"isolated");
         assert!(!isolated.try_exists("only.dat").unwrap());
+
+        let shared_a = first.read_shared("shared.dat").unwrap();
+        let shared_b = first.read_shared("shared.dat").unwrap();
+        assert_eq!(shared_a.as_ptr(), shared_b.as_ptr());
+    }
+
+    #[test]
+    fn replacing_active_bundle_releases_old_namespace_and_preserves_static_mounts() {
+        let vfs = AssetVfs::new();
+        vfs.mount_bundle(bundle(&[("boot.dat", b"boot"), ("shared.dat", b"boot")]))
+            .unwrap();
+        vfs.replace_active_bundle(bundle(&[("first.dat", b"first"), ("shared.dat", b"one")]))
+            .unwrap();
+        assert_eq!(vfs.read("first.dat").unwrap(), b"first");
+        assert_eq!(vfs.read("shared.dat").unwrap(), b"one");
+
+        vfs.replace_active_bundle(bundle(&[("second.dat", b"second")]))
+            .unwrap();
+        assert!(!vfs.try_exists("first.dat").unwrap());
+        assert_eq!(vfs.read("second.dat").unwrap(), b"second");
+        assert_eq!(vfs.read("boot.dat").unwrap(), b"boot");
+        assert_eq!(vfs.read("shared.dat").unwrap(), b"boot");
     }
 
     #[test]

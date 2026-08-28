@@ -212,7 +212,7 @@ fn main() -> Result<()> {
                 sprites += payload
                     .sprite_bank
                     .as_ref()
-                    .map(|bank| bank.sprites.iter().flatten().count())
+                    .map(|bank| bank.sprites.len())
                     .unwrap_or(0);
                 raw += payload.raw.len();
             }

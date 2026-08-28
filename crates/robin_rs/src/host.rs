@@ -1608,12 +1608,16 @@ mod application_context_tests {
                 1,
                 vec![SHADOW_KEY, 0x0841, TRANSPARENT_COLOR_16, 0x1234],
             )],
-            sprites: vec![Some(ShippingSprite {
-                width: 4,
-                height: 1,
-                dictionary_index: 0,
-                packed_data: vec![0],
-            })],
+            sprite_count: 1,
+            sprites: vec![(
+                0,
+                ShippingSprite {
+                    width: 4,
+                    height: 1,
+                    dictionary_index: 0,
+                    packed_data: std::sync::Arc::new(vec![0]),
+                },
+            )],
         });
 
         let mut holder = FrameHolder::new();

@@ -62,7 +62,6 @@ wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 pollster = "1.0"
 
 # Audio
-kira = { version = "0.12", optional = true }
 # Spatial-audio coords for kira (kira's spatial API takes mint::Vector3 /
 # Quaternion; glam types convert via mint compat). We talk to it directly
 # in mint to avoid pulling glam in as a direct dep.
@@ -83,6 +82,11 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 robin_lua.workspace = true
 mlua.workspace = true
+rayon = "1"
+# Keep Kira's complete native decoder/backend feature set. Native installs can
+# point at user-supplied data directories, so restricting their accepted audio
+# formats would be an unnecessary compatibility regression.
+kira = { version = "0.12", optional = true }
 fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
@@ -130,6 +134,16 @@ jni = "0.22.4"
 # Wasm-only: wasm-bindgen + web-sys glue, plus a JS-backed timer for
 # async pacing inside the game loop.  Single-threaded — no `wasm-bindgen-rayon`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# Shipping data contains PCM WAV effects and Ogg/Vorbis music. Limit the wasm
+# decoder graph to exactly those formats instead of Kira's defaults, which also
+# compile the unused MP3 and FLAC decoders into the browser module.
+kira = { version = "0.12", default-features = false, features = [
+    "cpal-realtime",
+    "ogg",
+    "vorbis",
+    "wav",
+    "pcm",
+], optional = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"

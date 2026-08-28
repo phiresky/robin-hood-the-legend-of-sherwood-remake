@@ -88,7 +88,7 @@ pub struct PackedSprite {
     /// sprites keep this `None` and use [`Self::bank_span`] instead —
     /// resolve either through [`FrameHolder::packed_data`].
     #[serde(skip)]
-    pub packed_data: Option<Vec<u16>>,
+    pub packed_data: Option<Arc<Vec<u16>>>,
     /// Word range of this sprite's packed data in the shared bank
     /// storage, when the data is bank-backed rather than owned.
     #[serde(skip)]
@@ -653,7 +653,7 @@ impl FrameHolder {
             width,
             height,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: Some(rgba.to_vec()),
             dictionary_index: UNMAPPED_DICT,
@@ -780,25 +780,35 @@ impl FrameHolder {
     /// Populate from a pre-parsed shipping sprite bank (no legacy I/O).
     /// Used by `initialize_sprite_bank_with_progress` when a shipping
     /// datadir is available.
-    fn load_from_shipping(&mut self, bank: &crate::shipping_datadir::ShippingSpriteBank) {
+    fn load_from_shipping(
+        &mut self,
+        bank: &crate::shipping_datadir::ShippingSpriteBank,
+        dictionaries: &[FrameDictionary],
+    ) {
         self.signature = bank.signature;
-        self.dictionaries = bank.dictionaries.clone();
+        self.dictionaries = dictionaries.to_vec();
         self.bank = None;
         self.sprites.clear();
-        self.sprites.reserve(bank.sprites.len());
-        for slot in &bank.sprites {
-            match slot {
-                Some(s) => self.sprites.push(PackedSprite {
-                    width: s.width,
-                    height: s.height,
-                    packed_size: (s.packed_data.len() * 2) as u32,
-                    packed_data: Some(s.packed_data.clone()),
-                    bank_span: None,
-                    rgba_data: None,
-                    dictionary_index: s.dictionary_index,
-                }),
-                None => self.sprites.push(PackedSprite::default()),
-            }
+        self.sprites
+            .resize(bank.sprite_count as usize, PackedSprite::default());
+        for (index, sprite) in &bank.sprites {
+            let Some(slot) = self.sprites.get_mut(*index as usize) else {
+                // Shipping conversion validates this too, but fail loudly if
+                // a corrupt payload reaches the runtime.
+                panic!(
+                    "shipping sprite id {index} exceeds bank size {}",
+                    bank.sprite_count
+                );
+            };
+            *slot = PackedSprite {
+                width: sprite.width,
+                height: sprite.height,
+                packed_size: (sprite.packed_data.len() * 2) as u32,
+                packed_data: Some(Arc::clone(&sprite.packed_data)),
+                bank_span: None,
+                rgba_data: None,
+                dictionary_index: sprite.dictionary_index,
+            };
         }
         self.reset_usage_tracker();
     }
@@ -817,13 +827,17 @@ impl FrameHolder {
     ) -> Result<()> {
         // Shipping datadir short-circuits the entire .bks/.dic read.
         if let Some(dd) = shipping
-            && let Some(bank) = dd.active_sprite_bank()
+            && dd
+                .with_active_sprite_bank(|bank, dictionaries| {
+                    tracing::info!(
+                        "Sprite bank: loaded from shipping datadir ({} of {} sprites populated)",
+                        bank.sprites.len(),
+                        bank.sprite_count
+                    );
+                    self.load_from_shipping(bank, dictionaries);
+                })
+                .is_some()
         {
-            tracing::info!(
-                "Sprite bank: loaded from shipping datadir ({} sprites)",
-                bank.sprites.len()
-            );
-            self.load_from_shipping(&bank);
             progress(ProgressUpdate::Tick(1.0));
             return Ok(());
         }
@@ -2106,7 +2120,7 @@ mod tests {
             width: 4,
             height: 2,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2137,7 +2151,7 @@ mod tests {
             width: 2,
             height: 1,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2171,7 +2185,7 @@ mod tests {
             width: 8,
             height: 1,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: 0,
@@ -2198,7 +2212,7 @@ mod tests {
             width: 1,
             height: 1,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2223,7 +2237,7 @@ mod tests {
             width: 2,
             height: 1,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2254,7 +2268,7 @@ mod tests {
             width: 3,
             height: 1,
             packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(packed),
+            packed_data: Some(Arc::new(packed)),
             bank_span: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,

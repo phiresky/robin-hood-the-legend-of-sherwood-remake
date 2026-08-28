@@ -445,7 +445,16 @@ pub(crate) async fn run_mission_headless(
         .profile(profiles)
         .mission_filename
         .clone();
-    if let Err(error) = ensure_shipping_mission(args, &mission_name).await {
+    let has_decoded_saved_world = pending_decoded_saved_world(callbacks);
+    if let Err(error) = ensure_shipping_mission(
+        args,
+        &mission_name,
+        &campaign,
+        profiles,
+        has_decoded_saved_world,
+    )
+    .await
+    {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
     let replay_restart = args
@@ -930,7 +939,16 @@ async fn run_mission_with_seed(
         .profile(profiles)
         .mission_filename
         .clone();
-    if let Err(error) = ensure_shipping_mission(args, &mission_name).await {
+    let has_decoded_saved_world = pending_decoded_saved_world(callbacks);
+    if let Err(error) = ensure_shipping_mission(
+        args,
+        &mission_name,
+        &campaign,
+        profiles,
+        has_decoded_saved_world,
+    )
+    .await
+    {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
     let campaign = establish_mission_restart_boundary(campaign, rng_seed, sim_config);
@@ -958,6 +976,9 @@ async fn run_mission_with_seed(
 async fn ensure_shipping_mission(
     args: &crate::main_entry::CliArgs,
     mission: &str,
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    has_decoded_saved_world: bool,
 ) -> Result<(), String> {
     let shipping = args.global_options.shipping_arc()?;
     let Some(datadir) = shipping.as_ref() else {
@@ -974,9 +995,22 @@ async fn ensure_shipping_mission(
     if !datadir.has_mission(mission) {
         return Ok(());
     }
-    crate::shipping_mission::ensure_loaded(shipping.as_ref(), mission)
-        .await
-        .map_err(|error| format!("load mission assets for {mission}: {error:#}"))
+    crate::shipping_mission::ensure_loaded(
+        shipping.as_ref(),
+        mission,
+        campaign,
+        profiles,
+        has_decoded_saved_world,
+    )
+    .await
+    .map_err(|error| format!("load mission assets for {mission}: {error:#}"))
+}
+
+fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
+    matches!(
+        callbacks.pending.as_ref(),
+        Some(SaveLoadRequest::Load { save: Some(_), .. })
+    )
 }
 
 #[cfg(test)]

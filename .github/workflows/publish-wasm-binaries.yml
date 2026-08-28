@@ -102,6 +102,16 @@ jobs:
                   if not src.is_file():
                       continue
                   rel = Path("Data") / src.relative_to(src_root)
+                  # Only audio used by the main menu belongs on the boot
+                  # critical path. Mission FX, voices, and music are embedded
+                  # in content-addressed ShippingMission dependencies.
+                  is_menu_sound = rel.is_relative_to(Path("Data/Sounds/Menu"))
+                  is_menu_music = rel in {
+                      Path("Data/Musics/Menu.wav"),
+                      Path("Data/Musics/Menu.ogg"),
+                  }
+                  if not (is_menu_sound or is_menu_music):
+                      continue
                   dst = artifact / rel
                   dst.parent.mkdir(parents=True, exist_ok=True)
                   shutil.copy2(src, dst)

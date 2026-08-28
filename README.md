@@ -132,18 +132,19 @@ same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
     /wasm/<short-hash>/robin_bg.wasm
     /wasm/<short-hash>/manifest.json
     /wasm/latest.json
-    /datadirs/demo-leicester/v4-q80.rhdata.zst
+    /datadirs/demo-leicester/v5-q80.rhdata.zst
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/audio/*.rhmission.zst
 
 The shell fetches `/wasm/latest.json` when no query parameter is present.  With
 `?replay=rhrec-<hash>-...`, it extracts `<hash>` and loads that exact
 artifact directory. The game data is not rebuilt by CI. Build it locally and
 publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v4-q80.rhdata.zst`, preserving its generated
-`Data/missions/` and `Data/rhs/` directories beside it. The browser initially
-fetches only the manifest, then fetches the selected mission's core and shared
-RHS files concurrently.
+`/datadirs/demo-leicester/v5-q80.rhdata.zst`, preserving its generated
+`Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
+browser initially fetches only the manifest, then fetches the selected
+mission's bounded core, RHS, and audio dependency closure concurrently.
 Audio and the required Rust UI/font overlay assets are published beside the
 wasm artifact and listed in `/wasm/<short-hash>/preload-assets.json`; the shell
 preloads those files into Rust before `wasm_boot` starts the synchronous game
@@ -156,7 +157,7 @@ The publishing workflow needs:
 
 - `BINARIES_REPO_TOKEN`: a token that can push to the binaries repo.
 - A manually maintained `/datadirs/demo-leicester/` shipping tree in the
-  binaries repo (manifest plus `missions/` and `rhs/`).
+  binaries repo (manifest plus `missions/`, `rhs/`, and `audio/`).
 
 ### Android
 
@@ -164,9 +165,9 @@ Android builds use winit's `android-activity` NativeActivity glue. The
 Android entry point is exported from the `robin_rs` cdylib, the
 packaging manifest lives at `android/AndroidManifest.xml`, and the
 Leicester demo shipping datadir is bundled under `android/assets/Data/`:
-`datadir.bin` comes from the published `v4-q80.rhdata.zst`, and the generated
-`missions/` and `rhs/` directories must be copied alongside it. Android reads
-selected payloads directly through `AAssetManager`.
+`datadir.bin` comes from the published `v5-q80.rhdata.zst`, and the generated
+`missions/`, `rhs/`, and `audio/` directories must be copied alongside it.
+Android reads selected payloads directly through `AAssetManager`.
 
 Prerequisites:
 

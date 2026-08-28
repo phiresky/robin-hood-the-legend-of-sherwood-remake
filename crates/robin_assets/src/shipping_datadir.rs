@@ -6,7 +6,7 @@
 //! `FrameHolder::initialize_sprite_bank`, `ResourceManager::attach_resource_file`,
 //! etc.) consult it instead of reading legacy files off disk.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -44,6 +44,26 @@ pub struct ShippingDatadir {
     pub raw: std::collections::BTreeMap<String, Vec<u8>>,
     /// Independently compressed payload to fetch before starting each mission.
     pub missions: BTreeMap<String, ShippingMissionRef>,
+    /// Content-addressed RHS payloads required when a character profile can
+    /// participate in the selected mission. Keys are stable CPF character
+    /// profile indices; values include the character's physical RHS variants
+    /// and the object/projectile RHS files enabled by its actions.
+    pub character_rhs_files: BTreeMap<u32, Vec<String>>,
+    /// Content-addressed localized voice payloads for each CPF character
+    /// profile. Runtime party/reinforcement selection uses the same profile
+    /// closure as `character_rhs_files`, avoiding every PC voice in every
+    /// mission reference.
+    pub character_audio_files: BTreeMap<u32, Vec<String>>,
+    /// Exclamation profile id corresponding to each CPF character profile.
+    pub character_exclamation_ids: BTreeMap<u32, u32>,
+    /// Authored soldier/civilian/required/rescue exclamation ids for each
+    /// mission. Dynamic party ids are unioned at the mission-load boundary.
+    pub mission_exclamation_ids: BTreeMap<String, Vec<u32>>,
+    /// Conservative RHS closure used only when constructing a mission around
+    /// an already-decoded saved world. Saved entities may contain object types
+    /// that are neither authored by the destination mission nor implied by its
+    /// current party, so save launches must not silently omit their masters.
+    pub saved_world_rhs_files: Vec<String>,
     /// Runtime-only source directory containing `datadir.bin` and its payloads.
     #[serde(skip)]
     #[bitcode(skip)]
@@ -52,16 +72,22 @@ pub struct ShippingDatadir {
     #[serde(skip)]
     #[bitcode(skip)]
     remote_base_url: Option<String>,
+    /// Runtime shared-byte view of boot `raw`. Installation moves into this
+    /// bundle when the manifest has a unique owner, avoiding a second copy.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    boot_raw_bundle: OnceLock<Arc<robin_util::asset_fs::Bundle>>,
     /// Payloads already installed for this process. Kept out of the manifest.
     #[serde(skip)]
     #[bitcode(skip)]
     loaded_missions: RwLock<BTreeMap<String, Arc<ShippingMission>>>,
     #[serde(skip)]
     #[bitcode(skip)]
-    loaded_files: RwLock<BTreeMap<String, Arc<ShippingMission>>>,
+    active_mission: RwLock<Option<String>>,
+    /// Exact static + dynamic exclamation closure for the active mission.
     #[serde(skip)]
     #[bitcode(skip)]
-    active_mission: RwLock<Option<String>>,
+    active_exclamation_ids: RwLock<BTreeSet<u32>>,
 }
 
 impl Default for ShippingDatadir {
@@ -77,11 +103,17 @@ impl Default for ShippingDatadir {
             sprite_bank: None,
             raw: BTreeMap::new(),
             missions: BTreeMap::new(),
+            character_rhs_files: BTreeMap::new(),
+            character_audio_files: BTreeMap::new(),
+            character_exclamation_ids: BTreeMap::new(),
+            mission_exclamation_ids: BTreeMap::new(),
+            saved_world_rhs_files: Vec::new(),
             source_dir: None,
             remote_base_url: None,
+            boot_raw_bundle: OnceLock::new(),
             loaded_missions: RwLock::new(BTreeMap::new()),
-            loaded_files: RwLock::new(BTreeMap::new()),
             active_mission: RwLock::new(None),
+            active_exclamation_ids: RwLock::new(BTreeSet::new()),
         }
     }
 }
@@ -101,6 +133,11 @@ pub struct ShippingMission {
     pub rhs_files: BTreeMap<String, RhsData>,
     pub sprite_bank: Option<ShippingSpriteBank>,
     pub raw: BTreeMap<String, Vec<u8>>,
+    /// Runtime shared-byte view of `raw`. Installation moves the decoded
+    /// vectors here so the VFS and mission payload share the same allocation.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    raw_bundle: OnceLock<Arc<robin_util::asset_fs::Bundle>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -116,8 +153,14 @@ pub struct RhsData {
 pub struct ShippingSpriteBank {
     pub signature: u32,
     pub dictionaries: Vec<FrameDictionary>,
-    /// One slot per bank id. `None` for sprites no `.rhs` referenced.
-    pub sprites: Vec<Option<ShippingSprite>>,
+    /// Total number of slots in the original bank. The runtime expands the
+    /// sparse entries below into this many slots once, after all mission
+    /// chunks have been combined.
+    pub sprite_count: u32,
+    /// Sorted `(bank id, sprite)` entries. Mission RHS chunks normally use a
+    /// tiny fraction of the global bank, so storing a dense `Vec<Option<_>>`
+    /// here used hundreds of MiB of transient wasm heap while decoding.
+    pub sprites: Vec<(u32, ShippingSprite)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -126,7 +169,7 @@ pub struct ShippingSprite {
     pub height: u16,
     pub dictionary_index: u16,
     /// Packed pixel data (RLE or dictionary-indexed).
-    pub packed_data: Vec<u16>,
+    pub packed_data: Arc<Vec<u16>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -212,48 +255,50 @@ impl ShippingDatadir {
             .contains_key(mission)
     }
 
-    pub fn install_mission(&self, mission: &str, payload: ShippingMission) -> Result<()> {
+    pub fn install_mission(&self, mission: &str, mut payload: ShippingMission) -> Result<()> {
         if !payload.levels.contains_key(mission) {
             return Err(anyhow!(
                 "shipping payload for {mission} does not contain its level"
             ));
         }
-        self.loaded_missions
+        if let (Some(base), Some(bank)) = (self.sprite_bank.as_ref(), payload.sprite_bank.as_ref())
+            && (base.signature != bank.signature || base.sprite_count != bank.sprite_count)
+        {
+            return Err(anyhow!(
+                "shipping mission {mission} sprite bank is incompatible with boot dictionaries"
+            ));
+        }
+        let raw = std::mem::take(&mut payload.raw)
+            .into_iter()
+            .map(|(path, bytes)| (path, bytes.into()))
+            .collect();
+        payload
+            .raw_bundle
+            .set(Arc::new(raw))
+            .map_err(|_| anyhow!("shipping mission {mission} raw bundle was already installed"))?;
+        let mut loaded = self
+            .loaded_missions
             .write()
-            .expect("shipping mission lock poisoned")
-            .insert(mission.to_owned(), Arc::new(payload));
+            .expect("shipping mission lock poisoned");
+        loaded.clear();
+        loaded.insert(mission.to_owned(), Arc::new(payload));
+        drop(loaded);
+        *self
+            .active_mission
+            .write()
+            .expect("shipping active mission lock poisoned") = None;
         self.activate_mission(mission)?;
         Ok(())
-    }
-
-    pub fn cache_file(&self, file: &str, payload: ShippingMission) -> Arc<ShippingMission> {
-        let payload = Arc::new(payload);
-        self.loaded_files
-            .write()
-            .expect("shipping file lock poisoned")
-            .insert(file.to_owned(), payload.clone());
-        payload
-    }
-
-    pub fn cached_file(&self, file: &str) -> Option<Arc<ShippingMission>> {
-        self.loaded_files
-            .read()
-            .expect("shipping file lock poisoned")
-            .get(file)
-            .cloned()
     }
 
     pub fn install_mission_parts(
         &self,
         mission: &str,
-        parts: impl IntoIterator<Item = Arc<ShippingMission>>,
+        parts: impl IntoIterator<Item = ShippingMission>,
     ) -> Result<()> {
-        let mut merged = ShippingMission {
-            sprite_bank: self.sprite_bank.clone(),
-            ..ShippingMission::default()
-        };
+        let mut merged = ShippingMission::default();
         for part in parts {
-            merged.merge_from(&part)?;
+            merged.merge_from(part)?;
         }
         self.install_mission(mission, merged)
     }
@@ -268,21 +313,17 @@ impl ShippingDatadir {
         let reference = self
             .mission_ref(mission)
             .ok_or_else(|| anyhow!("shipping datadir does not contain mission {mission}"))?;
-        let mut parts = Vec::with_capacity(reference.files.len());
+        let mut merged = ShippingMission::default();
         for file in &reference.files {
-            let part = if let Some(cached) = self.cached_file(file) {
-                cached
-            } else {
-                let path = self.source_file_path(file)?;
-                let compressed = robin_util::asset_fs::read(&path)
-                    .with_context(|| format!("read {}", path.display()))?;
-                let payload = decode_mission_compressed(&compressed)
-                    .with_context(|| format!("decode {}", path.display()))?;
-                self.cache_file(file, payload)
-            };
-            parts.push(part);
+            let path = self.source_file_path(file)?;
+            let compressed = robin_util::asset_fs::read(&path)
+                .with_context(|| format!("read {}", path.display()))?;
+            merged.merge_part(
+                decode_mission_compressed(&compressed)
+                    .with_context(|| format!("decode {}", path.display()))?,
+            )?;
         }
-        self.install_mission_parts(mission, parts)
+        self.install_mission_parts(mission, std::iter::once(merged))
     }
 
     pub fn activate_mission(&self, mission: &str) -> Result<()> {
@@ -292,11 +333,15 @@ impl ShippingDatadir {
         let payload = self
             .loaded_mission(mission)
             .ok_or_else(|| anyhow!("shipping mission {mission} has not been loaded"))?;
-        let raw = Arc::new(payload.raw.clone());
+        let raw = payload
+            .raw_bundle
+            .get()
+            .cloned()
+            .ok_or_else(|| anyhow!("shipping mission {mission} has no installed raw bundle"))?;
         let raw_files = raw.len();
         let rhs_files = payload.rhs_files.len();
         robin_util::asset_fs::global()
-            .mount_bundle_first(raw.clone())
+            .replace_active_bundle(raw.clone())
             .context("mount shipping mission assets")?;
         if let Some(first_path) = raw.keys().next()
             && !robin_util::asset_fs::global()
@@ -307,6 +352,12 @@ impl ShippingDatadir {
                 "shipping mission {mission} mounted {raw_files} raw assets, but {first_path} is not visible"
             ));
         }
+        robin_engine::sprite_script::replace_shipping_rhs(
+            payload
+                .rhs_files
+                .iter()
+                .map(|(path, rhs)| (path.as_str(), rhs.signature, rhs.profiles.as_slice())),
+        );
         *self
             .active_mission
             .write()
@@ -342,22 +393,28 @@ impl ShippingDatadir {
             .unwrap_or_else(|| self.scripts.clone())
     }
 
-    pub fn mission_sprite_bank(&self, mission: &str) -> Option<ShippingSpriteBank> {
-        self.loaded_mission(mission)
-            .and_then(|payload| payload.sprite_bank.clone())
-            .or_else(|| self.sprite_bank.clone())
-    }
-
-    pub fn active_sprite_bank(&self) -> Option<ShippingSpriteBank> {
+    pub fn with_active_sprite_bank<R>(
+        &self,
+        use_bank: impl FnOnce(&ShippingSpriteBank, &[FrameDictionary]) -> R,
+    ) -> Option<R> {
         let active = self
             .active_mission
             .read()
             .expect("shipping active mission lock poisoned")
             .clone();
-        active
+        let loaded = active
             .as_deref()
-            .and_then(|mission| self.mission_sprite_bank(mission))
-            .or_else(|| self.sprite_bank.clone())
+            .and_then(|mission| self.loaded_mission(mission));
+        let bank = loaded
+            .as_ref()
+            .and_then(|mission| mission.sprite_bank.as_ref())
+            .or(self.sprite_bank.as_ref())?;
+        let dictionaries = if bank.dictionaries.is_empty() {
+            &self.sprite_bank.as_ref()?.dictionaries
+        } else {
+            &bank.dictionaries
+        };
+        Some(use_bank(bank, dictionaries))
     }
 
     pub fn active_mission_name(&self) -> Option<String> {
@@ -367,72 +424,112 @@ impl ShippingDatadir {
             .clone()
     }
 
-    pub fn mission_raw(&self, mission: &str, key: &str) -> Option<Vec<u8>> {
-        self.loaded_mission(mission)
-            .and_then(|payload| payload.raw.get(key).cloned())
-            .or_else(|| self.raw.get(key).cloned())
+    /// Publish the exact speech-profile closure selected at the asynchronous
+    /// mission boundary. Process-wide audio caches use this instead of
+    /// scanning every CPF actor and warning for intentionally unmounted data.
+    pub fn set_active_exclamation_ids(&self, ids: BTreeSet<u32>) {
+        *self
+            .active_exclamation_ids
+            .write()
+            .expect("shipping active exclamation lock poisoned") = ids;
+    }
+
+    pub fn active_exclamation_ids(&self) -> Vec<u32> {
+        self.active_exclamation_ids
+            .read()
+            .expect("shipping active exclamation lock poisoned")
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    /// Borrow one boot asset whether installation has moved it into the VFS
+    /// shared-byte bundle or this manifest is still in converter/tool form.
+    pub fn raw_asset(&self, key: &str) -> Option<&[u8]> {
+        self.raw.get(key).map(Vec::as_slice).or_else(|| {
+            self.boot_raw_bundle
+                .get()
+                .and_then(|bundle| bundle.get(key))
+                .map(|bytes| bytes.as_ref())
+        })
     }
 }
 
 impl ShippingMission {
-    fn merge_from(&mut self, source: &Self) -> Result<()> {
-        merge_unique(&mut self.levels, &source.levels, "level")?;
-        merge_unique(&mut self.scripts, &source.scripts, "script")?;
-        merge_unique(&mut self.rhs_files, &source.rhs_files, "RHS")?;
-        merge_unique(&mut self.raw, &source.raw, "raw asset")?;
-        let Some(source_bank) = source.sprite_bank.as_ref() else {
+    /// Move-merge one independently decoded dependency into this payload.
+    /// Loaders use this incrementally so compressed/decoded part shells can be
+    /// released as soon as each bounded fetch completes.
+    pub fn merge_part(&mut self, source: Self) -> Result<()> {
+        self.merge_from(source)
+    }
+
+    fn merge_from(&mut self, mut source: Self) -> Result<()> {
+        merge_unique_owned(&mut self.levels, source.levels, "level")?;
+        merge_unique_owned(&mut self.scripts, source.scripts, "script")?;
+        merge_unique_owned(&mut self.rhs_files, source.rhs_files, "RHS")?;
+        merge_unique_owned(&mut self.raw, source.raw, "raw asset")?;
+        let Some(mut source_bank) = source.sprite_bank.take() else {
             return Ok(());
         };
         let bank = self.sprite_bank.get_or_insert_with(|| ShippingSpriteBank {
             signature: source_bank.signature,
-            dictionaries: source_bank.dictionaries.clone(),
-            sprites: vec![None; source_bank.sprites.len()],
+            dictionaries: std::mem::take(&mut source_bank.dictionaries),
+            sprite_count: source_bank.sprite_count,
+            sprites: Vec::new(),
         });
-        if bank.signature != source_bank.signature
-            || bank.sprites.len() != source_bank.sprites.len()
+        if bank.signature != source_bank.signature || bank.sprite_count != source_bank.sprite_count
         {
             return Err(anyhow!("shipping sprite-bank parts are incompatible"));
         }
         if bank.dictionaries.is_empty() {
-            bank.dictionaries = source_bank.dictionaries.clone();
+            bank.dictionaries = std::mem::take(&mut source_bank.dictionaries);
         } else if !source_bank.dictionaries.is_empty()
             && bitcode::encode(&bank.dictionaries) != bitcode::encode(&source_bank.dictionaries)
         {
             return Err(anyhow!("shipping sprite-bank dictionaries conflict"));
         }
-        for (index, sprite) in source_bank.sprites.iter().enumerate() {
-            let Some(sprite) = sprite else { continue };
-            if let Some(existing) = bank.sprites[index].as_ref()
-                && bitcode::encode(existing) != bitcode::encode(sprite)
-            {
+        for (index, sprite) in source_bank.sprites {
+            if index >= bank.sprite_count {
                 return Err(anyhow!(
-                    "shipping sprite-bank parts conflict at sprite {index}"
+                    "shipping sprite-bank part contains out-of-range sprite {index} (bank has {} slots)",
+                    bank.sprite_count
                 ));
             }
-            bank.sprites[index] = Some(sprite.clone());
+            match bank
+                .sprites
+                .binary_search_by_key(&index, |(index, _)| *index)
+            {
+                Ok(position) => {
+                    if bitcode::encode(&bank.sprites[position].1) != bitcode::encode(&sprite) {
+                        return Err(anyhow!(
+                            "shipping sprite-bank parts conflict at sprite {index}"
+                        ));
+                    }
+                }
+                Err(position) => bank.sprites.insert(position, (index, sprite)),
+            }
         }
         Ok(())
     }
 }
 
-fn merge_unique<K, V>(dst: &mut BTreeMap<K, V>, src: &BTreeMap<K, V>, kind: &str) -> Result<()>
+fn merge_unique_owned<K, V>(dst: &mut BTreeMap<K, V>, src: BTreeMap<K, V>, kind: &str) -> Result<()>
 where
-    K: Ord + Clone + std::fmt::Debug,
-    V: Clone,
+    K: Ord + std::fmt::Debug,
 {
     for (key, value) in src {
-        if dst.contains_key(key) {
+        if dst.contains_key(&key) {
             return Err(anyhow!("duplicate shipping {kind} key {key:?}"));
         }
-        dst.insert(key.clone(), value.clone());
+        dst.insert(key, value);
     }
     Ok(())
 }
 
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT4";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN01";
-pub const SHIPPING_DATADIR_VERSION: u32 = 4;
-pub const SHIPPING_MISSION_VERSION: u32 = 1;
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT5";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN02";
+pub const SHIPPING_DATADIR_VERSION: u32 = 5;
+pub const SHIPPING_MISSION_VERSION: u32 = 2;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -502,18 +599,30 @@ fn zstd_decompress(compressed: &[u8]) -> Result<Vec<u8>> {
     Ok(blob)
 }
 
-/// zstd level 22 with a 31-bit long-range window. Matches the converter.
+/// zstd level 22 with adaptive windows capped at the native 31-bit maximum.
 pub fn zstd_max_compress(bytes: &[u8]) -> Result<Vec<u8>> {
     zstd_compress_with_window(bytes, 31)
 }
 
-/// zstd level 22 with a caller-chosen `windowLog` (must be 10..=31). Use
-/// 31 for native builds; 30 is the ceiling for 32-bit zstd builds (wasm32).
-pub fn zstd_compress_with_window(bytes: &[u8], window_log: u32) -> Result<Vec<u8>> {
+/// zstd level 22 with an adaptive `windowLog` capped by the caller (10..=31).
+/// Pledging the input size lets zstd advertise only the window this frame can
+/// actually use. Split RHS chunks consequently require at most about 16 MiB
+/// instead of claiming a 1 GiB wasm decoder window, with effectively neutral
+/// compressed size.
+pub fn zstd_compress_with_window(bytes: &[u8], max_window_log: u32) -> Result<Vec<u8>> {
     use zstd::stream::raw::CParameter;
     use zstd::stream::write::Encoder;
+    if !(10..=31).contains(&max_window_log) {
+        return Err(anyhow!(
+            "zstd maximum window_log must be in 10..=31, got {max_window_log}"
+        ));
+    }
+    let content_window_log = usize::BITS - bytes.len().saturating_sub(1).leading_zeros();
+    let window_log = content_window_log.clamp(10, max_window_log);
     let mut out = Vec::new();
     let mut enc = Encoder::new(&mut out, 22).context("zstd encoder")?;
+    enc.set_pledged_src_size(Some(bytes.len() as u64))
+        .context("zstd pledged source size")?;
     enc.set_parameter(CParameter::WindowLog(window_log))
         .with_context(|| format!("zstd window_log={window_log}"))?;
     enc.set_parameter(CParameter::EnableLongDistanceMatching(true))
@@ -574,10 +683,27 @@ pub struct ShippingAssets {
 
 impl ShippingAssets {
     pub fn install(
-        datadir: Arc<ShippingDatadir>,
+        mut datadir: Arc<ShippingDatadir>,
         vfs: Arc<robin_util::asset_fs::AssetVfs>,
     ) -> Result<Self> {
-        vfs.mount_bundle_first(Arc::new(datadir.raw.clone()))
+        let raw: robin_util::asset_fs::Bundle = if let Some(unique) = Arc::get_mut(&mut datadir) {
+            std::mem::take(&mut unique.raw)
+                .into_iter()
+                .map(|(path, bytes)| (path, bytes.into()))
+                .collect()
+        } else {
+            datadir
+                .raw
+                .iter()
+                .map(|(path, bytes)| (path.clone(), bytes.clone().into()))
+                .collect()
+        };
+        let raw = Arc::new(raw);
+        datadir
+            .boot_raw_bundle
+            .set(raw.clone())
+            .map_err(|_| anyhow!("shipping boot raw bundle was already installed"))?;
+        vfs.mount_bundle_first(raw)
             .context("mount shipping raw asset bundle")?;
         Ok(Self { datadir, vfs })
     }
@@ -596,7 +722,7 @@ static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 /// Install a shipping datadir as the process-wide instance so lower-level
 /// loaders can consult it for pre-parsed data. Installation and VFS mount
 /// failures are returned to the startup boundary.
-pub fn install_global(dd: Arc<ShippingDatadir>) -> Result<()> {
+pub fn install_global(dd: Arc<ShippingDatadir>) -> Result<Arc<ShippingDatadir>> {
     if GLOBAL.get().is_some() {
         return Err(anyhow!("shipping datadir already installed"));
     }
@@ -606,7 +732,10 @@ pub fn install_global(dd: Arc<ShippingDatadir>) -> Result<()> {
     )?);
     GLOBAL
         .set(installed)
-        .map_err(|_| anyhow!("shipping datadir concurrently installed"))
+        .map_err(|_| anyhow!("shipping datadir concurrently installed"))?;
+    Ok(global()
+        .expect("shipping global was set immediately above")
+        .clone())
 }
 
 /// Access the installed shipping datadir, if any.
@@ -634,6 +763,17 @@ mod tests {
                 files: vec!["missions/mission-one.rhmission.zst".into()],
             },
         );
+        datadir
+            .character_rhs_files
+            .insert(7, vec!["rhs/character-seven.rhmission.zst".into()]);
+        datadir
+            .character_audio_files
+            .insert(7, vec!["audio/character-seven.rhmission.zst".into()]);
+        datadir.character_exclamation_ids.insert(7, 0x5043_5248);
+        datadir
+            .mission_exclamation_ids
+            .insert("MissionOne".into(), vec![0x534F_4C44]);
+        datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
@@ -642,6 +782,26 @@ mod tests {
         assert_eq!(
             decoded.mission_ref("MissionOne").unwrap().files,
             vec!["missions/mission-one.rhmission.zst"]
+        );
+        assert_eq!(
+            decoded.character_rhs_files.get(&7).unwrap(),
+            &["rhs/character-seven.rhmission.zst"]
+        );
+        assert_eq!(
+            decoded.character_audio_files.get(&7).unwrap(),
+            &["audio/character-seven.rhmission.zst"]
+        );
+        assert_eq!(
+            decoded.character_exclamation_ids.get(&7),
+            Some(&0x5043_5248)
+        );
+        assert_eq!(
+            decoded.mission_exclamation_ids.get("MissionOne").unwrap(),
+            &[0x534F_4C44]
+        );
+        assert_eq!(
+            decoded.saved_world_rhs_files,
+            ["rhs/saved-objects.rhmission.zst"]
         );
 
         let legacy_unversioned = bitcode::encode(&datadir);
@@ -667,40 +827,41 @@ mod tests {
             width: 1,
             height: 1,
             dictionary_index: 0,
-            packed_data: vec![value],
+            packed_data: Arc::new(vec![value]),
         };
         let bank = |sprites| ShippingSpriteBank {
             signature: 42,
             dictionaries: Vec::new(),
+            sprite_count: 2,
             sprites,
         };
         let mut merged = ShippingMission {
-            sprite_bank: Some(bank(vec![None, None])),
+            sprite_bank: Some(bank(Vec::new())),
             ..ShippingMission::default()
         };
         merged
-            .merge_from(&ShippingMission {
-                sprite_bank: Some(bank(vec![Some(sprite(10)), None])),
+            .merge_from(ShippingMission {
+                sprite_bank: Some(bank(vec![(0, sprite(10))])),
                 ..ShippingMission::default()
             })
             .unwrap();
         merged
-            .merge_from(&ShippingMission {
-                sprite_bank: Some(bank(vec![None, Some(sprite(20))])),
+            .merge_from(ShippingMission {
+                sprite_bank: Some(bank(vec![(1, sprite(20))])),
                 ..ShippingMission::default()
             })
             .unwrap();
 
         let sprites = &merged.sprite_bank.unwrap().sprites;
-        assert_eq!(sprites[0].as_ref().unwrap().packed_data, vec![10]);
-        assert_eq!(sprites[1].as_ref().unwrap().packed_data, vec![20]);
+        assert_eq!(sprites[0].1.packed_data.as_slice(), &[10]);
+        assert_eq!(sprites[1].1.packed_data.as_slice(), &[20]);
     }
 
     #[test]
     fn shipping_installation_owns_vfs_and_has_first_priority() {
         let vfs = Arc::new(AssetVfs::new());
         let mut loose = Bundle::new();
-        loose.insert("shared.dat".to_string(), b"loose".to_vec());
+        loose.insert("shared.dat".to_string(), b"loose".to_vec().into());
         vfs.mount_bundle(Arc::new(loose)).unwrap();
 
         let mut datadir = ShippingDatadir::default();
@@ -710,6 +871,11 @@ mod tests {
         let installed = ShippingAssets::install(Arc::new(datadir), vfs.clone()).unwrap();
 
         assert!(Arc::ptr_eq(installed.vfs(), &vfs));
+        assert!(installed.datadir().raw.is_empty());
+        assert_eq!(
+            installed.datadir().raw_asset("shared.dat"),
+            Some(&b"shipping"[..])
+        );
         assert_eq!(installed.vfs().read("shared.dat").unwrap(), b"shipping");
     }
 
