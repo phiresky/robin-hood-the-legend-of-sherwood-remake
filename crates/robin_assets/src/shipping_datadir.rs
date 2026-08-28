@@ -44,12 +44,16 @@ pub struct ShippingDatadir {
     pub raw: std::collections::BTreeMap<String, Vec<u8>>,
     /// Source-authoritative durations for boot audio stored in `raw`.
     pub audio_durations_ms: BTreeMap<String, u32>,
+    /// Standalone browser audio, keyed by the normalized logical Opus path
+    /// (for example `sounds/snd_001.opus`). The encoded bytes intentionally do
+    /// not live in this bitcode manifest or any mission payload.
+    pub audio_assets: BTreeMap<String, ShippingAudioAsset>,
     /// Independently compressed payload to fetch before starting each mission.
     pub missions: BTreeMap<String, ShippingMissionRef>,
     /// Content-addressed RHS payloads required when a character profile can
     /// participate in the selected mission. Keys are stable CPF character
-    /// profile indices; values include the character's physical RHS variants
-    /// and the object/projectile RHS files enabled by its actions.
+    /// profile indices; values include that exact physical character RHS and
+    /// the object/projectile RHS files enabled by its actions.
     pub character_rhs_files: BTreeMap<u32, Vec<String>>,
     /// Content-addressed localized voice payloads for each CPF character
     /// profile. Runtime party/reinforcement selection uses the same profile
@@ -105,6 +109,7 @@ impl Default for ShippingDatadir {
             sprite_bank: None,
             raw: BTreeMap::new(),
             audio_durations_ms: BTreeMap::new(),
+            audio_assets: BTreeMap::new(),
             missions: BTreeMap::new(),
             character_rhs_files: BTreeMap::new(),
             character_audio_files: BTreeMap::new(),
@@ -121,10 +126,33 @@ impl Default for ShippingDatadir {
     }
 }
 
+/// Serializable reference to one content-addressed standalone audio file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ShippingAudioAsset {
+    /// Path relative to the directory containing `datadir.bin`.
+    pub file: String,
+    pub encoded_size: u32,
+    /// Duration derived from the source asset, not from the transcoded stream.
+    pub duration_ms: u32,
+}
+
+/// Browser-ready standalone audio reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteAudioAsset {
+    pub url: String,
+    pub encoded_size: u32,
+    pub duration_ms: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingMissionRef {
+    /// Proto-level forest flag used by the original PC constructor to select
+    /// RobinHood (forest) or RobinTown (non-forest) before RHS dependencies
+    /// are fetched.
+    pub forest_level: bool,
     /// Paths relative to the directory containing `datadir.bin`. Shared RHS
-    /// payloads can be named by several missions without being stored twice.
+    /// and terrain payloads can be named by several missions without being
+    /// stored twice.
     pub files: Vec<String>,
 }
 
@@ -464,6 +492,9 @@ impl ShippingDatadir {
     /// asset. The wasm sound cache only needs this bookkeeping because Web
     /// Audio owns both decoding and PCM playback storage.
     pub fn active_audio_metadata(&self, path: &Path) -> Option<(u32, u32)> {
+        if let Some(asset) = self.find_audio_asset(path) {
+            return Some((asset.encoded_size, asset.duration_ms));
+        }
         let key = robin_util::asset_fs::bundle_key(path);
         let opus = Path::new(&key)
             .with_extension("opus")
@@ -495,6 +526,28 @@ impl ShippingDatadir {
             let bytes = self.raw_asset(&key).or_else(|| self.raw_asset(&opus))?;
             Some((u32::try_from(bytes.len()).ok()?, duration))
         })
+    }
+
+    /// Resolve legacy engine paths to a standalone browser audio asset.
+    ///
+    /// Callers may supply source extensions, bare sound names, paths relative
+    /// to `Sounds/Exclamations`, or native absolute paths containing a `Data`
+    /// component. All aliases resolve to the one catalog entry and therefore
+    /// the same content URL/browser decode cache entry.
+    pub fn remote_audio_asset(&self, path: &Path) -> Option<RemoteAudioAsset> {
+        let asset = self.find_audio_asset(path)?;
+        let base = self.remote_base_url.as_deref()?;
+        Some(RemoteAudioAsset {
+            url: format!("{}/{}", base.trim_end_matches('/'), asset.file),
+            encoded_size: asset.encoded_size,
+            duration_ms: asset.duration_ms,
+        })
+    }
+
+    fn find_audio_asset(&self, path: &Path) -> Option<&ShippingAudioAsset> {
+        audio_lookup_keys(path)
+            .into_iter()
+            .find_map(|key| self.audio_assets.get(&key))
     }
 
     /// Borrow one boot asset whether installation has moved it into the VFS
@@ -595,9 +648,47 @@ where
     Ok(())
 }
 
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT6";
+fn audio_lookup_keys(path: &Path) -> Vec<String> {
+    let mut raw = path.to_string_lossy().replace('\\', "/");
+    while let Some(rest) = raw.strip_prefix("./") {
+        raw = rest.to_owned();
+    }
+    let lowercase = raw.to_ascii_lowercase();
+    let key = if let Some(index) = lowercase.find("/data/") {
+        raw[index + "/data/".len()..].to_owned()
+    } else if lowercase.starts_with("data/") {
+        raw["data/".len()..].to_owned()
+    } else {
+        raw.trim_start_matches('/').to_owned()
+    }
+    .to_ascii_lowercase();
+
+    let mut bases = vec![key.clone()];
+    if let Some(rest) = key.strip_prefix("exclamations/") {
+        bases.push(format!("sounds/exclamations/{rest}"));
+    }
+    if !key.starts_with("sounds/") && !key.starts_with("musics/") {
+        bases.push(format!("sounds/{key}"));
+        bases.push(format!("sounds/exclamations/{key}"));
+    }
+
+    let mut keys = Vec::with_capacity(bases.len() * 2);
+    for base in bases {
+        keys.push(base.clone());
+        let opus = Path::new(&base)
+            .with_extension("opus")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if opus != base {
+            keys.push(opus);
+        }
+    }
+    keys
+}
+
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT8";
 const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN03";
-pub const SHIPPING_DATADIR_VERSION: u32 = 6;
+pub const SHIPPING_DATADIR_VERSION: u32 = 8;
 pub const SHIPPING_MISSION_VERSION: u32 = 3;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
@@ -829,9 +920,18 @@ mod tests {
         datadir
             .audio_durations_ms
             .insert("musics/menu.opus".into(), 9_876);
+        datadir.audio_assets.insert(
+            "sounds/arrow.opus".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/0123.opus".into(),
+                encoded_size: 456,
+                duration_ms: 789,
+            },
+        );
         datadir.missions.insert(
             "MissionOne".into(),
             ShippingMissionRef {
+                forest_level: true,
                 files: vec!["missions/mission-one.rhmission.zst".into()],
             },
         );
@@ -848,7 +948,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNAT6");
+        assert_eq!(&encoded[..8], b"RHDDNAT8");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -857,9 +957,18 @@ mod tests {
             Some(&9_876)
         );
         assert_eq!(
+            decoded.audio_assets.get("sounds/arrow.opus"),
+            Some(&ShippingAudioAsset {
+                file: "audio/assets/0123.opus".into(),
+                encoded_size: 456,
+                duration_ms: 789,
+            })
+        );
+        assert_eq!(
             decoded.mission_ref("MissionOne").unwrap().files,
             vec!["missions/mission-one.rhmission.zst"]
         );
+        assert!(decoded.mission_ref("MissionOne").unwrap().forest_level);
         assert_eq!(
             decoded.character_rhs_files.get(&7).unwrap(),
             &["rhs/character-seven.rhmission.zst"]
@@ -974,6 +1083,57 @@ mod tests {
             Some((4, 250))
         );
         assert_eq!(installed.vfs().read("shared.dat").unwrap(), b"shipping");
+    }
+
+    #[test]
+    fn remote_audio_catalog_resolves_legacy_aliases() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.set_remote_base_url("https://example.test/build/Data/".into());
+        datadir.audio_assets.insert(
+            "sounds/arrow.opus".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/abc.opus".into(),
+                encoded_size: 321,
+                duration_ms: 654,
+            },
+        );
+        datadir.audio_assets.insert(
+            "sounds/exclamations/expressions/alert.opus".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/voice.opus".into(),
+                encoded_size: 111,
+                duration_ms: 222,
+            },
+        );
+
+        let expected = RemoteAudioAsset {
+            url: "https://example.test/build/Data/audio/assets/abc.opus".into(),
+            encoded_size: 321,
+            duration_ms: 654,
+        };
+        assert_eq!(
+            datadir.remote_audio_asset(Path::new("Data/Sounds/Arrow.wav")),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            datadir.remote_audio_asset(Path::new("arrow.wav")),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            datadir.remote_audio_asset(Path::new("/games/Robin Hood/Data/Sounds/Arrow.ogg")),
+            Some(expected)
+        );
+        assert_eq!(
+            datadir
+                .remote_audio_asset(Path::new("Expressions/Alert.wav"))
+                .unwrap()
+                .url,
+            "https://example.test/build/Data/audio/assets/voice.opus"
+        );
+        assert_eq!(
+            datadir.active_audio_metadata(Path::new("Data/Sounds/Arrow.wav")),
+            Some((321, 654))
+        );
     }
 
     #[test]

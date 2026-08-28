@@ -134,10 +134,10 @@ same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
     /wasm/<short-hash>/robin_bg.wasm.gz
     /wasm/<short-hash>/manifest.json
     /wasm/latest.json
-    /datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst
+    /datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
-    /datadirs/demo-leicester/audio/*.rhmission.zst
+    /datadirs/demo-leicester/audio/assets/*.opus
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 prefers the deterministic `.gz` JS/wasm siblings and expands them with the
@@ -154,11 +154,13 @@ the wasm-safe zstd window):
         datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 
 Publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v6-web-opus-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
 browser initially fetches only the manifest, then fetches the selected
-mission's bounded core, RHS, and audio dependency closure concurrently.
-All web audio is deterministic Opus inside the shipping data. Only `arial.ttf`
+mission's bounded core, terrain, and exact RHS dependency closure concurrently.
+Web audio is deterministic, content-addressed Opus under `audio/assets/`; each
+file is fetched and decoded by Web Audio only when it is first played, so its
+encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
 and the required Rust UI PNG overlay assets remain beside the wasm artifact and
 are listed in
 `/wasm/<short-hash>/preload-assets.json`; the shell preloads those files before
@@ -171,7 +173,7 @@ The publishing workflow needs:
 
 - `BINARIES_REPO_TOKEN`: a token that can push to the binaries repo.
 - A manually maintained `/datadirs/demo-leicester/` shipping tree in the
-  binaries repo (manifest plus `missions/`, `rhs/`, and `audio/`).
+  binaries repo (manifest plus `missions/`, `rhs/`, `terrain/`, and `audio/`).
 
 ### Android
 

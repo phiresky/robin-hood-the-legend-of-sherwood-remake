@@ -976,11 +976,12 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 mod tests {
     use super::{
         AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
-        animation_rhs_rel_existing, exclamation_dat_filename, prepare_shipping_payload,
+        animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
+        level_asset_rel_existing, normalize_robin_profile_index, prepare_shipping_payload,
         transcode_audio_to_opus,
     };
     use robin_assets::shipping_datadir::ShippingMission;
-    use robin_engine::profiles::Action;
+    use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -1010,6 +1011,64 @@ mod tests {
         assert_eq!(
             animation_rhs_rel_existing(8, "river", &exists),
             "Animations/Day/river.rhs"
+        );
+    }
+
+    #[test]
+    fn shipping_level_assets_follow_exact_ambiance_day_root_lookup() {
+        let existing = [
+            "Levels/Attack/castle.map",
+            "Levels/Day/castle.min",
+            "Levels/root.map",
+            "Levels/root.min",
+        ];
+        let exists = |path: &str| existing.contains(&path).then(|| path.into());
+
+        assert_eq!(
+            level_asset_rel_existing(8, "castle", ".map", &exists).unwrap(),
+            "Levels/Attack/castle.map"
+        );
+        assert_eq!(
+            level_asset_rel_existing(8, "castle", ".min", &exists).unwrap(),
+            "Levels/Day/castle.min"
+        );
+        assert_eq!(
+            level_asset_rel_existing(128, "root", ".map", &exists).unwrap(),
+            "Levels/root.map"
+        );
+        assert!(level_asset_rel_existing(16, "missing", ".min", &exists).is_err());
+    }
+
+    #[test]
+    fn robin_profile_normalization_uses_forest_flag() {
+        let profiles = ProfileManager {
+            characters: vec![
+                CharacterProfile {
+                    filename: "RobinHood".into(),
+                    ..CharacterProfile::default()
+                },
+                CharacterProfile {
+                    filename: "RobinTown".into(),
+                    ..CharacterProfile::default()
+                },
+                CharacterProfile {
+                    filename: "LittleJohn".into(),
+                    ..CharacterProfile::default()
+                },
+            ],
+            ..ProfileManager::new()
+        };
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 1, true).unwrap(),
+            0
+        );
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 0, false).unwrap(),
+            1
+        );
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 2, true).unwrap(),
+            2
         );
     }
 
@@ -1068,6 +1127,37 @@ mod tests {
         let (_, compressed) =
             prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
         assert!(compressed.is_some());
+    }
+
+    #[test]
+    fn standalone_opus_is_cataloged_without_entering_mission_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let assets_dir = temp.path().join("audio/assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let mut catalog = std::collections::BTreeMap::new();
+        let payload = ShippingMission::default();
+        let opus = b"OggS-fake-OpusHead-test-payload";
+
+        insert_standalone_audio(
+            &mut catalog,
+            &assets_dir,
+            "Data/Sounds/Arrow.wav",
+            opus,
+            1_234,
+        )
+        .unwrap();
+
+        assert!(payload.raw.is_empty());
+        assert!(payload.audio_durations_ms.is_empty());
+        let asset = catalog.get("sounds/arrow.opus").unwrap();
+        assert_eq!(asset.encoded_size, opus.len() as u32);
+        assert_eq!(asset.duration_ms, 1_234);
+        assert_eq!(std::fs::read(temp.path().join(&asset.file)).unwrap(), opus);
+        assert!(
+            !robin_assets::shipping_datadir::encode_mission_native(&payload)
+                .windows(opus.len())
+                .any(|window| window == opus)
+        );
     }
 
     #[test]
@@ -1419,8 +1509,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingDatadir, ShippingMission, ShippingMissionRef, ShippingSprite,
-    ShippingSpriteBank,
+    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
+    ShippingSprite, ShippingSpriteBank,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1432,12 +1522,17 @@ struct ShippingMissionBuild {
     music_names: BTreeSet<String>,
     dialogue_samples: BTreeSet<String>,
     map_names: BTreeSet<String>,
+    level_asset_keys: BTreeSet<String>,
     proto_filename: String,
+    forest_level: bool,
+    ambiance: u32,
 }
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
     let mut dd = ShippingDatadir::default();
     let mut beggar_ids: BTreeSet<u32> = BTreeSet::new();
+    let audio_assets_dir = data_out.join("audio/assets");
+    fs::create_dir_all(&audio_assets_dir)?;
 
     let locale_dirs = detect_locale_data_dirs(&data_in);
     for src in &locale_dirs {
@@ -1527,6 +1622,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             let relative = Path::new("Sounds/Menu").join(filename);
             insert_shipping_audio(
                 &mut boot_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &relative.to_string_lossy(),
                 &path,
                 AudioKind::Effect,
@@ -1540,6 +1637,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     }) {
         insert_shipping_audio(
             &mut boot_audio,
+            &mut dd.audio_assets,
+            &audio_assets_dir,
             &relative,
             &path,
             AudioKind::Music,
@@ -1621,8 +1720,20 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         };
 
         let (proto, mission) = parse_level_pair(&rhp_path, &rhm_path, &beggar_ids)?;
+        let forest_level = proto
+            .misc
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow!(
+                    "proto level {} has no MISC forest-level metadata",
+                    mp.proto_level_filename
+                )
+            })?
+            .forest_level;
         let mut build = ShippingMissionBuild {
             proto_filename: mp.proto_level_filename.clone(),
+            forest_level,
+            ambiance: mission.header.ambiance,
             ..ShippingMissionBuild::default()
         };
         build.music_names.extend(
@@ -1658,9 +1769,21 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
         if mp.mission_filename == "Dem_Lei_MP" {
-            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RJMT", &in_path);
+            add_required_pc_profiles_for_pcs(
+                required_rhs_profiles,
+                &cpf,
+                "RJMT",
+                forest_level,
+                &in_path,
+            );
         } else if mp.mission_filename == "Demo_Lin" {
-            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RSABC", &in_path);
+            add_required_pc_profiles_for_pcs(
+                required_rhs_profiles,
+                &cpf,
+                "RSABC",
+                forest_level,
+                &in_path,
+            );
         }
         // Collect sprite/map refs.
         for p in &proto.patches {
@@ -1683,13 +1806,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             build.map_names.insert(mission.header.map_filename.clone());
         }
         for &idx in &mp.required_character_indices {
+            let idx = normalize_robin_profile_index(&cpf, idx as usize, forest_level)?;
             add_required_character_rhs_profiles_for_index(
                 required_rhs_profiles,
                 &cpf,
-                idx as usize,
+                idx,
                 &in_path,
             );
-            if let Some(profile) = cpf.characters.get(idx as usize)
+            if let Some(profile) = cpf.characters.get(idx)
                 && profile.exclamation_id != 0
             {
                 build
@@ -1758,13 +1882,15 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
         }
         for pc in &mission.pcs_to_rescue {
+            let profile_index =
+                normalize_robin_profile_index(&cpf, pc.profile_index as usize, forest_level)?;
             add_required_character_rhs_profiles_for_index(
                 required_rhs_profiles,
                 &cpf,
-                pc.profile_index as usize,
+                profile_index,
                 &in_path,
             );
-            if let Some(profile) = cpf.characters.get(pc.profile_index as usize)
+            if let Some(profile) = cpf.characters.get(profile_index)
                 && profile.exclamation_id != 0
             {
                 build
@@ -1995,58 +2121,56 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         rhs_payloads.insert(rel.clone(), payload);
     }
 
-    // Terrain/loading art stays with the small mission core. Maps remain JXL
-    // according to the chosen converter option.
-    // Several missions reuse the same city/map. Transcoding one source map
-    // repeatedly is especially expensive with cjxl and cannot change its
-    // bytes, so retain the encoded result while assembling mission payloads.
+    // Resolve only the terrain and loading art the original runtime can open
+    // for this mission. Keep each logical source asset in its own shared
+    // payload so missions that reuse a city also reuse one HTTP-cache key.
     let mut encoded_level_assets = std::collections::BTreeMap::<String, Vec<u8>>::new();
+    let mut level_asset_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
     for build in mission_builds.values_mut() {
         for map in &build.map_names {
-            for sub in ["Day", "Night", "Fog"] {
-                for ext in [".map", ".min"] {
-                    let rel = format!("Levels/{sub}/{map}{ext}");
-                    let Some(path) = in_path(&rel) else { continue };
-                    let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
-                        bytes.clone()
-                    } else {
-                        let bytes = match (ext, opts.map_format) {
-                            (".map", MapFormat::JxlLossless) => {
-                                transcode_sixteen_to_jxl(&path, None)?
-                            }
-                            (".map", MapFormat::JxlQ90) => {
-                                transcode_sixteen_to_jxl(&path, Some(90))?
-                            }
-                            (".map", MapFormat::JxlQ85) => {
-                                transcode_sixteen_to_jxl(&path, Some(85))?
-                            }
-                            (".map", MapFormat::JxlQ80) => {
-                                transcode_sixteen_to_jxl(&path, Some(80))?
-                            }
-                            (".map", MapFormat::Raw) | (".min", _) => {
-                                transcode_sixteen_drop_bzip(&path)?
-                            }
-                            _ => fs::read(&path)?,
-                        };
-                        encoded_level_assets.insert(rel.clone(), bytes.clone());
-                        bytes
-                    };
-                    build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
-                }
-            }
-        }
-        for ambiance in [1, 2, 4] {
-            let rel = format!("Levels/{ambiance:02}/{}.pak", build.proto_filename);
-            if let Some(path) = in_path(&rel) {
+            for ext in [".map", ".min"] {
+                let rel = level_asset_rel_existing(build.ambiance, map, ext, &in_path)?;
+                let path = in_path(&rel)
+                    .ok_or_else(|| anyhow!("resolved shipping level asset disappeared: {rel}"))?;
                 let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
                     bytes.clone()
                 } else {
-                    let bytes = transcode_pak_drop_bzip(&path)?;
+                    let bytes = match (ext, opts.map_format) {
+                        (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&path, None)?,
+                        (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&path, Some(90))?,
+                        (".map", MapFormat::JxlQ85) => transcode_sixteen_to_jxl(&path, Some(85))?,
+                        (".map", MapFormat::JxlQ80) => transcode_sixteen_to_jxl(&path, Some(80))?,
+                        (".map", MapFormat::Raw) | (".min", _) => {
+                            transcode_sixteen_drop_bzip(&path)?
+                        }
+                        _ => fs::read(&path)?,
+                    };
                     encoded_level_assets.insert(rel.clone(), bytes.clone());
                     bytes
                 };
-                build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
+                level_asset_payloads
+                    .entry(rel.clone())
+                    .or_default()
+                    .raw
+                    .insert(rel.to_ascii_lowercase(), bytes);
+                build.level_asset_keys.insert(rel);
             }
+        }
+        let rel = format!("Levels/{:02}/{}.pak", build.ambiance, build.proto_filename);
+        if let Some(path) = in_path(&rel) {
+            let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
+                bytes.clone()
+            } else {
+                let bytes = transcode_pak_drop_bzip(&path)?;
+                encoded_level_assets.insert(rel.clone(), bytes.clone());
+                bytes
+            };
+            level_asset_payloads
+                .entry(rel.clone())
+                .or_default()
+                .raw
+                .insert(rel.to_ascii_lowercase(), bytes);
+            build.level_asset_keys.insert(rel);
         }
     }
 
@@ -2106,9 +2230,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // shared RHS files avoid duplicating heroes/accessories across missions.
     let mission_dir = data_out.join("missions");
     let rhs_dir = data_out.join("rhs");
+    let terrain_dir = data_out.join("terrain");
     let audio_dir = data_out.join("audio");
     fs::create_dir_all(&mission_dir)?;
     fs::create_dir_all(&rhs_dir)?;
+    fs::create_dir_all(&terrain_dir)?;
     fs::create_dir_all(&audio_dir)?;
     // Max-level zstd is deliberately expensive and memory hungry. Bound the
     // worker count and write each completed chunk in its worker so the result
@@ -2122,6 +2248,27 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         .thread_name(|index| format!("shipping-zstd-{index}"))
         .build()
         .context("create bounded shipping compression pool")?;
+    let encoded_level_assets = compression_pool.install(|| {
+        level_asset_payloads
+            .into_par_iter()
+            .map(|(rel, payload)| {
+                let (filename, compressed) = prepare_shipping_payload(
+                    &terrain_dir,
+                    &rel,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                write_prepared_shipping_payload(&terrain_dir, &filename, compressed)?;
+                Ok((rel, format!("terrain/{filename}")))
+            })
+            .collect::<Vec<Result<(String, String)>>>()
+    });
+    let mut level_asset_files = std::collections::BTreeMap::<String, String>::new();
+    for encoded in encoded_level_assets {
+        let (rel, filename) = encoded?;
+        level_asset_files.insert(rel, filename);
+    }
     let encoded_rhs = compression_pool.install(|| {
         rhs_payloads
             .into_par_iter()
@@ -2167,10 +2314,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     dd.saved_world_rhs_files.sort();
     dd.saved_world_rhs_files.dedup();
 
-    // Audio is read synchronously by the legacy sound cache, so each selected
-    // mission must mount its complete audio closure before setup begins. Keep
-    // the large common FX set shared, and split localized speech by actor so a
-    // mission does not download the full locale's voice library.
+    // Source-format audio remains in dependency payloads for native builds.
+    // Opus browser audio is cataloged as standalone content-addressed files;
+    // these payloads then retain only small blocking metadata such as FXG and
+    // exclamation DAT files.
     let mut common_audio = ShippingMission::default();
     let sounds_root = data_in.join("Sounds");
     if sounds_root.is_dir() {
@@ -2189,6 +2336,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
             insert_shipping_audio(
                 &mut common_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &format!("Sounds/{relative}"),
                 &path,
                 AudioKind::Effect,
@@ -2332,6 +2481,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             })?;
             insert_shipping_audio(
                 &mut exclamation_metadata,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -2357,6 +2508,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if sample_profile_counts.get(&sample_rel).copied().unwrap_or(0) == 1 {
                 insert_shipping_audio(
                     &mut actor_audio,
+                    &mut dd.audio_assets,
+                    &audio_assets_dir,
                     &sample_rel,
                     &sample_path,
                     AudioKind::Voice,
@@ -2400,6 +2553,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    level_asset_keys,
+                    forest_level,
                     ..
                 } = build;
                 let (filename, compressed) = prepare_shipping_payload(
@@ -2419,6 +2574,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    level_asset_keys,
+                    forest_level,
                 ))
             })
             .collect::<Vec<Result<_>>>()
@@ -2432,9 +2589,17 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             required_exclamation_ids,
             music_names,
             dialogue_samples,
+            level_asset_keys,
+            forest_level,
         ) = encoded?;
         let relative = format!("missions/{filename}");
         let mut files = vec![relative.clone()];
+        for rel in level_asset_keys {
+            let file = level_asset_files.get(&rel).ok_or_else(|| {
+                anyhow!("shipping mission {mission_name} requires missing terrain payload {rel}")
+            })?;
+            files.push(file.clone());
+        }
         for rel in required_rhs_profiles.keys() {
             let file = rhs_files.get(rel).ok_or_else(|| {
                 anyhow!("shipping mission {mission_name} requires missing RHS payload {rel}")
@@ -2461,6 +2626,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             })?;
             insert_shipping_audio(
                 &mut dialogue_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -2494,6 +2661,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 })?;
             insert_shipping_audio(
                 &mut music_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &relative,
                 &path,
                 AudioKind::Music,
@@ -2520,8 +2689,15 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             mission_name.clone(),
             required_exclamation_ids.iter().copied().collect(),
         );
-        dd.missions
-            .insert(mission_name, ShippingMissionRef { files });
+        files.sort();
+        files.dedup();
+        dd.missions.insert(
+            mission_name,
+            ShippingMissionRef {
+                forest_level,
+                files,
+            },
+        );
     }
 
     // Serialize + compress with the configured window log.
@@ -2691,6 +2867,8 @@ impl AudioKind {
 
 fn insert_shipping_audio(
     payload: &mut ShippingMission,
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
     relative: &str,
     path: &Path,
     kind: AudioKind,
@@ -2713,25 +2891,91 @@ fn insert_shipping_audio(
             path.display()
         )
     })?;
-    let (relative, bytes) = match format {
-        AudioFormat::Source => (relative.to_owned(), source),
-        AudioFormat::Opus => (
-            Path::new(relative)
-                .with_extension("opus")
-                .to_string_lossy()
-                .into_owned(),
-            transcode_audio_to_opus(path, kind)?,
-        ),
-    };
-    let relative = relative.replace('\\', "/").to_ascii_lowercase();
-    if let Some(previous) = payload.raw.get(&relative) {
-        if previous != &bytes {
-            bail!("conflicting shipping audio sources for {relative}");
+    match format {
+        AudioFormat::Source => {
+            let relative = relative.replace('\\', "/").to_ascii_lowercase();
+            if let Some(previous) = payload.raw.get(&relative) {
+                if previous != &source {
+                    bail!("conflicting shipping audio sources for {relative}");
+                }
+            } else {
+                payload.raw.insert(relative.clone(), source);
+            }
+            insert_audio_duration(&mut payload.audio_durations_ms, relative, duration_ms)
+        }
+        AudioFormat::Opus => {
+            let logical = standalone_audio_logical_key(relative);
+            if let Some(existing) = catalog.get(&logical) {
+                if existing.duration_ms != duration_ms {
+                    bail!(
+                        "conflicting source durations for standalone shipping audio {logical}: {} vs {duration_ms}",
+                        existing.duration_ms
+                    );
+                }
+                return Ok(());
+            }
+            let bytes = transcode_audio_to_opus(path, kind)?;
+            insert_standalone_audio(catalog, assets_dir, relative, &bytes, duration_ms)
+        }
+    }
+}
+
+fn insert_standalone_audio(
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
+    relative: &str,
+    bytes: &[u8],
+    duration_ms: u32,
+) -> Result<()> {
+    let encoded_size =
+        u32::try_from(bytes.len()).context("standalone Opus asset exceeds u32 byte length")?;
+    let logical = standalone_audio_logical_key(relative);
+    let filename = standalone_audio_filename(bytes);
+    let output = assets_dir.join(&filename);
+    if output.exists() {
+        let existing = fs::read(&output)
+            .with_context(|| format!("read existing audio asset {}", output.display()))?;
+        if existing != bytes {
+            bail!("content-addressed audio collision at {}", output.display());
         }
     } else {
-        payload.raw.insert(relative.clone(), bytes);
+        fs::write(&output, bytes)
+            .with_context(|| format!("write audio asset {}", output.display()))?;
     }
-    match payload.audio_durations_ms.entry(relative) {
+    let asset = ShippingAudioAsset {
+        file: format!("audio/assets/{filename}"),
+        encoded_size,
+        duration_ms,
+    };
+    match catalog.entry(logical) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(asset);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &asset => {}
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!(
+                "conflicting standalone shipping audio for {}: {:?} vs {asset:?}",
+                entry.key(),
+                entry.get()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn standalone_audio_logical_key(relative: &str) -> String {
+    Path::new(&robin_util::asset_fs::bundle_key(Path::new(relative)))
+        .with_extension("opus")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn insert_audio_duration(
+    durations: &mut std::collections::BTreeMap<String, u32>,
+    relative: String,
+    duration_ms: u32,
+) -> Result<()> {
+    match durations.entry(relative) {
         std::collections::btree_map::Entry::Vacant(entry) => {
             entry.insert(duration_ms);
         }
@@ -2745,6 +2989,13 @@ fn insert_shipping_audio(
         }
     }
     Ok(())
+}
+
+fn standalone_audio_filename(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(bytes);
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{hash}.opus")
 }
 
 /// Encode through FFmpeg's mature libopus integration, then remux the packets
@@ -3337,6 +3588,46 @@ fn animation_rhs_rel_existing(
     primary
 }
 
+fn level_ambiance_directory(ambiance: u32) -> Result<&'static str> {
+    match ambiance {
+        1 => Ok("Day"),
+        2 => Ok("Fog"),
+        4 => Ok("Night"),
+        8 => Ok("Attack"),
+        16 => Ok("Custom1"),
+        32 => Ok("Custom2"),
+        64 => Ok("Custom3"),
+        128 => Ok("Custom4"),
+        _ => bail!("unknown mission ambiance bit value {ambiance}"),
+    }
+}
+
+/// Resolve a map or minimap exactly like the original engine: selected
+/// ambiance first, then Day, then the Levels root. Map and minimap are
+/// resolved independently because installs may place their fallbacks at
+/// different levels.
+fn level_asset_rel_existing(
+    ambiance: u32,
+    map: &str,
+    extension: &str,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+) -> Result<String> {
+    let directory = level_ambiance_directory(ambiance)?;
+    let mut candidates = vec![format!("Levels/{directory}/{map}{extension}")];
+    if directory != "Day" {
+        candidates.push(format!("Levels/Day/{map}{extension}"));
+    }
+    candidates.push(format!("Levels/{map}{extension}"));
+    candidates
+        .into_iter()
+        .find(|candidate| in_path(candidate).is_some())
+        .ok_or_else(|| {
+            anyhow!(
+                "required level asset {map}{extension} is absent from {directory}, Day, and Levels root"
+            )
+        })
+}
+
 fn add_required_character_rhs_profiles_for_index(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
@@ -3360,59 +3651,79 @@ fn add_character_rhs_profiles_for_index(
     let Some(profile) = profiles.characters.get(index) else {
         return;
     };
-    let mut found = false;
-    for variant in profiles
+    // Character profile indices identify physical RHS files. Do not group by
+    // localized profile name: RobinHood and RobinTown can share one logical
+    // name in legacy profile tables but the original PC constructor selects
+    // exactly one physical variant from the level's forest flag.
+    let rel = format!("Characters/{}.rhs", profile.filename);
+    if required_on_disk || in_path(&rel).is_some() {
+        add_required_rhs_rel(required, rel, &profile.profile_name);
+    } else {
+        tracing::warn!(
+            "character profile '{}' ({}) has no RHS in this datadir; omitting from manifest index",
+            profile.profile_name,
+            profile.filename,
+        );
+    }
+}
+
+fn normalize_robin_profile_index(
+    profiles: &ProfileManager,
+    index: usize,
+    forest_level: bool,
+) -> Result<usize> {
+    let profile = profiles
+        .characters
+        .get(index)
+        .ok_or_else(|| anyhow!("character profile index {index} does not exist"))?;
+    if !matches!(profile.filename.as_str(), "RobinHood" | "RobinTown") {
+        return Ok(index);
+    }
+    let wanted = if forest_level {
+        "RobinHood"
+    } else {
+        "RobinTown"
+    };
+    profiles
         .characters
         .iter()
-        .filter(|variant| variant.profile_name == profile.profile_name)
-    {
-        let rel = format!("Characters/{}.rhs", variant.filename);
-        if in_path(&rel).is_some() {
-            add_required_rhs_rel(required, rel, &variant.profile_name);
-            found = true;
-        }
-    }
-    if !found {
-        if required_on_disk {
-            add_required_rhs_rel(
-                required,
-                format!("Characters/{}.rhs", profile.filename),
-                &profile.profile_name,
-            );
-        } else {
-            tracing::warn!(
-                "character profile '{}' ({}) has no RHS in this datadir; omitting from manifest index",
-                profile.profile_name,
-                profile.filename,
-            );
-        }
-    }
+        .position(|candidate| candidate.filename == wanted)
+        .ok_or_else(|| {
+            anyhow!(
+                "required {wanted} profile is absent while normalizing Robin for a {} mission",
+                if forest_level { "forest" } else { "town" }
+            )
+        })
 }
 
 fn add_required_pc_profiles_for_pcs(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
     pcs: &str,
+    forest_level: bool,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) {
     for profile_name in pcs.chars().filter_map(pc_code_profile_name) {
-        // Some logical PCs have multiple physical RHS files under the same
-        // localized profile name (notably RobinHood/RobinTown). The level
-        // loader swaps those variants according to forest/town ambiance, and
-        // campaign/save state may still ask to preload either one.
-        let mut found = false;
-        for profile in profiles
-            .characters
-            .iter()
-            .filter(|profile| profile.profile_name == profile_name)
-        {
+        let profile = profiles.characters.iter().find(|profile| {
+            if profile.filename == "RobinHood" || profile.filename == "RobinTown" {
+                profile.filename
+                    == if forest_level {
+                        "RobinHood"
+                    } else {
+                        "RobinTown"
+                    }
+            } else {
+                profile.profile_name == profile_name
+            }
+        });
+        if let Some(profile) = profile {
             let rel = format!("Characters/{}.rhs", profile.filename);
             if in_path(&rel).is_some() {
                 add_required_rhs_rel(required, rel, &profile.profile_name);
-                found = true;
+            } else {
+                tracing::warn!("demo PC profile '{}' has no shipped RHS", profile_name);
             }
-        }
-        if !found {
+        } else {
             tracing::warn!("demo PC profile '{}' has no shipped RHS", profile_name);
         }
     }

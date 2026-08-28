@@ -73,19 +73,22 @@ async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
 fn request_buffer(path: &str) -> Option<AudioBuffer> {
     let asset = robin_assets::shipping_datadir::global()?.remote_audio_asset(Path::new(path))?;
     let url = asset.url;
-    let (buffer, generation) = with_audio(|audio| {
+    let (buffer, generation, should_load) = with_audio(|audio| {
         if let Some(buffer) = audio.buffers.get(&url) {
-            return (Some(buffer.clone()), audio.generation);
+            return (Some(buffer.clone()), audio.generation, false);
         }
         if audio.loading.contains(&url) || audio.failed.contains(&url) {
-            return (None, audio.generation);
+            return (None, audio.generation, false);
         }
         audio.loading.insert(url.clone());
-        (None, audio.generation)
+        (None, audio.generation, true)
     })
     .ok()?;
     if buffer.is_some() {
         return buffer;
+    }
+    if !should_load {
+        return None;
     }
 
     let requested_path = path.to_owned();

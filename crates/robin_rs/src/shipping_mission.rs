@@ -44,24 +44,19 @@ where
         profiles,
         has_decoded_saved_world,
     )?;
-    let total = dependencies.files.len()
-        + usize::from(cfg!(all(target_arch = "wasm32", feature = "audio")));
+    let total = dependencies.files.len();
     progress(MissionLoadProgress {
         completed: 0,
         total,
         file: None,
     });
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    if datadir.active_mission_name().as_deref() != Some(mission) {
+        crate::audio_backend::clear_mission()
+            .map_err(anyhow::Error::msg)
+            .context("clear browser audio for mission transition")?;
+    }
     if datadir.is_mission_loaded(mission) {
-        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-        {
-            decode_mission_audio(datadir, mission).await?;
-            progress(MissionLoadProgress {
-                completed: total,
-                total,
-                file: Some("browser audio"),
-            });
-            crate::window::yield_to_runtime().await;
-        }
         datadir
             .activate_mission(mission)
             .with_context(|| format!("activate shipping mission {mission}"))?;
@@ -108,16 +103,6 @@ where
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;
-    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-    {
-        decode_mission_audio(datadir, mission).await?;
-        progress(MissionLoadProgress {
-            completed: total,
-            total,
-            file: Some("browser audio"),
-        });
-        crate::window::yield_to_runtime().await;
-    }
     datadir.set_active_exclamation_ids(exclamation_ids);
     let payload = datadir
         .loaded_mission(mission)
@@ -131,27 +116,6 @@ where
         "shipping mission payload loaded"
     );
     Ok(())
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "audio"))]
-async fn decode_mission_audio(datadir: &ShippingDatadir, mission: &str) -> Result<()> {
-    let payload = datadir
-        .loaded_mission(mission)
-        .ok_or_else(|| anyhow!("shipping mission {mission} disappeared before audio decode"))?;
-    let entries = payload
-        .audio_durations_ms
-        .keys()
-        .map(|path| {
-            let bytes = payload.raw_asset(path).ok_or_else(|| {
-                anyhow!("required mission audio {path} is absent from its installed bundle")
-            })?;
-            Ok::<_, anyhow::Error>((path.clone(), bytes))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    crate::audio_backend::replace_mission(entries)
-        .await
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("decode required audio for shipping mission {mission}"))
 }
 
 struct RequiredMissionDependencies {
@@ -192,7 +156,11 @@ fn required_dependencies(
                 "mission-team character {character_index} has no profile while loading {mission}"
             )
         })?;
-        character_profiles.insert(profile.0);
+        character_profiles.insert(normalize_robin_profile(
+            profiles,
+            profile.0,
+            reference.forest_level,
+        )?);
     }
 
     // Reinforcement selection can instantiate any uninstanced, non-VIP gang
@@ -217,7 +185,11 @@ fn required_dependencies(
             )
         })?;
         if !profile.vip {
-            character_profiles.insert(profile_index.0);
+            character_profiles.insert(normalize_robin_profile(
+                profiles,
+                profile_index.0,
+                reference.forest_level,
+            )?);
         }
     }
 
@@ -253,6 +225,39 @@ fn required_dependencies(
         files: files.into_iter().collect(),
         exclamation_ids,
     })
+}
+
+/// Mirror `RHelementactorpc.cpp`: Robin's stored campaign profile may be
+/// either physical variant, but level construction always selects RobinHood
+/// for forests and RobinTown for towns.
+fn normalize_robin_profile(
+    profiles: &robin_engine::profiles::ProfileManager,
+    profile_index: u32,
+    forest_level: bool,
+) -> Result<u32> {
+    let profile = profiles
+        .characters
+        .get(profile_index as usize)
+        .ok_or_else(|| anyhow!("required character profile {profile_index} does not exist"))?;
+    if !matches!(profile.filename.as_str(), "RobinHood" | "RobinTown") {
+        return Ok(profile_index);
+    }
+    let wanted = if forest_level {
+        "RobinHood"
+    } else {
+        "RobinTown"
+    };
+    profiles
+        .characters
+        .iter()
+        .position(|candidate| candidate.filename == wanted)
+        .map(|index| index as u32)
+        .ok_or_else(|| {
+            anyhow!(
+                "required {wanted} profile is absent while normalizing Robin for a {} mission",
+                if forest_level { "forest" } else { "town" }
+            )
+        })
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
@@ -314,6 +319,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into(), "rhs/static".into()],
             },
         );
@@ -378,6 +384,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into()],
             },
         );
@@ -405,6 +412,7 @@ mod tests {
         datadir.missions.insert(
             "H01".into(),
             ShippingMissionRef {
+                forest_level: false,
                 files: vec!["missions/h01".into()],
             },
         );
@@ -420,5 +428,68 @@ mod tests {
             .err()
             .expect("missing profile dependency must fail");
         assert!(error.to_string().contains("profile 0"));
+    }
+
+    #[test]
+    fn required_files_selects_only_the_mission_robin_variant() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.missions.insert(
+            "Forest".into(),
+            ShippingMissionRef {
+                forest_level: true,
+                files: vec!["missions/forest".into()],
+            },
+        );
+        datadir.missions.insert(
+            "Town".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["missions/town".into()],
+            },
+        );
+        datadir
+            .mission_exclamation_ids
+            .insert("Forest".into(), Vec::new());
+        datadir
+            .mission_exclamation_ids
+            .insert("Town".into(), Vec::new());
+        datadir
+            .character_rhs_files
+            .insert(0, vec!["rhs/robin-hood".into()]);
+        datadir
+            .character_rhs_files
+            .insert(1, vec!["rhs/robin-town".into()]);
+        datadir.character_audio_files.insert(0, Vec::new());
+        datadir.character_audio_files.insert(1, Vec::new());
+
+        let mut profiles = ProfileManager::new();
+        profiles.characters = vec![
+            CharacterProfile {
+                filename: "RobinHood".into(),
+                ..CharacterProfile::default()
+            },
+            CharacterProfile {
+                filename: "RobinTown".into(),
+                ..CharacterProfile::default()
+            },
+        ];
+        let mut campaign = Campaign::default();
+        campaign.characters.push(description(0, false));
+        campaign.mission_team_indices.push(0);
+
+        let forest = required_dependencies(&datadir, "Forest", &campaign, &profiles, false)
+            .unwrap()
+            .files;
+        let town = required_dependencies(&datadir, "Town", &campaign, &profiles, false)
+            .unwrap()
+            .files;
+        assert_eq!(
+            forest,
+            vec!["missions/forest".to_owned(), "rhs/robin-hood".to_owned()]
+        );
+        assert_eq!(
+            town,
+            vec!["missions/town".to_owned(), "rhs/robin-town".to_owned()]
+        );
     }
 }
