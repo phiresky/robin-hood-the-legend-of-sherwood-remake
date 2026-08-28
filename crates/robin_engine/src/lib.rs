@@ -93,6 +93,7 @@ mod state_hash_impls;
 pub mod stealth;
 pub mod tactical_control;
 pub mod titbit;
+pub mod trading;
 pub mod vm;
 pub mod weapons;
 pub mod widget_state;

@@ -146,7 +146,8 @@ enum ScriptedModalMode {
 async fn drive_scripted_modal_lanes(
     host: &mut Host,
     game: &Game,
-    manager: &robin_engine::engine_manager::EngineManager,
+    manager: &mut robin_engine::engine_manager::EngineManager,
+    assets: &robin_engine::engine::LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     window: &mut GameWindow,
     audio: &mut super::interactive::MissionAudio,
@@ -159,6 +160,41 @@ async fn drive_scripted_modal_lanes(
     mut rendered: bool,
 ) -> bool {
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
+    if !rendered
+        && ui.active_modal.is_none()
+        && host.effects.take_signal(HostSignal::SherwoodTrading)
+    {
+        if auto_dismiss {
+            tracing::debug!("headless mode ignored a local Sherwood trading-panel request");
+        } else {
+            let profile = host
+                .application_context
+                .active_profile_snapshot()
+                .unwrap_or_else(|error| {
+                    panic!("Sherwood trading requires an active profile: {error}")
+                });
+            if profile.gameplay_config.sherwood_trading
+                && host.transport.local_seat == engine_player_command::PlayerId::HOST
+                && manager.engine.is_sherwood(&assets.profile_manager)
+            {
+                let Some(menu_resources) = resources.menu.as_ref() else {
+                    tracing::warn!("Sherwood trading: menu resources unavailable — skipped");
+                    return rendered;
+                };
+                let sectors = manager.engine.live_production_sectors(profiles);
+                let ransom = crate::ingame_menu::trading::ransom_from_engine(&manager.engine);
+                ui.active_modal = Some(ActiveModal::Trading(Box::new(
+                    crate::ingame_menu::TradingModalState::new(
+                        window,
+                        &presentation.renderer,
+                        menu_resources,
+                        &sectors,
+                        ransom,
+                    ),
+                )));
+            }
+        }
+    }
     let mut modal_ctx = ModalContext {
         window,
         renderer: &mut presentation.renderer,
@@ -198,8 +234,10 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
             rendered = true;
         }
     }
@@ -252,8 +290,10 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
             rendered = true;
         }
     }
@@ -285,12 +325,42 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
             rendered = true;
         }
     }
     rendered
+}
+
+fn dispatch_trading_modal_outcome(
+    outcome: ActiveModalOutcome,
+    host: &mut Host,
+    manager: &mut robin_engine::engine_manager::EngineManager,
+    assets: &robin_engine::engine::LevelAssets,
+    frame: &mut MissionFrame,
+) {
+    match outcome {
+        ActiveModalOutcome::None => {}
+        ActiveModalOutcome::SellSherwoodItem {
+            prod_type,
+            quantity,
+        } => dispatch_local_command(
+            host,
+            &mut manager.engine,
+            &mut frame.post_commands,
+            assets,
+            &PlayerCommand::CampaignSellProductionItem {
+                prod_type,
+                quantity,
+            },
+        ),
+        ActiveModalOutcome::QuitMissionRequested => {
+            debug_assert!(false, "mission-state modal reached scripted modal lanes")
+        }
+    }
 }
 
 /// Drive the first mission-won "leave now" prompt after scripted modal lanes.
@@ -367,6 +437,8 @@ fn drive_leave_mission_prompt(
         host,
         &mut modal_ctx,
         &mut frame.replay_modal_dismissals,
+        &manager.engine,
+        &assets.profile_manager,
     );
     if outcome == ActiveModalOutcome::QuitMissionRequested {
         let cmd = PlayerCommand::QuitMissionRequested;
@@ -580,6 +652,7 @@ impl InteractiveFrameSimulation {
                 host,
                 game,
                 manager,
+                assets.as_ref(),
                 profiles,
                 window,
                 audio,

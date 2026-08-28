@@ -34,6 +34,7 @@ const OPTION_LABELS: &[&str] = &[
     "Sherwood Production Forecast",
     "Reusable Cloaks",
     "Campaign Presentation",
+    "Sherwood Item Trading",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -225,6 +226,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         3 => config.show_production_forecast = !config.show_production_forecast,
         4 => config.reusable_cloaks = !config.reusable_cloaks,
         5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => config.sherwood_trading = !config.sherwood_trading,
         _ => {}
     }
 }
@@ -240,6 +242,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
             config.campaign_presentation
                 != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
         }
+        6 => config.sherwood_trading,
         _ => false,
     }
 }

@@ -66,6 +66,7 @@ mod teleport;
 mod tests;
 mod tick;
 mod titbit_sync;
+mod trading;
 mod transitions;
 mod types;
 mod wasp_nest;

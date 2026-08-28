@@ -850,6 +850,13 @@ pub enum PlayerCommand {
     /// into the campaign before exiting Sherwood.  Invoked on the
     /// mission-start branch.
     CampaignHarvestProductionSectorState,
+    /// Sell exactly one or five stored Sherwood production items.  The
+    /// authoritative handler validates host ownership, location, stock and
+    /// currency overflow before mutating anything.
+    CampaignSellProductionItem {
+        prod_type: crate::sector_production::Type,
+        quantity: crate::trading::TradeQuantity,
+    },
     /// Convert every peasant on the current mission team into blazons,
     /// removing their PC entities from the engine.  Dispatched from
     /// the Sherwood mission-start branch when the player committed
@@ -969,6 +976,11 @@ pub enum PlayerCommand {
     },
     /// Toggle the post-port player interaction for releasing tied NPCs.
     SetUnbindingEnabled {
+        enabled: bool,
+    },
+    /// Toggle the deterministic trading rule immediately after an in-game
+    /// options change.
+    SetSherwoodTrading {
         enabled: bool,
     },
 

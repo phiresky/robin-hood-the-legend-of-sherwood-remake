@@ -1266,6 +1266,12 @@ impl EngineInner {
             CampaignHarvestProductionSectorState => {
                 self.harvest_production_sector_state(assets);
             }
+            CampaignSellProductionItem {
+                prod_type,
+                quantity,
+            } => {
+                self.sell_sherwood_production_item(assets, seat, *prod_type, *quantity);
+            }
             CampaignConvertSelectedPeasantsToBlazons => {
                 self.convert_selected_peasants_to_blazons(sim, &assets.profile_manager);
             }
@@ -1450,6 +1456,9 @@ impl EngineInner {
             }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(*enabled);
+            }
+            SetSherwoodTrading { enabled } => {
+                self.control.sim_config.sherwood_trading = *enabled;
             }
 
             HeroSpeak { pc_id, expression } => {

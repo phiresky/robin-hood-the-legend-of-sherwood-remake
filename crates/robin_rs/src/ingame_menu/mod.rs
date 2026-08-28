@@ -42,6 +42,7 @@ pub mod resources;
 pub mod save_load;
 pub mod shortcuts;
 pub mod sounds;
+pub mod trading;
 pub mod widget_bridge;
 pub mod yesno;
 
@@ -60,6 +61,7 @@ pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
 pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
+pub use trading::{TradingModalState, TradingOutcome};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
 
 use robin_engine::game_operation::GameCode;

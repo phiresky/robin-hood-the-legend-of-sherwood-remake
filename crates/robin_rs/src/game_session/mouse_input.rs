@@ -17,7 +17,7 @@ use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks};
 use crate::gfx_types::GameEvent;
-use crate::host::{Host, TacticalTargetMode};
+use crate::host::{Host, HostSignal, TacticalTargetMode};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
@@ -105,6 +105,28 @@ pub(super) fn handle_mouse_input(
 
     if pause_menu.is_none() && !pause_closed_this_frame {
         for event in events {
+            if matches!(
+                event,
+                GameEvent::KeyDown {
+                    keycode: crate::gfx_types::Keycode::Char(b't'),
+                    ..
+                }
+            ) && engine.is_sherwood(&assets.profile_manager)
+                && host.transport.local_seat == engine_player_command::PlayerId::HOST
+            {
+                let enabled = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("Sherwood trading shortcut requires an active profile: {error}")
+                    })
+                    .gameplay_config
+                    .sherwood_trading;
+                if enabled {
+                    host.effects.request_signal(HostSignal::SherwoodTrading);
+                }
+                continue;
+            }
             // When `user_locked` is set (by Command::LockUser, which
             // cutscenes and forced dialogues dispatch), MOUSE_MOVED
             // and MOUSE_BUTTON are dropped.  Filter all mouse events
@@ -1479,11 +1501,13 @@ pub(super) async fn handle_pause_menu_events(
                         // rather than showing a stale local preference.
                         gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
                         gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
+                        gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
+                        let simulation_sherwood_trading = gameplay_config.sherwood_trading;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1563,6 +1587,12 @@ pub(super) async fn handle_pause_menu_events(
                         if gameplay_config.reusable_cloaks != simulation_reusable_cloaks {
                             let cmd = PlayerCommand::SetReusableCloaks {
                                 enabled: gameplay_config.reusable_cloaks,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.sherwood_trading != simulation_sherwood_trading {
+                            let cmd = PlayerCommand::SetSherwoodTrading {
+                                enabled: gameplay_config.sherwood_trading,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

@@ -12,7 +12,7 @@ use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, DebriefingModalState, DebriefingOutcome, DialogueModalState, DialogueSentence,
     IngameMenuResources, MissionStatePopupState, ModalNet, PopupScrollItem, PopupScrollModalState,
-    layout::TextAlign,
+    TradingModalState, TradingOutcome, layout::TextAlign,
 };
 use crate::renderer::Renderer;
 use crate::window::{GameWindow, start_text_input};
@@ -434,6 +434,7 @@ pub(super) enum ActiveModal {
         state: MissionStatePopupState,
         replay_result: Option<engine_player_command::DialogResult>,
     },
+    Trading(Box<TradingModalState>),
 }
 
 impl ActiveModal {
@@ -443,6 +444,7 @@ impl ActiveModal {
             ActiveModal::PopupScroll(batch) => batch.is_empty(),
             ActiveModal::Debriefing(batch) => batch.is_empty(),
             ActiveModal::MissionState { .. } => false,
+            ActiveModal::Trading(_) => false,
         }
     }
 }
@@ -451,6 +453,10 @@ impl ActiveModal {
 pub(super) enum ActiveModalOutcome {
     None,
     QuitMissionRequested,
+    SellSherwoodItem {
+        prod_type: robin_engine::sector_production::Type,
+        quantity: robin_engine::trading::TradeQuantity,
+    },
 }
 
 /// Per-frame queue of typed replay modal results.
@@ -806,6 +812,7 @@ pub(super) fn start_active_sherwood_report(
         &score_info,
         &resources.menu_text,
         profile.gameplay_config.show_production_forecast,
+        profile.gameplay_config.sherwood_trading,
     );
     let kind = engine_player_command::ModalKind::SherwoodReport;
     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
@@ -829,17 +836,20 @@ fn build_sherwood_report_text(
     score_info: &ScoreInfo,
     menu_text: &crate::ingame_menu::resources::MenuText,
     show_forecast: bool,
+    show_trading: bool,
 ) -> String {
     let campaign = engine.campaign();
     let sherwood = SherwoodStat;
     if !show_forecast {
-        return sherwood.get_text(
+        let mut text = sherwood.get_text(
             &campaign.production_sectors,
             &campaign.characters,
             profiles,
             score_info,
             menu_text,
         );
+        append_trading_hint(&mut text, menu_text, show_trading);
+        return text;
     }
 
     let live_sectors = engine.live_production_sectors(profiles);
@@ -856,14 +866,27 @@ fn build_sherwood_report_text(
                     duration_seconds: Some(mission_profile.length),
                 }
             });
-    sherwood.get_text_with_forecast(
+    let mut text = sherwood.get_text_with_forecast(
         &live_sectors,
         &campaign.characters,
         profiles,
         score_info,
         menu_text,
         Some(&forecast_cycle),
-    )
+    );
+    append_trading_hint(&mut text, menu_text, show_trading);
+    text
+}
+
+fn append_trading_hint(
+    text: &mut String,
+    menu_text: &crate::ingame_menu::resources::MenuText,
+    show_trading: bool,
+) {
+    if show_trading {
+        text.push_str("\n\n");
+        text.push_str(&menu_text.get(crate::ingame_menu::resources::MT_STR_TRADING_HINT));
+    }
 }
 
 pub(super) fn start_active_debriefing_batch(
@@ -945,6 +968,8 @@ pub(super) fn tick_active_modal(
     host: &mut Host,
     ctx: &mut ModalContext<'_>,
     replay_modal_dismissals: &mut ReplayModalDismissals,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
 ) -> ActiveModalOutcome {
     let Some(modal) = active_modal.as_mut() else {
         return ActiveModalOutcome::None;
@@ -1035,6 +1060,45 @@ pub(super) fn tick_active_modal(
                 }
             } else {
                 ActiveModalOutcome::None
+            }
+        }
+        ActiveModal::Trading(state) => {
+            let ModalContext {
+                window,
+                renderer,
+                cursor_res,
+                cursor_renderer,
+                menu_resources,
+                ..
+            } = ctx;
+            let Some(resources) = menu_resources.as_ref() else {
+                tracing::warn!("Sherwood trading: menu resources unavailable — closing");
+                *active_modal = None;
+                return ActiveModalOutcome::None;
+            };
+            let receipts = host.effects.take_trade_receipts();
+            let sectors = engine.live_production_sectors(profiles);
+            let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+            match state.tick(
+                window,
+                renderer,
+                resources,
+                receipts,
+                &sectors,
+                Some(cursor),
+            ) {
+                Some(TradingOutcome::Close) => {
+                    *active_modal = None;
+                    ActiveModalOutcome::None
+                }
+                Some(TradingOutcome::Sell {
+                    prod_type,
+                    quantity,
+                }) => ActiveModalOutcome::SellSherwoodItem {
+                    prod_type,
+                    quantity,
+                },
+                None => ActiveModalOutcome::None,
             }
         }
     }
@@ -1179,6 +1243,7 @@ pub(super) async fn drain_pending_sherwood_stat(
                 &score_info,
                 &resources.menu_text,
                 profile.gameplay_config.show_production_forecast,
+                profile.gameplay_config.sherwood_trading,
             );
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);

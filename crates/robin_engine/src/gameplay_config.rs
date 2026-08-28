@@ -92,6 +92,12 @@ pub struct GameplayConfig {
     #[serde(default = "default_show_production_forecast")]
     pub show_production_forecast: bool,
 
+    /// Enable authoritative Sherwood inventory sales and their trading UI.
+    /// Missing fields deserialize as `false`, preserving pre-feature profiles
+    /// without silently opting them into a new economy.
+    #[serde(default)]
+    pub sherwood_trading: bool,
+
     /// Allow PCs to put their shipped cape disguise back on.
     ///
     /// Missing means an existing/migrated profile and deliberately preserves
@@ -118,6 +124,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             show_production_forecast: default_show_production_forecast(),
+            sherwood_trading: true,
             reusable_cloaks: true,
             campaign_presentation: CampaignPresentationMode::ProgressTree,
         }
@@ -132,6 +139,7 @@ mod tests {
     fn hard_reaction_time_fix_is_the_default() {
         assert!(GameplayConfig::default().fix_hard_reaction_times);
         assert!(GameplayConfig::default().show_production_forecast);
+        assert!(GameplayConfig::default().sherwood_trading);
     }
 
     #[test]
@@ -141,6 +149,7 @@ mod tests {
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.show_production_forecast);
+        assert!(!config.sherwood_trading);
         assert!(!config.reusable_cloaks);
         assert_eq!(
             config.campaign_presentation,
@@ -170,5 +179,17 @@ mod tests {
     #[test]
     fn fresh_profiles_enable_reusable_cloaks() {
         assert!(GameplayConfig::default().reusable_cloaks);
+    }
+
+    #[test]
+    fn sherwood_trading_toggle_round_trips_with_profile_config() {
+        let config = GameplayConfig {
+            sherwood_trading: false,
+            ..GameplayConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.sherwood_trading);
     }
 }

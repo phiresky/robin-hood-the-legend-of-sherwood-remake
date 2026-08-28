@@ -113,6 +113,7 @@ impl ApplicationContext {
         let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
         let enable_unbinding = active.gameplay_config.enable_unbinding;
         let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+        let sherwood_trading = active.gameplay_config.sherwood_trading;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -129,6 +130,7 @@ impl ApplicationContext {
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -147,6 +149,7 @@ impl ApplicationContext {
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.sherwood_trading = existing.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -206,6 +209,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             let mut profiles = self
                 .required_services()?
@@ -223,6 +227,7 @@ impl ApplicationContext {
                 active.gameplay_config.fix_hard_reaction_times,
                 active.gameplay_config.enable_unbinding,
                 active.gameplay_config.reusable_cloaks,
+                active.gameplay_config.sherwood_trading,
             )
         };
         self.refresh_profile_derived_state(
@@ -231,6 +236,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(result)
     }
@@ -252,6 +258,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
@@ -302,6 +309,7 @@ impl ApplicationContext {
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
             let enable_unbinding = active.gameplay_config.enable_unbinding;
             let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+            let sherwood_trading = active.gameplay_config.sherwood_trading;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -332,6 +340,7 @@ impl ApplicationContext {
                 fix_hard_reaction_times,
                 enable_unbinding,
                 reusable_cloaks,
+                sherwood_trading,
             )
         };
 
@@ -341,6 +350,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(profile_id)
     }
@@ -419,12 +429,14 @@ impl ApplicationContext {
         fix_hard_reaction_times: bool,
         enable_unbinding: bool,
         reusable_cloaks: bool,
+        sherwood_trading: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -878,6 +890,7 @@ pub enum HostSignal {
     MissionStatePopup,
     ResetInput,
     PromoteFpsCheat,
+    SherwoodTrading,
 }
 
 /// Ordered, typed work emitted at the post-tick boundary. Variant-specific
@@ -886,6 +899,7 @@ pub enum HostSignal {
 pub struct HostEffectBatches {
     modals: Vec<HostModalRequest>,
     signals: Vec<HostSignal>,
+    trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
     pub background_blits: Vec<PendingBgBlit>,
 }
 
@@ -928,6 +942,17 @@ impl HostEffectBatches {
         };
         self.modals.remove(index);
         true
+    }
+
+    pub fn extend_trade_receipts(
+        &mut self,
+        receipts: impl IntoIterator<Item = robin_engine::trading::TradeReceipt>,
+    ) {
+        self.trade_receipts.extend(receipts);
+    }
+
+    pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
+        std::mem::take(&mut self.trade_receipts)
     }
 
     pub fn dialogue_count(&self) -> usize {
@@ -993,6 +1018,7 @@ impl HostEffectBatches {
     pub fn clear(&mut self) {
         self.modals.clear();
         self.signals.clear();
+        self.trade_receipts.clear();
         self.background_blits.clear();
     }
 }
@@ -1376,6 +1402,7 @@ impl Host {
         if fx.pending_sherwood_report {
             self.effects.request_sherwood_report();
         }
+        self.effects.extend_trade_receipts(fx.trade_receipts);
         if fx.pending_show_console {
             self.effects.request_signal(HostSignal::ShowConsole);
         }
