@@ -198,7 +198,10 @@ impl CampaignProgressGraph {
                     .filter(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
                     .count(),
                 best,
-                badge_count: mission.attempt_history().badges().len(),
+                // Raw calculated results remain on every immutable attempt for
+                // debrief/audit. Only the host-policy-approved achievement
+                // history is allowed to drive awarded badge presentation.
+                badge_count: mission.achievement_badges().len(),
                 lifetime_attempt_count,
                 lifetime_win_count,
                 selectable: accessible || (allow_replays && has_win),

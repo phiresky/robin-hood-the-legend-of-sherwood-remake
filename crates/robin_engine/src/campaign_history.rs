@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::achievement::{AchievementSet, MissionAchievementResults};
+use crate::achievement::MissionAchievementResults;
 use crate::engine::SimConfig;
 use crate::mission_stat::MissionStat;
 use crate::player_profile::DifficultyLevel;
@@ -316,16 +316,6 @@ impl MissionAttemptHistory {
         self.attempts
             .iter()
             .any(|attempt| attempt.outcome == MissionAttemptOutcome::Won)
-    }
-
-    pub fn badges(&self) -> AchievementSet {
-        self.attempts
-            .iter()
-            .filter_map(MissionAttempt::achievements)
-            .fold(AchievementSet::empty(), |mut badges, results| {
-                badges.union_with(results.earned());
-                badges
-            })
     }
 
     pub(crate) fn append(&mut self, attempt: MissionAttempt) {
