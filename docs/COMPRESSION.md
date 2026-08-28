@@ -670,7 +670,11 @@ Primary references for the candidates: the
 [WebGPU feature guarantees](https://gpuweb.github.io/gpuweb/#adapter-capability-guarantees),
 and the [zstd dictionary API](https://facebook.github.io/zstd/zstd_manual.html#Chapter5).
 
-## Schema-v6 web audio (2026-08-28)
+## Schema-v6 web audio (superseded, 2026-08-28)
+
+This section records the intermediate eager-audio design and its measurements.
+Schema v8 below is authoritative for the current browser layout: do not use the
+v6 boot/mission totals to estimate current transfers.
 
 Browser shipping now uses `convert_datadir --audio-format opus`. FFmpeg's
 libopus encoder runs offline with 20 ms VBR frames and complexity 10: localized
@@ -734,6 +738,44 @@ That is 66,401,671 B smaller than the previous 146,327,889 B total (-45.4%).
 HTTP content encoding can further reduce the wasm/JS/shell portion; the
 already-zstd-compressed data and Opus streams should not be counted on for a
 similar secondary reduction.
+
+## Schema-v8 lazy web audio and exact dependencies (2026-08-28)
+
+Schema v8 (`RHDDNAT8`) replaces eager boot/mission Opus payloads with a catalog
+in `datadir.bin`. Each catalog entry maps a normalized legacy path to a
+content-addressed `Data/audio/assets/<sha256>.opus`, its encoded size, and the
+source-authoritative duration. The browser fetches an asset only at first
+playback and passes its JavaScript `ArrayBuffer` directly to
+`decodeAudioData`; encoded audio and decoded PCM never enter wasm memory.
+In-flight requests are deduplicated by content URL. Native and Android
+`--audio-format source` output remains embedded and does not require Web Audio.
+
+Mission references now select the exact ambiance/day map and minimap, loading
+PAK, physical character RHS set, and RobinHood/RobinTown variant. Terrain is a
+shared content-addressed dependency instead of being embedded in each mission
+core. The production browser recipe is q80 JXL, 24 kbit/s voice, 48 kbit/s
+effects, 64 kbit/s music, and zstd window log 30.
+
+The full-game `H01_Lin_VL` artifact and a fresh-profile Chrome run measured:
+
+```
+wasm gzip + bindgen JS gzip        4,633,216 B
+boot datadir                       9,352,150 B
+required overlay assets             201,506 B
+boot game payload                 14,186,872 B
+
+59 blocking mission files         26,142,522 B
+audio played through startup       1,322,900 B (2 unique requests)
+boot + mission + played audio     41,652,294 B
+```
+
+The single-file shell is 14,522 B raw / 5,550 B gzip. Adding its gzip body and
+the 58-byte build pointer plus 1,731-byte preload manifest gives a production
+body total of **41,659,633 B** through first-mission startup, excluding HTTP
+headers. Mission loading reached 59/59, installed `H01_Lin_VL`, initialized all
+portrait/action/fighting caches, and began replay recording without a panic or
+runtime exception. Audio is timing-driven; later dialogue, effects, or voices
+add only the standalone files actually played.
 
 ## Reproducing
 
