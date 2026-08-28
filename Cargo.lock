@@ -5892,6 +5892,7 @@ dependencies = [
  "bytemuck",
  "bzip2",
  "flate2",
+ "foldhash 0.2.0",
  "jxl",
  "memmap2",
  "robin_engine",

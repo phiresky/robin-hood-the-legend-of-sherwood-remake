@@ -27,9 +27,11 @@
 //! zstd-22 standalone, ~3.9x on family variants coded against their base;
 //! the whole character corpus comes out 2.27x smaller than zstd-19.
 
-use std::collections::HashMap;
-
 use anyhow::{Result, anyhow};
+
+/// Context maps are on the per-tile hot path; foldhash beats SipHash by a
+/// wide margin here and lookup-only use never depends on iteration order.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
 
 // ---------------------------------------------------------------------------
 // Range coder (LZMA-style, 32-bit range, byte renormalisation)
@@ -147,18 +149,103 @@ const CTX_HALVE_LIMIT: u32 = 1 << 14;
 /// character, so slow, stable statistics win.
 const BUMP: u16 = 1;
 
-/// One adaptive context: seen symbols with counts, in insertion order.
-#[derive(Default)]
-struct Ctx {
-    syms: Vec<(u16, u16)>,
-    sum: u32,
+/// Promote a context to dense counts once it holds this many distinct
+/// symbols (only when the alphabet is small enough for an 8 KB flat array).
+/// Measured: promotion at 320 REGRESSED decode 6.4s -> 11.8s on Knight01 —
+/// the hot contexts are so skewed that the bubbled list answers from its
+/// head in ~1 cache line while Fenwick ops touch ~12 cold ones. Disabled
+/// (usize::MAX) until someone finds a workload where dense wins; the
+/// machinery is kept because exclusion-adjusted Fenwick coding is the known
+/// path to O(log) escapes if decode time ever becomes the priority.
+const PROMOTE_AT: usize = usize::MAX;
+const PROMOTE_MAX_ALPHABET: u32 = 4096;
+
+/// One adaptive context.
+///
+/// `Small` keeps (symbol, count) pairs frequency-bubbled to the front so hot
+/// lookups terminate early. `Big` is a flat per-symbol count array with O(1)
+/// updates — its intervals are symbol-ordered rather than frequency-ordered,
+/// which changes nothing about arithmetic-coding cost, only the layout, and
+/// promotion happens at the same deterministic point on both coder sides.
+enum Ctx {
+    Small {
+        syms: Vec<(u16, u16)>,
+        sum: u32,
+    },
+    Big {
+        counts: Box<[u16]>,
+        /// Fenwick tree over `counts` (1-based): prefix sums, point updates
+        /// and target descent in O(log alphabet).
+        tree: Box<[u32]>,
+        sum: u32,
+        distinct: u32,
+    },
+}
+
+/// Fenwick prefix sum of `counts[0..x]`.
+fn fenwick_prefix(tree: &[u32], x: usize) -> u32 {
+    let mut i = x;
+    let mut s = 0u32;
+    while i > 0 {
+        s += tree[i];
+        i &= i - 1;
+    }
+    s
+}
+
+fn fenwick_add(tree: &mut [u32], mut i: usize, delta: u32) {
+    i += 1;
+    while i < tree.len() {
+        tree[i] += delta;
+        i += i & i.wrapping_neg();
+    }
+}
+
+/// Binary descent: the symbol `s` with `prefix(s) <= target < prefix(s+1)`,
+/// returned as `(s, prefix(s))`.
+fn fenwick_descend(tree: &[u32], target: u32) -> (usize, u32) {
+    let n = tree.len() - 1;
+    let mut step = n.next_power_of_two();
+    if step > n {
+        step >>= 1;
+    }
+    let mut idx = 0usize;
+    let mut acc = 0u32;
+    while step > 0 {
+        let next = idx + step;
+        if next <= n && acc + tree[next] <= target {
+            idx = next;
+            acc += tree[next];
+        }
+        step >>= 1;
+    }
+    (idx, acc)
+}
+
+fn rebuild_fenwick(counts: &[u16]) -> Box<[u32]> {
+    let mut tree = vec![0u32; counts.len() + 1].into_boxed_slice();
+    for (i, &c) in counts.iter().enumerate() {
+        if c > 0 {
+            fenwick_add(&mut tree, i, c as u32);
+        }
+    }
+    tree
+}
+
+impl Default for Ctx {
+    fn default() -> Self {
+        Ctx::Small {
+            syms: Vec::new(),
+            sum: 0,
+        }
+    }
 }
 
 enum CtxCode {
-    /// (cum, freq, total) of the coded symbol.
-    Sym(u32, u32, u32),
-    /// (cum, freq, total) of the escape.
-    Escape(u32, u32, u32),
+    /// (cum, freq, total, see bucket) of the coded symbol.
+    Sym(u32, u32, u32, SeeKey),
+    /// (cum, freq, total, see bucket) of the escape.
+    Escape(u32, u32, u32, SeeKey),
     /// Context was empty: nothing is coded (probability-1 escape).
     Empty,
 }
@@ -167,108 +254,320 @@ enum CtxCode {
 /// PPMD-style `distinct.div_ceil(2)` was measured worse net: +1.3..1.9% on
 /// standalone characters (the bulk of the coded bytes), -0.3..0.5% on
 /// cross-variant streams.
+///
+/// Used for bookkeeping totals (`Ctx::total` fast paths); actual coding
+/// uses [`See`]-adaptive escape frequencies where a `See` table is passed.
 #[inline]
 fn escape_weight(distinct: u32) -> u32 {
     distinct
 }
 
+/// Secondary escape estimation: adaptive escape statistics per
+/// (chain level, log2 distinct-symbol count) bucket, replacing PPMC's fixed
+/// "escape mass = distinct" heuristic with learned hit/escape ratios.
+struct See {
+    /// [level][log2 distinct][log2 sum][top-symbol skew quartile]
+    /// -> (symbol hits, escapes).
+    stats: [[[[(u32, u32); 4]; 15]; 13]; 4],
+}
+
+/// A flattened See bucket index.
+#[derive(Clone, Copy)]
+struct SeeKey(usize, usize, usize, usize);
+
+impl See {
+    fn new() -> Self {
+        Self {
+            stats: [[[[(1, 1); 4]; 15]; 13]; 4],
+        }
+    }
+
+    #[inline]
+    fn key(level: usize, sum: u32, distinct: u32, top: u32) -> SeeKey {
+        let d = (31 - (distinct.max(1)).leading_zeros()).min(12) as usize;
+        // Context maturity: escape probability falls as observations grow.
+        let s = (31 - (sum.max(1)).leading_zeros()).min(14) as usize;
+        // How dominant the most frequent symbol is: quartile of top/sum.
+        let skew = ((top as u64 * 4) / sum.max(1) as u64).min(3) as usize;
+        SeeKey(level, d, s, skew)
+    }
+
+    /// Escape frequency for a context whose non-excluded interval has `sum`
+    /// total counts. Never 0, and capped so the coder total stays well
+    /// inside range precision.
+    #[inline]
+    fn esc_freq(&self, k: SeeKey, sum: u32) -> u32 {
+        let (hits, esc) = self.stats[k.0][k.1][k.2][k.3];
+        ((sum as u64 * esc as u64) / hits.max(1) as u64).clamp(1, (4 * sum.max(1)) as u64) as u32
+    }
+
+    #[inline]
+    fn update(&mut self, k: SeeKey, escaped: bool) {
+        let slot = &mut self.stats[k.0][k.1][k.2][k.3];
+        if escaped {
+            slot.1 += 1;
+        } else {
+            slot.0 += 1;
+        }
+        if slot.0 + slot.1 >= 1 << 13 {
+            slot.0 = (slot.0 / 2).max(1);
+            slot.1 = (slot.1 / 2).max(1);
+        }
+    }
+}
+
 impl Ctx {
+    fn sum(&self) -> u32 {
+        match self {
+            Ctx::Small { sum, .. } | Ctx::Big { sum, .. } => *sum,
+        }
+    }
+
+    fn distinct(&self) -> u32 {
+        match self {
+            Ctx::Small { syms, .. } => syms.len() as u32,
+            Ctx::Big { distinct, .. } => *distinct,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.distinct() == 0
+    }
+
+    /// Count of the most frequent symbol (bubbling keeps it at the front of
+    /// a Small context). Big contexts don't track it; 0 selects the lowest
+    /// skew bucket, which only affects See bucketing, not correctness.
+    fn top(&self) -> u32 {
+        match self {
+            Ctx::Small { syms, .. } => syms.first().map(|&(_, c)| c as u32).unwrap_or(0),
+            Ctx::Big { .. } => 0,
+        }
+    }
+
     fn total(&self) -> u32 {
-        self.sum + self.syms.len() as u32
+        self.sum() + escape_weight(self.distinct())
     }
 
     /// Locate `x` for encoding, ignoring symbols in `excl` (PPM exclusion:
     /// an escape at a more specific level proves the symbol is none of that
     /// level's candidates, so they must not cost probability mass here).
-    fn code_for(&self, x: u16, excl: &Excl) -> CtxCode {
-        let mut cum = 0u32;
-        let mut found: Option<(u32, u32)> = None;
-        let mut distinct = 0u32;
-        for &(s, c) in &self.syms {
-            if excl.contains(s) {
-                continue;
-            }
-            if s == x {
-                found = Some((cum, c as u32));
-            }
-            cum += c as u32;
-            distinct += 1;
-        }
-        if distinct == 0 {
+    /// Escape mass comes from the adaptive `see` table for `level`.
+    fn code_for(&self, x: u16, excl: &Excl, see: &See, level: usize) -> CtxCode {
+        if self.is_empty() {
             return CtxCode::Empty;
         }
-        let total = cum + escape_weight(distinct);
-        match found {
-            Some((start, freq)) => CtxCode::Sym(start, freq, total),
-            None => CtxCode::Escape(cum, escape_weight(distinct), total),
-        }
-    }
-
-    /// Total of the non-excluded interval (needed before `sym_at`).
-    fn total_excl(&self, excl: &Excl) -> u32 {
-        let mut cum = 0u32;
-        let mut distinct = 0u32;
-        for &(s, c) in &self.syms {
-            if excl.contains(s) {
-                continue;
+        if excl.is_empty() {
+            // Fast path: `sum` is tracked, so the scan can stop at `x`.
+            let sum = self.sum();
+            let key = See::key(level, sum, self.distinct(), self.top());
+            let esc = see.esc_freq(key, sum);
+            let total = sum + esc;
+            let mut cum = 0u32;
+            match self {
+                Ctx::Small { syms, .. } => {
+                    for &(s, c) in syms {
+                        if s == x {
+                            return CtxCode::Sym(cum, c as u32, total, key);
+                        }
+                        cum += c as u32;
+                    }
+                    CtxCode::Escape(sum, esc, total, key)
+                }
+                Ctx::Big { counts, tree, .. } => {
+                    let c = counts[x as usize] as u32;
+                    if c > 0 {
+                        cum += fenwick_prefix(tree, x as usize);
+                        CtxCode::Sym(cum, c, total, key)
+                    } else {
+                        CtxCode::Escape(sum, esc, total, key)
+                    }
+                }
             }
-            cum += c as u32;
-            distinct += 1;
-        }
-        if distinct == 0 {
-            0
         } else {
-            cum + escape_weight(distinct)
+            let mut cum = 0u32;
+            let mut found: Option<(u32, u32)> = None;
+            let mut distinct = 0u32;
+            let mut visit = |s: u16, c: u32| {
+                if excl.contains(s) {
+                    return;
+                }
+                if s == x {
+                    found = Some((cum, c));
+                }
+                cum += c;
+                distinct += 1;
+            };
+            match self {
+                Ctx::Small { syms, .. } => {
+                    for &(s, c) in syms {
+                        visit(s, c as u32);
+                    }
+                }
+                Ctx::Big { counts, .. } => {
+                    for (s, &c) in counts.iter().enumerate() {
+                        if c > 0 {
+                            visit(s as u16, c as u32);
+                        }
+                    }
+                }
+            }
+            if distinct == 0 {
+                return CtxCode::Empty;
+            }
+            // Bucket by the context's overall top count (not the non-excluded
+            // top): an approximation, but identical on both coder sides.
+            let key = See::key(level, cum, distinct, self.top());
+            let esc = see.esc_freq(key, cum);
+            let total = cum + esc;
+            match found {
+                Some((start, freq)) => CtxCode::Sym(start, freq, total, key),
+                None => CtxCode::Escape(cum, esc, total, key),
+            }
         }
     }
 
-    /// Locate the symbol containing `target` for decoding (over the
-    /// non-excluded interval). `Ok((sym, cum, freq, total))` or
-    /// `Err(escape (cum, freq, total))`.
-    #[allow(clippy::type_complexity)]
-    fn sym_at(
-        &self,
-        target: u32,
-        excl: &Excl,
-    ) -> std::result::Result<(u16, u32, u32, u32), (u32, u32, u32)> {
-        let total = self.total_excl(excl);
+    /// Find the symbol whose no-exclusion interval contains `target`
+    /// (caller has already checked `target < self.sum()`).
+    fn find_by_target(&self, target: u32) -> (u16, u32, u32) {
         let mut cum = 0u32;
-        let mut hit: Option<(u16, u32, u32)> = None;
-        let mut distinct = 0u32;
-        for &(s, c) in &self.syms {
-            if excl.contains(s) {
-                continue;
+        match self {
+            Ctx::Small { syms, .. } => {
+                for &(s, c) in syms {
+                    if target < cum + c as u32 {
+                        return (s, cum, c as u32);
+                    }
+                    cum += c as u32;
+                }
             }
-            if hit.is_none() && target < cum + c as u32 {
-                hit = Some((s, cum, c as u32));
+            Ctx::Big { counts, tree, .. } => {
+                let (s, prefix) = fenwick_descend(tree, target);
+                return (s as u16, prefix, counts[s] as u32);
             }
-            cum += c as u32;
-            distinct += 1;
         }
-        match hit {
-            Some((s, start, freq)) => Ok((s, start, freq, total)),
-            None => Err((cum, escape_weight(distinct), total)),
+        unreachable!("target beyond context sum");
+    }
+
+    /// Copy the non-excluded (symbol, count) pairs into `out`.
+    /// Returns `(sum, total)` of the reduced interval (0, 0 when empty).
+    fn fill_scratch(
+        &self,
+        excl: &Excl,
+        see: &See,
+        level: usize,
+        out: &mut Vec<(u16, u32)>,
+    ) -> (u32, u32, SeeKey) {
+        out.clear();
+        let mut sum = 0u32;
+        let mut push = |s: u16, c: u32, out: &mut Vec<(u16, u32)>| {
+            if !excl.contains(s) {
+                out.push((s, c));
+                sum += c;
+            }
+        };
+        match self {
+            Ctx::Small { syms, .. } => {
+                for &(s, c) in syms {
+                    push(s, c as u32, out);
+                }
+            }
+            Ctx::Big { counts, .. } => {
+                for (s, &c) in counts.iter().enumerate() {
+                    if c > 0 {
+                        push(s as u16, c as u32, out);
+                    }
+                }
+            }
+        }
+        if out.is_empty() {
+            (0, 0, See::key(level, 0, 1, 0))
+        } else {
+            let key = See::key(level, sum, out.len() as u32, self.top());
+            (sum, sum + see.esc_freq(key, sum), key)
         }
     }
 
-    /// Append this context's non-excluded symbols to the exclusion list.
+    /// Append this context's symbols to the exclusion list.
     fn exclude_into(&self, excl: &mut Excl) {
-        for &(s, _) in &self.syms {
-            excl.insert(s);
+        match self {
+            Ctx::Small { syms, .. } => {
+                for &(s, _) in syms {
+                    excl.insert(s);
+                }
+            }
+            Ctx::Big { counts, .. } => {
+                for (s, &c) in counts.iter().enumerate() {
+                    if c > 0 {
+                        excl.insert(s as u16);
+                    }
+                }
+            }
         }
     }
 
-    fn bump(&mut self, x: u16) {
-        match self.syms.iter_mut().find(|(s, _)| *s == x) {
-            Some((_, c)) => *c += BUMP,
-            None => self.syms.push((x, BUMP)),
-        }
-        self.sum += BUMP as u32;
-        if self.total() >= CTX_HALVE_LIMIT {
-            self.sum = 0;
-            for (_, c) in &mut self.syms {
-                *c = (*c / 2).max(1);
-                self.sum += *c as u32;
+    fn bump(&mut self, x: u16, alphabet: u32) {
+        match self {
+            Ctx::Small { syms, sum } => {
+                match syms.iter().position(|&(s, _)| s == x) {
+                    Some(mut i) => {
+                        syms[i].1 += BUMP;
+                        // Bubble toward the front while more frequent than
+                        // the predecessor so scans hit hot symbols first.
+                        // Deterministic, so both coder sides keep identical
+                        // interval layouts.
+                        while i > 0 && syms[i].1 > syms[i - 1].1 {
+                            syms.swap(i, i - 1);
+                            i -= 1;
+                        }
+                    }
+                    None => syms.push((x, BUMP)),
+                }
+                *sum += BUMP as u32;
+                if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
+                    *sum = 0;
+                    for (_, c) in syms.iter_mut() {
+                        *c = (*c / 2).max(1);
+                        *sum += *c as u32;
+                    }
+                }
+                if syms.len() >= PROMOTE_AT && alphabet <= PROMOTE_MAX_ALPHABET {
+                    let mut counts = vec![0u16; alphabet as usize].into_boxed_slice();
+                    let mut new_sum = 0u32;
+                    for &(s, c) in syms.iter() {
+                        counts[s as usize] = c;
+                        new_sum += c as u32;
+                    }
+                    let distinct = syms.len() as u32;
+                    let tree = rebuild_fenwick(&counts);
+                    *self = Ctx::Big {
+                        counts,
+                        tree,
+                        sum: new_sum,
+                        distinct,
+                    };
+                }
+            }
+            Ctx::Big {
+                counts,
+                tree,
+                sum,
+                distinct,
+            } => {
+                if counts[x as usize] == 0 {
+                    *distinct += 1;
+                }
+                counts[x as usize] += BUMP;
+                fenwick_add(tree, x as usize, BUMP as u32);
+                *sum += BUMP as u32;
+                if *sum + escape_weight(*distinct) >= CTX_HALVE_LIMIT {
+                    *sum = 0;
+                    for c in counts.iter_mut() {
+                        if *c > 0 {
+                            *c = (*c / 2).max(1);
+                            *sum += *c as u32;
+                        }
+                    }
+                    *tree = rebuild_fenwick(counts);
+                }
             }
         }
     }
@@ -282,6 +581,7 @@ const EDGE: u16 = 0xFFFF;
 struct Excl {
     stamp: Vec<u32>,
     generation: u32,
+    inserted: u32,
 }
 
 impl Excl {
@@ -289,15 +589,22 @@ impl Excl {
         Self {
             stamp: vec![0; alphabet as usize],
             generation: 0,
+            inserted: 0,
         }
     }
 
     fn begin(&mut self) {
         self.generation += 1;
+        self.inserted = 0;
         if self.generation == u32::MAX {
             self.stamp.fill(0);
             self.generation = 1;
         }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.inserted == 0
     }
 
     #[inline]
@@ -308,6 +615,7 @@ impl Excl {
     #[inline]
     fn insert(&mut self, s: u16) {
         self.stamp[s as usize] = self.generation;
+        self.inserted += 1;
     }
 }
 
@@ -319,51 +627,67 @@ struct Model {
     /// sharper predictions.
     c2: HashMap<u32, Ctx>,
     /// primary alone (the stronger single predictor).
-    c1: HashMap<u16, Ctx>,
+    c1: Vec<Ctx>,
     /// second alone.
-    c1b: HashMap<u16, Ctx>,
+    c1b: Vec<Ctx>,
     c0: Ctx,
     alphabet: u32,
     excl: Excl,
+    /// Reusable buffer for the exclusion-aware decode path: one scan copies
+    /// the non-excluded (symbol, count) pairs here, and the target search
+    /// walks this compact array instead of re-scanning with stamp checks.
+    scratch: Vec<(u16, u32)>,
+    see: See,
 }
 
 impl Model {
     fn new(alphabet: u16) -> Self {
         Self {
-            c2: HashMap::new(),
-            c1: HashMap::new(),
-            c1b: HashMap::new(),
+            c2: HashMap::default(),
+            // Order-1 contexts are direct-indexed by symbol (last slot =
+            // EDGE): no hashing on the per-tile hot path.
+            c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
+            c1b: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
             c0: Ctx::default(),
             alphabet: alphabet as u32,
             excl: Excl::new(alphabet),
+            scratch: Vec::new(),
+            see: See::new(),
         }
     }
 
     fn encode_sym(&mut self, enc: &mut RangeEncoder, primary: u16, second: u16, x: u16) {
         let key2 = ((primary as u32) << 16) | second as u32;
+        let alphabet = self.alphabet;
         self.excl.begin();
         let excl = &mut self.excl;
+        let see = &mut self.see;
         let mut coded = false;
-        for ctx in [
+        for (level, ctx) in [
             self.c2.entry(key2).or_default(),
-            self.c1.entry(primary).or_default(),
-            self.c1b.entry(second).or_default(),
+            &mut self.c1[(primary as usize).min(alphabet as usize)],
+            &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             if !coded {
-                match ctx.code_for(x, excl) {
-                    CtxCode::Sym(cum, f, t) => {
+                match ctx.code_for(x, excl, see, level) {
+                    CtxCode::Sym(cum, f, t, key) => {
                         enc.encode(cum, f, t);
+                        see.update(key, false);
                         coded = true;
                     }
-                    CtxCode::Escape(cum, f, t) => {
+                    CtxCode::Escape(cum, f, t, key) => {
                         enc.encode(cum, f, t);
+                        see.update(key, true);
                         ctx.exclude_into(excl);
                     }
                     CtxCode::Empty => {}
                 }
             }
-            ctx.bump(x);
+            ctx.bump(x, alphabet);
         }
         if !coded {
             enc.encode(x as u32, 1, self.alphabet);
@@ -374,33 +698,68 @@ impl Model {
         let key2 = ((primary as u32) << 16) | second as u32;
         self.excl.begin();
         let excl = &mut self.excl;
+        let scratch = &mut self.scratch;
+        let see = &mut self.see;
         let mut decoded: Option<u16> = None;
         // Decode over the chain first (contexts stay immutable; exclusions
         // accumulate in the stamp set), then bump every level.
         {
             let chain: [&Ctx; 4] = [
                 self.c2.entry(key2).or_default(),
-                self.c1.entry(primary).or_default(),
-                self.c1b.entry(second).or_default(),
+                &self.c1[(primary as usize).min(self.alphabet as usize)],
+                &self.c1b[(second as usize).min(self.alphabet as usize)],
                 &self.c0,
             ];
-            for ctx in chain {
-                let total = ctx.total_excl(excl);
+            for (level, ctx) in chain.into_iter().enumerate() {
+                if excl.is_empty() {
+                    // Fast path: `sum` is tracked and the escape interval
+                    // starts at it, so escapes are O(1) and symbol scans
+                    // stop at the target (hot symbols sit at the front).
+                    if ctx.is_empty() {
+                        continue;
+                    }
+                    let sum = ctx.sum();
+                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
+                    let esc = see.esc_freq(key, sum);
+                    let total = sum + esc;
+                    let target = dec.decode_target(total);
+                    if target >= sum {
+                        dec.commit(sum, esc, total);
+                        see.update(key, true);
+                        ctx.exclude_into(excl);
+                        continue;
+                    }
+                    let (s, cum, c) = ctx.find_by_target(target);
+                    dec.commit(cum, c, total);
+                    see.update(key, false);
+                    decoded = Some(s);
+                    break;
+                }
+                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
                 if total == 0 {
                     continue;
                 }
                 let target = dec.decode_target(total);
-                match ctx.sym_at(target, excl) {
-                    Ok((s, cum, f, t)) => {
-                        dec.commit(cum, f, t);
+                if target >= sum {
+                    dec.commit(sum, total - sum, total);
+                    see.update(key, true);
+                    for &(s, _) in scratch.iter() {
+                        excl.insert(s);
+                    }
+                    continue;
+                }
+                let mut cum = 0u32;
+                for &(s, c) in scratch.iter() {
+                    if target < cum + c {
+                        dec.commit(cum, c, total);
+                        see.update(key, false);
                         decoded = Some(s);
                         break;
                     }
-                    Err((cum, f, t)) => {
-                        dec.commit(cum, f, t);
-                        ctx.exclude_into(excl);
-                    }
+                    cum += c;
                 }
+                debug_assert!(decoded.is_some());
+                break;
             }
         }
         let x = match decoded {
@@ -411,10 +770,11 @@ impl Model {
                 target as u16
             }
         };
-        self.c2.entry(key2).or_default().bump(x);
-        self.c1.entry(primary).or_default().bump(x);
-        self.c1b.entry(second).or_default().bump(x);
-        self.c0.bump(x);
+        let alphabet = self.alphabet;
+        self.c2.entry(key2).or_default().bump(x, alphabet);
+        self.c1[(primary as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c1b[(second as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c0.bump(x, alphabet);
         x
     }
 }
