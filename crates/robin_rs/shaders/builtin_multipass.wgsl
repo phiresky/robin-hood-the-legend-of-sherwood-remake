@@ -276,7 +276,14 @@ fn fs_anime_restore(in: VsOut) -> @location(0) vec4<f32> {
     let blur = box_blur(in.uv);
     let detail = c - blur;
     let gate = smoothstep(params.upscale.y * 0.15, 0.35, abs(luma(detail.rgb)));
-    return vec4<f32>(clamp(c.rgb + detail.rgb * gate * params.upscale.x * 1.35, 0.0, 1.0), c.a);
+    return vec4<f32>(
+        clamp(
+            c.rgb + detail.rgb * gate * params.upscale.x * 1.35,
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        ),
+        c.a,
+    );
 }
 
 @fragment
@@ -285,7 +292,14 @@ fn fs_anime_restore_soft(in: VsOut) -> @location(0) vec4<f32> {
     let blur = box_blur(in.uv);
     let softened = mix(c, blur, 0.16 + params.upscale.z * 0.12);
     let detail = c - blur;
-    return vec4<f32>(clamp(softened.rgb + detail.rgb * params.upscale.x * 0.65, 0.0, 1.0), c.a);
+    return vec4<f32>(
+        clamp(
+            softened.rgb + detail.rgb * params.upscale.x * 0.65,
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        ),
+        c.a,
+    );
 }
 
 @fragment
@@ -344,7 +358,14 @@ fn fs_super_finish(in: VsOut) -> @location(0) vec4<f32> {
     let sw = sample_offset(in.uv, vec2<f32>(-1.0, 1.0));
     let se = sample_offset(in.uv, vec2<f32>(1.0, 1.0));
     let diagonal = (nw + ne + sw + se) * 0.25;
-    return vec4<f32>(clamp(c.rgb + (c.rgb - diagonal.rgb) * params.upscale.x * 0.18, 0.0, 1.0), c.a);
+    return vec4<f32>(
+        clamp(
+            c.rgb + (c.rgb - diagonal.rgb) * params.upscale.x * 0.18,
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        ),
+        c.a,
+    );
 }
 
 fn curved_uv(uv: vec2<f32>) -> vec2<f32> {
@@ -381,7 +402,10 @@ fn crt_base(uv: vec2<f32>, royale: bool) -> vec4<f32> {
     rgb *= mask;
     let flicker = 1.0 - params.temporal.x * 0.025
         * (0.5 + 0.5 * sin(params.temporal.y * 2.39996323));
-    return vec4<f32>(clamp(rgb * flicker, 0.0, 1.0), c.a);
+    return vec4<f32>(
+        clamp(rgb * flicker, vec3<f32>(0.0), vec3<f32>(1.0)),
+        c.a,
+    );
 }
 
 @fragment
