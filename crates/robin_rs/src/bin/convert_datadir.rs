@@ -908,8 +908,9 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 mod tests {
     use super::{
         AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
-        animation_rhs_rel_existing, exclamation_dat_filename, level_asset_rel_existing,
-        normalize_robin_profile_index, prepare_shipping_payload, transcode_audio_to_opus,
+        animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
+        level_asset_rel_existing, normalize_robin_profile_index, prepare_shipping_payload,
+        transcode_audio_to_opus,
     };
     use robin_assets::shipping_datadir::ShippingMission;
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
@@ -1058,6 +1059,37 @@ mod tests {
         let (_, compressed) =
             prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
         assert!(compressed.is_some());
+    }
+
+    #[test]
+    fn standalone_opus_is_cataloged_without_entering_mission_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let assets_dir = temp.path().join("audio/assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let mut catalog = std::collections::BTreeMap::new();
+        let payload = ShippingMission::default();
+        let opus = b"OggS-fake-OpusHead-test-payload";
+
+        insert_standalone_audio(
+            &mut catalog,
+            &assets_dir,
+            "Data/Sounds/Arrow.wav",
+            opus,
+            1_234,
+        )
+        .unwrap();
+
+        assert!(payload.raw.is_empty());
+        assert!(payload.audio_durations_ms.is_empty());
+        let asset = catalog.get("sounds/arrow.opus").unwrap();
+        assert_eq!(asset.encoded_size, opus.len() as u32);
+        assert_eq!(asset.duration_ms, 1_234);
+        assert_eq!(std::fs::read(temp.path().join(&asset.file)).unwrap(), opus);
+        assert!(
+            !robin_assets::shipping_datadir::encode_mission_native(&payload)
+                .windows(opus.len())
+                .any(|window| window == opus)
+        );
     }
 
     #[test]
@@ -1409,8 +1441,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingDatadir, ShippingMission, ShippingMissionRef, ShippingSprite,
-    ShippingSpriteBank,
+    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
+    ShippingSprite, ShippingSpriteBank,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1431,6 +1463,8 @@ struct ShippingMissionBuild {
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
     let mut dd = ShippingDatadir::default();
     let mut beggar_ids: BTreeSet<u32> = BTreeSet::new();
+    let audio_assets_dir = data_out.join("audio/assets");
+    fs::create_dir_all(&audio_assets_dir)?;
 
     let locale_dirs = detect_locale_data_dirs(&data_in);
     for src in &locale_dirs {
@@ -1520,6 +1554,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             let relative = Path::new("Sounds/Menu").join(filename);
             insert_shipping_audio(
                 &mut boot_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &relative.to_string_lossy(),
                 &path,
                 AudioKind::Effect,
@@ -1533,6 +1569,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     }) {
         insert_shipping_audio(
             &mut boot_audio,
+            &mut dd.audio_assets,
+            &audio_assets_dir,
             &relative,
             &path,
             AudioKind::Music,
@@ -2175,10 +2213,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     dd.saved_world_rhs_files.sort();
     dd.saved_world_rhs_files.dedup();
 
-    // Audio is read synchronously by the legacy sound cache, so each selected
-    // mission must mount its complete audio closure before setup begins. Keep
-    // the large common FX set shared, and split localized speech by actor so a
-    // mission does not download the full locale's voice library.
+    // Source-format audio remains in dependency payloads for native builds.
+    // Opus browser audio is cataloged as standalone content-addressed files;
+    // these payloads then retain only small blocking metadata such as FXG and
+    // exclamation DAT files.
     let mut common_audio = ShippingMission::default();
     let sounds_root = data_in.join("Sounds");
     if sounds_root.is_dir() {
@@ -2197,6 +2235,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
             insert_shipping_audio(
                 &mut common_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &format!("Sounds/{relative}"),
                 &path,
                 AudioKind::Effect,
@@ -2311,6 +2351,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             })?;
             insert_shipping_audio(
                 &mut exclamation_metadata,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -2336,6 +2378,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if sample_profile_counts.get(&sample_rel).copied().unwrap_or(0) == 1 {
                 insert_shipping_audio(
                     &mut actor_audio,
+                    &mut dd.audio_assets,
+                    &audio_assets_dir,
                     &sample_rel,
                     &sample_path,
                     AudioKind::Voice,
@@ -2452,6 +2496,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             })?;
             insert_shipping_audio(
                 &mut dialogue_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -2485,6 +2531,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 })?;
             insert_shipping_audio(
                 &mut music_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
                 &relative,
                 &path,
                 AudioKind::Music,
@@ -2689,6 +2737,8 @@ impl AudioKind {
 
 fn insert_shipping_audio(
     payload: &mut ShippingMission,
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
     relative: &str,
     path: &Path,
     kind: AudioKind,
@@ -2711,25 +2761,91 @@ fn insert_shipping_audio(
             path.display()
         )
     })?;
-    let (relative, bytes) = match format {
-        AudioFormat::Source => (relative.to_owned(), source),
-        AudioFormat::Opus => (
-            Path::new(relative)
-                .with_extension("opus")
-                .to_string_lossy()
-                .into_owned(),
-            transcode_audio_to_opus(path, kind)?,
-        ),
-    };
-    let relative = relative.replace('\\', "/").to_ascii_lowercase();
-    if let Some(previous) = payload.raw.get(&relative) {
-        if previous != &bytes {
-            bail!("conflicting shipping audio sources for {relative}");
+    match format {
+        AudioFormat::Source => {
+            let relative = relative.replace('\\', "/").to_ascii_lowercase();
+            if let Some(previous) = payload.raw.get(&relative) {
+                if previous != &source {
+                    bail!("conflicting shipping audio sources for {relative}");
+                }
+            } else {
+                payload.raw.insert(relative.clone(), source);
+            }
+            insert_audio_duration(&mut payload.audio_durations_ms, relative, duration_ms)
+        }
+        AudioFormat::Opus => {
+            let logical = standalone_audio_logical_key(relative);
+            if let Some(existing) = catalog.get(&logical) {
+                if existing.duration_ms != duration_ms {
+                    bail!(
+                        "conflicting source durations for standalone shipping audio {logical}: {} vs {duration_ms}",
+                        existing.duration_ms
+                    );
+                }
+                return Ok(());
+            }
+            let bytes = transcode_audio_to_opus(path, kind)?;
+            insert_standalone_audio(catalog, assets_dir, relative, &bytes, duration_ms)
+        }
+    }
+}
+
+fn insert_standalone_audio(
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
+    relative: &str,
+    bytes: &[u8],
+    duration_ms: u32,
+) -> Result<()> {
+    let encoded_size =
+        u32::try_from(bytes.len()).context("standalone Opus asset exceeds u32 byte length")?;
+    let logical = standalone_audio_logical_key(relative);
+    let filename = standalone_audio_filename(bytes);
+    let output = assets_dir.join(&filename);
+    if output.exists() {
+        let existing = fs::read(&output)
+            .with_context(|| format!("read existing audio asset {}", output.display()))?;
+        if existing != bytes {
+            bail!("content-addressed audio collision at {}", output.display());
         }
     } else {
-        payload.raw.insert(relative.clone(), bytes);
+        fs::write(&output, bytes)
+            .with_context(|| format!("write audio asset {}", output.display()))?;
     }
-    match payload.audio_durations_ms.entry(relative) {
+    let asset = ShippingAudioAsset {
+        file: format!("audio/assets/{filename}"),
+        encoded_size,
+        duration_ms,
+    };
+    match catalog.entry(logical) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(asset);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &asset => {}
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!(
+                "conflicting standalone shipping audio for {}: {:?} vs {asset:?}",
+                entry.key(),
+                entry.get()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn standalone_audio_logical_key(relative: &str) -> String {
+    Path::new(&robin_util::asset_fs::bundle_key(Path::new(relative)))
+        .with_extension("opus")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn insert_audio_duration(
+    durations: &mut std::collections::BTreeMap<String, u32>,
+    relative: String,
+    duration_ms: u32,
+) -> Result<()> {
+    match durations.entry(relative) {
         std::collections::btree_map::Entry::Vacant(entry) => {
             entry.insert(duration_ms);
         }
@@ -2743,6 +2859,13 @@ fn insert_shipping_audio(
         }
     }
     Ok(())
+}
+
+fn standalone_audio_filename(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(bytes);
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{hash}.opus")
 }
 
 /// Encode through FFmpeg's mature libopus integration, then remux the packets
