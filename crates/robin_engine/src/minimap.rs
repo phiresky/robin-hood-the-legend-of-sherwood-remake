@@ -1269,6 +1269,17 @@ mod tests {
     }
 
     #[test]
+    fn classify_neutral_soldier_with_amber_civilian_dot() {
+        let info = ElementDotInfo {
+            is_human: true,
+            is_soldier: true,
+            camp: Camp::Neutral,
+            ..default_info()
+        };
+        assert_eq!(classify_element_dot(&info), Some(DotType::Civilian));
+    }
+
+    #[test]
     fn classify_vip_soldier() {
         let info = ElementDotInfo {
             is_human: true,
