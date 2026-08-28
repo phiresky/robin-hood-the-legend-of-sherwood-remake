@@ -2837,21 +2837,48 @@ pub fn item_action_tooltip_extension(
                 "60-frame daze; 1500-frame scent; fighting targets are immune.",
             )
         }),
-        Action::Stone if previews.stone_effect => Some(if rules.stone_ground_distraction {
-            (
-                "item_tooltip.stone.distraction",
-                "Direct hit: 10 damage + strong concussion. Ground noise radius: 240.",
-            )
-        } else {
-            (
-                "item_tooltip.stone.classic",
-                "Direct hit: 10 damage + strong concussion.",
-            )
-        }),
-        Action::Net if previews.net_area => Some((
-            "item_tooltip.net.area",
-            "Captures active people within 40, including allies; terrain or people can crumple it.",
-        )),
+        Action::Stone if previews.stone_direct_effect || previews.stone_distraction_area => Some(
+            match (
+                previews.stone_direct_effect,
+                previews.stone_distraction_area,
+                rules.stone_ground_distraction,
+            ) {
+                (true, true, true) => (
+                    "item_tooltip.stone.direct_and_distraction",
+                    "Direct hit: 10 damage + strong concussion. Ground noise radius: 240.",
+                ),
+                (true, _, _) => (
+                    "item_tooltip.stone.direct",
+                    "Direct hit: 10 damage + strong concussion.",
+                ),
+                (false, true, true) => (
+                    "item_tooltip.stone.distraction",
+                    "Ground noise attracts eligible hostiles within 240.",
+                ),
+                (false, true, false) => (
+                    "item_tooltip.stone.distraction_disabled",
+                    "Ground distraction is disabled in Gameplay settings.",
+                ),
+                (false, false, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Net if previews.net_capture_area || previews.net_crumple_prediction => Some(
+            match (previews.net_capture_area, previews.net_crumple_prediction) {
+                (true, true) => (
+                    "item_tooltip.net.capture_and_crumple",
+                    "Captures active people within 40, including allies; terrain or people can crumple it.",
+                ),
+                (true, false) => (
+                    "item_tooltip.net.capture",
+                    "Captures active people within 40, including allies.",
+                ),
+                (false, true) => (
+                    "item_tooltip.net.crumple",
+                    "Terrain and some victim conditions can crumple the net.",
+                ),
+                (false, false) => unreachable!("tooltip guard checked above"),
+            },
+        ),
         Action::Ale if previews.ale_effect => Some((
             "item_tooltip.ale.effect",
             "Visible outdoor enemies need beer interest; drunk enemies accept.",
@@ -3687,6 +3714,61 @@ mod tests {
         assert_eq!(tracker.ready_button(), Some((2, 1)));
         tracker.update(Some((2, 2)));
         assert_eq!(tracker.ready_button(), None);
+    }
+
+    #[test]
+    fn stone_preview_controls_direct_hit_and_noise_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let direct_only = ItemPreviewConfig {
+            stone_direct_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, direct_text) = item_action_tooltip_extension(
+            Action::Stone,
+            ItemGameplayConfig::default(),
+            direct_only,
+        )
+        .expect("direct stone explanation");
+        assert!(direct_text.contains("Direct hit"));
+        assert!(!direct_text.contains("noise"));
+
+        let noise_only = ItemPreviewConfig {
+            stone_distraction_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, noise_text) =
+            item_action_tooltip_extension(Action::Stone, ItemGameplayConfig::default(), noise_only)
+                .expect("stone noise explanation");
+        assert!(noise_text.contains("Ground noise"));
+        assert!(!noise_text.contains("Direct hit"));
+    }
+
+    #[test]
+    fn net_preview_controls_capture_area_and_crumple_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let capture_only = ItemPreviewConfig {
+            net_capture_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, capture_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), capture_only)
+                .expect("net capture explanation");
+        assert!(capture_text.contains("within 40"));
+        assert!(!capture_text.contains("crumple"));
+
+        let crumple_only = ItemPreviewConfig {
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, crumple_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), crumple_only)
+                .expect("net crumple explanation");
+        assert!(crumple_text.contains("crumple"));
+        assert!(!crumple_text.contains("within 40"));
     }
 
     #[test]

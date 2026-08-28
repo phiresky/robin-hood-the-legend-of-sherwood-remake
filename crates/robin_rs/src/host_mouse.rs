@@ -80,6 +80,25 @@ fn item_preview_enabled(engine: &Engine, profile_setting: bool) -> bool {
     profile_setting && engine.original_rng_replay_cursor().is_none()
 }
 
+/// Integration seam for the ground-target arm supplied by the stone-noise
+/// feature. Keeping the presentation here makes the mechanics and radius use
+/// one canonical item config without duplicating the authoritative stimulus.
+#[allow(dead_code)]
+pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPoint) {
+    if engine.sim_config().item_gameplay.stone_ground_distraction
+        && item_preview_enabled(engine, host.item_previews.stone_distraction_area)
+    {
+        set_item_effect_preview(
+            host,
+            center,
+            Some(robin_engine::gameplay_config::STONE_DISTRACTION_RADIUS as u16),
+            "item_preview.stone.distraction",
+            "Stone noise: eligible hostiles investigate within 240",
+            false,
+        );
+    }
+}
+
 fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
     engine.mission_script()?;
     engine
@@ -1292,7 +1311,7 @@ fn cursor_for_stone(
                         };
                         apply_trajectory_preview(host, preview);
                     }
-                    if item_preview_enabled(engine, host.item_previews.stone_effect)
+                    if item_preview_enabled(engine, host.item_previews.stone_direct_effect)
                         && let Some(center) = target_pos
                     {
                         set_item_effect_preview(
@@ -1606,27 +1625,58 @@ fn cursor_for_net(
                     };
                     apply_trajectory_preview(host, preview);
                 }
-                if item_preview_enabled(engine, host.item_previews.net_area)
-                    && host.valid_trajectory
-                {
+                let preview_capture =
+                    item_preview_enabled(engine, host.item_previews.net_capture_area);
+                let preview_crumple =
+                    item_preview_enabled(engine, host.item_previews.net_crumple_prediction);
+                if (preview_capture || preview_crumple) && host.valid_trajectory {
                     let landing = host
                         .trajectory_preview_points
                         .last()
                         .map(|point| point.position);
-                    let crumpled = landing.is_some_and(|point| {
-                        engine.predict_net_crumple_at(assets, point, host.trajectory_preview_layer)
-                    });
-                    host.net_crumpled = crumpled;
-                    let text = if crumpled {
-                        "Net: will crumple here; captures people within 40 when clear"
+                    let crumpled = if preview_crumple {
+                        let predicted = landing.is_some_and(|point| {
+                            engine.predict_net_crumple_at(
+                                assets,
+                                point,
+                                host.trajectory_preview_layer,
+                            )
+                        });
+                        host.net_crumpled = predicted;
+                        predicted
                     } else {
-                        "Net: captures active people within 40 (including allies)"
+                        // Preserve the original Easy-only trajectory tint;
+                        // the capture-area switch must not silently enable
+                        // enhanced crumple prediction on Medium or Hard.
+                        host.net_crumpled
+                    };
+                    let (key, text) = match (preview_capture, preview_crumple, crumpled) {
+                        (true, true, true) => (
+                            "item_preview.net.capture_and_crumple",
+                            "Net: will crumple here; captures people within 40 when clear",
+                        ),
+                        (true, true, false) => (
+                            "item_preview.net.capture_and_clear",
+                            "Net: clear landing; captures active people within 40 (including allies)",
+                        ),
+                        (true, false, _) => (
+                            "item_preview.net.capture",
+                            "Net: captures active people within 40 (including allies)",
+                        ),
+                        (false, true, true) => (
+                            "item_preview.net.crumple",
+                            "Net: will crumple at this landing point",
+                        ),
+                        (false, true, false) => {
+                            ("item_preview.net.clear", "Net: landing point is clear")
+                        }
+                        (false, false, _) => unreachable!("preview gate checked above"),
                     };
                     set_item_effect_preview(
                         host,
                         trajectory_landing(host, mouse_elem),
-                        Some(40),
-                        "item_preview.net.area",
+                        preview_capture.then_some(40),
+                        key,
                         text,
                         crumpled,
                     );

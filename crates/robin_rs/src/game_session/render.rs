@@ -1658,11 +1658,9 @@ pub(super) fn render_frame(
                                 crate::ui_panel::item_action_tooltip_extension(
                                     action,
                                     engine.sim_config().item_gameplay,
-                                    if engine.original_rng_replay_cursor().is_some() {
-                                        robin_engine::gameplay_config::ItemPreviewConfig::classic()
-                                    } else {
-                                        host.item_previews
-                                    },
+                                    host.item_previews.effective_for_original_parity(
+                                        engine.original_rng_replay_cursor().is_some(),
+                                    ),
                                 )
                             {
                                 if !text.is_empty() {
