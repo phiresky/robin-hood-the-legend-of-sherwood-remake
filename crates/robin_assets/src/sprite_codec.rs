@@ -270,7 +270,7 @@ fn escape_weight(distinct: u32) -> u32 {
 struct See {
     /// [level][log2 distinct][log2 sum][top-symbol skew quartile]
     /// -> (symbol hits, escapes).
-    stats: [[[[(u32, u32); 4]; 15]; 13]; 4],
+    stats: [[[[(u32, u32); 4]; 15]; 13]; 5],
 }
 
 /// A flattened See bucket index.
@@ -280,7 +280,7 @@ struct SeeKey(usize, usize, usize, usize);
 impl See {
     fn new() -> Self {
         Self {
-            stats: [[[[(1, 1); 4]; 15]; 13]; 4],
+            stats: [[[[(1, 1); 4]; 15]; 13]; 5],
         }
     }
 
@@ -578,6 +578,11 @@ impl Ctx {
 /// Sentinel context symbol for "no neighbor" (grid edge / no base).
 const EDGE: u16 = 0xFFFF;
 
+/// See-statistics slot for the two-predecessor (b1, b2) level. Fixed at 4
+/// so the established levels 0..3 keep their indices and single-base
+/// bitstreams stay byte-identical.
+const SEE_LEVEL_PAIR2: usize = 4;
+
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
 /// membership, O(1) reset per coded symbol (bump the generation).
 struct Excl {
@@ -628,6 +633,11 @@ struct Model {
     /// character, extra memory and time — PPMC escape costs cancel the
     /// sharper predictions.
     c2: HashMap<u32, Ctx>,
+    /// Two-predecessor level for family members with two already-decoded
+    /// siblings: (base1-tile, base2-tile). Its See statistics live at index
+    /// 4 so the established levels keep their indices (and single-base
+    /// bitstreams stay byte-identical).
+    c2pair: HashMap<u32, Ctx>,
     /// primary alone (the stronger single predictor).
     c1: Vec<Ctx>,
     /// second alone.
@@ -646,6 +656,7 @@ impl Model {
     fn new(alphabet: u16) -> Self {
         Self {
             c2: HashMap::default(),
+            c2pair: HashMap::default(),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -694,6 +705,131 @@ impl Model {
         if !coded {
             enc.encode(x as u32, 1, self.alphabet);
         }
+    }
+
+    /// Two-predecessor chain for sprites with two aligned decoded siblings:
+    /// (b1, b2) -> (b1, above) -> b1 -> above -> order-0 -> uniform.
+    /// The (b1, above) level shares the map and See slot of the single-base
+    /// chain's most specific level (identical semantics), so mixed streams
+    /// pool their statistics.
+    fn encode_sym3(&mut self, enc: &mut RangeEncoder, b1: u16, b2: u16, above: u16, x: u16) {
+        let key_pair = ((b1 as u32) << 16) | b2 as u32;
+        let key2 = ((b1 as u32) << 16) | above as u32;
+        let alphabet = self.alphabet;
+        self.excl.begin();
+        let excl = &mut self.excl;
+        let see = &mut self.see;
+        let mut coded = false;
+        for (level, ctx) in [
+            (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
+            (0, self.c2.entry(key2).or_default()),
+            (1, &mut self.c1[(b1 as usize).min(alphabet as usize)]),
+            (2, &mut self.c1b[(above as usize).min(alphabet as usize)]),
+            (3, &mut self.c0),
+        ] {
+            if !coded {
+                match ctx.code_for(x, excl, see, level) {
+                    CtxCode::Sym(cum, f, t, key) => {
+                        enc.encode(cum, f, t);
+                        see.update(key, false);
+                        coded = true;
+                    }
+                    CtxCode::Escape(cum, f, t, key) => {
+                        enc.encode(cum, f, t);
+                        see.update(key, true);
+                        ctx.exclude_into(excl);
+                    }
+                    CtxCode::Empty => {}
+                }
+            }
+            ctx.bump(x, alphabet);
+        }
+        if !coded {
+            enc.encode(x as u32, 1, self.alphabet);
+        }
+    }
+
+    /// Decoder mirror of [`Self::encode_sym3`].
+    fn decode_sym3(&mut self, dec: &mut RangeDecoder, b1: u16, b2: u16, above: u16) -> u16 {
+        let key_pair = ((b1 as u32) << 16) | b2 as u32;
+        let key2 = ((b1 as u32) << 16) | above as u32;
+        self.excl.begin();
+        let excl = &mut self.excl;
+        let scratch = &mut self.scratch;
+        let see = &mut self.see;
+        let mut decoded: Option<u16> = None;
+        {
+            let chain: [(usize, &Ctx); 5] = [
+                (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
+                (0, self.c2.entry(key2).or_default()),
+                (1, &self.c1[(b1 as usize).min(self.alphabet as usize)]),
+                (2, &self.c1b[(above as usize).min(self.alphabet as usize)]),
+                (3, &self.c0),
+            ];
+            for (level, ctx) in chain {
+                if excl.is_empty() {
+                    if ctx.is_empty() {
+                        continue;
+                    }
+                    let sum = ctx.sum();
+                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
+                    let esc = see.esc_freq(key, sum);
+                    let total = sum + esc;
+                    let target = dec.decode_target(total);
+                    if target >= sum {
+                        dec.commit(sum, esc, total);
+                        see.update(key, true);
+                        ctx.exclude_into(excl);
+                        continue;
+                    }
+                    let (s, cum, c) = ctx.find_by_target(target);
+                    dec.commit(cum, c, total);
+                    see.update(key, false);
+                    decoded = Some(s);
+                    break;
+                }
+                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
+                if total == 0 {
+                    continue;
+                }
+                let target = dec.decode_target(total);
+                if target >= sum {
+                    dec.commit(sum, total - sum, total);
+                    see.update(key, true);
+                    for &(s, _) in scratch.iter() {
+                        excl.insert(s);
+                    }
+                    continue;
+                }
+                let mut cum = 0u32;
+                for &(s, c) in scratch.iter() {
+                    if target < cum + c {
+                        dec.commit(cum, c, total);
+                        see.update(key, false);
+                        decoded = Some(s);
+                        break;
+                    }
+                    cum += c;
+                }
+                debug_assert!(decoded.is_some());
+                break;
+            }
+        }
+        let x = match decoded {
+            Some(s) => s,
+            None => {
+                let target = dec.decode_target(self.alphabet);
+                dec.commit(target, 1, self.alphabet);
+                target as u16
+            }
+        };
+        let alphabet = self.alphabet;
+        self.c2pair.entry(key_pair).or_default().bump(x, alphabet);
+        self.c2.entry(key2).or_default().bump(x, alphabet);
+        self.c1[(b1 as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c1b[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c0.bump(x, alphabet);
+        x
     }
 
     fn decode_sym(&mut self, dec: &mut RangeDecoder, primary: u16, second: u16) -> u16 {
@@ -806,13 +942,30 @@ pub fn encode_grids(
     grids: &[SpriteGrid],
     base: Option<&[Option<&[u16]>]>,
 ) -> Result<Vec<u8>> {
-    if let Some(base) = base {
-        if base.len() != grids.len() {
-            return Err(anyhow!(
-                "base list length {} != grid count {}",
-                base.len(),
-                grids.len()
-            ));
+    encode_grids_multi(alphabet, grids, base, None)
+}
+
+/// [`encode_grids`] with an optional SECOND predecessor per sprite: family
+/// members with two already-decoded siblings code each tile through the
+/// richer (b1, b2) -> (b1, above) -> ... chain (measured roughly 2x smaller
+/// on third-and-later family members). `base2[i]` requires `base[i]`;
+/// single-base and no-base sprites keep their established (byte-identical)
+/// chains.
+pub fn encode_grids_multi(
+    alphabet: u16,
+    grids: &[SpriteGrid],
+    base: Option<&[Option<&[u16]>]>,
+    base2: Option<&[Option<&[u16]>]>,
+) -> Result<Vec<u8>> {
+    for (label, list) in [("base", base), ("base2", base2)] {
+        if let Some(list) = list {
+            if list.len() != grids.len() {
+                return Err(anyhow!(
+                    "{label} list length {} != grid count {}",
+                    list.len(),
+                    grids.len()
+                ));
+            }
         }
     }
     let mut enc = RangeEncoder::new();
@@ -828,9 +981,15 @@ pub fn encode_grids(
             ));
         }
         let b = base.and_then(|b| b[gi]);
-        if let Some(b) = b {
-            if b.len() != g.indices.len() {
-                return Err(anyhow!("grid {gi}: base length mismatch"));
+        let b2 = base2.and_then(|b| b[gi]);
+        if b2.is_some() && b.is_none() {
+            return Err(anyhow!("grid {gi}: base2 without base"));
+        }
+        for (label, s) in [("base", b), ("base2", b2)] {
+            if let Some(s) = s {
+                if s.len() != g.indices.len() {
+                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
+                }
             }
         }
         for (i, &x) in g.indices.iter().enumerate() {
@@ -842,11 +1001,11 @@ pub fn encode_grids(
             // The chain falls back specific -> primary -> second, so put the
             // stronger single predictor first: the base tile for variants,
             // the above tile standalone (see COMPRESSION.md entropy table).
-            let (primary, second) = match b {
-                Some(b) => (b[i], above),
-                None => (above, left),
-            };
-            model.encode_sym(&mut enc, primary, second, x);
+            match (b, b2) {
+                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
+                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
+                _ => model.encode_sym(&mut enc, above, left, x),
+            }
         }
     }
     Ok(enc.finish())
@@ -860,13 +1019,27 @@ pub fn decode_grids(
     base: Option<&[Option<&[u16]>]>,
     blob: &[u8],
 ) -> Result<Vec<Vec<u16>>> {
-    if let Some(base) = base {
-        if base.len() != dims.len() {
-            return Err(anyhow!(
-                "base list length {} != grid count {}",
-                base.len(),
-                dims.len()
-            ));
+    decode_grids_multi(alphabet, dims, base, None, blob)
+}
+
+/// Decoder for [`encode_grids_multi`]; `base`/`base2` must match the
+/// encoding call exactly.
+pub fn decode_grids_multi(
+    alphabet: u16,
+    dims: &[(u16, u16)],
+    base: Option<&[Option<&[u16]>]>,
+    base2: Option<&[Option<&[u16]>]>,
+    blob: &[u8],
+) -> Result<Vec<Vec<u16>>> {
+    for (label, list) in [("base", base), ("base2", base2)] {
+        if let Some(list) = list {
+            if list.len() != dims.len() {
+                return Err(anyhow!(
+                    "{label} list length {} != grid count {}",
+                    list.len(),
+                    dims.len()
+                ));
+            }
         }
     }
     let mut dec = RangeDecoder::new(blob);
@@ -876,20 +1049,27 @@ pub fn decode_grids(
         let cols = cols16 as usize;
         let n = cols * rows as usize;
         let b = base.and_then(|b| b[gi]);
-        if let Some(b) = b {
-            if b.len() != n {
-                return Err(anyhow!("grid {gi}: base length mismatch"));
+        let b2 = base2.and_then(|b| b[gi]);
+        if b2.is_some() && b.is_none() {
+            return Err(anyhow!("grid {gi}: base2 without base"));
+        }
+        for (label, s) in [("base", b), ("base2", b2)] {
+            if let Some(s) = s {
+                if s.len() != n {
+                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
+                }
             }
         }
         let mut g: Vec<u16> = Vec::with_capacity(n);
         for i in 0..n {
             let above = if i >= cols { g[i - cols] } else { EDGE };
             let left = if i % cols > 0 { g[i - 1] } else { EDGE };
-            let (primary, second) = match b {
-                Some(b) => (b[i], above),
-                None => (above, left),
+            let x = match (b, b2) {
+                (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
+                (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
+                _ => model.decode_sym(&mut dec, above, left),
             };
-            g.push(model.decode_sym(&mut dec, primary, second));
+            g.push(x);
         }
         out.push(g);
     }
@@ -998,6 +1178,77 @@ mod tests {
         grids.push((2, 2, vec![7, 8, 9, 10]));
         bases.push(None);
         roundtrip(4096, &grids, Some(bases));
+    }
+
+    #[test]
+    fn roundtrip_with_two_bases() {
+        let mut rng = 7u64;
+        let mut rand = move || {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) as u32
+        };
+        let mut grids = Vec::new();
+        let mut b1s: Vec<Option<Vec<u16>>> = Vec::new();
+        let mut b2s: Vec<Option<Vec<u16>>> = Vec::new();
+        for s in 0..7u16 {
+            let (cols, rows) = (4u16, 5u16);
+            let n = (cols * rows) as usize;
+            let b1: Vec<u16> = (0..n)
+                .map(|i| ((i * 11 + s as usize * 7) % 900) as u16)
+                .collect();
+            let b2: Vec<u16> = b1.iter().map(|&v| (v + 300) % 4096).collect();
+            let target: Vec<u16> = b1
+                .iter()
+                .zip(b2.iter())
+                .map(|(&a, &b)| {
+                    if rand() % 6 == 0 {
+                        (a + b) % 4096
+                    } else {
+                        (a + 600) % 4096
+                    }
+                })
+                .collect();
+            grids.push((cols, rows, target));
+            b1s.push(Some(b1));
+            b2s.push(Some(b2));
+        }
+        // One sprite with only one base, one with none.
+        grids.push((3, 3, (0..9).map(|i| (i * 5) as u16).collect()));
+        b1s.push(Some((0..9).map(|i| (i * 5 + 1) as u16).collect()));
+        b2s.push(None);
+        grids.push((2, 2, vec![9, 8, 7, 6]));
+        b1s.push(None);
+        b2s.push(None);
+
+        let grid_refs: Vec<SpriteGrid> = grids
+            .iter()
+            .map(|(c, r, v)| SpriteGrid {
+                cols: *c,
+                rows: *r,
+                indices: v,
+            })
+            .collect();
+        let b1_refs: Vec<Option<&[u16]>> = b1s.iter().map(|o| o.as_deref()).collect();
+        let b2_refs: Vec<Option<&[u16]>> = b2s.iter().map(|o| o.as_deref()).collect();
+        let blob = encode_grids_multi(4096, &grid_refs, Some(&b1_refs), Some(&b2_refs)).unwrap();
+        let dims: Vec<(u16, u16)> = grids.iter().map(|(c, r, _)| (*c, *r)).collect();
+        let decoded =
+            decode_grids_multi(4096, &dims, Some(&b1_refs), Some(&b2_refs), &blob).unwrap();
+        for ((_, _, v), d) in grids.iter().zip(decoded.iter()) {
+            assert_eq!(v, d);
+        }
+        // base2 without base is rejected.
+        let bad_b1: Vec<Option<&[u16]>> = vec![None];
+        let four = [1u16, 2, 3, 4];
+        let bad_b2: Vec<Option<&[u16]>> = vec![Some(&four)];
+        let one = [SpriteGrid {
+            cols: 2,
+            rows: 2,
+            indices: &four,
+        }];
+        assert!(encode_grids_multi(4096, &one, Some(&bad_b1), Some(&bad_b2)).is_err());
     }
 
     #[test]

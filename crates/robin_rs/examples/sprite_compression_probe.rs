@@ -102,6 +102,17 @@ struct Cli {
     #[arg(long)]
     mix: Vec<String>,
 
+    /// Real-codec encode+decode of C against TWO siblings ("A:B:C"), with
+    /// bit-exact roundtrip verification.
+    #[arg(long)]
+    code3: Vec<String>,
+
+    /// Two-sibling conditional entropy "A:B:C": how much do TWO previously
+    /// decoded family members (A and B, aligned positionally) predict C?
+    /// Prices multi-predecessor variant coding, which ships no extra bytes.
+    #[arg(long)]
+    entropy3: Vec<String>,
+
     /// Output directory for --streams / --atlas files.
     #[arg(long, default_value = "/tmp/sprite_streams")]
     out: PathBuf,
@@ -746,6 +757,90 @@ fn entropy(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
 /// Cross-variant conditional entropy: code variant B's tile indices with
 /// variant A's aligned tile as (part of) the context. Both characters must
 /// pair positionally (verified by --recolor: same dims everywhere).
+/// H(C | A-tile, B-tile[, above]) where A and B are two already-decoded
+/// family members aligned positionally with C. Prices coding a variant
+/// against multiple predecessors, which ships no extra bytes (the decoder
+/// holds every predecessor chunk via the dependency edges).
+fn entropy3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str) -> Result<()> {
+    let (sa, _) = char_frame_ids(data_dir, a)?;
+    let (sb, _) = char_frame_ids(data_dir, b)?;
+    let (sc, _) = char_frame_ids(data_dir, c)?;
+    let mut triples: Vec<(u32, u32, u32)> = sa
+        .iter()
+        .zip(sb.iter())
+        .zip(sc.iter())
+        .map(|((&ia, &ib), &ic)| (ia, ib, ic))
+        .collect();
+    triples.sort_unstable();
+    triples.dedup();
+    let mut n_syms = 0u64;
+    let mut by_a: HashMap<u16, HashMap<u16, u64>> = HashMap::new();
+    let mut by_ab: HashMap<u32, HashMap<u16, u64>> = HashMap::new();
+    let mut by_ab_above: HashMap<u64, HashMap<u16, u64>> = HashMap::new();
+    for &(ia, ib, ic) in &triples {
+        let (spa, spb, spc) = (
+            &holder.sprites()[ia as usize],
+            &holder.sprites()[ib as usize],
+            &holder.sprites()[ic as usize],
+        );
+        if [spa, spb, spc]
+            .iter()
+            .any(|s| s.dictionary_index == UNMAPPED_DICT)
+            || (spa.width, spa.height) != (spc.width, spc.height)
+            || (spb.width, spb.height) != (spc.width, spc.height)
+        {
+            continue;
+        }
+        let (Some(pa), Some(pb), Some(pc)) = (
+            holder.packed_data(ia),
+            holder.packed_data(ib),
+            holder.packed_data(ic),
+        ) else {
+            continue;
+        };
+        if pa.len() != pc.len() || pb.len() != pc.len() {
+            continue;
+        }
+        let per_row = (spc.width / 4) as usize;
+        for (i, &x) in pc.iter().enumerate() {
+            let above = if i >= per_row {
+                pc[i - per_row]
+            } else {
+                0xFFFF
+            };
+            let (at, bt) = (pa[i], pb[i]);
+            n_syms += 1;
+            *by_a.entry(at).or_default().entry(x).or_default() += 1;
+            *by_ab
+                .entry(((at as u32) << 16) | bt as u32)
+                .or_default()
+                .entry(x)
+                .or_default() += 1;
+            *by_ab_above
+                .entry(((at as u64) << 32) | ((bt as u64) << 16) | above as u64)
+                .or_default()
+                .entry(x)
+                .or_default() += 1;
+        }
+    }
+    println!("## entropy3 ({a}, {b}) -> {c}: {n_syms} tiles");
+    for (label, bits, nctx) in [
+        ("| A-tile", cond_entropy_bits(&by_a), by_a.len()),
+        ("| A+B tiles", cond_entropy_bits(&by_ab), by_ab.len()),
+        (
+            "| A+B+above",
+            cond_entropy_bits(&by_ab_above),
+            by_ab_above.len(),
+        ),
+    ] {
+        println!(
+            "  {label:<12} {bits:>6.3} bits/tile  -> {:>9.0} bytes  ({nctx} contexts)",
+            bits * n_syms as f64 / 8.0
+        );
+    }
+    Ok(())
+}
+
 fn entropy2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
@@ -1451,6 +1546,99 @@ fn codec_grids2<'h>(
     Ok((dims, slices, bases, alphabet, unbased))
 }
 
+/// Real-codec size of C coded against two aligned siblings A and B, with
+/// per-sprite fallback to one base / standalone on structural mismatch.
+fn code3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str) -> Result<()> {
+    use robin_assets::sprite_codec::{SpriteGrid, decode_grids_multi, encode_grids_multi};
+    let (sa, _) = char_frame_ids(data_dir, a)?;
+    let (sb, _) = char_frame_ids(data_dir, b)?;
+    let (sc, _) = char_frame_ids(data_dir, c)?;
+    let mut triples: Vec<(u32, u32, u32)> = sc
+        .iter()
+        .zip(sa.iter())
+        .zip(sb.iter())
+        .map(|((&ic, &ia), &ib)| (ic, ia, ib))
+        .collect();
+    triples.sort_unstable();
+    triples.dedup();
+    let mut dims = Vec::new();
+    let mut slices: Vec<&[u16]> = Vec::new();
+    let mut b1s: Vec<Option<&[u16]>> = Vec::new();
+    let mut b2s: Vec<Option<&[u16]>> = Vec::new();
+    let mut alphabet: u16 = 0;
+    let (mut two, mut one, mut zero) = (0usize, 0usize, 0usize);
+    for &(ic, ia, ib) in &triples {
+        let spc = &holder.sprites()[ic as usize];
+        if spc.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(pc) = holder.packed_data(ic) else {
+            continue;
+        };
+        let dict = holder
+            .dictionary(spc.dictionary_index)
+            .ok_or_else(|| anyhow!("missing dictionary {}", spc.dictionary_index))?;
+        alphabet = alphabet.max(dict.num_entries());
+        let aligned = |id: u32| -> Option<&[u16]> {
+            let sp = &holder.sprites()[id as usize];
+            holder.packed_data(id).filter(|p| {
+                sp.dictionary_index != UNMAPPED_DICT
+                    && (sp.width, sp.height) == (spc.width, spc.height)
+                    && p.len() == pc.len()
+            })
+        };
+        let (b1, b2) = match (aligned(ia), aligned(ib)) {
+            (Some(x), Some(y)) => {
+                two += 1;
+                (Some(x), Some(y))
+            }
+            (Some(x), None) => {
+                one += 1;
+                (Some(x), None)
+            }
+            (None, Some(y)) => {
+                one += 1;
+                (Some(y), None)
+            }
+            (None, None) => {
+                zero += 1;
+                (None, None)
+            }
+        };
+        dims.push((spc.width / 4, spc.height));
+        slices.push(pc);
+        b1s.push(b1);
+        b2s.push(b2);
+    }
+    let grids: Vec<SpriteGrid> = dims
+        .iter()
+        .zip(slices.iter())
+        .map(|(&(cw, r), &s)| SpriteGrid {
+            cols: cw,
+            rows: r,
+            indices: s,
+        })
+        .collect();
+    let n_tiles: usize = slices.iter().map(|s| s.len()).sum();
+    let t0 = std::time::Instant::now();
+    let blob = encode_grids_multi(alphabet, &grids, Some(&b1s), Some(&b2s))?;
+    let t_enc = t0.elapsed();
+    let decoded = decode_grids_multi(alphabet, &dims, Some(&b1s), Some(&b2s), &blob)?;
+    for (i, (d, s)) in decoded.iter().zip(slices.iter()).enumerate() {
+        if d.as_slice() != *s {
+            return Err(anyhow!("{a}:{b}:{c}: roundtrip mismatch at grid {i}"));
+        }
+    }
+    println!(
+        "## code3 ({a}, {b}) -> {c}: {} sprites ({two} two-base, {one} one-base, {zero} unbased), {n_tiles} tiles -> {} bytes ({:.3} bits/tile), enc {:.1}s, roundtrip OK",
+        grids.len(),
+        blob.len(),
+        blob.len() as f64 * 8.0 / n_tiles as f64,
+        t_enc.as_secs_f64(),
+    );
+    Ok(())
+}
+
 fn code2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
     use robin_assets::sprite_codec::{SpriteGrid, decode_grids, encode_grids};
     let pairs = positional_pairs(data_dir, a, b)?;
@@ -1752,6 +1940,30 @@ fn main() -> Result<()> {
             .split_once(':')
             .ok_or_else(|| anyhow!("--entropy2 wants A:B, got {pair}"))?;
         entropy2(&holder, &cli.data_dir, a, b)?;
+    }
+    for triple in &cli.code3 {
+        let mut it = triple.splitn(3, ':');
+        let (a, b, c) = (
+            it.next().unwrap_or_default(),
+            it.next().unwrap_or_default(),
+            it.next().unwrap_or_default(),
+        );
+        if c.is_empty() {
+            return Err(anyhow!("--code3 wants A:B:C, got {triple}"));
+        }
+        code3(&holder, &cli.data_dir, a, b, c)?;
+    }
+    for triple in &cli.entropy3 {
+        let mut it = triple.splitn(3, ':');
+        let (a, b, c) = (
+            it.next().unwrap_or_default(),
+            it.next().unwrap_or_default(),
+            it.next().unwrap_or_default(),
+        );
+        if c.is_empty() {
+            return Err(anyhow!("--entropy3 wants A:B:C, got {triple}"));
+        }
+        entropy3(&holder, &cli.data_dir, a, b, c)?;
     }
     for pair in &cli.cm2 {
         let (a, b) = pair
