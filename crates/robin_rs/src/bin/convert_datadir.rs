@@ -2436,9 +2436,44 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             member_orders.insert(name.clone(), order);
         }
     }
+    // First-load weighting: a hub chunk that missions already require adds
+    // nothing to their closures, while a dependency-only hub adds its whole
+    // (large, standalone-coded) chunk — measured ~7 MB extra on H01's first
+    // load with pure compression-optimal hubs. Among candidates within
+    // FAMILY_HUB_PROXY_TOLERANCE of the best compression proxy, prefer the
+    // member the most missions reference.
+    const FAMILY_HUB_PROXY_TOLERANCE: f64 = 1.05;
+    let mission_use_count = |name: &str| -> usize {
+        let rel = format!("Characters/{name}.rhs");
+        mission_builds
+            .values()
+            .filter(|build| {
+                build
+                    .required_rhs_profiles
+                    .keys()
+                    .any(|required| required.eq_ignore_ascii_case(&rel))
+            })
+            .count()
+    };
+    let pick_weighted = |costs: &[(f64, &String)]| -> Option<String> {
+        let best = costs
+            .iter()
+            .map(|(cost, _)| *cost)
+            .fold(f64::INFINITY, f64::min);
+        costs
+            .iter()
+            .filter(|(cost, _)| *cost <= best * FAMILY_HUB_PROXY_TOLERANCE)
+            .max_by(|(ca, na), (cb, nb)| {
+                mission_use_count(na)
+                    .cmp(&mission_use_count(nb))
+                    .then(cb.total_cmp(ca))
+                    .then_with(|| nb.cmp(na))
+            })
+            .map(|(_, name)| (*name).clone())
+    };
     let mut family_bases = std::collections::BTreeMap::<String, String>::new();
     for (key, members) in &families {
-        let mut best: Option<(f64, &String)> = None;
+        let mut costs: Vec<(f64, &String)> = Vec::new();
         let mut proxy_failed = false;
         for candidate in members {
             let mut cost = match family_base_standalone_proxy(&holder, &member_orders[candidate]) {
@@ -2467,12 +2502,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if proxy_failed {
                 break;
             }
-            if best.is_none_or(|(b, _)| cost < b) {
-                best = Some((cost, candidate));
-            }
+            costs.push((cost, candidate));
         }
-        let base = match (proxy_failed, best) {
-            (false, Some((_, name))) => name.clone(),
+        let base = match (proxy_failed, pick_weighted(&costs)) {
+            (false, Some(name)) => name,
             _ => {
                 tracing::warn!(
                     family = key.as_str(),
@@ -2484,6 +2517,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         tracing::info!(
             family = key.as_str(),
             base = base.as_str(),
+            missions_using = mission_use_count(&base),
             "selected family coding base"
         );
         family_bases.insert(key.clone(), base);
@@ -2503,7 +2537,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             continue;
         }
         let hub1 = &family_bases[key];
-        let mut best: Option<(f64, &String)> = None;
+        let mut costs: Vec<(f64, &String)> = Vec::new();
         let mut proxy_failed = false;
         for candidate in members {
             if candidate == hub1 {
@@ -2529,18 +2563,17 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             if proxy_failed {
                 break;
             }
-            if best.is_none_or(|(b, _)| cost < b) {
-                best = Some((cost, candidate));
-            }
+            costs.push((cost, candidate));
         }
-        match (proxy_failed, best) {
-            (false, Some((_, name))) => {
+        match (proxy_failed, pick_weighted(&costs)) {
+            (false, Some(name)) => {
                 tracing::info!(
                     family = key.as_str(),
                     base2 = name.as_str(),
+                    missions_using = mission_use_count(&name),
                     "selected family second base"
                 );
-                family_second_bases.insert(key.clone(), name.clone());
+                family_second_bases.insert(key.clone(), name);
             }
             _ => {
                 tracing::warn!(

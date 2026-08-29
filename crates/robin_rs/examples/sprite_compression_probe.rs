@@ -2401,6 +2401,15 @@ fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
         mission_ref.files.len(),
         manifest_bytes + total
     );
+    let mut sized: Vec<(u64, &String)> = mission_ref
+        .files
+        .iter()
+        .map(|rel| (fs::metadata(data_out.join(rel)).map(|m| m.len()).unwrap_or(0), rel))
+        .collect();
+    sized.sort_unstable_by(|a, b| b.cmp(a));
+    for (size, rel) in sized.iter().take(20) {
+        println!("    {size:>10}  {rel}");
+    }
     Ok(())
 }
 
