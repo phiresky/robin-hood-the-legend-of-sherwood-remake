@@ -4758,7 +4758,12 @@ impl Entity {
         };
 
         let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
-        let mut belt = self.human_feet_point_3d();
+        // Original's ComputeBeltPoint copies RHPositionInterface::GetPosition,
+        // whose release-build accessor returns the retained mpointPosition
+        // bytes without forcing ComputePosition3D. This matters during the
+        // bounded elevation-crossing callback window: an arrow released there
+        // must aim from the outgoing cached plane, just like the shipped game.
+        let mut belt = self.element_data().position();
         let posture = if e.posture == Posture::Undefined {
             Posture::Upright
         } else {
@@ -5716,6 +5721,48 @@ impl ElementNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn belt_point_uses_retained_position_during_elevation_crossing_callback() {
+        use crate::position_interface::{ObstacleHandle, PlaneZCoeffs};
+
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        let position = pc.position_iface_mut();
+        position.set_obstacle(
+            Some(ObstacleHandle::new(1).unwrap()),
+            Some(PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 36.0,
+            }),
+        );
+        position.set_map_position(MapPoint::new(198.0, 282.0));
+        let outgoing = position.get_position();
+        position.set_obstacle(
+            Some(ObstacleHandle::new(2).unwrap()),
+            Some(PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 35.5,
+            }),
+        );
+        position.restore_cached_position_3d_invalid(outgoing);
+
+        assert_eq!(
+            pc.compute_belt_point(),
+            Some(WorldPoint3D::new(198.0, 318.0, 61.0)),
+            "ComputeBeltPoint must preserve Original's raw GetPosition bytes"
+        );
+    }
 
     #[test]
     fn delayed_positions_preserve_original_map_then_world_priority() {
