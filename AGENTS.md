@@ -12,9 +12,10 @@
 
 ## Worktree agent instructions
 
-When working in a worktree (`.claude/worktrees/<name>/`), you are in a **full copy of the repo**. All files are here. Do NOT try to access files via `../../` or the parent repo path. Work entirely within the current working directory.
+When working in a worktree (`.worktrees/<name>/`), you are in a **full copy of the repo**. All files are here. Do NOT try to access files via `../../` or the parent repo path. Work entirely within the current working directory.
 
 - The Cargo workspace is at the repo root. Run `cargo test` to build and test.
+- **NEVER change Cargo's target directory.** Do not set `CARGO_TARGET_DIR`, pass `--target-dir`, or add Cargo configuration that redirects it. Cargo's target directory must remain at `target/` inside each worktree so build artifacts are isolated per worktree.
 - When done, **commit your changes** with `git add` and `git commit`. The branch will be merged into `rust` later.
 - The Rust implementation is functionally runnable. Net-new features go in `docs/NEW_FEATURES.md`.
 - Only modify the files specified in your task. Don't touch unrelated files.
