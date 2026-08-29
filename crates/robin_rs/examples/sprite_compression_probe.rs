@@ -2198,7 +2198,7 @@ fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
     let rle_jxl_bytes: u64 = merged_bank
         .rle_jxl_chunks
         .iter()
-        .map(|c| c.jxl_blobs.iter().map(|b| b.len() as u64).sum::<u64>() + c.masks.len() as u64)
+        .map(|c| c.jxl_blobs.iter().map(|b| b.len() as u64).sum::<u64>())
         .sum();
     for chunk in &merged_bank.rle_jxl_chunks {
         for id in &chunk.sprite_ids {
@@ -2240,9 +2240,11 @@ fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
         n_sprites += 1;
         n_px += sprite.width as u64 * sprite.height as u64;
         if let Some(rhs) = lossy_of.get(id) {
-            // Structural verification: run extents and every key literal
-            // must match the source RLE exactly (the class maps carry
-            // them losslessly); only opaque RGB may differ.
+            // Structural verification: the decoded raster must classify
+            // every pixel exactly as the source RLE canvas does (this is
+            // the alpha-channel-losslessness assertion — a reclassified
+            // pixel is a visible artifact), with the key VALUES bit-exact.
+            // Only visible RGB may differ.
             use robin_assets::rle_jxl;
             n_lossy += 1;
             let source_packed = holder
@@ -2252,50 +2254,55 @@ fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
             if (source_sprite.width, source_sprite.height) != (sprite.width, sprite.height) {
                 bail!("lossy sprite {id} dims differ from the source bank");
             }
-            let (src_px, src_classes, src_used) = rle_jxl::decode_rle_canvas(
-                sprite.width as usize,
-                sprite.height as usize,
-                source_packed,
-            )
-            .with_context(|| format!("walk source RLE sprite {id}"))?;
+            let (width, height) = (sprite.width as usize, sprite.height as usize);
+            let (src_px, src_used) = rle_jxl::decode_rle_canvas(width, height, source_packed)
+                .with_context(|| format!("walk source RLE sprite {id}"))?;
             if src_used != source_packed.len() {
                 bail!("lossy sprite {id} has trailing source words — converter bug");
             }
-            let (out_px, out_classes, out_used) = rle_jxl::decode_rle_canvas(
-                sprite.width as usize,
-                sprite.height as usize,
-                &sprite.packed_data,
-            )
-            .with_context(|| format!("walk shipped RLE sprite {id}"))?;
-            if out_used != sprite.packed_data.len() {
-                bail!("lossy sprite {id} reconstructed with trailing words");
+            if !sprite.packed_data.is_empty() {
+                bail!("lossy sprite {id} ({rhs}) still ships packed words");
             }
-            if src_classes != out_classes {
-                bail!(
-                    "lossy sprite {id} ({rhs}): class structure (run extents / keys) \
-                     differs from the source bank"
-                );
-            }
+            let raster = sprite
+                .raster
+                .as_ref()
+                .ok_or_else(|| anyhow!("lossy sprite {id} ({rhs}) materialized no raster"))?;
+            let out_px: Vec<u16> = (0..height)
+                .flat_map(|y| {
+                    raster
+                        .row(y, width)
+                        .expect("raster window fits its atlas")
+                        .iter()
+                        .copied()
+                })
+                .collect();
             let mut sse = 0.0f64;
             let mut exact = 0u64;
             let mut opaque = 0u64;
-            for (i, &class) in src_classes.iter().enumerate() {
+            for (i, (&source, &shipped)) in src_px.iter().zip(&out_px).enumerate() {
+                let class = rle_jxl::class_of(source);
+                if class != rle_jxl::class_of(shipped) {
+                    bail!(
+                        "lossy sprite {id} ({rhs}): pixel {i} changed class — the alpha channel \
+                         did not survive the lossy encode"
+                    );
+                }
                 if class != rle_jxl::CL_OPAQUE {
-                    // Keys are exact by the class equality above, but the
-                    // VALUES must also match bit-for-bit.
-                    if src_px[i] != out_px[i] {
+                    // Keyed pixels must also match bit-for-bit, not merely
+                    // agree on class.
+                    if source != shipped {
                         bail!("lossy sprite {id}: key pixel {i} differs from the source bank");
                     }
                     continue;
                 }
                 opaque += 1;
-                let a = rle_jxl::expand565(src_px[i]);
-                let b = rle_jxl::expand565(out_px[i]);
+                let a = rle_jxl::expand565(source);
+                let b = rle_jxl::expand565(shipped);
                 for c in 0..3 {
                     let d = a[c] as f64 - b[c] as f64;
                     sse += d * d;
                 }
-                if src_px[i] == out_px[i] {
+                if source == shipped {
                     exact += 1;
                 }
             }
@@ -2331,7 +2338,7 @@ fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
     };
     println!(
         "## verify-shipping {}: {} chunks ({n_blobs} VQ blobs, {blob_bytes} blob bytes; \
-         {} RLE-JXL chunks, {n_rle_blobs} JXL images, {rle_jxl_bytes} jxl+mask bytes; \
+         {} RLE-JXL chunks, {n_rle_blobs} JXL images, {rle_jxl_bytes} jxl bytes; \
          decoded in {:.1}s), {n_sprites} sprites ({n_vq} VQ), {n_px} pixels — {exact_note}",
         data_out.display(),
         chunks.len(),
@@ -2619,6 +2626,33 @@ fn decode_bench(spec: &str) -> Result<()> {
         t_mat.as_secs_f64(),
         t_rle.as_secs_f64(),
     );
+    // Resident-memory accounting: the decoded atlases these sprites window
+    // into (counted once per distinct atlas, gutters included) against the
+    // packed RLE words they replace.
+    if n_rle_chunks > 0 {
+        let mut atlases: HashMap<usize, u64> = HashMap::new();
+        let (mut lossy_sprites, mut sprite_px) = (0u64, 0u64);
+        for (_, sprite) in &merged_bank.sprites {
+            let Some(raster) = sprite.raster.as_ref() else {
+                continue;
+            };
+            lossy_sprites += 1;
+            sprite_px += sprite.width as u64 * sprite.height as u64;
+            atlases.insert(
+                std::sync::Arc::as_ptr(&raster.atlas) as usize,
+                raster.atlas.len() as u64,
+            );
+        }
+        let atlas_px: u64 = atlases.values().sum();
+        println!(
+            "  resident RLE-JXL: {lossy_sprites} sprites in {} atlases = {} B decoded \
+             ({} B of sprite pixels + {} B atlas gutters), 2 B/px",
+            atlases.len(),
+            2 * atlas_px,
+            2 * sprite_px,
+            2 * (atlas_px - sprite_px.min(atlas_px)),
+        );
+    }
     Ok(())
 }
 

@@ -1632,6 +1632,7 @@ mod application_context_tests {
                     height: 1,
                     dictionary_index: 0,
                     packed_data: std::sync::Arc::new(vec![0]),
+                    raster: None,
                 },
             )],
             vq_chunks: Vec::new(),

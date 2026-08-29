@@ -271,13 +271,15 @@ pub struct SpriteVqChunk {
 /// only — native shipping keeps exact RLE words because parity traces
 /// screenshot composited RGB565 framebuffers).
 ///
-/// Each listed sprite is a `width x height` region of one JXL image in
-/// `jxl_blobs` (a per-animation-group atlas or a single-sprite image; the
-/// converter decides per sprite and keeps exact RLE when that is smaller).
-/// The JXL image carries only opaque RGB; `masks` holds the lossless 2-bit
-/// class map (see [`crate::rle_jxl`]) that reconstructs run extents,
-/// shadow-key literals, and transparent-key literals EXACTLY. Only opaque
-/// RGB values are lossy (requantized to RGB565 at materialization).
+/// Each listed sprite is a `width x height` region of one RGBA JXL image
+/// in `jxl_blobs` (a per-animation-group atlas or a single-sprite image;
+/// the converter decides per sprite and keeps exact RLE when that is
+/// smaller). The color channels carry the opaque RGB lossily; the ALPHA
+/// channel carries the per-pixel class losslessly (see [`crate::rle_jxl`]),
+/// which is what reconstructs run extents, shadow-key literals, and
+/// transparent-key literals EXACTLY — there is no sidecar structure data.
+/// Only opaque RGB values are lossy (requantized to RGB565 at
+/// materialization).
 ///
 /// Unlike VQ chunks there are no cross-chunk dependencies: every sprite id
 /// listed here appears in exactly one chunk of the whole tree (sprites
@@ -287,17 +289,13 @@ pub struct SpriteVqChunk {
 pub struct SpriteRleJxlChunk {
     /// Relative RHS path this chunk was built from (diagnostics only).
     pub rhs: String,
-    /// Encoded JXL images (RGBA; alpha 0 marks don't-care pixels).
+    /// Encoded RGBA JXL images: lossy color, lossless class-marker alpha.
     pub jxl_blobs: Vec<Vec<u8>>,
     /// Bank ids of the coded sprites, strictly ascending.
     pub sprite_ids: Vec<u32>,
     /// Per sprite, aligned with `sprite_ids`: which blob and the top-left
     /// pixel of its region inside that blob.
     pub placements: Vec<RleJxlPlacement>,
-    /// Concatenated packed 2-bit class maps in `sprite_ids` order, each
-    /// `class_map_len(width, height)` bytes (dims come from the sprite
-    /// rows). Uncompressed here — the outer chunk zstd handles it.
-    pub masks: Vec<u8>,
 }
 
 /// Placement of one sprite inside its chunk's JXL blob list.
@@ -411,8 +409,16 @@ pub struct ShippingSprite {
     pub height: u16,
     pub dictionary_index: u16,
     /// Packed pixel data (RLE or dictionary-indexed). Empty for VQ sprites
-    /// whose grid lives in a [`SpriteVqChunk`] blob until materialization.
+    /// whose grid lives in a [`SpriteVqChunk`] blob until materialization,
+    /// and for web-lossy RLE sprites, which materialize into `raster`
+    /// instead and never have packed words at all.
     pub packed_data: Arc<Vec<u16>>,
+    /// Runtime-only: decoded RGB565 atlas window produced by
+    /// [`ShippingSpriteBank::materialize_rle_jxl_chunks`]. Never
+    /// serialized — the shipped form is the JXL blob it came from.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    pub raster: Option<crate::frame_holder::SpriteRaster>,
 }
 
 /// Dispatcher state for worker-pool VQ chunk decode (wasm-threads builds).
@@ -994,80 +1000,83 @@ impl ShippingSpriteBank {
             .all(|sprite_id| self.sprite_row(*sprite_id).is_some())
     }
 
-    /// Decode one RLE-JXL chunk into `(sprite id, exact-format RLE words)`
-    /// pairs. Pure compute over the prepared dims — no `self` access, so a
-    /// wasm worker thread can run it.
+    /// Decode one RLE-JXL chunk into `(sprite id, raster window)` pairs.
+    /// Pure compute over the prepared dims — no `self` access, so a wasm
+    /// worker thread can run it.
+    ///
+    /// Each atlas becomes ONE shared RGB565 canvas (classes from the
+    /// lossless alpha channel, visible color requantized from the lossy
+    /// color channels); sprites reference sub-rects of it rather than
+    /// copying pixels out. The packed RLE run format is deliberately not
+    /// rebuilt — nothing draws from runs, so every consumer would only
+    /// decompress them straight back to this raster.
     fn run_rle_jxl_chunk_decode(
         chunk: &SpriteRleJxlChunk,
         dims: &[(u16, u16)],
-    ) -> Result<Vec<(u32, Vec<u16>)>> {
+    ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
         use crate::rle_jxl;
-        let decoded_blobs: Vec<(usize, usize, Vec<u8>)> = chunk
+        let atlases: Vec<(usize, usize, Arc<Vec<u16>>)> = chunk
             .jxl_blobs
             .iter()
             .enumerate()
             .map(|(index, blob)| {
-                rle_jxl::decode_jxl_rgba8(blob)
-                    .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))
+                let (width, height, rgba) = rle_jxl::decode_jxl_rgba8(blob)
+                    .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+                let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
+                    format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
+                })?;
+                Ok((width, height, Arc::new(canvas)))
             })
             .collect::<Result<_>>()?;
         let mut out = Vec::with_capacity(chunk.sprite_ids.len());
-        let mut mask_offset = 0usize;
         for ((&sprite_id, placement), &(width, height)) in chunk
             .sprite_ids
             .iter()
             .zip(&chunk.placements)
             .zip(dims.iter())
         {
-            let mask_len = rle_jxl::class_map_len(width, height);
-            let bits = chunk.masks.get(mask_offset..mask_offset + mask_len).ok_or_else(|| {
-                anyhow!(
-                    "RLE-JXL chunk for {} has a truncated class-map stream at sprite {sprite_id}",
-                    chunk.rhs
-                )
-            })?;
-            mask_offset += mask_len;
-            let classes = rle_jxl::unpack_class_map(bits, width as usize * height as usize)?;
-            let (blob_w, _blob_h, rgba) =
-                decoded_blobs.get(placement.blob as usize).ok_or_else(|| {
+            let (atlas_w, atlas_h, canvas) =
+                atlases.get(placement.blob as usize).ok_or_else(|| {
                     anyhow!(
                         "RLE-JXL chunk for {} places sprite {sprite_id} in missing blob {}",
                         chunk.rhs,
                         placement.blob
                     )
                 })?;
-            let packed = rle_jxl::reconstruct_rle_packed(
-                width as usize,
-                height as usize,
-                &classes,
-                rgba,
-                *blob_w,
-                placement.x as usize,
-                placement.y as usize,
-            )
-            .with_context(|| format!("reconstruct RLE sprite {sprite_id} of {}", chunk.rhs))?;
-            out.push((sprite_id, packed));
-        }
-        if mask_offset != chunk.masks.len() {
-            return Err(anyhow!(
-                "RLE-JXL chunk for {} carries {} class-map bytes but its sprites consume {mask_offset}",
-                chunk.rhs,
-                chunk.masks.len()
+            if placement.x as usize + width as usize > *atlas_w
+                || placement.y as usize + height as usize > *atlas_h
+            {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} places sprite {sprite_id} ({width}x{height}) at \
+                     ({},{}) outside its {atlas_w}x{atlas_h} atlas",
+                    chunk.rhs,
+                    placement.x,
+                    placement.y
+                ));
+            }
+            out.push((
+                sprite_id,
+                crate::frame_holder::SpriteRaster {
+                    atlas: Arc::clone(canvas),
+                    stride: *atlas_w as u32,
+                    x: placement.x,
+                    y: placement.y,
+                },
             ));
         }
         Ok(out)
     }
 
-    /// Write one chunk's reconstructed RLE words into the sprite rows.
-    /// The converter guarantees each bank sprite is JXL-coded by at most one
-    /// chunk, so an already-populated row must match exactly (it can only be
-    /// the same chunk applied twice).
+    /// Attach one chunk's decoded raster windows to its sprite rows. The
+    /// converter guarantees each bank sprite is JXL-coded by at most one
+    /// chunk, so a row that already carries packed words or a raster is a
+    /// broken payload rather than something to reconcile.
     pub fn apply_decoded_rle_jxl_chunk(
         &mut self,
         chunk: &SpriteRleJxlChunk,
-        packed: Vec<(u32, Vec<u16>)>,
+        rasters: Vec<(u32, crate::frame_holder::SpriteRaster)>,
     ) -> Result<()> {
-        for (sprite_id, words) in packed {
+        for (sprite_id, raster) in rasters {
             let position = self
                 .sprites
                 .binary_search_by_key(&sprite_id, |(id, _)| *id)
@@ -1076,16 +1085,18 @@ impl ShippingSpriteBank {
                 })?;
             let sprite = &mut self.sprites[position].1;
             if !sprite.packed_data.is_empty() {
-                if *sprite.packed_data != words {
-                    return Err(anyhow!(
-                        "sprite {sprite_id} decodes differently in two RLE-JXL chunks \
-                         ({} vs an earlier one)",
-                        chunk.rhs
-                    ));
-                }
-                continue;
+                return Err(anyhow!(
+                    "sprite {sprite_id} is JXL-coded by {} but also ships packed words",
+                    chunk.rhs
+                ));
             }
-            sprite.packed_data = Arc::new(words);
+            if sprite.raster.is_some() {
+                return Err(anyhow!(
+                    "sprite {sprite_id} is JXL-coded by two RLE-JXL chunks (latest {})",
+                    chunk.rhs
+                ));
+            }
+            sprite.raster = Some(raster);
         }
         Ok(())
     }
@@ -1104,7 +1115,7 @@ impl ShippingSpriteBank {
             .map(|chunk| self.prepare_rle_jxl_chunk_dims(chunk))
             .collect::<Result<Vec<_>>>()?;
         #[cfg(not(target_arch = "wasm32"))]
-        let decoded: Vec<Result<Vec<(u32, Vec<u16>)>>> = {
+        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = {
             use rayon::prelude::*;
             pending
                 .par_iter()
@@ -1113,15 +1124,15 @@ impl ShippingSpriteBank {
                 .collect()
         };
         #[cfg(target_arch = "wasm32")]
-        let decoded: Vec<Result<Vec<(u32, Vec<u16>)>>> = pending
+        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = pending
             .iter()
             .zip(&inputs)
             .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
             .collect();
-        for (chunk, packed) in pending.iter().zip(decoded) {
-            let packed =
-                packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
-            self.apply_decoded_rle_jxl_chunk(chunk, packed)?;
+        for (chunk, rasters) in pending.iter().zip(decoded) {
+            let rasters = rasters
+                .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            self.apply_decoded_rle_jxl_chunk(chunk, rasters)?;
         }
         Ok(())
     }
@@ -1137,7 +1148,11 @@ impl ShippingSpriteBank {
 #[derive(Default)]
 pub struct RleJxlDecodeScheduler {
     in_flight: futures_util::stream::FuturesUnordered<
-        futures_channel::oneshot::Receiver<(SpriteRleJxlChunk, Result<Vec<(u32, Vec<u16>)>>, f64)>,
+        futures_channel::oneshot::Receiver<(
+            SpriteRleJxlChunk,
+            Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>,
+            f64,
+        )>,
     >,
 }
 
@@ -1174,7 +1189,12 @@ impl RleJxlDecodeScheduler {
     /// Await the next completed decode. `Ok(None)` when none is in flight.
     pub async fn next_decoded(
         &mut self,
-    ) -> Result<Option<(SpriteRleJxlChunk, Vec<(u32, Vec<u16>)>)>> {
+    ) -> Result<
+        Option<(
+            SpriteRleJxlChunk,
+            Vec<(u32, crate::frame_holder::SpriteRaster)>,
+        )>,
+    > {
         use futures_util::StreamExt as _;
         let Some(result) = self.in_flight.next().await else {
             return Ok(None);
@@ -2101,6 +2121,7 @@ mod tests {
             height: 1,
             dictionary_index: 0,
             packed_data: Arc::new(vec![value]),
+            raster: None,
         };
         let bank = |sprites| ShippingSpriteBank {
             signature: 42,
@@ -2162,6 +2183,7 @@ mod tests {
             height: VQ_DIMS.1,
             dictionary_index: 0,
             packed_data: Arc::new(packed),
+            raster: None,
         }
     }
 
@@ -2222,6 +2244,7 @@ mod tests {
                             height: 1,
                             dictionary_index: UNMAPPED_DICT,
                             packed_data: Arc::new(RLE_WORDS.to_vec()),
+                            raster: None,
                         },
                     ),
                 ],
@@ -2275,19 +2298,19 @@ mod tests {
         }
     }
 
-    /// Lossless 8x4 RGBA JXL atlas (cjxl -d 0 -e 7) holding two RLE
-    /// sprites: A (4x4) at (0,0) and B (4x2) at (4,0), generated from the
-    /// exact canvases of `RLE_A_WORDS` / `RLE_B_WORDS` (opaque pixels
-    /// expanded 565 -> 888, every other class RGBA (0,0,0,0)). Lossless +
-    /// 565-representable colors means materialization must reproduce the
-    /// source words bit-for-bit.
+    /// Lossless 8x4 RGBA JXL atlas (`cjxl -d 0 --alpha_distance=0 -e 7`)
+    /// holding two RLE sprites: A (4x4) at (0,0) and B (4x2) at (4,0),
+    /// generated from the exact canvases of `RLE_A_WORDS` / `RLE_B_WORDS`
+    /// — opaque pixels expanded 565 -> 888, and every pixel's alpha set to
+    /// its class marker. Lossless + 565-representable colors means
+    /// materialization must reproduce the source words bit-for-bit.
     const RLE_JXL_FIXTURE: &[u8] = &[
-        0xFF, 0x0A, 0x18, 0x70, 0xB0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x0C, 0x01, 0x4B, 0x18, 0x93,
-        0x8E, 0x83, 0x83, 0x84, 0x13, 0xC4, 0x63, 0x8B, 0xCA, 0x5D, 0x40, 0x14, 0x00, 0x3E, 0x18,
-        0x72, 0xF5, 0x52, 0xFC, 0x6F, 0xC6, 0xC5, 0x18, 0x81, 0x51, 0xFB, 0xDD, 0x8F, 0x6A, 0xB4,
-        0xE8, 0x0B, 0x02, 0x4C, 0xEF, 0x2C, 0x49, 0x8A, 0x2F, 0x32, 0x8A, 0xCD, 0xFA, 0x8B, 0x31,
-        0x04, 0x31, 0x0A, 0x41, 0x73, 0x55, 0xDB, 0xDA, 0x75, 0xEA, 0x8D, 0x0E, 0x17, 0x80, 0x9E,
-        0xF2, 0xE0, 0x05, 0x00,
+        0xFF, 0x0A, 0x18, 0x70, 0xB0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x2C, 0x01, 0x4B, 0x28, 0x36,
+        0x56, 0x1F, 0xBC, 0x28, 0x28, 0x48, 0x38, 0x41, 0x3C, 0xB6, 0x50, 0xDE, 0x05, 0x84, 0x01,
+        0x80, 0x07, 0x96, 0xFC, 0x7A, 0x29, 0xBE, 0xB7, 0xE3, 0xC7, 0x58, 0x01, 0x56, 0xED, 0xFF,
+        0x7E, 0x54, 0xAB, 0x45, 0x5F, 0x40, 0x80, 0xE9, 0x9D, 0x4F, 0x92, 0xE2, 0x8D, 0x8C, 0x62,
+        0x13, 0x40, 0x00, 0xF1, 0x8B, 0x31, 0x04, 0x31, 0x0A, 0xC1, 0x60, 0x54, 0xDB, 0xDA, 0x4D,
+        0xF4, 0x13, 0x1D, 0x86, 0x9A, 0x73, 0x30, 0x53, 0xDB, 0x2B, 0xB7, 0x00,
     ];
     const RLE_A_WORDS: [u16; 16] = [
         0,
@@ -2317,15 +2340,8 @@ mod tests {
             height: h,
             dictionary_index: UNMAPPED_DICT,
             packed_data: Arc::new(Vec::new()),
+            raster: None,
         };
-        let mask_of = |w: u16, h: u16, words: &[u16]| {
-            let (_pixels, classes, used) =
-                rle_jxl::decode_rle_canvas(w as usize, h as usize, words).unwrap();
-            assert_eq!(used, words.len());
-            rle_jxl::pack_class_map(&classes)
-        };
-        let mut masks = mask_of(4, 4, &RLE_A_WORDS);
-        masks.extend(mask_of(4, 2, &RLE_B_WORDS));
         let mission = ShippingMission {
             sprite_bank: Some(ShippingSpriteBank {
                 signature: 7,
@@ -2349,7 +2365,6 @@ mod tests {
                             y: 0,
                         },
                     ],
-                    masks,
                 }],
             }),
             ..ShippingMission::default()
@@ -2361,14 +2376,29 @@ mod tests {
         let bank = decoded.sprite_bank.as_mut().unwrap();
         bank.materialize_rle_jxl_chunks().unwrap();
         assert!(bank.rle_jxl_chunks.is_empty());
-        assert_eq!(
-            bank.sprite_row(5).unwrap().packed_data.as_slice(),
-            RLE_A_WORDS
-        );
-        assert_eq!(
-            bank.sprite_row(9).unwrap().packed_data.as_slice(),
-            RLE_B_WORDS
-        );
+        // Both sprites now window into ONE shared atlas — nothing was
+        // copied out of it, and no RLE words were rebuilt.
+        let rasters: Vec<_> = [5u32, 9]
+            .iter()
+            .map(|id| bank.sprite_row(*id).unwrap().raster.clone().unwrap())
+            .collect();
+        assert!(bank.sprite_row(5).unwrap().packed_data.is_empty());
+        assert!(Arc::ptr_eq(&rasters[0].atlas, &rasters[1].atlas));
+        assert_eq!((rasters[0].stride, rasters[0].x), (8, 0));
+        assert_eq!(rasters[1].x, 4);
+        // The raster is exactly the canvas the packed words decompress to:
+        // lossless color plus the class-carrying alpha reproduces it.
+        for (raster, words, width, height) in [
+            (&rasters[0], &RLE_A_WORDS[..], 4usize, 4usize),
+            (&rasters[1], &RLE_B_WORDS[..], 4, 2),
+        ] {
+            let (expected, used) = rle_jxl::decode_rle_canvas(width, height, words).unwrap();
+            assert_eq!(used, words.len());
+            let actual: Vec<u16> = (0..height)
+                .flat_map(|y| raster.row(y, width).unwrap().iter().copied())
+                .collect();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

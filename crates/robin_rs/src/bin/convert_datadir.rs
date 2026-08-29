@@ -1708,8 +1708,13 @@ struct RleJxlChunkStats {
     kept_irregular: usize,
     kept_low_psnr: usize,
     jxl_bytes: u64,
-    mask_bytes: u64,
     raw_words_replaced: u64,
+    /// Pixels of the decoded atlases these chunks keep resident (2 B each),
+    /// gutters included.
+    atlas_pixels: u64,
+    /// Pixels the sprites themselves occupy — the difference from
+    /// `atlas_pixels` is atlas gutter waste.
+    sprite_canvas_pixels: u64,
 }
 
 impl RleJxlChunkStats {
@@ -1722,36 +1727,54 @@ impl RleJxlChunkStats {
         self.kept_irregular += other.kept_irregular;
         self.kept_low_psnr += other.kept_low_psnr;
         self.jxl_bytes += other.jxl_bytes;
-        self.mask_bytes += other.mask_bytes;
         self.raw_words_replaced += other.raw_words_replaced;
+        self.atlas_pixels += other.atlas_pixels;
+        self.sprite_canvas_pixels += other.sprite_canvas_pixels;
     }
     fn lossy(&self) -> usize {
         self.atlased + self.individual
     }
 }
 
-/// Opaque-pixel PSNR of one encoded member region, scored over the exact
-/// RGB565 values materialization will ship (requantized + key-dodged) —
-/// the same statistic `--verify-shipping` computes afterwards.
-fn member_psnr(
+/// Check one encoded member region against its source canvas: the CLASS of
+/// every pixel must survive exactly (that is the whole contract the alpha
+/// channel carries — a single reclassified edge pixel is a visible
+/// artifact), and the visible pixels are scored for PSNR over the exact
+/// RGB565 values materialization will ship. Errors, rather than a low
+/// score, on any class mismatch.
+fn member_quality(
     candidate: &RleJxlCandidate,
     rgba: &[u8],
     rgba_width: usize,
     x0: usize,
     y0: usize,
-) -> f64 {
+) -> Result<f64> {
     use robin_assets::rle_jxl::{self, CL_OPAQUE};
     let (mut sse, mut opaque) = (0.0f64, 0u64);
     for y in 0..candidate.height as usize {
         for x in 0..candidate.width as usize {
             let i = y * candidate.width as usize + x;
-            if candidate.classes[i] != CL_OPAQUE {
+            let source = candidate.pixels[i];
+            let offset = ((y0 + y) * rgba_width + x0 + x) * 4;
+            let class = rle_jxl::alpha_to_class(rgba[offset + 3])
+                .with_context(|| format!("sprite {} pixel ({x},{y})", candidate.id))?;
+            if class != rle_jxl::class_of(source) {
+                bail!(
+                    "sprite {} pixel ({x},{y}) came back in class {class} instead of {} — \
+                     cjxl did not code the alpha channel losslessly",
+                    candidate.id,
+                    rle_jxl::class_of(source),
+                );
+            }
+            if class != CL_OPAQUE {
                 continue;
             }
-            let off = ((y0 + y) * rgba_width + x0 + x) * 4;
-            let shipped =
-                rle_jxl::dodge_keys(rle_jxl::quant565(rgba[off], rgba[off + 1], rgba[off + 2]));
-            let a = rle_jxl::expand565(candidate.pixels[i]);
+            let shipped = rle_jxl::dodge_keys(rle_jxl::quant565(
+                rgba[offset],
+                rgba[offset + 1],
+                rgba[offset + 2],
+            ));
+            let a = rle_jxl::expand565(source);
             let b = rle_jxl::expand565(shipped);
             for channel in 0..3 {
                 let d = a[channel] as f64 - b[channel] as f64;
@@ -1761,10 +1784,10 @@ fn member_psnr(
         }
     }
     if opaque == 0 || sse == 0.0 {
-        return f64::INFINITY;
+        return Ok(f64::INFINITY);
     }
     let mse = sse / (opaque as f64 * 3.0);
-    10.0 * (255.0f64 * 255.0 / mse).log10()
+    Ok(10.0 * (255.0f64 * 255.0 / mse).log10())
 }
 
 /// One eligible RLE sprite expanded for the JXL path.
@@ -1772,27 +1795,21 @@ struct RleJxlCandidate {
     id: u32,
     width: u16,
     height: u16,
-    /// Decoded canvas pixels (RGB565 with key values in place).
+    /// Decoded canvas (RGB565 with the key values in place) — exactly what
+    /// materialization must reproduce.
     pixels: Vec<u16>,
-    /// Per-pixel `rle_jxl::CL_*` classes.
-    classes: Vec<u8>,
     /// Exact packed words (for the keep-exact size comparison).
     raw_words: usize,
 }
 
 impl RleJxlCandidate {
-    /// RGBA export: opaque pixels expand to 888 + alpha 255, every other
-    /// class is (0,0,0,0) — keys ship in the lossless class map instead and
-    /// alpha 0 frees the encoder from reproducing anything there.
-    fn rgba(&self) -> Vec<u8> {
-        let mut rgba = vec![0u8; self.pixels.len() * 4];
-        for (i, &px) in self.pixels.iter().enumerate() {
-            if self.classes[i] == robin_assets::rle_jxl::CL_OPAQUE {
-                let [r, g, b] = robin_assets::rle_jxl::expand565(px);
-                rgba[i * 4..i * 4 + 4].copy_from_slice(&[r, g, b, 255]);
-            }
-        }
-        rgba
+    /// Encoder input for this sprite alone: class-carrying alpha plus
+    /// edge-extended color.
+    fn smeared_rgba(&self) -> Result<Vec<u8>> {
+        use robin_assets::rle_jxl;
+        let mut rgba = rle_jxl::canvas_to_rgba(&self.pixels)?;
+        rle_jxl::smear_invisible_rgb(&mut rgba, self.width as usize, self.height as usize);
+        Ok(rgba)
     }
 
     fn raw_le_bytes(&self, sprites: &[(u32, ShippingSprite)]) -> Vec<u8> {
@@ -1814,9 +1831,10 @@ struct RleJxlAccepted {
     blob: u32,
     x: u16,
     y: u16,
-    classes: Vec<u8>,
     atlased: bool,
     raw_words: usize,
+    /// Pixels this sprite occupies in its atlas (resident-cost accounting).
+    canvas_pixels: u64,
 }
 
 /// Compressed-size estimate for the keep-exact side of the per-sprite
@@ -1860,7 +1878,7 @@ fn build_rle_jxl_chunk(
             stats.kept_shared += 1;
             continue;
         }
-        let (pixels, classes, used) = match rle_jxl::decode_rle_canvas(
+        let (pixels, used) = match rle_jxl::decode_rle_canvas(
             sprite.width as usize,
             sprite.height as usize,
             &sprite.packed_data,
@@ -1887,7 +1905,6 @@ fn build_rle_jxl_chunk(
             width: sprite.width,
             height: sprite.height,
             pixels,
-            classes,
             raw_words: sprite.packed_data.len(),
         });
     }
@@ -1976,11 +1993,13 @@ fn build_rle_jxl_chunk(
                 let cols = (frames.len() as f64).sqrt().ceil() as usize;
                 let rows = frames.len().div_ceil(cols);
                 let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
+                // Gutters start fully transparent, so the edge extension
+                // below flows sprite color across cell boundaries too.
                 let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
                 let mut placements = Vec::with_capacity(frames.len());
                 for (k, frame) in frames.iter().enumerate() {
                     let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
-                    let src = frame.rgba();
+                    let src = rle_jxl::canvas_to_rgba(&frame.pixels)?;
                     for y in 0..frame.height as usize {
                         let dst = ((y0 + y) * atlas_w + x0) * 4;
                         let n = frame.width as usize * 4;
@@ -1988,6 +2007,7 @@ fn build_rle_jxl_chunk(
                     }
                     placements.push((frame.id, x0 as u16, y0 as u16));
                 }
+                rle_jxl::smear_invisible_rgb(&mut rgba, atlas_w, atlas_h);
                 let jxl = encode_pixels_to_jxl(
                     atlas_w as u32,
                     atlas_h as u32,
@@ -2001,7 +2021,9 @@ fn build_rle_jxl_chunk(
                     .with_context(|| format!("decode encoded atlas for {rel}"))?;
                 for &(id, x0, y0) in &placements {
                     let candidate = &candidates[by_id[&id]];
-                    if member_psnr(candidate, &decoded, dec_w, x0 as usize, y0 as usize)
+                    // Class mismatches error out of the whole conversion —
+                    // only the quality score demotes a member.
+                    if member_quality(candidate, &decoded, dec_w, x0 as usize, y0 as usize)?
                         < RLE_JXL_MIN_SPRITE_PSNR_DB
                     {
                         low_psnr.push(id);
@@ -2038,9 +2060,9 @@ fn build_rle_jxl_chunk(
                             blob,
                             x,
                             y,
-                            classes: candidate.classes.clone(),
                             atlased: true,
                             raw_words: candidate.raw_words,
+                            canvas_pixels: candidate.pixels.len() as u64,
                         });
                     }
                 }
@@ -2049,14 +2071,13 @@ fn build_rle_jxl_chunk(
         }
     }
     // Ungrouped / demoted sprites: individual JXL, kept only when it clears
-    // the PSNR floor and beats the outer-zstd cost of the exact words
-    // (mask included).
+    // the PSNR floor and beats the outer-zstd cost of the exact words.
     for id in ungrouped {
         let candidate = &candidates[by_id[&id]];
         let jxl = encode_pixels_to_jxl(
             candidate.width as u32,
             candidate.height as u32,
-            &candidate.rgba(),
+            &candidate.smeared_rgba()?,
             png::ColorType::Rgba,
             Some(quality),
             7,
@@ -2064,13 +2085,11 @@ fn build_rle_jxl_chunk(
         .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
         let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
             .with_context(|| format!("decode encoded sprite {id} of {rel}"))?;
-        if member_psnr(candidate, &decoded, dec_w, 0, 0) < RLE_JXL_MIN_SPRITE_PSNR_DB {
+        if member_quality(candidate, &decoded, dec_w, 0, 0)? < RLE_JXL_MIN_SPRITE_PSNR_DB {
             stats.kept_low_psnr += 1;
             continue;
         }
-        let mask = rle_jxl::pack_class_map(&candidate.classes);
-        let raw_z = zstd19_len(&candidate.raw_le_bytes(sprites))?;
-        if jxl.len() + zstd19_len(&mask)? >= raw_z {
+        if jxl.len() >= zstd19_len(&candidate.raw_le_bytes(sprites))? {
             stats.kept_smaller += 1;
             continue;
         }
@@ -2081,9 +2100,9 @@ fn build_rle_jxl_chunk(
             blob,
             x: 0,
             y: 0,
-            classes: candidate.classes.clone(),
             atlased: false,
             raw_words: candidate.raw_words,
+            canvas_pixels: candidate.pixels.len() as u64,
         });
     }
     if accepted.is_empty() {
@@ -2095,7 +2114,6 @@ fn build_rle_jxl_chunk(
         jxl_blobs: blobs,
         sprite_ids: Vec::with_capacity(accepted.len()),
         placements: Vec::with_capacity(accepted.len()),
-        masks: Vec::new(),
     };
     for entry in &accepted {
         chunk.sprite_ids.push(entry.id);
@@ -2104,24 +2122,29 @@ fn build_rle_jxl_chunk(
             x: entry.x,
             y: entry.y,
         });
-        chunk
-            .masks
-            .extend_from_slice(&rle_jxl::pack_class_map(&entry.classes));
         if entry.atlased {
             stats.atlased += 1;
         } else {
             stats.individual += 1;
         }
         stats.raw_words_replaced += entry.raw_words as u64;
-        // Blank the row: the words come back from the JXL + mask at
-        // mission install, exactly like VQ grids come out of their blob.
+        stats.sprite_canvas_pixels += entry.canvas_pixels;
+        // Blank the row: at mission install the JXL decodes to a shared
+        // raster and the row points into it, exactly like VQ grids come
+        // out of their blob.
         let position = sprites
             .binary_search_by_key(&entry.id, |(id, _)| *id)
             .expect("accepted sprite came from these rows");
         sprites[position].1.packed_data = Arc::new(Vec::new());
     }
     stats.jxl_bytes = chunk.jxl_blobs.iter().map(|blob| blob.len() as u64).sum();
-    stats.mask_bytes = chunk.masks.len() as u64;
+    // Resident cost of this chunk once decoded: the whole atlas raster at
+    // 2 B/px, gutters included (see the memory note in the ledger).
+    for blob in &chunk.jxl_blobs {
+        let (width, height, _rgba) = rle_jxl::decode_jxl_rgba8(blob)
+            .with_context(|| format!("measure decoded atlas of {rel}"))?;
+        stats.atlas_pixels += (width * height) as u64;
+    }
     Ok((Some(chunk), stats))
 }
 
@@ -2236,11 +2259,12 @@ fn build_rhs_chunk_payload(
                 height: sprite.height,
                 dictionary_index: sprite.dictionary_index,
                 packed_data: Arc::new(row_packed),
+                raster: None,
             },
         ));
     }
-    // Web recipe: swap eligible RLE bucket sprites to lossy JXL + class
-    // masks, blanking the rows the chunk covers.
+    // Web recipe: swap eligible RLE bucket sprites to lossy JXL atlases,
+    // blanking the rows the chunk covers.
     let (rle_jxl_chunk, rle_stats) = match rle_format.jxl_quality() {
         Some(quality) if is_rle_jxl_bucket_rel(rel) => {
             build_rle_jxl_chunk(rel, prep, &mut sprites, quality, multi_chunk_ids)?
@@ -3399,8 +3423,9 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             kept_irregular = rle_totals.kept_irregular,
             kept_low_psnr = rle_totals.kept_low_psnr,
             jxl_bytes = rle_totals.jxl_bytes,
-            mask_bytes = rle_totals.mask_bytes,
             raw_bytes_replaced = 2 * rle_totals.raw_words_replaced,
+            resident_atlas_bytes = 2 * rle_totals.atlas_pixels,
+            resident_sprite_bytes = 2 * rle_totals.sprite_canvas_pixels,
             "RLE sprite bucket encoded as lossy JXL (web recipe)"
         );
     }
@@ -4714,10 +4739,25 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
 
 /// RGBA with the sprite transparency key mapped to alpha; effort 9 because
 /// interface art is small and encoded once.
+///
+/// `to_rgba8888` writes flat black `(0,0,0,0)` for keyed pixels, which drags
+/// edge pixels dark under lossy DCT (the same bleeding the RLE sprite path
+/// avoids). At a lossy quality the invisible RGB is free to be anything, so
+/// edge-extend it instead; at `-d 0` the keyed pixels are coded exactly as
+/// given, so leave the existing bytes alone.
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
 
-    let rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
+    let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
+    if quality.is_some() {
+        // `to_rgba8888` emits alpha 255 for every visible pixel, which is
+        // exactly the "opaque" marker the smear treats as a color source.
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+    }
     transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)
 }
 
@@ -4776,7 +4816,20 @@ fn encode_pixels_to_jxl(
     let mut cmd = Command::new("cjxl");
     let effort = effort.to_string();
     if let Some(q) = quality {
-        cmd.args(["-q", &q.to_string(), "-e", &effort, "-", "-"]);
+        // `--alpha_distance=0` keeps the extra channel mathematically
+        // lossless while the color channels stay lossy. cjxl 0.12 defaults
+        // it to 0 already; passing it explicitly means a future default
+        // change cannot silently corrupt the sprite class channel (which
+        // `member_quality` would then catch as a hard error anyway).
+        cmd.args([
+            "-q",
+            &q.to_string(),
+            "--alpha_distance=0",
+            "-e",
+            &effort,
+            "-",
+            "-",
+        ]);
     } else {
         cmd.args(["-d", "0", "--modular=1", "-e", &effort, "-", "-"]);
     }
