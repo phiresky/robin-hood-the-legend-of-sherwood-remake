@@ -183,6 +183,17 @@ Neither cache evicts today; if a sprite-heavy mission makes the
 reservation matter, the fix is per-group paging, and
 `AtlasStats::occupancy` is the number to watch.
 
+**Simulation is untouched.** Two independent checks:
+
+- Replaying the same recording under both paths produces the *same*
+  engine state hash at frame 0 — `c7de02c707bd0b7d` in both arms. (That
+  recording desyncs against its own stored `517c97920814a7c2` because
+  it was made against a different build/datadir; the point here is that
+  the two arms agree with each other exactly.)
+- The frame-600 captures are byte-identical, which means 600 simulated
+  frames put every entity on exactly the same pixel. Any RNG or state
+  divergence would have moved something.
+
 **Wall time.** The full-map export is dominated by mission load and
 software (lavapipe) rasterisation, so it is not a clean frame-rate
 measurement: `Dem_Lei_MP` frame 600 took 155 s legacy vs 151 s atlas,
