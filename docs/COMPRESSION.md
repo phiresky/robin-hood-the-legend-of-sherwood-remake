@@ -2004,19 +2004,25 @@ and therefore has nothing to defer. Browser measurements on that path
 are a no-regression check, not a speed-up demo:
 
 ```
-                        pkg-base (main)   pkg-after (this change)
-H01_Lin_VL                     11.6 s            11.7 s
-Tac01_FoA_MP                    9.1 s             9.0 s
-Sherwood                        4.8 s             4.8 s
+                       pkg-base (main)          pkg-after (this change)
+H01_Lin_VL       26.2 / 12.6 / 17.7 s      11.7 / 17.7 / 15.9 s
+                        median 17.7 s             median 15.9 s
+Tac01_FoA_MP                   17.9 s             9.0 / 9.3 s
+Sherwood                        6.1 s                    4.8 s
 ```
 
 (headless Chrome, SwiftShader, loopback COOP/COEP server, `ship_web_v13`
 datadir; time from `wasm_boot` to "activated shipping mission", which on
-these launches equals time to "Recording replay"). No deferred-tail line,
-no `skipped draw` line, and no missing-sprite artifacts on any of the
-three; run-to-run spread on this machine is a few hundred ms, so the
-columns are indistinguishable — as expected when the partition is a
-no-op.
+these launches equals time to "Recording replay"). H01 runs were
+interleaved base/after to share load conditions. The run-to-run spread
+(11.7-26.2 s for the same binary) dwarfs any difference between the
+columns: this machine runs many concurrent agent builds, and the
+measurement is dominated by CPU/IO contention rather than by the
+install. That is the expected result — with an empty reinforcement pool
+the partition is a no-op and both binaries execute the same schedule —
+so these runs are a no-regression check only. No deferred-tail line, no
+`skipped draw` line, and no missing-sprite artifacts appeared on any
+run.
 
 The partition rules themselves are unit-tested in `shipping_mission.rs`
 (`SpriteDeferral` compiles on every target; only the streaming driver is
