@@ -26,7 +26,7 @@ zstd.workspace = true
 # JPEG XL. Disable default SIMD because this workspace currently uses
 # Cranelift in dev builds, and jxl's default AVX512 path hits unsupported
 # intrinsics there.
-jxl = { version = "0.4", default-features = false }
+jxl = { version = "0.6", default-features = false }
 
 # `bzip2` is only needed when reading **legacy** SBPictureSixteen data
 # (`.bfn` glyph tables, loose `.res` archives shipped by the original

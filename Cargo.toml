@@ -30,7 +30,7 @@ anyhow = "1"
 bitcode = { git = "https://github.com/SoftbearStudios/bitcode.git", rev = "7ae88076943b74151e99713f33635ac5a5d4f4bf" }
 bitflags = "2"
 bytemuck = "1"
-enum-map = "2"
+enum-map = "3"
 fastrand = "2"
 geo = "0.33"
 indexmap = "2"
@@ -48,11 +48,6 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 
 [patch.crates-io]
-# proc-macro-error2 2.0.1 re-exports a private `extern crate proc_macro`,
-# which is a future hard error. Keep the same crate/version and apply the
-# compiler-suggested visibility fix until upstream publishes it. The fork
-# contains only that fix on top of upstream 2.0.1.
-proc-macro-error2 = { git = "https://github.com/phiresky/proc-macro-error-2.git", rev = "095ca9d18e988eabd12a27f3bce08dd8f8a72a97" }
 # winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the
 # window center on Windows, so mouse motion stops entirely (we always hide the
 # OS cursor and draw our own). The fork is v0.30.13 plus the upstream fix
@@ -94,6 +89,15 @@ codegen-backend = "cranelift"
 # dramatically faster without slowing down our own crate's rebuilds.
 [profile.dev.package."*"]
 opt-level = 3
+
+# crc32fast 1.5.1 runtime-dispatches to a VPCLMULQDQ path whose intrinsics
+# cranelift cannot compile yet (it aborts with "llvm.x86.pclmulqdq.256 is
+# not yet supported" the moment that path runs on AVX-512 hardware).
+# Build just this crate with LLVM in the cranelift-backed profiles.
+[profile.dev.package.crc32fast]
+codegen-backend = "llvm"
+[profile.test.package.crc32fast]
+codegen-backend = "llvm"
 
 # Workspace crates stay unoptimized so incremental rebuilds are fast.
 [profile.dev.package.robin_rs]

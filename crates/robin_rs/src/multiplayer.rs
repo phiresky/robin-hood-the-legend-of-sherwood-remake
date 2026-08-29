@@ -20,6 +20,8 @@ use std::sync::mpsc::{Receiver, Sender};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod identity;
 pub mod matchmaking;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rendezvous;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;

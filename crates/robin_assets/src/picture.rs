@@ -424,7 +424,7 @@ impl Picture {
         let mut input: &[u8] = bytes;
         let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
 
-        let mut dec_with_image = match dec.process(&mut input) {
+        let mut dec_with_image = match dec.process(&mut input, None) {
             Ok(ProcessingResult::Complete { result }) => result,
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input but we provided the whole blob")
@@ -456,7 +456,7 @@ impl Picture {
         });
 
         // Advance from WithImageInfo → WithFrameInfo (no buffers yet).
-        let dec_with_frame = match dec_with_image.process(&mut input) {
+        let dec_with_frame = match dec_with_image.process(&mut input, None) {
             Ok(ProcessingResult::Complete { result }) => result,
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input reading frame header")
@@ -467,7 +467,7 @@ impl Picture {
         let stride = w * 3;
         let mut rgb = vec![0u8; stride * h];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgb, h, stride)];
-        match dec_with_frame.process(&mut input, &mut output_bufs) {
+        match dec_with_frame.process(&mut input, &mut output_bufs, None) {
             Ok(ProcessingResult::Complete { .. }) => {}
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input while finishing frame")
@@ -509,7 +509,7 @@ impl Picture {
         let mut input: &[u8] = bytes;
         let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
 
-        let mut dec_with_image = match dec.process(&mut input) {
+        let mut dec_with_image = match dec.process(&mut input, None) {
             Ok(ProcessingResult::Complete { result }) => result,
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input but we provided the whole blob")
@@ -532,7 +532,7 @@ impl Picture {
             extra_channel_format: vec![None],
         });
 
-        let dec_with_frame = match dec_with_image.process(&mut input) {
+        let dec_with_frame = match dec_with_image.process(&mut input, None) {
             Ok(ProcessingResult::Complete { result }) => result,
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input reading frame header")
@@ -543,7 +543,7 @@ impl Picture {
         let stride = w * 4;
         let mut rgba = vec![0u8; stride * h];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgba, h, stride)];
-        match dec_with_frame.process(&mut input, &mut output_bufs) {
+        match dec_with_frame.process(&mut input, &mut output_bufs, None) {
             Ok(ProcessingResult::Complete { .. }) => {}
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input while finishing frame")

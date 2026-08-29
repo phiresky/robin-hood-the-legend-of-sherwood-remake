@@ -262,7 +262,7 @@ impl<T: StateHash> StateHash for Vec<T> {
 
 impl<K, V> StateHash for enum_map::EnumMap<K, V>
 where
-    K: enum_map::EnumArray<V>,
+    K: enum_map::Enum,
     V: StateHash,
 {
     #[inline]

@@ -2,9 +2,9 @@
 //!
 //! There is no broker anywhere.  Every player who opens the
 //! multiplayer menu joins one well-known gossip topic; peers for the
-//! topic are found through the BitTorrent Mainline DHT
-//! (`distributed-topic-tracker`), so no address, server, or
-//! environment variable is ever configured.
+//! topic are found through the BitTorrent Mainline DHT (see
+//! [`super::rendezvous`]), so no address, server, or environment
+//! variable is ever configured.
 //!
 //! Hosts periodically broadcast their game as a [`GameListing`]
 //! (soft state — listings expire when the announcements stop).
@@ -227,17 +227,19 @@ fn open_native(nickname: String) -> Result<MatchmakingSession, String> {
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use distributed_topic_tracker::{AutoDiscoveryGossip, Config, RecordPublisher, TopicId};
-    use ed25519_dalek::SigningKey;
+    use crate::multiplayer::rendezvous::{ANNOUNCE_INTERVAL, TopicRendezvous};
+    use futures::StreamExt;
+    use iroh::EndpointId;
     use iroh_gossip::net::Gossip;
+    use iroh_gossip::proto::TopicId;
+    use sha2::Digest;
     use std::collections::HashMap;
     use std::sync::mpsc::TryRecvError;
     use std::time::Instant;
 
-    /// Well-known topic every copy of the game rendezvouses on.  The
-    /// "secret" is public by design — the game list is public.
+    /// Well-known topic every copy of the game rendezvouses on —
+    /// public by design, the game list is public.
     const TOPIC: &str = "robinhood-legend-of-sherwood/matchmaking/0";
-    const TOPIC_SECRET: &[u8] = b"robinhood-legend-of-sherwood/matchmaking/0/secret";
 
     const TICK: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -262,8 +264,11 @@ mod native {
         /// Live listings by game id, with the last refresh time.
         listings: HashMap<String, (GameListing, Instant)>,
         neighbors: usize,
+        /// Mirrors `neighbors` for the DHT rendezvous task, which only
+        /// re-bootstraps while the swarm is empty.
+        neighbors_watch: tokio::sync::watch::Sender<usize>,
         events: Sender<MatchmakingEvent>,
-        sender: distributed_topic_tracker::GossipSender,
+        sender: iroh_gossip::api::GossipSender,
         last_broadcast: Instant,
         listings_dirty: bool,
     }
@@ -285,18 +290,30 @@ mod native {
             .accept(iroh_gossip::ALPN, gossip.clone())
             .spawn();
 
-        let signing_key = SigningKey::from_bytes(&endpoint.secret_key().to_bytes());
-        let publisher = RecordPublisher::new(
-            TopicId::new(TOPIC.to_string()),
-            signing_key,
-            None,
-            TOPIC_SECRET.to_vec(),
-            Config::default(),
-        );
-        let topic = match gossip
-            .subscribe_and_join_with_auto_discovery_no_wait(publisher)
+        let local_id = endpoint.secret_key().public();
+        let rendezvous = match TopicRendezvous::new(TOPIC, *local_id.as_bytes()) {
+            Ok(rendezvous) => rendezvous,
+            Err(e) => {
+                let _ = events.send(MatchmakingEvent::Disconnected(format!(
+                    "start matchmaking rendezvous: {e:#}"
+                )));
+                let _ = router.shutdown().await;
+                endpoint.close().await;
+                return;
+            }
+        };
+        let topic_id = TopicId::from_bytes(sha2::Sha256::digest(TOPIC.as_bytes()).into());
+        let bootstrap: Vec<EndpointId> = rendezvous
+            .bootstrap_ids()
             .await
-        {
+            .iter()
+            .filter_map(|id| EndpointId::from_bytes(id).ok())
+            .collect();
+        tracing::debug!(
+            peers = bootstrap.len(),
+            "matchmaking rendezvous bootstrap ids from DHT"
+        );
+        let topic = match gossip.subscribe(topic_id, bootstrap).await {
             Ok(topic) => topic,
             Err(e) => {
                 let _ = events.send(MatchmakingEvent::Disconnected(format!(
@@ -307,17 +324,12 @@ mod native {
                 return;
             }
         };
-        let (sender, mut receiver) = match topic.split().await {
-            Ok(split) => split,
-            Err(e) => {
-                let _ = events.send(MatchmakingEvent::Disconnected(format!(
-                    "split matchmaking topic: {e}"
-                )));
-                let _ = router.shutdown().await;
-                endpoint.close().await;
-                return;
-            }
-        };
+        let (sender, mut receiver) = topic.split();
+        let (neighbors_watch, neighbors_rx) = tokio::sync::watch::channel(0usize);
+        // Keep announcing on the DHT (and re-bootstrapping while the
+        // swarm is empty) in the background.  The task dies with the
+        // worker's runtime.
+        tokio::spawn(rendezvous_loop(rendezvous, sender.clone(), neighbors_rx));
         let _ = events.send(MatchmakingEvent::Neighbors(0));
 
         let mut worker = Worker {
@@ -325,6 +337,7 @@ mod native {
             role: Role::Browsing,
             listings: HashMap::new(),
             neighbors: 0,
+            neighbors_watch,
             events,
             sender,
             last_broadcast: Instant::now() - BROADCAST_INTERVAL,
@@ -337,11 +350,17 @@ mod native {
             tokio::select! {
                 event = receiver.next() => {
                     match event {
-                        Ok(event) => worker.handle_gossip_event(event).await,
-                        Err(e) => {
+                        Some(Ok(event)) => worker.handle_gossip_event(event).await,
+                        Some(Err(e)) => {
                             let _ = worker.events.send(MatchmakingEvent::Disconnected(format!(
                                 "matchmaking gossip stream ended: {e}"
                             )));
+                            break 'session;
+                        }
+                        None => {
+                            let _ = worker.events.send(MatchmakingEvent::Disconnected(
+                                "matchmaking gossip stream closed".to_string(),
+                            ));
                             break 'session;
                         }
                     }
@@ -387,7 +406,7 @@ mod native {
                     return;
                 }
             };
-            if let Err(e) = self.sender.broadcast(bytes).await {
+            if let Err(e) = self.sender.broadcast(bytes.into()).await {
                 tracing::debug!("matchmaking broadcast failed (no neighbors yet?): {e}");
             }
         }
@@ -403,12 +422,14 @@ mod native {
                 },
                 Event::NeighborUp(_) => {
                     self.neighbors = self.neighbors.saturating_add(1);
+                    let _ = self.neighbors_watch.send(self.neighbors);
                     let _ = self
                         .events
                         .send(MatchmakingEvent::Neighbors(self.neighbors));
                 }
                 Event::NeighborDown(_) => {
                     self.neighbors = self.neighbors.saturating_sub(1);
+                    let _ = self.neighbors_watch.send(self.neighbors);
                     let _ = self
                         .events
                         .send(MatchmakingEvent::Neighbors(self.neighbors));
@@ -627,6 +648,36 @@ mod native {
                 games.sort_by(|a, b| a.id.cmp(&b.id));
                 let _ = self.events.send(MatchmakingEvent::Games(games));
             }
+        }
+    }
+
+    /// Background DHT presence: keep the local endpoint id announced in
+    /// the rendezvous slot, and while the gossip swarm has no neighbors
+    /// keep pulling fresh ids from the DHT and asking gossip to join
+    /// them.  Runs until the worker's runtime is dropped.
+    async fn rendezvous_loop(
+        rendezvous: TopicRendezvous,
+        sender: iroh_gossip::api::GossipSender,
+        neighbors: tokio::sync::watch::Receiver<usize>,
+    ) {
+        loop {
+            if let Err(e) = rendezvous.announce().await {
+                tracing::debug!("matchmaking rendezvous announce failed: {e:#}");
+            }
+            if *neighbors.borrow() == 0 {
+                let ids: Vec<EndpointId> = rendezvous
+                    .bootstrap_ids()
+                    .await
+                    .iter()
+                    .filter_map(|id| EndpointId::from_bytes(id).ok())
+                    .collect();
+                if !ids.is_empty()
+                    && let Err(e) = sender.join_peers(ids).await
+                {
+                    tracing::debug!("matchmaking rendezvous join_peers failed: {e}");
+                }
+            }
+            tokio::time::sleep(ANNOUNCE_INTERVAL).await;
         }
     }
 

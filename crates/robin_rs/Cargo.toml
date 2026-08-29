@@ -42,7 +42,7 @@ ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
 bitcode.workspace = true
 zstd.workspace = true
-base64 = "0.22"
+base64 = "0.23"
 sha2 = "0.11"
 # Zip-backed custom missions are compiled on wasm too. Browser builds do not
 # currently mount host paths, but the shared picker/launch code still needs the
@@ -87,24 +87,21 @@ tiny_http = "0.12"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
 # hole punching.  Peers are addressed by their public-key endpoint id,
 # so no port forwarding or bind-address configuration is needed.
-iroh = "1.0.3"
+iroh = "1.1.0"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time", "io-util"] }
 # Non-poisoning mutexes for the multiplayer peer state shared across
 # transport worker threads.
 parking_lot = "0.12"
 # Real memory / CPU-frequency queries for the options-menu hardware line.
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # Serverless matchmaking: hosts announce games on a well-known
-# iroh-gossip topic whose peers are found through the BitTorrent
-# Mainline DHT (distributed-topic-tracker) — no broker, no
-# configuration.  The DHT address lookup additionally lets endpoint
+# iroh-gossip topic whose peers meet through BEP-44 mutable records on
+# the BitTorrent Mainline DHT (`multiplayer::rendezvous`) — no broker,
+# no configuration.  The DHT address lookup additionally lets endpoint
 # ids resolve without any hosted DNS/relay-discovery infrastructure.
-# ed25519-dalek matches the SigningKey type distributed-topic-tracker
-# expects (built from the iroh SecretKey bytes).
 iroh-gossip = { version = "0.101", features = ["net"] }
-distributed-topic-tracker = "0.3.5"
-ed25519-dalek = "3.0.0-rc.0"
-iroh-mainline-address-lookup = "0.4"
+mainline = "7"
+iroh-mainline-address-lookup = "0.5"
 
 # Desktop installer/update lifecycle hooks. Keep this target-scoped so the
 # Android cdylib and browser build do not pull in desktop packaging support.
@@ -112,7 +109,7 @@ iroh-mainline-address-lookup = "0.4"
 semver = "1"
 velopack = "1.2.0"
 # Native folder-picker / message dialogs for the startup datadir selector.
-rfd = "0.15"
+rfd = "0.17"
 
 # GUI-subsystem binaries have no console; re-attach to the parent process
 # console so logs still reach the terminal when launched from one.
