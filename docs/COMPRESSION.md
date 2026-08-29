@@ -1678,3 +1678,133 @@ cargo run --release --example jxl_sprite_probe -- \
 # report: tmp/jxl_sprite_probe/report.txt; worst-case side-by-side
 # PNGs under tmp/jxl_sprite_probe/<char>/worst_q{80,90}/
 ```
+
+### Follow-up: the RLE/patch bucket — lossy JXL WINS here (2026-08-29)
+
+Same probe, `--rle` mode, on the content class where the economics
+differ: the RLE bucket has no VQ codec side (its best entropy stage so
+far is xz -9e, "RLE bucket context modeling" above), and the content is
+map-like art, which is what took the terrain maps down 60%. The mode
+reproduces the ledger bucket exactly — 10,134 RLE sprites, raw corpus
+blob 63.73 MiB (= 66.8 MB), zstd-19 16.87 MiB (= 17.69 MB), xz -9e
+14.84 MiB (= 15.56 MB); the 9,516 VQ sprites in the same 150 RHS files
+are v9's business and excluded. Same mask methodology, extended to four
+classes: transparent/outside-run, shadow, opaque, plus "in-run literal
+with the transparent-key value" — with the map, RLE run extents AND all
+key literals reconstruct exactly, so lossy error is confined to opaque
+RGB (0 trailing-word sprites in the bucket; some patches carry LARGE
+key-literal interiors, visible magenta in the dumps).
+
+Selected >= 20x20 px: 8,277 sprites (8,155 from the 116 animation RHS,
+122 accessory) = 98.8% of bucket bytes; 62.2M canvas px, 41% opaque.
+
+```
+selected comparators |  zstd-19 16.59 MiB   xz -9e 14.62 MiB
+jxl per-sprite + 865.8 KiB mask (cjxl e7):
+  q90 16.18 MiB (1.16x xz) | q80 11.18 MiB (0.82x) | q70 8.93 MiB (0.67x) | d0 19.32 MiB (1.38x)
+atlas per (rhs,profile,action), 383 of 569 groups >= 4 frames (8,088 frames):
+  atlas       q90 11.70 MiB | q80 7985 KiB | q70 6205 KiB | d0 13.60 MiB
+  per-sprite  q90 13.90 MiB | q80 9921 KiB | q70 8001 KiB | d0 15.07 MiB
+  animated    q80 10.12 MiB | d0 15.19 MiB  (APNG -> cjxl frame sequence)
+```
+
+- **Per-sprite lossy already beats the best entropy coder**: q80+mask
+  is 0.82x of xz -9e, q70+mask 0.67x — where the VQ characters showed
+  3.8-5.1x LOSSES. No dictionary quantiser ever touched these pixels,
+  so JXL is not re-buying anyone else's bits.
+- **Atlases add ~20%**: unlike the VQ case, per-animation grid atlases
+  recover real money (-19.5% at q80, -22.5% at q70 vs the same frames
+  per-sprite) — frames are large and similar, and cjxl's patch/context
+  machinery sees the repetition. Animated JXL is a bust: cjxl codes
+  APNG frames essentially independently (10.12 MiB q80, WORSE than the
+  8.0 MiB atlas), so atlas > animation.
+- **Best measured config**: atlas-q70 (6,205 KiB) + per-sprite q70 for
+  the 189 ungrouped frames (1,146 KiB) + masks (866 KiB) = **8.02 MiB
+  = 0.55x of xz** (0.48x of zstd-19). Fullgame: ~6.6 MiB under the xz
+  plan, ~8.6 MiB under the shipping-zstd status quo, for the cost of
+  going lossy. The same config at q80 is 10.14 MiB = 0.69x xz.
+- **Lossless JXL still loses** (d0+mask 1.38x xz): exact dither
+  reproduction is the same bad deal it was for characters. The win is
+  ONLY available by accepting lossy opaque RGB.
+- **Quality**: opaque-px PSNR q90 33.3 / q80 30.7 / q70 29.2 dB.
+  On the >= 200x200 subset (186 big map patches, 22.5% of bucket
+  bytes — where JXL is at its best, q70+mask 0.31x xz) the WORST
+  patch at q70 is 24.6 dB and visually near-clean (building roof
+  texture slightly softened; invisible composited on a q80 map).
+  The global worst cases are small dithered effect/pickup sprites
+  (ids ~121xx, 18.4-19.8 dB at q70/q80) — visible softening, but
+  these contribute almost no bytes. 565-exact opaque pixels: 17-26%,
+  so this is NOT framebuffer-parity-safe (see below). Key collisions:
+  0 across 25.5M opaque px at all three qualities.
+- **Decode cost is the real price**: jxl-rs 8.6-9.4 s single-thread
+  for all 8,277 images (1.0-1.1 ms/img, ~6.7 Mpx/s) vs 0.10 s zstd /
+  0.55 s xz inflate for the same content — 15-90x slower. The bucket
+  is spread across 116 mission-scoped files, so the per-mission
+  increment is a fraction of that, but a wasm boot that materializes
+  many missions' patches would feel it. Encode is cheap (81 s
+  per-sprite + 75 s atlases on 12 threads).
+
+Actionable: for WEB delivery, a jxl-q70/q80 atlas path for animation/
+patch chunks supersedes the earlier "xz entropy stage" recommendation
+(~4x the savings: ~8.6 MiB vs ~2.1 MB). Two caveats before wiring it:
+(1) parity — replay/screenshot traces compare composited RGB565
+framebuffers, and ambient patches appear in them; lossy patches must
+be web-only or parity re-baselined; native/parity datadirs keep the
+lossless path. (2) decode-time budget on wasm (above): ship atlases
+per animation group so decode stays lazy per mission.
+
+### Follow-up: loading-art `.pak` pictures (2026-08-29)
+
+`--pak` mode. Premise correction first: with `--interface-image-format
+jxl-q80` (the v11 shipping flag) BOTH fullgame paks already take the
+converter's keyed-RGBA JXL path (`is_interface_path` matches
+`Interface/Loading.pak` and `2047/Data/Interface/Slideshow_in.pak`);
+`transcode_pak_drop_bzip` is only the raw-format fallback. So this
+measurement quantifies the shipped choice and the headroom below it
+(cjxl e9, keyed RGBA, exactly like the converter):
+
+```
+                       raw      zstd-max     d0     q90     q80*    q70    PSNR q80/q70
+Loading.pak (3x1024x768)   4608 KiB   437.0 KiB  527 KiB  267 KiB  145 KiB  102 KiB   36.0 / 35.0 dB
+Slideshow_in.pak (3x640x480) 1800 KiB  88.3 KiB   71 KiB   51 KiB   35 KiB   29 KiB   36.9 / 35.2 dB
+                                                                   *q80 = shipped setting
+```
+
+The shipped q80 is 2-3x under the best lossless alternative and
+visually transparent — this is photographic/painted art (the Robin portrait
+loading screen), exactly VarDCT's home turf; even q70's 33-35 dB reads
+clean at full size. Dropping to q70 would save another ~28% but only
+~50 KiB absolute — not worth a schema knob. A handful of key-collision
+pixels exist in the slideshow (2-4 px per quality); harmless because
+the runtime keys off the shipped alpha channel, not RGB. Verdict: keep
+q80; nothing to wire.
+
+### Visual-tolerance map across the asset classes
+
+- **Tolerant**: loading/slideshow art (photographic; q80 transparent,
+  q70 fine) and large RLE map patches / ambient animation frames
+  (organic textures composited onto maps that are already jxl-q80;
+  worst q70 case visually near-clean). These two classes are exactly
+  "map-like" — the same content family where JXL took terrain 60%.
+- **Marginal**: small dithered RLE effect/pickup sprites (worst cases
+  18-20 dB, visible softening at 1x) — they ride along with the patch
+  bucket but cost almost nothing; if one ever looks bad in-game, a
+  per-sprite lossless escape (d0 or raw RLE) is cheap.
+- **Risky / closed**: VQ character sprites (the head-to-head above —
+  lossy breaks 565-exactness AND loses 4-5x on size), and anything a
+  parity trace screenshots. Palette-keyed transparency itself is a
+  solved non-issue in every mode via the 2-bit class maps (masks) or
+  the shipped alpha channel (paks); the risk was never the keys, it
+  is the dither.
+
+RLE/pak repro:
+
+```
+cargo run --release --example jxl_sprite_probe -- \
+    --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe --rle
+cargo run --release --example jxl_sprite_probe -- \
+    --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe --pak
+# reports: tmp/jxl_sprite_probe/report_{rle,pak}.txt; dumps under
+# tmp/jxl_sprite_probe/rle/worst_q{70,80}/ and .../pak_*/worst/
+# big-patch subset: add --min-dim 200 (use a separate --out)
+```
