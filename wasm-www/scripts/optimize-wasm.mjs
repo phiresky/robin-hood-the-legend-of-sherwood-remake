@@ -33,7 +33,8 @@ for (const inputPath of paths) {
         const tmpPath = `${wasmPath}.opt`;
         execFileSync(
             'wasm-opt',
-            ['-Oz', '--strip-debug', '--strip-dwarf', '-o', tmpPath, wasmPath],
+            // --enable-simd: modules are built with +simd128 (.cargo/config.toml).
+            ['-Oz', '--enable-simd', '--strip-debug', '--strip-dwarf', '-o', tmpPath, wasmPath],
             { stdio: 'inherit' },
         );
         renameSync(tmpPath, wasmPath);

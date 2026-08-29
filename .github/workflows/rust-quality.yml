@@ -16,10 +16,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # The checked-in wrapper and linker are local development tools that are not
-  # available on GitHub-hosted runners.
+  # available on GitHub-hosted runners; the linker override replaces the Wild
+  # driver script. The cfg-based `target-cpu=x86-64-v3` baseline from
+  # .cargo/config.toml still applies — do NOT set RUSTFLAGS here, it would
+  # replace (not merge with) that baseline.
   RUSTC_WRAPPER: ""
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
-  RUSTFLAGS: -C target-cpu=x86-64-v2
 
 jobs:
   format:

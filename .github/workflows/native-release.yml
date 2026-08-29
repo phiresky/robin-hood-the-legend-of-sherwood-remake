@@ -26,14 +26,15 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
-  # The checked-in native Linux linker settings are optimized for local
-  # development and reference Wild. Use the runner's portable defaults in CI.
+  # The checked-in native Linux linker is the Wild driver script, a local
+  # development tool; use the runner's default toolchain in CI.
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
-  # NOTE: no workflow-level RUSTFLAGS. The RUSTFLAGS env var outranks every
-  # target.<triple>.rustflags source (Cargo picks the first matching source,
-  # no merging), so a global value would silently discard the Windows
-  # cross-link flags written by the MinGW step below. Each job instead sets
-  # its flags in its toolchain step via GITHUB_ENV.
+  # NOTE: no RUSTFLAGS anywhere in this workflow. The RUSTFLAGS env var
+  # replaces every target.* rustflags source (no merging), so it would
+  # silently discard both the shared cfg-based `target-cpu=x86-64-v3`
+  # baseline from .cargo/config.toml and the Windows cross-link flags
+  # written by the MinGW step below. CARGO_TARGET_*_RUSTFLAGS, by contrast,
+  # merges with the config entries, so the baseline reaches both jobs.
   VPK_VERSION: 1.2.0
 
 jobs:
@@ -103,12 +104,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libasound2-dev libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
-          # A real RUSTFLAGS (higher precedence than target config, full
-          # replacement) is what drops the checked-in `--ld-path=wild` /
-          # `target-cpu=x86-64-v3` development flags on this runner. Scoped
-          # to the Linux job only — a global RUSTFLAGS would also erase the
-          # Windows job's per-target cross-link flags.
-          echo 'RUSTFLAGS=-C target-cpu=x86-64-v2' >> "${GITHUB_ENV}"
 
       - name: Install MinGW cross toolchain
         if: matrix.runtime == 'win-x64'
@@ -119,9 +114,10 @@ jobs:
           # The posix-threads MinGW variant provides the C++ std threading
           # primitives the vendored C++ deps (Luau) may use.
           #
-          # These flags only take effect because no RUSTFLAGS env var is set
-          # in this job — RUSTFLAGS would outrank (and fully replace, no
-          # merging) this target-specific source. Ubuntu keeps
+          # These flags merge with the cfg-based `target-cpu=x86-64-v3`
+          # baseline from .cargo/config.toml (CARGO_TARGET_*_RUSTFLAGS joins
+          # the target.* config sources rather than replacing them, unlike a
+          # real RUSTFLAGS env var, which must stay unset). Ubuntu keeps
           # mingw's libstdc++.a in a gcc-versioned dir that rustc does not
           # search by default, so `-L native=` points at it (mlua-sys links
           # `static=stdc++` for Luau); winpthread (pulled in by the posix
@@ -141,7 +137,7 @@ jobs:
             echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix"
             echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix"
             echo "CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix"
-            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-C target-cpu=x86-64-v2 -C link-arg=-static-libstdc++ -C link-arg=-static-libgcc -L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-C link-arg=-static-libstdc++ -C link-arg=-static-libgcc -L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
           } >> "${GITHUB_ENV}"
 
       - name: Cache cargo registry and build artifacts

@@ -14,6 +14,10 @@ env:
   BINARIES_REPO: phiresky/robin-hood-the-legend-of-sherwood-remake-binaries
   BINARIES_BRANCH: gh-pages
   RUSTC_WRAPPER: ""
+  # Host-native builds in this job (`cargo install wasm-bindgen-cli` runs from
+  # the checkout and reads .cargo/config.toml) must not use the local Wild
+  # linker driver script.
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
 jobs:
   publish:
@@ -29,7 +33,7 @@ jobs:
       - name: Install wasm tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y binaryen clang mold wabt
+          sudo apt-get install -y binaryen clang wabt
           WASM_BINDGEN_VERSION="$(
             awk '
               $0 == "name = \"wasm-bindgen\"" { found = 1; next }
@@ -67,8 +71,12 @@ jobs:
             target/wasm32-unknown-unknown/wasm-release/robin.wasm
 
           optimized_wasm="${RUNNER_TEMP}/robin_bg.opt.wasm"
+          # --enable-simd: the module contains simd128 instructions (see
+          # [target.wasm32-unknown-unknown] rustflags in .cargo/config.toml);
+          # explicit rather than relying on target_features section detection.
           wasm-opt \
             -Oz \
+            --enable-simd \
             --strip-debug \
             --strip-dwarf \
             -o "${optimized_wasm}" \

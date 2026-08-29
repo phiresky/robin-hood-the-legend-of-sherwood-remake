@@ -170,13 +170,31 @@ codegen-backend = "llvm"
 inherits = "release"
 codegen-backend = "llvm"
 opt-level = "z"
-lto = true
+# No LTO, deliberately: rustc runs the LTO-stage LLVM pipeline at the *root
+# crate's* opt-level, and at "z"/"s" LLVM never runs the loop vectorizer, so
+# both fat and thin LTO silently discard the O3+simd128 codegen of the
+# robin_assets override below (verified empirically on nightly-2026-08-25).
+# There is no cargo knob that gives z-sized code plus an LTO-stage
+# vectorizer: raising the profile to 3 with per-package "z" overrides keeps
+# the vectorizer but the O3 LTO inliner balloons the module instead
+# (measured post-wasm-opt gzipped: 4.92 MB fat-LTO/all-z with zero SIMD,
+# 5.73 MB with this config and the codec vectorized, 7.10 MB for the
+# LTO-at-O3 variant — and no-LTO also halves the build time).  Cross-crate
+# inlining/DCE for size is partly recovered by the `wasm-opt -Oz` post-build
+# step.
+lto = false
 codegen-units = 1
 debug = 0
 strip = "debuginfo"
 panic = "abort"
 # The deployed module is further shrunk with `wasm-opt -Oz` and
 # `wasm-strip` (wabt) — both as explicit post-build steps.
+
+# The sprite/asset codec is the wasm hot path (decode runs on every load) and
+# the size levels never auto-vectorize; build just this crate for speed while
+# the rest of the module stays size-optimized.
+[profile.wasm-release.package.robin_assets]
+opt-level = 3
 
 # Android cross builds need LLVM.  The workspace dev profile uses
 # cranelift for native Linux iteration, but cranelift does not target

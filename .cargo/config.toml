@@ -6,14 +6,21 @@
 # Machine-local settings like `rustc-wrapper = sccache` or `jobs = N` belong in
 # your user-level ~/.cargo/config.toml, not here.
 
+# Shared CPU baseline for every x86-64 target (native Linux, the MinGW Windows
+# cross build, CI): modern portable x86_64 (AVX2/FMA/BMI), without tying
+# builds to the exact local CPU the way `target-cpu=native` would. Defined
+# once here: cargo JOINS all matching target.<cfg>/target.<triple> rustflags
+# sources, including the CARGO_TARGET_<triple>_RUSTFLAGS env vars CI sets, so
+# this reaches every x86-64 build. Only a plain RUSTFLAGS env var replaces it
+# (full replacement, no merging) — never set one, in CI or locally.
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# The Wild reference lives in a linker-driver script rather than in rustflags
+# so that CI can drop it with the scalar CARGO_TARGET_*_LINKER=cc override
+# (rustflags env vars merge with — never replace — the entries above).
 [target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = [
-    "-C", "link-arg=--ld-path=wild",
-    # Modern portable x86_64 baseline (AVX2/FMA/BMI), without tying builds to
-    # the exact local CPU the way `target-cpu=native` would.
-    "-C", "target-cpu=x86-64-v3",
-]
+linker = "scripts/clang-wild-linker.sh"
 
 # Static MinGW runtime so C++ deps (vendored Luau via mlua; glslang/SPIRV-Cross
 # when `retroarch-shaders` is on) don't make the exe depend on libstdc++-6.dll.
@@ -55,6 +62,14 @@ codegen-backend = true
 [target.wasm32-unknown-unknown]
 rustflags = [
     "--cfg=getrandom_backend=\"wasm_js\"",
+    # Wasm SIMD, baseline in all major browsers since Safari 16.4 (2023).
+    # Lets LLVM auto-vectorize (only in crates built at opt-level 2/3 — the
+    # size levels never run the loop vectorizer, see the wasm-release profile
+    # notes in Cargo.toml). The other post-MVP features this toolchain
+    # supports (bulk-memory, nontrapping-fptoint, sign-ext, multivalue,
+    # reference-types, mutable-globals) are already default-on for this
+    # target. relaxed-simd is deliberately absent: not yet browser-baseline.
+    "-C", "target-feature=+simd128",
     # Rust async poll functions can retain large game/session values across
     # await points. Keep a practical guard margin above the 1 MiB wasm-ld
     # default even though the largest child futures are heap-boxed.
