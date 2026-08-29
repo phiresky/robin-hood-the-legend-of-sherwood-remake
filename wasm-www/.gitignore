@@ -9,8 +9,7 @@ dist-inline/
 # `wasm-bindgen --target web --out-dir wasm-www/pkg ...`.
 # pkg-bench*: wasm_decode_bench glue from scripts/build-wasm-threads.sh.
 pkg/
-pkg-bench/
-pkg-bench-serial/
+pkg-bench*/
 
 # Local dev: symlink `public/data/` at a datadir of choice
 # (e.g. `../../../../../datadirs/demo_shipping_wasm`).

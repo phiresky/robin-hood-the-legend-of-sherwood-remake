@@ -268,17 +268,45 @@ async fn wasm_init_thread_pool() {
         tracing::info!("page is not cross-origin isolated; sprite decode stays single-threaded");
         return;
     }
-    let threads = js_sys::Reflect::get(&global, &"navigator".into())
-        .and_then(|navigator| js_sys::Reflect::get(&navigator, &"hardwareConcurrency".into()))
-        .ok()
-        .and_then(|value| value.as_f64())
-        .map(|value| value as usize)
-        .filter(|&threads| threads >= 1)
-        .unwrap_or(1);
+    // Cap the pool well below hardwareConcurrency: VQ decode is allocation
+    // heavy and wasm's dlmalloc serializes every thread on one global lock,
+    // so throughput peaks around 4 workers and then INVERTS (measured on the
+    // demo corpus, 12-core Chrome: serial 11.2 s, 4 workers 6.6 s, 8 workers
+    // 11.1 s, 12 workers 12.2 s for H01). `?wasm-threads=N` overrides for
+    // experiments — e.g. after a future allocator swap.
+    const MAX_DECODE_WORKERS: usize = 4;
+    let threads = wasm_query_thread_override().unwrap_or_else(|| {
+        js_sys::Reflect::get(&global, &"navigator".into())
+            .and_then(|navigator| js_sys::Reflect::get(&navigator, &"hardwareConcurrency".into()))
+            .ok()
+            .and_then(|value| value.as_f64())
+            .map(|value| value as usize)
+            .filter(|&threads| threads >= 1)
+            .unwrap_or(1)
+            .min(MAX_DECODE_WORKERS)
+    });
     match robin_assets::wasm_threads::init_pool(threads).await {
         Ok(()) => tracing::info!(threads, "wasm rayon worker pool ready"),
         // A failed pool spawn leaves the serial decode path fully functional.
         Err(error) => tracing::warn!("wasm worker pool init failed, staying serial: {error:#}"),
+    }
+}
+
+/// `?wasm-threads=N` / `?wasm_threads=N`: explicit worker-pool size.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+fn wasm_query_thread_override() -> Option<usize> {
+    let params = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok())?;
+    let value = params
+        .get("wasm-threads")
+        .or_else(|| params.get("wasm_threads"))?;
+    match value.parse::<usize>() {
+        Ok(threads) if threads >= 1 => Some(threads),
+        _ => {
+            tracing::warn!("ignoring invalid wasm-threads query value {value:?}");
+            None
+        }
     }
 }
 

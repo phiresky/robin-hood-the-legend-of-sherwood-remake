@@ -388,6 +388,11 @@ impl VqDecodeScheduler {
         rhs_files: &BTreeMap<String, RhsData>,
         strict: bool,
     ) -> Result<()> {
+        // Longest-first dispatch: rayon's injected queue is FIFO, so this
+        // starts the biggest blobs (family hubs — the heads of the longest
+        // dependency chains) before the small variants pile onto the
+        // workers. Chunk decode time tracks blob size closely.
+        pending.sort_by_key(|chunk| std::cmp::Reverse(chunk.blob.len()));
         let mut index = 0;
         while index < pending.len() {
             let ready = if strict {
@@ -399,7 +404,10 @@ impl VqDecodeScheduler {
                 index += 1;
                 continue;
             }
-            let chunk = pending.swap_remove(index);
+            // Order-preserving removal (`swap_remove` would drag the
+            // smallest chunk into the just-vacated slot and dispatch it
+            // second). The list is tens of entries; O(n) shifting is noise.
+            let chunk = pending.remove(index);
             let inputs = bank
                 .prepare_vq_chunk_inputs(&chunk, rhs_files)
                 .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;

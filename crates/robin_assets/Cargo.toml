@@ -78,6 +78,13 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3", optional = true }
+# Global allocator for every wasm build (src/wasm_alloc.rs): std's dlmalloc
+# funnels every thread through one futex lock, which measurably INVERTS
+# worker-pool decode scaling past ~4 threads, and talc is ~9% faster even
+# single-threaded on the sprite-decode corpus. Pinned exactly: a global
+# allocator swap should never ride in on an unrelated `cargo update`.
+talc = "=5.1.0"
+spinning_top = "0.3"
 
 [features]
 # Threaded sprite decode on wasm32 (rayon worker pool via wasm-bindgen-rayon).
