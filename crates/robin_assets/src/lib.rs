@@ -10,6 +10,7 @@ pub mod late_sprites;
 pub mod picture;
 pub mod res_descr;
 pub mod resource_manager;
+pub mod rle_jxl;
 pub mod sb3d;
 pub mod scb;
 pub mod serialize;

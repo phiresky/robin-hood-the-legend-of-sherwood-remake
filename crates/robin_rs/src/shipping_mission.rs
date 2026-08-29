@@ -544,7 +544,10 @@ where
     F: FnMut(MissionLoadProgress<'_>),
 {
     use futures::FutureExt as _;
-    use robin_assets::shipping_datadir::{ShippingSpriteBank, SpriteVqChunk, VqDecodeScheduler};
+    use robin_assets::shipping_datadir::{
+        RleJxlDecodeScheduler, ShippingSpriteBank, SpriteRleJxlChunk, SpriteVqChunk,
+        VqDecodeScheduler,
+    };
     use robin_assets::wasm_threads;
 
     let total = files.len();
@@ -598,6 +601,12 @@ where
     let mut pending_chunks: Vec<SpriteVqChunk> = Vec::new();
     let mut scheduler = VqDecodeScheduler::default();
     let mut label = String::from("downloading mission parts");
+    // RLE-JXL chunks (web recipe) have no cross-chunk dependencies, so each
+    // is dispatched to the pool the moment its part merges; results are
+    // applied in the drain phase below. On the serial fallback they stay in
+    // the bank and `install_mission` decodes them.
+    let mut pending_rle: Vec<SpriteRleJxlChunk> = Vec::new();
+    let mut rle_scheduler = RleJxlDecodeScheduler::default();
     loop {
         // Boxed: `select!` polls through `&mut`, which needs `Unpin`, and an
         // `async fn` future is not. One small allocation per event is noise
@@ -648,6 +657,8 @@ where
                     }
                     let rhs_files = &merged.rhs_files;
                     if pooled {
+                        pending_rle.append(&mut bank.rle_jxl_chunks);
+                        rle_scheduler.dispatch_ready(bank, &mut pending_rle)?;
                         // Lenient readiness: a missing row/base only means
                         // its part has not arrived yet.
                         scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
@@ -746,6 +757,15 @@ where
                 .await
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
         }
+        // Apply the worker-pool RLE-JXL decodes that ran alongside the
+        // fetches; anything still pending falls to the strict serial pass.
+        while let Some((chunk, packed)) = rle_scheduler.next_decoded().await? {
+            bank.apply_decoded_rle_jxl_chunk(&chunk, packed)?;
+            rle_scheduler.dispatch_ready(bank, &mut pending_rle)?;
+        }
+        bank.rle_jxl_chunks.append(&mut pending_rle);
+        bank.materialize_rle_jxl_chunks()
+            .with_context(|| format!("materialize RLE-JXL sprite chunks for mission {mission}"))?;
     }
     progress(MissionLoadProgress {
         completed: InstallWorkModel::UNITS,
@@ -769,6 +789,9 @@ where
                     sprite_count: bank.sprite_count,
                     sprites: bank.sprites.clone(),
                     vq_chunks: Vec::new(),
+                    // The tail only carries deferred VQ work; RLE-JXL
+                    // chunks are always materialized before activation.
+                    rle_jxl_chunks: Vec::new(),
                 },
                 rhs_files,
                 chunks,
