@@ -593,7 +593,7 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
     m.insert(
         MT_STR_TRADING_HINT,
-        "Trading available: press T to sell stored production items.",
+        "Trading available: press T or use Sherwood trading in the pause menu.",
     );
     m.insert(MT_TTL_SHERWOOD_TRADING, "Sherwood trading");
     m.insert(MT_BTN_SELL_ONE, "Sell 1");

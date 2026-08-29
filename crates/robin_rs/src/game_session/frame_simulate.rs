@@ -162,21 +162,18 @@ async fn drive_scripted_modal_lanes(
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
     if !rendered
         && ui.active_modal.is_none()
-        && host.effects.take_signal(HostSignal::SherwoodTrading)
+        && host.effects.has_signal(HostSignal::SherwoodTrading)
     {
-        if auto_dismiss {
-            tracing::debug!("headless mode ignored a local Sherwood trading-panel request");
-        } else {
-            let profile = host
-                .application_context
-                .active_profile_snapshot()
-                .unwrap_or_else(|error| {
-                    panic!("Sherwood trading requires an active profile: {error}")
-                });
-            if profile.gameplay_config.sherwood_trading
-                && host.transport.local_seat == engine_player_command::PlayerId::HOST
-                && manager.engine.is_sherwood(&assets.profile_manager)
-            {
+        let access = sherwood_trading_access(host, &manager.engine, profiles);
+        match host.effects.take_sherwood_trading(access) {
+            Ok(false) => {}
+            Err(reason) => {
+                tracing::warn!(?reason, "queued Sherwood trading-panel request rejected");
+            }
+            Ok(true) if auto_dismiss => {
+                tracing::debug!("headless mode ignored a local Sherwood trading-panel request");
+            }
+            Ok(true) => {
                 let Some(menu_resources) = resources.menu.as_ref() else {
                     tracing::warn!("Sherwood trading: menu resources unavailable — skipped");
                     return rendered;
@@ -237,7 +234,13 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
@@ -293,7 +296,13 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
@@ -328,7 +337,13 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_trading_modal_outcome(outcome, host, manager, assets, frame);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
@@ -340,7 +355,7 @@ fn dispatch_trading_modal_outcome(
     host: &mut Host,
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
-    frame: &mut MissionFrame,
+    post_commands: &mut engine_player_command::FrameCommands,
 ) {
     match outcome {
         ActiveModalOutcome::None => {}
@@ -350,7 +365,7 @@ fn dispatch_trading_modal_outcome(
         } => dispatch_local_command(
             host,
             &mut manager.engine,
-            &mut frame.post_commands,
+            post_commands,
             assets,
             &PlayerCommand::CampaignSellProductionItem {
                 prod_type,

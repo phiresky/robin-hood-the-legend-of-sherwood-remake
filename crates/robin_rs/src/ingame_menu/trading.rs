@@ -1,7 +1,6 @@
 //! Live Sherwood inventory-trading panel.
 
 use crate::gfx_types::{GameEvent, Keycode};
-use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::campaign::CampaignValue;
@@ -70,6 +69,21 @@ impl TradingModalState {
         sectors: &[SectorProduction],
         ransom: i32,
     ) -> Self {
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let mut input = ModalInputState::new();
+        input.seed_mouse_from_window(window, transform);
+        Self::build(resources, sectors, ransom, input)
+    }
+
+    fn build(
+        resources: &IngameMenuResources,
+        sectors: &[SectorProduction],
+        ransom: i32,
+        input: ModalInputState,
+    ) -> Self {
         let rows = TRADE_ITEMS
             .iter()
             .map(|definition| {
@@ -127,12 +141,6 @@ impl TradingModalState {
             button_w,
             button_h,
         ));
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let mut input = ModalInputState::new();
-        input.seed_mouse_from_window(window, transform);
         let mut state = Self {
             rows,
             selected: 0,
@@ -466,8 +474,11 @@ pub fn ransom_from_engine(engine: &robin_engine::engine::Engine) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROW_H, ROW_Y, substitute};
-    use robin_engine::trading::TRADE_ITEMS;
+    use super::{ROW_H, ROW_Y, TradingModalState, TradingOutcome, substitute};
+    use crate::ingame_menu::IngameMenuResources;
+    use crate::ingame_menu::widget_bridge::ModalInputState;
+    use robin_engine::sector_production::{SectorProduction, Type};
+    use robin_engine::trading::{TRADE_ITEMS, TradeQuantity};
 
     #[test]
     fn localized_trade_templates_replace_placeholders_in_order() {
@@ -481,5 +492,42 @@ mod tests {
     fn every_inventory_row_fits_above_the_status_area() {
         const STATUS_Y: i32 = 342;
         assert!(ROW_Y + ROW_H * TRADE_ITEMS.len() as i32 <= STATUS_Y);
+    }
+
+    fn trading_state(stock: u16) -> (IngameMenuResources, TradingModalState) {
+        let resources = IngameMenuResources::stub();
+        let sectors: Vec<_> = TRADE_ITEMS
+            .iter()
+            .map(|item| {
+                let mut sector = SectorProduction::new(item.prod_type);
+                sector.amount = stock;
+                sector
+            })
+            .collect();
+        let state = TradingModalState::build(&resources, &sectors, 100, ModalInputState::new());
+        (resources, state)
+    }
+
+    #[test]
+    fn sell_one_and_sell_five_each_require_exact_second_activation() {
+        for quantity in [TradeQuantity::One, TradeQuantity::Five] {
+            let (resources, mut state) = trading_state(10);
+            assert_eq!(state.request_sale(&resources, quantity), None);
+            assert_eq!(
+                state.request_sale(&resources, quantity),
+                Some(TradingOutcome::Sell {
+                    prod_type: Type::MakeArrow,
+                    quantity,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn sell_five_never_arms_when_only_one_item_is_available() {
+        let (resources, mut state) = trading_state(1);
+        assert_eq!(state.request_sale(&resources, TradeQuantity::Five), None);
+        assert_eq!(state.pending_confirmation, None);
+        assert!(!state.awaiting_receipt);
     }
 }

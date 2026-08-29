@@ -5,11 +5,17 @@ an optional gameplay rule (`Sherwood Item Trading` in Gameplay settings), is
 enabled for newly created profiles, and remains disabled when an older profile
 has no saved value for the setting.
 
-The panel is opened with **T** while in Sherwood. Select an inventory row and
-use the explicit **Sell 1** or **Sell 5** action. `Sell 5` is disabled below
-five units. A second activation confirms the exact item, quantity, and proceeds;
-the UI does not change stock or currency until the authoritative simulation
-returns a receipt.
+The panel is opened with **T** while in Sherwood. It is also available as a
+**Sherwood trading** row in the pause menu for mouse and touch users whenever
+the local player is the host and the rule is enabled. Both routes pass through
+the same typed input request and revalidate host ownership, setting, and
+location immediately before the modal opens. If the player assigns **T** to a
+custom shortcut, that binding takes precedence and the pause-menu row remains
+available. Select an inventory row and use
+the explicit **Sell 1** or **Sell 5** action. `Sell 5` is disabled below five
+units. A second activation confirms the exact item, quantity, and proceeds; the
+UI does not change stock or currency until the authoritative simulation returns
+a receipt.
 
 ## Price table
 

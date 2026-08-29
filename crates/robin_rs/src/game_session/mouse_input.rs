@@ -8,7 +8,7 @@
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
-    required_menu_resources,
+    request_sherwood_trading_panel, required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -105,28 +105,6 @@ pub(super) fn handle_mouse_input(
 
     if pause_menu.is_none() && !pause_closed_this_frame {
         for event in events {
-            if matches!(
-                event,
-                GameEvent::KeyDown {
-                    keycode: crate::gfx_types::Keycode::Char(b't'),
-                    ..
-                }
-            ) && engine.is_sherwood(&assets.profile_manager)
-                && host.transport.local_seat == engine_player_command::PlayerId::HOST
-            {
-                let enabled = host
-                    .application_context
-                    .active_profile_snapshot()
-                    .unwrap_or_else(|error| {
-                        panic!("Sherwood trading shortcut requires an active profile: {error}")
-                    })
-                    .gameplay_config
-                    .sherwood_trading;
-                if enabled {
-                    host.effects.request_signal(HostSignal::SherwoodTrading);
-                }
-                continue;
-            }
             // When `user_locked` is set (by Command::LockUser, which
             // cutscenes and forced dialogues dispatch), MOUSE_MOVED
             // and MOUSE_BUTTON are dropped.  Filter all mouse events
@@ -1469,6 +1447,27 @@ pub(super) async fn handle_pause_menu_events(
                 // position so HUD hover state is re-evaluated on the
                 // first frame after the menu closes.
                 threaded_input.queue_mouse_motion_resync();
+            }
+            PauseMenuOutcome::OpenSherwoodTrading => {
+                match request_sherwood_trading_panel(host, engine, &assets.profile_manager) {
+                    Ok(()) => {
+                        *pause_menu = None;
+                        *pause_closed_this_frame = true;
+                        renderer.clear_frozen_scene();
+                        threaded_input.reset_input_state();
+                        input_translator.reset_state();
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                    }
+                    Err(reason) => {
+                        // The row was admitted when the menu opened, but the
+                        // host/rule/location can change before activation.
+                        // Revalidation keeps the stale button fail-closed.
+                        tracing::warn!(?reason, "pause-menu Sherwood trading request rejected");
+                        if let Some(menu) = pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                        }
+                    }
+                }
             }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
