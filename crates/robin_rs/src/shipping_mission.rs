@@ -227,6 +227,9 @@ struct InstallWorkModel {
     /// Monotonic guard: totals grow while parts stream in, so the raw
     /// fraction can dip; never report backwards motion.
     emitted: f32,
+    /// Last reported unit count — repeat emits (progress ticks) are
+    /// suppressed so the loading log is not flooded with identical lines.
+    last_units: usize,
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
@@ -251,8 +254,13 @@ impl InstallWorkModel {
         F: FnMut(MissionLoadProgress<'_>),
     {
         self.emitted = self.emitted.max(self.fraction());
+        let completed = (self.emitted * Self::UNITS as f32).round() as usize;
+        if completed == self.last_units {
+            return;
+        }
+        self.last_units = completed;
         progress(MissionLoadProgress {
-            completed: (self.emitted * Self::UNITS as f32).round() as usize,
+            completed,
             total: Self::UNITS,
             file: Some(label),
         });
@@ -291,6 +299,24 @@ impl SpriteDeferral {
             .mission_ref(mission)
             .ok_or_else(|| anyhow!("shipping datadir does not contain mission {mission}"))?;
         let forest_level = reference.forest_level;
+        // The Sherwood camp (always campaign mission 0) and its outro are
+        // populated from the uninstanced gang itself — exactly the set that
+        // is deferrable everywhere else — so nothing may be deferred there.
+        let sherwood = campaign
+            .missions
+            .get(campaign.get_sherwood_mission_idx())
+            .and_then(|m| m.profile_idx)
+            .and_then(|idx| profiles.missions.get(idx as usize))
+            .is_some_and(|profile| profile.mission_filename == mission)
+            || mission == "SherwoodOutro";
+        if sherwood {
+            return Ok(Self {
+                candidates: BTreeSet::new(),
+                parked: Vec::new(),
+                level_filtered: false,
+                forest_level,
+            });
+        }
         // These lookups were all validated by `required_dependencies`
         // moments earlier; failures here are genuine data errors.
         let mut team = BTreeSet::new();
@@ -497,6 +523,7 @@ where
         decode_total: 0,
         decode_done: 0,
         emitted: 0.0,
+        last_units: usize::MAX,
     };
     // A decoded saved world can contain any entity — reinforcements that
     // already spawned included — so "present at mission start" cannot be
