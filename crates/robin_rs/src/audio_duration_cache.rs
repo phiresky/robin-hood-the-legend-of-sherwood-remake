@@ -102,6 +102,81 @@ impl AudioDurationCache {
         Some(duration_ms)
     }
 
+    /// Batch variant of [`Self::duration_ms`]: derive the duration of every
+    /// distinct sample name once, fanning cache misses out across a thread
+    /// pool on native (wasm derives sequentially — no threads there).
+    ///
+    /// Returns `name → duration_ms` for every name whose sample resolved;
+    /// missing samples are simply absent, matching `duration_ms`'s `None`.
+    /// The probe must derive durations exactly like the sample loader so
+    /// cached and uncached loads stay byte-identical.
+    pub fn durations_for(
+        &mut self,
+        resolver: &SampleResolver,
+        names: impl IntoIterator<Item = String>,
+        probe: &(dyn Fn(&str) -> Option<u32> + Sync),
+    ) -> BTreeMap<String, u32> {
+        let names: std::collections::BTreeSet<String> = names.into_iter().collect();
+        let mut out = BTreeMap::new();
+        // (name, native identity if the sample resolved to a file)
+        let mut misses: Vec<(String, Option<(String, u64, u64)>)> = Vec::new();
+        for name in names {
+            match resolver.resolve(&name) {
+                Some((path, size, mtime_ms)) => {
+                    let key = path.to_string_lossy().into_owned();
+                    match self.entries.get(&key) {
+                        Some(hit) if hit.size == size && hit.mtime_ms == mtime_ms => {
+                            out.insert(name, hit.duration_ms);
+                        }
+                        _ => misses.push((name, Some((key, size, mtime_ms)))),
+                    }
+                }
+                // No native file (e.g. bundle-backed datadirs) — derive
+                // through the probe; those reads are already in-memory.
+                None => misses.push((name, None)),
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let derived: Vec<_> = {
+            use rayon::prelude::*;
+            misses
+                .into_par_iter()
+                .map(|(name, identity)| {
+                    let duration = probe(&name);
+                    (name, identity, duration)
+                })
+                .collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let derived: Vec<_> = misses
+            .into_iter()
+            .map(|(name, identity)| {
+                let duration = probe(&name);
+                (name, identity, duration)
+            })
+            .collect();
+
+        for (name, identity, duration) in derived {
+            let Some(duration_ms) = duration else {
+                continue;
+            };
+            if let Some((key, size, mtime_ms)) = identity {
+                self.entries.insert(
+                    key,
+                    CachedDuration {
+                        size,
+                        mtime_ms,
+                        duration_ms,
+                    },
+                );
+                self.dirty = true;
+            }
+            out.insert(name, duration_ms);
+        }
+        out
+    }
+
     /// Write the cache back if any entry was added or refreshed.
     pub fn save_if_dirty(&self) {
         if !self.dirty {
