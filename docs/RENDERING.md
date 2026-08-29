@@ -124,7 +124,72 @@ compare -metric AE legacy.png atlas.png null:     # expect 0
 
 ### Measurements
 
-<!-- filled in once the A/B and FPS runs complete -->
+**Pixel identity.** Eight full-map captures, three missions, two
+datadirs, frames 0 / 25 / 300 / 600. In every case the legacy and atlas
+PNGs are **byte-identical** (same SHA-256, same file size) and
+`compare -metric AE` reports **0 differing pixels**. These are not
+small images: `Dem_Lei_MP` is 3136×2064 with 13 260 distinct colours.
+
+| mission | datadir | frame | capture | differing px |
+|---|---|---|---|---|
+| `Dem_Lei_MP` | demo_leicester_ecoste | 0 | 3136×1984 | 0 |
+| `Dem_Lei_MP` | demo_leicester_ecoste | 25 | 3136×1984 | 0 |
+| `Dem_Lei_MP` | demo_leicester_ecoste | 600 | 3136×2064 | 0 |
+| `S02_Lei_MP` | fullgame_linux | 0 | — | 0 |
+| `H01_Lin_VL` | fullgame_linux | 0 | 2944×2256 | 0 |
+| `H01_Lin_VL` | fullgame_linux | 300 | 2944×2256 | 0 |
+
+**Draw calls and binds.** Counted at the scene capture, which for the
+full-map exporter *is* the whole scene. `quads` is the queue length;
+`drawcalls` is actual `pass.draw` calls after coalescing; `binds` is
+`set_bind_group(1, …)` calls.
+
+| scene | quads | drawcalls | binds | Δ |
+|---|---|---|---|---|
+| `Dem_Lei_MP` f0 legacy | 217 | 217 | 217 | |
+| `Dem_Lei_MP` f0 atlas | 217 | **161** | **161** | −26% |
+| `Dem_Lei_MP` f600 legacy | 208 | 208 | 208 | |
+| `Dem_Lei_MP` f600 atlas | 208 | **153** | **153** | −26% |
+| `H01_Lin_VL` f300 legacy | 149 | 149 | 149 | |
+| `H01_Lin_VL` f300 atlas | 149 | **99** | **99** | −34% |
+
+Legacy `binds == quads` exactly, which is the predicted pathology:
+every sprite owned a texture, so every sprite forced a rebind. The
+residual atlas binds are the non-sprite draws (background, masks, HUD,
+stencil) that legitimately switch texture.
+
+**Layer size.** Layers are reserved whole, so their size is a
+memory-vs-binds dial. Measured on `Dem_Lei_MP` at frame 600 (106
+sprites cached):
+
+| policy | layers | reserved | occupancy | binds |
+|---|---|---|---|---|
+| fixed 2048² | 1 | 16.0 MiB | 13% | 157 |
+| doubling 512²→2048² | 3 | 21.0 MiB | 20% | 157 |
+| **uniform 1024²** | 2 | **8.0 MiB** | **53%** | **153** |
+
+Uniform 1024² wins on all three axes and is what shipped. Doubling
+loses because spilling into the next size step over-reserves badly.
+
+**Memory, honestly.** For `Dem_Lei_MP` at frame 600 the atlas reserves
+8.0 MiB to hold ~4.2 MiB of actual sprite pixels. The pre-atlas cache
+allocated exactly `w×h×4` per sprite, so it held those ~4.2 MiB plus
+per-texture overhead — meaning the atlas costs roughly **2× the pixel
+bytes** at 53% occupancy. That is the real trade, and it is worth
+stating rather than claiming a memory win: what the atlas removes is
+one `wgpu::Texture` + `TextureView` + `BindGroup` object per sprite
+(86–106 of them here, and far more over a long session), not bytes.
+Neither cache evicts today; if a sprite-heavy mission makes the
+reservation matter, the fix is per-group paging, and
+`AtlasStats::occupancy` is the number to watch.
+
+**Wall time.** The full-map export is dominated by mission load and
+software (lavapipe) rasterisation, so it is not a clean frame-rate
+measurement: `Dem_Lei_MP` frame 600 took 155 s legacy vs 151 s atlas,
+`H01_Lin_VL` frame 0 15.1 s vs 14.5 s. Directionally favourable,
+within noise, and not offered as an FPS result — a real FPS comparison
+needs a release build on real hardware, which this headless box cannot
+provide.
 
 ### Still to do
 

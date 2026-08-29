@@ -39,7 +39,24 @@ pub(super) fn capture_frame_rgba(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("capture frame"),
         });
+    let queued_draws = frame.queued.len();
     frame.encode_pass1_to_rt(&mut encoder, pipelines, resources);
+    // `present` reports these per second, but a screenshot/offscreen
+    // capture never goes through `present` — and for the full-map
+    // exporter this pass *is* the whole scene, so it is the one place
+    // the real sprite draw/bind counts can be observed.
+    let atlas = resources.sprite_atlas.stats();
+    tracing::info!(
+        target: "fps",
+        "capture {w}x{h}  quads={queued_draws}  drawcalls={}  binds={}  \
+         atlas={}L/{:.1}MiB/{:.0}%occ/{}spr",
+        super::bind_counter::take_draw_calls(),
+        super::bind_counter::take_count(),
+        atlas.layers,
+        atlas.bytes() as f32 / (1024.0 * 1024.0),
+        atlas.occupancy() * 100.0,
+        atlas.sprites,
+    );
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &frame.render_target_texture,

@@ -36,11 +36,18 @@ use super::make_tex_bg;
 /// docs: correctness does not depend on it, containment does.
 const GUTTER: u32 = 1;
 
-/// Edge length of a normal atlas layer. 2048² × RGBA8 = 16 MiB, which
-/// is a reasonable granularity: big enough that a mission's sprites
-/// land in a handful of layers, small enough that a mostly-empty final
-/// layer doesn't waste much.
-const LAYER_SIZE: u32 = 2048;
+/// Edge length of an atlas layer. 1024² × RGBA8 = 4 MiB.
+///
+/// Layers are reserved whole, so this is a memory-vs-binds dial: every
+/// layer a frame touches costs one texture bind, but every layer that
+/// is only partly filled wastes its remainder. Measured on real
+/// missions, a fixed 2048 (16 MiB) sat at 17–26% occupancy, and a
+/// doubling 512→1024→2048 schedule reached 21 MiB at 20% because
+/// spilling into the next size step over-reserves so badly. A uniform
+/// 1024 grows in fine-grained 4 MiB steps that track actual sprite
+/// area, while keeping the layer count — and so the bind count — in
+/// the low single digits for a mission.
+const LAYER_SIZE: u32 = 1024;
 
 /// Where a sprite ended up inside the atlas.
 #[derive(Clone, Copy, Debug)]
@@ -278,12 +285,20 @@ impl SpriteAtlas {
             Some(found) => found,
             None => {
                 let limit = gpu.device.limits().max_texture_dimension_2d;
+                // A sprite too big for the scheduled layer size gets a
+                // layer sized to fit it instead — rare, but it must not
+                // silently fail.
                 let needed = (w.max(h) + GUTTER * 2).next_power_of_two();
                 let size = LAYER_SIZE.min(limit).max(needed);
                 assert!(
                     size <= limit,
                     "sprite {width}x{height} exceeds the device's \
                      max_texture_dimension_2d of {limit}"
+                );
+                tracing::debug!(
+                    "sprite atlas: new layer {} at {size}x{size} ({} sprites so far)",
+                    self.layers.len(),
+                    self.sprites,
                 );
                 self.layers.push(AtlasLayer::new(gpu, bgl, sampler, size));
                 let i = self.layers.len() - 1;

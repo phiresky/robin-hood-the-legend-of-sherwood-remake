@@ -2422,6 +2422,7 @@ fn log_fps(
     draws_this_frame: usize,
     uploads_this_frame: usize,
     binds_this_frame: usize,
+    draw_calls_this_frame: usize,
     atlas: atlas::AtlasStats,
 ) {
     use std::sync::OnceLock;
@@ -2431,6 +2432,7 @@ fn log_fps(
         draws_total: usize,
         uploads_total: usize,
         binds_total: usize,
+        draw_calls_total: usize,
         last: web_time::Instant,
     }
     let m = STATE.get_or_init(|| {
@@ -2439,6 +2441,7 @@ fn log_fps(
             draws_total: 0,
             uploads_total: 0,
             binds_total: 0,
+            draw_calls_total: 0,
             last: web_time::Instant::now(),
         })
     });
@@ -2447,17 +2450,19 @@ fn log_fps(
     g.draws_total += draws_this_frame;
     g.uploads_total += uploads_this_frame;
     g.binds_total += binds_this_frame;
+    g.draw_calls_total += draw_calls_this_frame;
     if g.last.elapsed().as_secs() >= 1 {
         let avg_draws = g.draws_total / g.frames as usize;
         let avg_uploads = g.uploads_total / g.frames as usize;
         let avg_binds = g.binds_total / g.frames as usize;
+        let avg_draw_calls = g.draw_calls_total / g.frames as usize;
         let (present_avg_us, _) = present_time::take_avg();
         let upload_labels = upload_counter::take_labels();
         tracing::debug!(
             target: "fps",
-            "{} fps  draws/f={}  binds/f={}  uploads/f={}  present={:.2}ms  \
-             atlas={}L/{:.0}MiB/{:.0}%occ/{}spr  upload_labels={}",
-            g.frames, avg_draws, avg_binds, avg_uploads,
+            "{} fps  quads/f={}  drawcalls/f={}  binds/f={}  uploads/f={}  \
+             present={:.2}ms  atlas={}L/{:.0}MiB/{:.0}%occ/{}spr  upload_labels={}",
+            g.frames, avg_draws, avg_draw_calls, avg_binds, avg_uploads,
             present_avg_us as f32 / 1000.0,
             atlas.layers,
             atlas.bytes() as f32 / (1024.0 * 1024.0),
@@ -2469,6 +2474,7 @@ fn log_fps(
         g.draws_total = 0;
         g.uploads_total = 0;
         g.binds_total = 0;
+        g.draw_calls_total = 0;
         g.last = web_time::Instant::now();
     }
 }
@@ -2544,17 +2550,29 @@ mod upload_counter {
 /// every sprite owned a texture and so forced its own texture bind, and
 /// `binds/f` tracked `draws/f` almost exactly. Packed into shared
 /// layers, a run of sprites from one layer costs a single bind.
+/// …and the `draw` calls actually recorded, which is not the same as
+/// the number of queued quads once consecutive same-state draws are
+/// coalesced into one contiguous vertex range.
 mod bind_counter {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static N: AtomicUsize = AtomicUsize::new(0);
+    static BINDS: AtomicUsize = AtomicUsize::new(0);
+    static DRAW_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     pub fn inc() {
-        N.fetch_add(1, Ordering::Relaxed);
+        BINDS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_draw_call() {
+        DRAW_CALLS.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn take_count() -> usize {
-        N.swap(0, Ordering::Relaxed)
+        BINDS.swap(0, Ordering::Relaxed)
+    }
+
+    pub fn take_draw_calls() -> usize {
+        DRAW_CALLS.swap(0, Ordering::Relaxed)
     }
 }
 

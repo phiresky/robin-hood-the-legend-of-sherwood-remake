@@ -293,6 +293,7 @@ impl FrameState {
             draws_this_frame,
             uploads_this_frame,
             bind_counter::take_count(),
+            bind_counter::take_draw_calls(),
             resources.sprite_atlas.stats(),
         );
     }
@@ -804,6 +805,7 @@ impl FrameState {
         macro_rules! flush_run {
             () => {
                 if let Some((first, count)) = pending.take() {
+                    bind_counter::inc_draw_call();
                     pass.draw(first..first + count, 0..1);
                 }
             };
