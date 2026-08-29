@@ -1,9 +1,11 @@
 name: Native release
 
+# Releases only — tags, the nightly schedule, and manual dispatch. PRs are
+# deliberately NOT built here: rust-quality covers them, and packaging both
+# platforms with Velopack on every PR push is expensive.
 on:
   push:
     tags: ["v[0-9]*"]
-  pull_request:
   schedule:
     # GitHub schedules are UTC. The change-detection job prevents unchanged
     # commits from rebuilding or replacing the rolling nightly release.
