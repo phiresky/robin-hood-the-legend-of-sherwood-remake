@@ -157,6 +157,7 @@ same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
     /datadirs/demo-leicester/audio/assets/*.opus
+    /datadirs/demo-leicester/audio/bundles/*.bin
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 prefers the deterministic `.gz` JS/wasm siblings and expands them with the
@@ -177,9 +178,15 @@ Publish the generated `Data/datadir.bin` as
 `Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
 browser initially fetches only the manifest, then fetches the selected
 mission's bounded core, terrain, and exact RHS dependency closure concurrently.
-Web audio is deterministic, content-addressed Opus under `audio/assets/`; each
-file is fetched and decoded by Web Audio only when it is first played, so its
-encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
+Web audio is a deterministic, content-addressed Opus catalog under `audio/`.
+Menu audio warms alongside engine startup; mission loading fetches the active
+logical bundles and decodes only its dialogue, voices, music, and long
+ambience. Other effects remain lazy, with cold playback requests held on real
+mixer channels until their shared decode completes. A cold transient
+non-looping effect reservation expires if playback has not started within 10
+seconds; voice, loop, jingle, and music requests wait until explicit halt,
+load failure, backend drop, or mission transition.
+Encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
 and the required Rust UI PNG overlay assets remain beside the wasm artifact and
 are listed in
 `/wasm/<short-hash>/preload-assets.json`; the shell preloads those files before

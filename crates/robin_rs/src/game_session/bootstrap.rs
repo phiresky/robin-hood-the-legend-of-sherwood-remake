@@ -442,14 +442,25 @@ impl MissionLoadingScreen {
         } else {
             progress.completed as f32 / progress.total as f32
         };
-        let target = 0.02 + 0.08 * fraction;
+        let (start, span, label) = match progress.phase {
+            crate::shipping_mission::MissionLoadPhase::Data => {
+                let span = if cfg!(all(target_arch = "wasm32", feature = "audio")) {
+                    0.06
+                } else {
+                    0.08
+                };
+                (0.02, span, "mission data")
+            }
+            crate::shipping_mission::MissionLoadPhase::Audio => (0.08, 0.02, "mission audio"),
+        };
+        let target = start + span * fraction;
         let text = match progress.file {
             Some(file) => format!(
-                "Loading mission data ({}/{}): {file}",
+                "Loading {label} ({}/{}): {file}",
                 progress.completed, progress.total
             ),
-            None if progress.completed == progress.total => "Mission data ready".to_owned(),
-            None => format!("Loading mission data (0/{})", progress.total),
+            None if progress.completed == progress.total => format!("{label} ready"),
+            None => format!("Loading {label} (0/{})", progress.total),
         };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_counted_status(text, target);

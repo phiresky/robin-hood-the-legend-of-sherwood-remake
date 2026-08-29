@@ -11,7 +11,14 @@ use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mi
 const MISSION_FETCH_CONCURRENCY: usize = 8;
 
 /// One observable step at the asynchronous shipping-data boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MissionLoadPhase {
+    Data,
+    Audio,
+}
+
 pub struct MissionLoadProgress<'a> {
+    pub phase: MissionLoadPhase,
     pub completed: usize,
     pub total: usize,
     pub file: Option<&'a str>,
@@ -25,6 +32,7 @@ pub async fn ensure_loaded<F>(
     campaign: &robin_engine::campaign::Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
     has_decoded_saved_world: bool,
+    _warm_audio: bool,
     mut progress: F,
 ) -> Result<()>
 where
@@ -47,12 +55,13 @@ where
     )?;
     let total = dependencies.files.len();
     progress(MissionLoadProgress {
+        phase: MissionLoadPhase::Data,
         completed: 0,
         total,
         file: None,
     });
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-    if datadir.active_mission_name().as_deref() != Some(mission) {
+    if _warm_audio && datadir.active_mission_name().as_deref() != Some(mission) {
         crate::audio_backend::clear_mission()
             .map_err(anyhow::Error::msg)
             .context("clear browser audio for mission transition")?;
@@ -63,10 +72,25 @@ where
             .with_context(|| format!("activate shipping mission {mission}"))?;
         datadir.set_active_exclamation_ids(dependencies.exclamation_ids);
         progress(MissionLoadProgress {
+            phase: MissionLoadPhase::Data,
             completed: total,
             total,
             file: None,
         });
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        if _warm_audio {
+            crate::audio_backend::preload_active_mission(|audio| {
+                progress(MissionLoadProgress {
+                    phase: MissionLoadPhase::Audio,
+                    completed: audio.completed,
+                    total: audio.total,
+                    file: audio.file,
+                });
+            })
+            .await
+            .map_err(anyhow::Error::msg)
+            .context("warm active mission browser audio")?;
+        }
         return Ok(());
     }
     let files = dependencies.files;
@@ -97,6 +121,7 @@ where
                 .with_context(|| format!("merge shipping file {file}"))?;
             completed += 1;
             progress(MissionLoadProgress {
+                phase: MissionLoadPhase::Data,
                 completed,
                 total,
                 file: Some(&file),
@@ -130,6 +155,20 @@ where
         rhs_files = payload.rhs_files.len(),
         "shipping mission payload loaded"
     );
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    if _warm_audio {
+        crate::audio_backend::preload_active_mission(|audio| {
+            progress(MissionLoadProgress {
+                phase: MissionLoadPhase::Audio,
+                completed: audio.completed,
+                total: audio.total,
+                file: audio.file,
+            });
+        })
+        .await
+        .map_err(anyhow::Error::msg)
+        .context("warm active mission browser audio")?;
+    }
     Ok(())
 }
 
@@ -213,6 +252,7 @@ where
                     .with_context(|| format!("merge shipping file {file}"))?;
                 completed += 1;
                 progress(MissionLoadProgress {
+                    phase: MissionLoadPhase::Data,
                     completed,
                     total,
                     file: Some(&file),
