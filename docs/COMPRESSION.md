@@ -1887,3 +1887,44 @@ cargo run --release --example jxl_sprite_probe -- \
 # tmp/jxl_sprite_probe/rle/worst_q{70,80}/ and .../pak_*/worst/
 # big-patch subset: add --min-dim 200 (use a separate --out)
 ```
+
+## Final integrated browser measurement: 71.6 s -> 16.1 s (2026-08-29)
+
+Everything from today combined into one build and one conversion (the
+canonical `scripts/build_web_shipping_datadir.sh` recipe): schema v12
+chunks, all JXL at q70 (maps, minimaps, interface, loading art), music
+at 48 kbit/s from the lossless remaster drop, merged `.map`+`.min`
+terrain payloads, wasm threads (wasm-bindgen-rayon, 4 workers, talc
+allocator) with the fully-streamed mission install (all part requests
+issued at once, zstd+bitcode decode on arrival, dependency-ready VQ
+chunks dispatched to workers immediately), and the parallelized session
+setup. Verify green (402,303 sprites bit-identical, closure check ok).
+
+Fresh-profile headless Chrome, loopback COOP/COEP server, same
+methodology as the v10/v11 runs, `H01_Lin_VL`:
+
+```
+                                   v10 (morning)   v11 (afternoon)   final
+wasm gzip + bindgen JS gzip         5,921,549 B     4,862,157 B     4,899,142 B
+boot datadir                        9,324,395 B     7,893,113 B     7,235,504 B
+blocking mission files             24,857,987 B    25,272,333 B    24,699,538 B (72 files)
+total through first-mission        41,699,607 B    39,623,279 B    38,432,730 B
+navigation -> in-game                    71.6 s          23.5 s          16.1 s
+```
+
+Timeline of the final run: wasm instantiated +0.4 s, datadir loaded
++0.5 s, worker pool ready (4 threads) +0.6 s, all 72 mission files
+fetched +4.0 s (parallel; the old loader issued them one at a time),
+mission activated +9.6 s (fetch, streamed decode, and SwiftShader
+engine bring-up all overlap in that window), in-game (replay recording)
++16.1 s. Session bootstrap is now 6.6 s of the total and is dominated
+by the JXL background-map decode (3.1 s) and frontend/menu resource
+assembly (2.6 s) — the next optimization targets if anyone wants them;
+the sprite codec no longer appears in the top spans at all.
+
+Headless caveat: SwiftShader (software GL) inflates engine bring-up;
+on a real GPU the total should land noticeably under 16 s. The shell
+also gained a boot progress bar (streamed byte progress through engine
+download/compile, assets, datadir, boot) and, for static hosts, the
+coi-serviceworker so threads work on GitHub Pages after one automatic
+first-visit reload.
