@@ -102,9 +102,10 @@ struct Args {
     /// (`Data/Animations/**` plus the ACCESSORIES_/BONUS_/RELIC_/TG_
     /// character files). `exact` keeps the byte-preserving packed RLE words
     /// (required for native/parity builds); `jxl-q70` ships them as lossy
-    /// JXL per-animation atlases plus lossless 2-bit class masks — run
-    /// extents and transparent/shadow keys stay bit-exact, only opaque RGB
-    /// is lossy (docs/COMPRESSION.md, 2026-08-29 RLE follow-up). WEB ONLY.
+    /// JXL per-animation atlases whose alpha channel carries the pixel
+    /// class losslessly — transparent and shadow pixels stay bit-exact,
+    /// only visible RGB is lossy (docs/COMPRESSION.md, 2026-08-30 RLE
+    /// alpha-atlas section). WEB ONLY: it breaks framebuffer parity.
     #[arg(long, value_enum, default_value_t = RleSpriteFormat::Exact)]
     rle_sprite_format: RleSpriteFormat,
 }
@@ -2352,7 +2353,7 @@ fn build_rhs_chunk_payload(
         base = prep.base_rel.as_deref().unwrap_or(""),
         base2 = prep.base2_rel.as_deref().unwrap_or(""),
         rle_jxl_sprites = rle_stats.lossy(),
-        rle_jxl_bytes = rle_stats.jxl_bytes + rle_stats.mask_bytes,
+        rle_jxl_bytes = rle_stats.jxl_bytes,
         "built shared RHS sprite payload"
     );
     Ok((payload, rle_stats))
