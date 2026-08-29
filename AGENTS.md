@@ -12,6 +12,8 @@
 
 ## Worktree agent instructions
 
+Always create worktrees in `.worktrees` in the main repo. Name them exactly like the branch.
+
 When working in a worktree (`.worktrees/<name>/`), you are in a **full copy of the repo**. All files are here. Do NOT try to access files via `../../` or the parent repo path. Work entirely within the current working directory.
 
 - The Cargo workspace is at the repo root. Run `cargo test` to build and test.
