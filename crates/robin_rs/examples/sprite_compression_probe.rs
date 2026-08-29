@@ -2121,9 +2121,37 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
     // way the runtime merges a mission closure, then materialize the blobs
     // (order-independent; a variant with a missing base chunk is an error).
     let mut merged = ShippingMission::default();
+    // Per-chunk bookkeeping for the dependency-closure check below: which
+    // sprite rows each rhs file provides, and which base/base2 sprite ids
+    // its VQ chunks decode against (they live in other chunks).
+    let mut chunk_provides = HashMap::<String, HashSet<u32>>::new();
+    let mut chunk_needs = HashMap::<String, Vec<(String, u32)>>::new();
     for chunk in &chunks {
         let mission = decode_mission_compressed(&fs::read(chunk)?)
             .with_context(|| format!("decode {}", chunk.display()))?;
+        if let Some(chunk_bank) = &mission.sprite_bank {
+            let key = format!(
+                "rhs/{}",
+                chunk
+                    .file_name()
+                    .expect("rhs chunk has a file name")
+                    .to_string_lossy()
+            );
+            let mut needs = Vec::new();
+            for vq in &chunk_bank.vq_chunks {
+                for id in vq.base_ids.iter().flatten() {
+                    needs.push((format!("{} base", vq.rhs), *id));
+                }
+                for id in vq.base2_ids.iter().flatten() {
+                    needs.push((format!("{} base2", vq.rhs), *id));
+                }
+            }
+            chunk_provides.insert(
+                key.clone(),
+                chunk_bank.sprites.iter().map(|(id, _)| *id).collect(),
+            );
+            chunk_needs.insert(key, needs);
+        }
         merged
             .merge_part(mission)
             .with_context(|| format!("merge {}", chunk.display()))?;
@@ -2164,6 +2192,46 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
         data_out.display(),
         chunks.len(),
         t_dec.as_secs_f64(),
+    );
+    // Dependency-closure check: every manifest list that names a variant
+    // chunk must also name the hub chunk(s) its base/base2 sprites live in
+    // (schema v10 star-2 adds the second edge). The merged verification
+    // above always merges everything, so it cannot catch a missing edge.
+    let mut lists: Vec<(String, Vec<String>)> = dd
+        .missions
+        .iter()
+        .map(|(name, mission_ref)| (format!("mission {name}"), mission_ref.files.clone()))
+        .collect();
+    for (profile, files) in &dd.character_rhs_files {
+        lists.push((format!("character profile {profile}"), files.clone()));
+    }
+    lists.push(("saved-world".into(), dd.saved_world_rhs_files.clone()));
+    for (label, files) in &lists {
+        let mut provided = HashSet::<u32>::new();
+        let mut needs: Vec<&(String, u32)> = Vec::new();
+        for file in files {
+            if !file.starts_with("rhs/") {
+                continue;
+            }
+            let ids = chunk_provides
+                .get(file)
+                .ok_or_else(|| anyhow!("{label} lists unknown RHS chunk {file}"))?;
+            provided.extend(ids.iter().copied());
+            needs.extend(&chunk_needs[file]);
+        }
+        for (what, id) in needs {
+            if !provided.contains(id) {
+                bail!(
+                    "{label}: dependency closure is missing sprite {id} ({what}) — a hub chunk \
+                     edge is absent from the manifest"
+                );
+            }
+        }
+    }
+    println!(
+        "## closure-check {}: {} dependency lists cover all base/base2 sprite ids",
+        data_out.display(),
+        lists.len(),
     );
     Ok(())
 }

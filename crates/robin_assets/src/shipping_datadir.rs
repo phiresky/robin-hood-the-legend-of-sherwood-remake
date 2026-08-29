@@ -211,15 +211,21 @@ pub struct ShippingSpriteBank {
 /// at conversion) are concatenated into a single adaptive-model `blob`;
 /// `base_ids[i]` names the family-base sprite whose materialized grid is the
 /// cross-variant context for `sprite_ids[i]` (`None` = coded standalone).
-/// Base sprites always live in a different chunk of the same mission closure
-/// (the base RHS chunk), which the conversion lists as an explicit mission
-/// dependency.
+/// Schema v10 adds a star-2 topology: `base2_ids[i]` optionally names a
+/// SECOND already-decoded sibling whose grid joins the coding context (a
+/// sprite may only carry a `base2` when it also carries a `base`). Base
+/// sprites always live in different chunks of the same mission closure (the
+/// family hub chunks), which the conversion lists as explicit mission
+/// dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct SpriteVqChunk {
     /// Relative RHS path this chunk was built from (diagnostics only).
     pub rhs: String,
     /// Relative RHS path of the family base this chunk is coded against.
     pub base_rhs: Option<String>,
+    /// Relative RHS path of the second family hub providing `base2_ids`
+    /// contexts. Empty when this chunk uses no second predecessor.
+    pub base2_rhs: String,
     /// Codec alphabet: the largest `num_entries()` of the dictionaries
     /// referenced by the chunk's VQ sprites.
     pub alphabet: u16,
@@ -228,7 +234,11 @@ pub struct SpriteVqChunk {
     /// Per sprite: bank id of the base sprite providing cross-variant
     /// context, or `None` for standalone coding. Same length as `sprite_ids`.
     pub base_ids: Vec<Option<u32>>,
-    /// `sprite_codec::encode_grids` output for all grids of this chunk.
+    /// Per sprite: bank id of the second-predecessor sprite, aligned with
+    /// `sprite_ids`. Must be empty (or all `None`) when `base2_rhs` is empty;
+    /// a `Some` entry requires the matching `base_ids` entry to be `Some`.
+    pub base2_ids: Vec<Option<u32>>,
+    /// `sprite_codec::encode_grids_multi` output for all grids of this chunk.
     pub blob: Vec<u8>,
 }
 
@@ -271,11 +281,16 @@ impl ShippingSpriteBank {
                 let stuck: Vec<String> = still_pending
                     .iter()
                     .map(|chunk| {
-                        format!(
-                            "{} (base {})",
+                        let mut label = format!(
+                            "{} (base {}",
                             chunk.rhs,
                             chunk.base_rhs.as_deref().unwrap_or("?")
-                        )
+                        );
+                        if !chunk.base2_rhs.is_empty() {
+                            label.push_str(&format!(", base2 {}", chunk.base2_rhs));
+                        }
+                        label.push(')');
+                        label
                     })
                     .collect();
                 return Err(anyhow!(
@@ -306,32 +321,46 @@ impl ShippingSpriteBank {
     /// (its own chunk decodes later in the fixpoint loop). An entirely
     /// missing or non-VQ base sprite is an error.
     fn vq_chunk_bases_ready(&self, chunk: &SpriteVqChunk) -> Result<bool> {
-        for base_id in chunk.base_ids.iter().flatten() {
-            let base = self.sprite_row(*base_id).ok_or_else(|| {
-                anyhow!(
-                    "VQ sprite chunk for {} needs base sprite {base_id} from {}, which is not \
-                     part of this mission payload",
-                    chunk.rhs,
-                    chunk.base_rhs.as_deref().unwrap_or("?")
-                )
-            })?;
-            if base.dictionary_index == UNMAPPED_DICT {
-                return Err(anyhow!(
-                    "VQ sprite chunk for {} names base sprite {base_id}, which is not \
-                     dictionary-coded",
-                    chunk.rhs
-                ));
-            }
-            let expected = Self::vq_grid_len(base);
-            match base.packed_data.len() {
-                len if len == expected => {}
-                0 => return Ok(false),
-                len => {
+        if chunk.base2_rhs.is_empty() && chunk.base2_ids.iter().any(Option::is_some) {
+            return Err(anyhow!(
+                "VQ sprite chunk for {} carries base2 sprite ids without a base2 RHS",
+                chunk.rhs
+            ));
+        }
+        for (label, base_rhs, ids) in [
+            (
+                "base",
+                chunk.base_rhs.as_deref().unwrap_or("?"),
+                &chunk.base_ids,
+            ),
+            ("base2", chunk.base2_rhs.as_str(), &chunk.base2_ids),
+        ] {
+            for base_id in ids.iter().flatten() {
+                let base = self.sprite_row(*base_id).ok_or_else(|| {
+                    anyhow!(
+                        "VQ sprite chunk for {} needs {label} sprite {base_id} from {base_rhs}, \
+                         which is not part of this mission payload",
+                        chunk.rhs
+                    )
+                })?;
+                if base.dictionary_index == UNMAPPED_DICT {
                     return Err(anyhow!(
-                        "base sprite {base_id} for chunk {} has {len} packed words, expected \
-                         {expected}",
+                        "VQ sprite chunk for {} names {label} sprite {base_id}, which is not \
+                         dictionary-coded",
                         chunk.rhs
                     ));
+                }
+                let expected = Self::vq_grid_len(base);
+                match base.packed_data.len() {
+                    len if len == expected => {}
+                    0 => return Ok(false),
+                    len => {
+                        return Err(anyhow!(
+                            "{label} sprite {base_id} for chunk {} has {len} packed words, \
+                             expected {expected}",
+                            chunk.rhs
+                        ));
+                    }
                 }
             }
         }
@@ -346,11 +375,21 @@ impl ShippingSpriteBank {
                 chunk.base_ids.len()
             ));
         }
+        if !chunk.base2_ids.is_empty() && chunk.base2_ids.len() != chunk.sprite_ids.len() {
+            return Err(anyhow!(
+                "chunk lists {} sprites but {} base2 entries",
+                chunk.sprite_ids.len(),
+                chunk.base2_ids.len()
+            ));
+        }
         let mut dims = Vec::with_capacity(chunk.sprite_ids.len());
         // Cloned `Arc`s keep the base grids alive independently of `self`, so
         // the decoded grids can be written back through `&mut self` below.
         let mut base_grids: Vec<Option<Arc<Vec<u16>>>> = Vec::with_capacity(chunk.base_ids.len());
-        for (sprite_id, base_id) in chunk.sprite_ids.iter().zip(&chunk.base_ids) {
+        let mut base2_grids: Vec<Option<Arc<Vec<u16>>>> = Vec::with_capacity(chunk.base_ids.len());
+        for (index, (sprite_id, base_id)) in
+            chunk.sprite_ids.iter().zip(&chunk.base_ids).enumerate()
+        {
             let sprite = self.sprite_row(*sprite_id).ok_or_else(|| {
                 anyhow!("chunk names sprite {sprite_id}, which the payload does not contain")
             })?;
@@ -360,25 +399,33 @@ impl ShippingSpriteBank {
                 ));
             }
             dims.push((sprite.width / 4, sprite.height));
-            base_grids.push(match base_id {
-                // Availability and length were proven by `vq_chunk_bases_ready`.
-                Some(base_id) => Some(Arc::clone(
-                    &self
-                        .sprite_row(*base_id)
-                        .expect("base sprite checked by vq_chunk_bases_ready")
-                        .packed_data,
-                )),
-                None => None,
-            });
+            // Availability and length were proven by `vq_chunk_bases_ready`.
+            let resolve = |base_id: &Option<u32>| {
+                base_id.map(|base_id| {
+                    Arc::clone(
+                        &self
+                            .sprite_row(base_id)
+                            .expect("base sprite checked by vq_chunk_bases_ready")
+                            .packed_data,
+                    )
+                })
+            };
+            base_grids.push(resolve(base_id));
+            base2_grids.push(resolve(chunk.base2_ids.get(index).unwrap_or(&None)));
         }
-        let base_slices: Vec<Option<&[u16]>> = base_grids
-            .iter()
-            .map(|grid| grid.as_ref().map(|grid| grid.as_slice()))
-            .collect();
-        let decoded = crate::sprite_codec::decode_grids(
+        fn as_slices(grids: &[Option<Arc<Vec<u16>>>]) -> Vec<Option<&[u16]>> {
+            grids
+                .iter()
+                .map(|grid| grid.as_ref().map(|grid| grid.as_slice()))
+                .collect()
+        }
+        let base_slices = as_slices(&base_grids);
+        let base2_slices = as_slices(&base2_grids);
+        let decoded = crate::sprite_codec::decode_grids_multi(
             chunk.alphabet,
             &dims,
             Some(&base_slices),
+            Some(&base2_slices),
             &chunk.blob,
         )?;
         for (sprite_id, grid) in chunk.sprite_ids.iter().zip(decoded) {
@@ -886,16 +933,19 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
     keys
 }
 
-// Schema v9: VQ sprite grids move out of per-sprite `packed_data` into one
-// `sprite_codec` context-model blob per RHS chunk (see [`SpriteVqChunk`]),
-// with cross-variant coding against family-base chunks. Both the boot
+// Schema v10: star-2 family topology — [`SpriteVqChunk`] gains `base2_rhs` /
+// `base2_ids`, letting third-and-later family members code each tile against
+// TWO already-decoded siblings (schema v9 introduced the per-chunk
+// `sprite_codec` blobs and single-base cross-variant coding). Both the boot
 // manifest and the mission chunk layout changed, so both magics advance —
 // bitcode is not self-describing, and a versioned magic mismatch is the only
-// thing standing between an old binary and a misparse.
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNAT9";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN04";
-pub const SHIPPING_DATADIR_VERSION: u32 = 9;
-pub const SHIPPING_MISSION_VERSION: u32 = 4;
+// thing standing between an old binary and a misparse. (The datadir magic is
+// spelled `RHDDNA10` because the tag is exactly 8 bytes; the u32 version
+// beside it is the authoritative number.)
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA10";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN05";
+pub const SHIPPING_DATADIR_VERSION: u32 = 10;
+pub const SHIPPING_MISSION_VERSION: u32 = 5;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -1154,7 +1204,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNAT9");
+        assert_eq!(&encoded[..8], b"RHDDNA10");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -1211,7 +1261,7 @@ mod tests {
             .audio_durations_ms
             .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
-        assert_eq!(&encoded[..8], b"RHMISN04");
+        assert_eq!(&encoded[..8], b"RHMISN05");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));
@@ -1258,11 +1308,13 @@ mod tests {
         assert_eq!(sprites[1].1.packed_data.as_slice(), &[20]);
     }
 
-    /// Base VQ grid (sprite 0), variant VQ grid (sprite 1): 8x3 pixels =
+    /// Base VQ grid (sprite 0), variant VQ grid (sprite 1), second-variant VQ
+    /// grid (sprite 3, star-2 coded against sprites 0 AND 1): 8x3 pixels =
     /// 2x3 tiles.
     const VQ_DIMS: (u16, u16) = (8, 3);
     const BASE_GRID: [u16; 6] = [5, 6, 7, 5, 6, 7];
     const VARIANT_GRID: [u16; 6] = [5, 6, 7, 5, 9, 7];
+    const SECOND_VARIANT_GRID: [u16; 6] = [5, 6, 7, 5, 9, 8];
     const RLE_WORDS: [u16; 3] = [1, 2, 3];
     const VQ_ALPHABET: u16 = 16;
 
@@ -1273,7 +1325,7 @@ mod tests {
         ShippingSpriteBank {
             signature: 77,
             dictionaries: Vec::new(),
-            sprite_count: 3,
+            sprite_count: 4,
             sprites,
             vq_chunks,
         }
@@ -1307,9 +1359,11 @@ mod tests {
                 vec![SpriteVqChunk {
                     rhs: "Characters/Test00.rhs".into(),
                     base_rhs: None,
+                    base2_rhs: String::new(),
                     alphabet: VQ_ALPHABET,
                     sprite_ids: vec![0],
                     base_ids: vec![None],
+                    base2_ids: Vec::new(),
                     blob,
                 }],
             )),
@@ -1348,9 +1402,44 @@ mod tests {
                 vec![SpriteVqChunk {
                     rhs: "Characters/Test01.rhs".into(),
                     base_rhs: Some("Characters/Test00.rhs".into()),
+                    base2_rhs: String::new(),
                     alphabet: VQ_ALPHABET,
                     sprite_ids: vec![1],
                     base_ids: vec![Some(0)],
+                    base2_ids: Vec::new(),
+                    blob,
+                }],
+            )),
+            ..ShippingMission::default()
+        }
+    }
+
+    /// Chunk mission for the third family member: sprite 3 star-2 coded
+    /// against base sprite 0 AND sibling sprite 1 (both from other chunks).
+    fn second_variant_chunk_mission() -> ShippingMission {
+        use crate::sprite_codec::{SpriteGrid, encode_grids_multi};
+        let blob = encode_grids_multi(
+            VQ_ALPHABET,
+            &[SpriteGrid {
+                cols: VQ_DIMS.0 / 4,
+                rows: VQ_DIMS.1,
+                indices: &SECOND_VARIANT_GRID,
+            }],
+            Some(&[Some(&BASE_GRID)]),
+            Some(&[Some(&VARIANT_GRID)]),
+        )
+        .unwrap();
+        ShippingMission {
+            sprite_bank: Some(vq_test_bank(
+                vec![(3, vq_sprite(Vec::new()))],
+                vec![SpriteVqChunk {
+                    rhs: "Characters/Test02.rhs".into(),
+                    base_rhs: Some("Characters/Test00.rhs".into()),
+                    base2_rhs: "Characters/Test01.rhs".into(),
+                    alphabet: VQ_ALPHABET,
+                    sprite_ids: vec![3],
+                    base_ids: vec![Some(0)],
+                    base2_ids: vec![Some(1)],
                     blob,
                 }],
             )),
@@ -1367,8 +1456,12 @@ mod tests {
             decode_mission_compressed(&compressed).unwrap()
         };
         // Fetch completion order is nondeterministic on wasm: merge the
-        // variant chunk before its base, then materialize.
+        // star-2 chunk first (its base2 sibling itself decodes against the
+        // family base), then the variant, then the base, and materialize.
         let mut merged = ShippingMission::default();
+        merged
+            .merge_part(reload(&second_variant_chunk_mission()))
+            .unwrap();
         merged.merge_part(reload(&variant_chunk_mission())).unwrap();
         merged.merge_part(reload(&base_chunk_mission())).unwrap();
         let bank = merged.sprite_bank.as_mut().unwrap();
@@ -1387,6 +1480,10 @@ mod tests {
             bank.sprite_row(2).unwrap().packed_data.as_slice(),
             RLE_WORDS
         );
+        assert_eq!(
+            bank.sprite_row(3).unwrap().packed_data.as_slice(),
+            SECOND_VARIANT_GRID
+        );
     }
 
     #[test]
@@ -1402,6 +1499,26 @@ mod tests {
         assert!(
             error.to_string().contains("base sprite 0"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn star2_vq_chunk_without_base2_chunk_is_an_error() {
+        // The base chunk arrives but the base2 sibling chunk never does: the
+        // star-2 chunk must fail loudly, naming the missing base2 RHS.
+        let mut merged = ShippingMission::default();
+        merged.merge_part(second_variant_chunk_mission()).unwrap();
+        merged.merge_part(base_chunk_mission()).unwrap();
+        let error = merged
+            .sprite_bank
+            .as_mut()
+            .unwrap()
+            .materialize_vq_chunks()
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("base2 sprite 1") && message.contains("Characters/Test01.rhs"),
+            "unexpected error: {message}"
         );
     }
 

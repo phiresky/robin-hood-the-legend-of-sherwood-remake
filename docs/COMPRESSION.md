@@ -1398,3 +1398,60 @@ aligned through the script offsets that already ship (--entropy-temporal,
 - Still open: parallel chunk decode at install (after the star-2 branch
   merges; chunks are independent), and exclusion-adjusted Fenwick coding if
   single-thread decode ever needs another 2x.
+## Shipping integration: schema v10 — star-2 family topology (2026-08-29)
+
+The two-predecessor coding above is wired into the shipping format as
+**v10** (`RHDDNA10` — the tag is capped at 8 bytes, the u32 version beside
+it says 10 — mission chunks `RHMISN05`; mismatches fail loudly as before).
+
+Format (`robin_assets::shipping_datadir`): `SpriteVqChunk` gains
+`base2_rhs: String` (empty = none) and `base2_ids: Vec<Option<u32>>`
+(aligned with `sprite_ids`; must be empty/all-`None` when `base2_rhs` is
+empty, and a `Some` requires the matching `base_ids` entry). Blobs are
+`encode_grids_multi` output; single-base and standalone chunks stay
+byte-identical to v9. Materialization resolves base2 grids exactly like
+base grids inside the same fixpoint (order-independent); a chunk whose
+declared base2 sprites are absent from the payload is a hard error naming
+the missing base2 RHS.
+
+Converter: per family, hub1 stays the proxy-selected base; hub2 = argmin
+over candidates c != hub1 of sum over members m not in {hub1, c} of the
+sampled H(m | c tile) pair proxy — the best *second* predictor for the
+rest (logged as "selected family second base"). hub2's own chunk codes
+against hub1 only. Every other member pairs positionally against BOTH hubs
+and follows the probe's `code3` ladder per sprite: two aligned bases ->
+one (either hub can serve as the single base) -> standalone. Hub grids a
+variant references are unioned into the respective hub chunk, and the
+dependency map is now multi-edge: a variant chunk pulls in hub1 always and
+hub2 whenever referenced, in mission files, `character_rhs_files`, and
+`saved_world_rhs_files`. Two-member families (none in fullgame) keep the
+plain star-1 path; the demo (no complete families) converts byte-identically
+to v9 modulo the new empty fields.
+
+Measured, fullgame (`fullgame_linux`, raw maps, windowLog 30), against the
+v9 numbers above:
+
+```
+                          v9              v10 (star-2)      delta
+Data/rhs bucket           97,829,439      96,658,119        -1,171,320 B (-1.20%)
+VQ blob bytes             78,244,997      77,024,677        -1,220,320 B (-1.56%)
+```
+
+All 9 families picked a hub2 (Archer01+02, Crossbowman02+03, Guard A05+01,
+Guard B01+05, Knight01+02, Officer05+02, Officier B01+02, Soldier A01+02,
+Soldier B01+02); 30 chunks code star-2. Knight03's chunk lands at
+1,148,686 B — exactly the probe's `--code3` measurement. The corpus win is
+~1.2 MB, well under the ~3-4 MB projected from the code3 samples: those
+were measured against *lexicographic* single bases (Guard A02 vs A00 =
+515,795 B), while v9 production already coded third-and-later members
+against their proxy-selected best hub, so much of the projected gap was
+already banked by hub selection. The remaining marginal value of the
+second predecessor is real but smaller (Guard A02: 399,170 B here).
+
+verify-shipping (both trees): demo 52 chunks / 65,058 sprites /
+146,584,025 pixels, fullgame 223 chunks (133 blobs) / 402,303 sprites /
+1,101,554,622 pixels — all identical to the source banks. The probe's
+verifier additionally gained a dependency-closure check: for every mission
+/ character-profile / saved-world list it asserts the listed chunks
+provide every base/base2 sprite id the listed variant chunks reference
+(the merged verify alone cannot catch a missing hub edge).
