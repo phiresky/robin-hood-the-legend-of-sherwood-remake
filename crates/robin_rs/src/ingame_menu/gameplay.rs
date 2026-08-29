@@ -220,3 +220,32 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_forecast_row_preserves_tactical_control_mapping() {
+        assert_eq!(
+            OPTION_LABELS,
+            [
+                "Fix Hard Reaction Times",
+                "Control Tactical Units",
+                "Sherwood Production Forecast",
+            ]
+        );
+
+        let mut config = GameplayConfig::default();
+        assert!(!is_option_selected(&config, 1));
+        assert!(is_option_selected(&config, 2));
+
+        apply_option_toggle(&mut config, 1);
+        assert!(config.control_tactical_units);
+        assert!(config.show_production_forecast);
+
+        apply_option_toggle(&mut config, 2);
+        assert!(config.control_tactical_units);
+        assert!(!config.show_production_forecast);
+    }
+}
