@@ -2841,6 +2841,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     let mut level_asset_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
     for build in mission_builds.values_mut() {
         for map in &build.map_names {
+            // A mission that opens a map always opens its minimap too (the
+            // runtime draws both), so both land in ONE shared payload keyed
+            // by the `.map` rel: one HTTP fetch / cache key per city and
+            // ambiance instead of two. Runtime lookups are by the original
+            // asset path inside the payload, so merging is invisible there.
+            let map_rel = level_asset_rel_existing(build.ambiance, map, ".map", &in_path)?;
             for ext in [".map", ".min"] {
                 let rel = level_asset_rel_existing(build.ambiance, map, ext, &in_path)?;
                 let path = in_path(&rel)
@@ -2862,12 +2868,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     bytes
                 };
                 level_asset_payloads
-                    .entry(rel.clone())
+                    .entry(map_rel.clone())
                     .or_default()
                     .raw
                     .insert(rel.to_ascii_lowercase(), bytes);
-                build.level_asset_keys.insert(rel);
             }
+            build.level_asset_keys.insert(map_rel);
         }
         let rel = format!("Levels/{:02}/{}.pak", build.ambiance, build.proto_filename);
         if let Some(path) = in_path(&rel) {
