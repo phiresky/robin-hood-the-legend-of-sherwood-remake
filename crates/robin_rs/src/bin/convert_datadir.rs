@@ -97,6 +97,36 @@ struct Args {
     /// compress ~5% smaller under zstd (docs/COMPRESSION.md, 2026-08-28).
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     rank_dictionaries: bool,
+
+    /// Shipping: how to encode the RLE patch/ambient-animation sprite bucket
+    /// (`Data/Animations/**` plus the ACCESSORIES_/BONUS_/RELIC_/TG_
+    /// character files). `exact` keeps the byte-preserving packed RLE words
+    /// (required for native/parity builds); `jxl-q70` ships them as lossy
+    /// JXL per-animation atlases plus lossless 2-bit class masks — run
+    /// extents and transparent/shadow keys stay bit-exact, only opaque RGB
+    /// is lossy (docs/COMPRESSION.md, 2026-08-29 RLE follow-up). WEB ONLY.
+    #[arg(long, value_enum, default_value_t = RleSpriteFormat::Exact)]
+    rle_sprite_format: RleSpriteFormat,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum RleSpriteFormat {
+    /// Keep exact packed RLE words (byte-preserving).
+    Exact,
+    /// Lossy JXL atlases at quality 70 + lossless class masks (web recipe).
+    JxlQ70,
+    /// Lossy JXL atlases at quality 80 + lossless class masks.
+    JxlQ80,
+}
+
+impl RleSpriteFormat {
+    fn jxl_quality(self) -> Option<u8> {
+        match self {
+            Self::Exact => None,
+            Self::JxlQ70 => Some(70),
+            Self::JxlQ80 => Some(80),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -212,6 +242,7 @@ fn main() -> Result<()> {
                 zstd_window_log: args.zstd_window_log,
                 resume: args.resume,
                 rank_dictionaries: args.rank_dictionaries,
+                rle_sprite_format: args.rle_sprite_format,
             },
         ),
     }
@@ -225,6 +256,7 @@ struct ShippingOpts {
     zstd_window_log: u32,
     resume: bool,
     rank_dictionaries: bool,
+    rle_sprite_format: RleSpriteFormat,
 }
 
 /// Locate the game data directory inside the input folder.
@@ -1540,8 +1572,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
-    ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
+    RhsData, RleJxlPlacement, ShippingAudioAsset, ShippingDatadir, ShippingMission,
+    ShippingMissionRef, ShippingSprite, ShippingSpriteBank, SpriteRleJxlChunk, SpriteVqChunk,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1628,6 +1660,386 @@ fn remapped_packed(
     }))
 }
 
+/// The RLE-bucket files eligible for `--rle-sprite-format jxl-*`: the
+/// content class where lossy JXL was measured to WIN (docs/COMPRESSION.md,
+/// 2026-08-29 "the RLE/patch bucket"). RLE sprites in other RHS chunks
+/// (e.g. stray RLE frames inside character banks) keep exact words — they
+/// were not part of the measured/visually-vetted corpus.
+fn is_rle_jxl_bucket_rel(rel: &str) -> bool {
+    let lower = rel.replace('\\', "/").to_ascii_lowercase();
+    if lower.starts_with("animations/") {
+        return true;
+    }
+    lower.strip_prefix("characters/").is_some_and(|name| {
+        ["accessories_", "bonus_", "relic_", "tg_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    })
+}
+
+/// Sprites below this dimension keep exact RLE: the per-image JXL header
+/// tax dominates and the worst visual outliers live here (the probe's
+/// `--min-dim` selection).
+const RLE_JXL_MIN_DIM: u16 = 20;
+/// Animation groups with at least this many eligible frames get packed
+/// into grid atlases (cjxl's patch/context machinery recovers ~20% over
+/// per-sprite encodes on the measured corpus).
+const RLE_JXL_MIN_ATLAS_FRAMES: usize = 4;
+/// Cap on a single atlas image, splitting big groups into sub-atlases so
+/// one worker's transient RGBA decode buffer stays bounded on wasm.
+const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RleJxlChunkStats {
+    atlased: usize,
+    individual: usize,
+    kept_smaller: usize,
+    kept_small_dim: usize,
+    kept_shared: usize,
+    kept_irregular: usize,
+    jxl_bytes: u64,
+    mask_bytes: u64,
+    raw_words_replaced: u64,
+}
+
+impl RleJxlChunkStats {
+    fn add(&mut self, other: &RleJxlChunkStats) {
+        self.atlased += other.atlased;
+        self.individual += other.individual;
+        self.kept_smaller += other.kept_smaller;
+        self.kept_small_dim += other.kept_small_dim;
+        self.kept_shared += other.kept_shared;
+        self.kept_irregular += other.kept_irregular;
+        self.jxl_bytes += other.jxl_bytes;
+        self.mask_bytes += other.mask_bytes;
+        self.raw_words_replaced += other.raw_words_replaced;
+    }
+    fn lossy(&self) -> usize {
+        self.atlased + self.individual
+    }
+}
+
+/// One eligible RLE sprite expanded for the JXL path.
+struct RleJxlCandidate {
+    id: u32,
+    width: u16,
+    height: u16,
+    /// Decoded canvas pixels (RGB565 with key values in place).
+    pixels: Vec<u16>,
+    /// Per-pixel `rle_jxl::CL_*` classes.
+    classes: Vec<u8>,
+    /// Exact packed words (for the keep-exact size comparison).
+    raw_words: usize,
+}
+
+impl RleJxlCandidate {
+    /// RGBA export: opaque pixels expand to 888 + alpha 255, every other
+    /// class is (0,0,0,0) — keys ship in the lossless class map instead and
+    /// alpha 0 frees the encoder from reproducing anything there.
+    fn rgba(&self) -> Vec<u8> {
+        let mut rgba = vec![0u8; self.pixels.len() * 4];
+        for (i, &px) in self.pixels.iter().enumerate() {
+            if self.classes[i] == robin_assets::rle_jxl::CL_OPAQUE {
+                let [r, g, b] = robin_assets::rle_jxl::expand565(px);
+                rgba[i * 4..i * 4 + 4].copy_from_slice(&[r, g, b, 255]);
+            }
+        }
+        rgba
+    }
+
+    fn raw_le_bytes(&self, sprites: &[(u32, ShippingSprite)]) -> Vec<u8> {
+        let position = sprites
+            .binary_search_by_key(&self.id, |(id, _)| *id)
+            .expect("candidate came from these rows");
+        sprites[position]
+            .1
+            .packed_data
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect()
+    }
+}
+
+/// An accepted lossy sprite waiting for chunk assembly.
+struct RleJxlAccepted {
+    id: u32,
+    blob: u32,
+    x: u16,
+    y: u16,
+    classes: Vec<u8>,
+    atlased: bool,
+    raw_words: usize,
+}
+
+/// Compressed-size estimate for the keep-exact side of the per-sprite
+/// decision: the raw words as they would sit in the outer chunk zstd.
+fn zstd19_len(bytes: &[u8]) -> Result<usize> {
+    Ok(zstd::stream::encode_all(bytes, 19)
+        .context("zstd19 size estimate")?
+        .len())
+}
+
+/// Build the lossy-JXL payload for one RHS chunk's eligible RLE sprites and
+/// blank the rows it covers. See `--rle-sprite-format` and the schema v13
+/// comment in `shipping_datadir.rs`.
+fn build_rle_jxl_chunk(
+    rel: &str,
+    prep: &RhsChunkPrep,
+    sprites: &mut [(u32, ShippingSprite)],
+    quality: u8,
+    multi_chunk_ids: &std::collections::HashSet<u32>,
+) -> Result<(Option<SpriteRleJxlChunk>, RleJxlChunkStats)> {
+    use robin_assets::rle_jxl;
+
+    let mut stats = RleJxlChunkStats::default();
+    let Some(rhs_data) = &prep.rhs_data else {
+        return Ok((None, stats));
+    };
+    // Expand every eligible candidate.
+    let mut candidates: Vec<RleJxlCandidate> = Vec::new();
+    for (id, sprite) in sprites.iter() {
+        if sprite.dictionary_index != UNMAPPED_DICT
+            || sprite.packed_data.is_empty()
+            || sprite.width == 0
+            || sprite.height == 0
+        {
+            continue;
+        }
+        if multi_chunk_ids.contains(id) {
+            // Two chunks may not lossy-code one bank slot independently
+            // (their decodes would conflict at mission merge), so shared
+            // sprites keep the exact words in every chunk that ships them.
+            stats.kept_shared += 1;
+            continue;
+        }
+        let (pixels, classes, used) = match rle_jxl::decode_rle_canvas(
+            sprite.width as usize,
+            sprite.height as usize,
+            &sprite.packed_data,
+        ) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                tracing::warn!(rhs = rel, sprite = id, %error, "RLE sprite does not walk; keeping exact words");
+                stats.kept_irregular += 1;
+                continue;
+            }
+        };
+        if used != sprite.packed_data.len() {
+            // Trailing words beyond the row walk cannot round-trip through
+            // a canvas (none measured in the bucket, but never guess).
+            stats.kept_irregular += 1;
+            continue;
+        }
+        if sprite.width < RLE_JXL_MIN_DIM || sprite.height < RLE_JXL_MIN_DIM {
+            stats.kept_small_dim += 1;
+            continue;
+        }
+        candidates.push(RleJxlCandidate {
+            id: *id,
+            width: sprite.width,
+            height: sprite.height,
+            pixels,
+            classes,
+            raw_words: sprite.packed_data.len(),
+        });
+    }
+    if candidates.is_empty() {
+        return Ok((None, stats));
+    }
+    let by_id: std::collections::HashMap<u32, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.id, index))
+        .collect();
+
+    // First-claim (profile, action) animation groups over the shipped
+    // scripts — the probe's grouping rule.
+    let mut claimed = std::collections::HashSet::<u32>::new();
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    for (_name, info) in &rhs_data.profiles {
+        let mut by_action = std::collections::BTreeMap::<u16, Vec<u32>>::new();
+        for script in info.scripts.iter() {
+            let entry = by_action.entry(script.action_id).or_default();
+            for &frame_id in &script.frame_ids {
+                if by_id.contains_key(&frame_id) && claimed.insert(frame_id) {
+                    entry.push(frame_id);
+                }
+            }
+        }
+        groups.extend(by_action.into_values().filter(|ids| !ids.is_empty()));
+    }
+    // Script-order claiming covers every candidate (chunk rows come from
+    // script frame ids), but stay defensive about synthesized extras.
+    let mut ungrouped: Vec<u32> = candidates
+        .iter()
+        .map(|candidate| candidate.id)
+        .filter(|id| !claimed.contains(id))
+        .collect();
+
+    let mut blobs: Vec<Vec<u8>> = Vec::new();
+    let mut accepted: Vec<RleJxlAccepted> = Vec::new();
+    for group in &groups {
+        if group.len() < RLE_JXL_MIN_ATLAS_FRAMES {
+            ungrouped.extend_from_slice(group);
+            continue;
+        }
+        // Split into sub-atlases under the pixel cap. Cell dims are the
+        // sub-atlas max, so splitting also tightens cells when a group
+        // mixes frame sizes.
+        let mut sub_atlases: Vec<&[u32]> = Vec::new();
+        let mut start = 0usize;
+        while start < group.len() {
+            let mut end = start;
+            let (mut cell_w, mut cell_h) = (0usize, 0usize);
+            while end < group.len() {
+                let candidate = &candidates[by_id[&group[end]]];
+                let w = cell_w.max(candidate.width as usize);
+                let h = cell_h.max(candidate.height as usize);
+                let count = end - start + 1;
+                let cols = (count as f64).sqrt().ceil() as usize;
+                let rows = count.div_ceil(cols);
+                if end > start && cols * w * rows * h > RLE_JXL_MAX_ATLAS_PIXELS {
+                    break;
+                }
+                (cell_w, cell_h) = (w, h);
+                end += 1;
+            }
+            sub_atlases.push(&group[start..end]);
+            start = end;
+        }
+        // Encode the group's sub-atlases, then decide atlas-vs-exact at
+        // group level against the outer-zstd cost of the raw words.
+        let mut group_jxl: Vec<(Vec<u8>, Vec<(u32, u16, u16)>)> = Vec::new();
+        let mut group_jxl_bytes = 0usize;
+        for sub in &sub_atlases {
+            let frames: Vec<&RleJxlCandidate> =
+                sub.iter().map(|id| &candidates[by_id[id]]).collect();
+            let cell_w = frames.iter().map(|f| f.width as usize).max().unwrap();
+            let cell_h = frames.iter().map(|f| f.height as usize).max().unwrap();
+            let cols = (frames.len() as f64).sqrt().ceil() as usize;
+            let rows = frames.len().div_ceil(cols);
+            let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
+            let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
+            let mut placements = Vec::with_capacity(frames.len());
+            for (k, frame) in frames.iter().enumerate() {
+                let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
+                let src = frame.rgba();
+                for y in 0..frame.height as usize {
+                    let dst = ((y0 + y) * atlas_w + x0) * 4;
+                    let n = frame.width as usize * 4;
+                    rgba[dst..dst + n].copy_from_slice(&src[y * n..(y + 1) * n]);
+                }
+                placements.push((frame.id, x0 as u16, y0 as u16));
+            }
+            let jxl = encode_pixels_to_jxl(
+                atlas_w as u32,
+                atlas_h as u32,
+                &rgba,
+                png::ColorType::Rgba,
+                Some(quality),
+                7,
+            )
+            .with_context(|| format!("cjxl atlas for {rel}"))?;
+            group_jxl_bytes += jxl.len();
+            group_jxl.push((jxl, placements));
+        }
+        let mut raw_le = Vec::new();
+        for id in group.iter() {
+            raw_le.extend(candidates[by_id[id]].raw_le_bytes(sprites));
+        }
+        if group_jxl_bytes >= zstd19_len(&raw_le)? {
+            // The atlas lost to plain entropy coding (tiny/flat groups);
+            // fall through to the per-sprite decision for its members.
+            ungrouped.extend_from_slice(group);
+            continue;
+        }
+        for (jxl, placements) in group_jxl {
+            let blob = blobs.len() as u32;
+            blobs.push(jxl);
+            for (id, x, y) in placements {
+                let candidate = &candidates[by_id[&id]];
+                accepted.push(RleJxlAccepted {
+                    id,
+                    blob,
+                    x,
+                    y,
+                    classes: candidate.classes.clone(),
+                    atlased: true,
+                    raw_words: candidate.raw_words,
+                });
+            }
+        }
+    }
+    // Ungrouped / demoted sprites: individual JXL, kept only when it beats
+    // the outer-zstd cost of the exact words (mask included).
+    for id in ungrouped {
+        let candidate = &candidates[by_id[&id]];
+        let jxl = encode_pixels_to_jxl(
+            candidate.width as u32,
+            candidate.height as u32,
+            &candidate.rgba(),
+            png::ColorType::Rgba,
+            Some(quality),
+            7,
+        )
+        .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
+        let mask = rle_jxl::pack_class_map(&candidate.classes);
+        let raw_z = zstd19_len(&candidate.raw_le_bytes(sprites))?;
+        if jxl.len() + zstd19_len(&mask)? >= raw_z {
+            stats.kept_smaller += 1;
+            continue;
+        }
+        let blob = blobs.len() as u32;
+        blobs.push(jxl);
+        accepted.push(RleJxlAccepted {
+            id,
+            blob,
+            x: 0,
+            y: 0,
+            classes: candidate.classes.clone(),
+            atlased: false,
+            raw_words: candidate.raw_words,
+        });
+    }
+    if accepted.is_empty() {
+        return Ok((None, stats));
+    }
+    accepted.sort_by_key(|entry| entry.id);
+    let mut chunk = SpriteRleJxlChunk {
+        rhs: rel.to_owned(),
+        jxl_blobs: blobs,
+        sprite_ids: Vec::with_capacity(accepted.len()),
+        placements: Vec::with_capacity(accepted.len()),
+        masks: Vec::new(),
+    };
+    for entry in &accepted {
+        chunk.sprite_ids.push(entry.id);
+        chunk.placements.push(RleJxlPlacement {
+            blob: entry.blob,
+            x: entry.x,
+            y: entry.y,
+        });
+        chunk
+            .masks
+            .extend_from_slice(&rle_jxl::pack_class_map(&entry.classes));
+        if entry.atlased {
+            stats.atlased += 1;
+        } else {
+            stats.individual += 1;
+        }
+        stats.raw_words_replaced += entry.raw_words as u64;
+        // Blank the row: the words come back from the JXL + mask at
+        // mission install, exactly like VQ grids come out of their blob.
+        let position = sprites
+            .binary_search_by_key(&entry.id, |(id, _)| *id)
+            .expect("accepted sprite came from these rows");
+        sprites[position].1.packed_data = Arc::new(Vec::new());
+    }
+    stats.jxl_bytes = chunk.jxl_blobs.iter().map(|blob| blob.len() as u64).sum();
+    stats.mask_bytes = chunk.masks.len() as u64;
+    Ok((Some(chunk), stats))
+}
+
 /// Assemble one shared RHS chunk: sprite rows for every reachable bank slot,
 /// with all well-formed VQ grids coded into a single `sprite_codec` blob
 /// (cross-variant against `prep.base_ids` where present) and RLE/ragged
@@ -1637,7 +2049,9 @@ fn build_rhs_chunk_payload(
     dict_remaps: Option<&[Vec<u16>]>,
     rel: &str,
     prep: &RhsChunkPrep,
-) -> Result<ShippingMission> {
+    rle_format: RleSpriteFormat,
+    multi_chunk_ids: &std::collections::HashSet<u32>,
+) -> Result<(ShippingMission, RleJxlChunkStats)> {
     let mut payload = ShippingMission::default();
     if let Some(rhs_data) = &prep.rhs_data {
         payload.rhs_files.insert(rel.to_owned(), rhs_data.clone());
@@ -1740,6 +2154,15 @@ fn build_rhs_chunk_payload(
             },
         ));
     }
+    // Web recipe: swap eligible RLE bucket sprites to lossy JXL + class
+    // masks, blanking the rows the chunk covers.
+    let (rle_jxl_chunk, rle_stats) = match rle_format.jxl_quality() {
+        Some(quality) if is_rle_jxl_bucket_rel(rel) => {
+            build_rle_jxl_chunk(rel, prep, &mut sprites, quality, multi_chunk_ids)?
+        }
+        _ => (None, RleJxlChunkStats::default()),
+    };
+
     let coded_sprites = blob_ids.len();
     let mut vq_chunks = Vec::new();
     let mut blob_bytes = 0usize;
@@ -1809,6 +2232,7 @@ fn build_rhs_chunk_payload(
         sprite_count: holder.sprites().len() as u32,
         sprites,
         vq_chunks,
+        rle_jxl_chunks: rle_jxl_chunk.into_iter().collect(),
     });
     tracing::info!(
         rhs = rel,
@@ -1818,9 +2242,11 @@ fn build_rhs_chunk_payload(
         vq_blob_bytes = blob_bytes,
         base = prep.base_rel.as_deref().unwrap_or(""),
         base2 = prep.base2_rel.as_deref().unwrap_or(""),
+        rle_jxl_sprites = rle_stats.lossy(),
+        rle_jxl_bytes = rle_stats.jxl_bytes + rle_stats.mask_bytes,
         "built shared RHS sprite payload"
     );
-    Ok(payload)
+    Ok((payload, rle_stats))
 }
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
@@ -2300,6 +2726,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         sprite_count: holder.sprites().len() as u32,
         sprites: Vec::new(),
         vq_chunks: Vec::new(),
+        rle_jxl_chunks: Vec::new(),
     });
     let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     for build in mission_builds.values() {
@@ -2834,23 +3261,60 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
     }
 
+    // Sprites referenced by more than one chunk must keep exact RLE words
+    // in each (independent lossy encodes of one bank slot would conflict at
+    // mission merge, where duplicate rows are required to be identical).
+    let multi_chunk_ids: std::collections::HashSet<u32> = {
+        let mut seen = std::collections::HashSet::<u32>::new();
+        let mut multi = std::collections::HashSet::<u32>::new();
+        for prep in rhs_preps.values() {
+            for &id in &prep.used_sprite_ids {
+                if !seen.insert(id) {
+                    multi.insert(id);
+                }
+            }
+        }
+        multi
+    };
+
     // Phase C: assemble the chunk payloads. `encode_grids` dominates this
     // stage, so it runs on the bounded worker pool.
     let built_payloads = compression_pool.install(|| {
         rhs_preps
             .par_iter()
             .map(|(rel, prep)| {
-                Ok((
-                    rel.clone(),
-                    build_rhs_chunk_payload(&holder, dict_remaps.as_deref(), rel, prep)?,
-                ))
+                let (payload, rle_stats) = build_rhs_chunk_payload(
+                    &holder,
+                    dict_remaps.as_deref(),
+                    rel,
+                    prep,
+                    opts.rle_sprite_format,
+                    &multi_chunk_ids,
+                )?;
+                Ok((rel.clone(), payload, rle_stats))
             })
-            .collect::<Vec<Result<(String, ShippingMission)>>>()
+            .collect::<Vec<Result<(String, ShippingMission, RleJxlChunkStats)>>>()
     });
     let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    let mut rle_totals = RleJxlChunkStats::default();
     for built in built_payloads {
-        let (rel, payload) = built?;
+        let (rel, payload, rle_stats) = built?;
+        rle_totals.add(&rle_stats);
         rhs_payloads.insert(rel, payload);
+    }
+    if opts.rle_sprite_format.jxl_quality().is_some() {
+        tracing::info!(
+            atlased = rle_totals.atlased,
+            individual = rle_totals.individual,
+            kept_smaller = rle_totals.kept_smaller,
+            kept_small_dim = rle_totals.kept_small_dim,
+            kept_shared = rle_totals.kept_shared,
+            kept_irregular = rle_totals.kept_irregular,
+            jxl_bytes = rle_totals.jxl_bytes,
+            mask_bytes = rle_totals.mask_bytes,
+            raw_bytes_replaced = 2 * rle_totals.raw_words_replaced,
+            "RLE sprite bucket encoded as lossy JXL (web recipe)"
+        );
     }
 
     // Resolve only the terrain and loading art the original runtime can open
@@ -4052,16 +4516,36 @@ fn transcode_pixels_to_jxl(
     quality: Option<u8>,
     effort: u8,
 ) -> Result<Vec<u8>> {
+    encode_pixels_to_jxl(
+        pic.width as u32,
+        pic.height as u32,
+        &pixels,
+        color,
+        quality,
+        effort,
+    )
+}
+
+/// Dimension-explicit form of [`transcode_pixels_to_jxl`]; the RLE sprite
+/// atlas path has no `Picture` to borrow dims from.
+fn encode_pixels_to_jxl(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    color: png::ColorType,
+    quality: Option<u8>,
+    effort: u8,
+) -> Result<Vec<u8>> {
     use std::io::Write as _;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let mut png_bytes: Vec<u8> = Vec::new();
     {
-        let mut enc = png::Encoder::new(&mut png_bytes, pic.width as u32, pic.height as u32);
+        let mut enc = png::Encoder::new(&mut png_bytes, width, height);
         enc.set_color(color);
         enc.set_depth(png::BitDepth::Eight);
         let mut w = enc.write_header().context("png header")?;
-        w.write_image_data(&pixels).context("png data")?;
+        w.write_image_data(pixels).context("png data")?;
     }
 
     let mut cmd = Command::new("cjxl");

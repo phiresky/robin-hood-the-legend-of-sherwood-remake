@@ -1635,6 +1635,7 @@ mod application_context_tests {
                 },
             )],
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         });
 
         let mut holder = FrameHolder::new();
