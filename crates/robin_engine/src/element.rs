@@ -5759,7 +5759,12 @@ mod tests {
                 dz: 35.5,
             }),
         );
-        position.restore_cached_position_3d_invalid(outgoing);
+        let mut state = position.v48_serialized_state();
+        state.position = outgoing;
+        state
+            .computed_position
+            .remove(crate::position_interface::PositionComputed::THREE_D);
+        position.restore_v48_serialized_state(state);
 
         assert_eq!(
             pc.compute_belt_point(),
@@ -5805,7 +5810,12 @@ mod tests {
                 dz: 35.5,
             }),
         );
-        position.restore_cached_position_3d_invalid(outgoing);
+        let mut state = position.v48_serialized_state();
+        state.position = outgoing;
+        state
+            .computed_position
+            .remove(crate::position_interface::PositionComputed::THREE_D);
+        position.restore_v48_serialized_state(state);
 
         assert_eq!(
             soldier.compute_detection_point(),

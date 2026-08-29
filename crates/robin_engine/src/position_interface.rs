@@ -2484,7 +2484,7 @@ mod tests {
         let map = pi.map_position();
         assert!((map.x - 100.0).abs() < 1e-4);
         assert!((map.y - 150.0).abs() < 1e-4); // y - z
-        assert_eq!(pi.get_position_resolved(), p3(100.0, 200.0, 50.0));
+        assert_eq!(pi.get_position(), p3(100.0, 200.0, 50.0));
         assert_eq!(pi.computed_position, PositionComputed::THREE_D);
     }
 
