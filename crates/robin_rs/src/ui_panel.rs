@@ -379,6 +379,7 @@ impl PortraitCache {
     /// Reads each portrait resource from the resource manager, converts
     /// to a renderer surface. Missing resources are logged and skipped.
     pub fn load(&mut self, res: &mut ResourceManager, renderer: &mut Renderer) {
+        let mut timer = crate::game_session::PhaseTimer::new("portrait cache load");
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
             let res_id = kind.portrait_resource();
@@ -406,6 +407,7 @@ impl PortraitCache {
             "Portrait cache: {} surfaces loaded",
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
+        timer.step("character portraits");
 
         let (width, height, pixels) =
             decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png"))
@@ -496,6 +498,7 @@ impl PortraitCache {
                     .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
             );
         }
+        timer.step("embedded allied art");
 
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
         for (res_id, field, label) in [
@@ -615,6 +618,8 @@ impl PortraitCache {
             }
         }
 
+        timer.step("scrolls + borders");
+
         // ── Load action button icons (normal + focused + pressed states) ──
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
@@ -695,6 +700,7 @@ impl PortraitCache {
             "Portrait cache: {} action icon sets loaded",
             self.action_surfaces.iter().filter(|s| s.is_some()).count(),
         );
+        timer.step("action icons");
 
         // ── Load fighting sword overlay surfaces (per character) ──
         for kind in CharacterKind::VARIANTS {
@@ -915,6 +921,8 @@ impl PortraitCache {
             }
         }
 
+        timer.step("indicators + blazons + overlays");
+
         // ── Pre-load all per-slot sub-pictures of the requirements-bar
         //    icon tables.  Each resource carries one sub-picture per
         //    character-profile or per-action enum value.  Loading the full
@@ -958,6 +966,8 @@ impl PortraitCache {
                 self.sub_pictures.insert((res_id, sub_id), surface_id);
             }
         }
+        timer.step("requirements tables");
+        timer.total();
     }
 
     /// Install a pre-loaded localized-name map.  Read at render time
