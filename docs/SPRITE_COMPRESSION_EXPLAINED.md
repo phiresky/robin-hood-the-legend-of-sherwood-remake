@@ -220,6 +220,23 @@ The meta-lesson: this data has three different kinds of redundancy —
 Each bucket gets the coder that matches its redundancy; no single tool wins
 everywhere.
 
+### Why we beat codecs that also model 2-D context
+
+JXL and AV1 model 2-D context too — so why do they lose 3-17× here? Because
+our real advantage is *inherited*: the 2002 VQ pass already performed the
+lossy step, once, at authoring time. That quantization collapsed a noisy,
+dithered pixel field into a clean **discrete symbol process** — 4,096 ids on
+a lattice — and everything we ship is lossless with respect to that (the
+original renders are gone; the quantized bank *is* the game). An image codec
+must reproduce the dither pixel-exactly, and dither is deliberate noise; we
+predict ids, where a context has either seen the exact symbol or it hasn't.
+Three further edges compound it: ids are *categorical* (numeric prediction —
+gradients, deltas — is meaningless on them, and codecs are built numeric);
+our statistics persist across a character's thousands of tiny frames with no
+per-image headers and no shipped model; and cross-variant prediction is
+side-information no standard codec interface accepts — a variant is a
+re-textured re-render, not a motion-displaced frame.
+
 ## 7. Where the remaining headroom is
 
 - The standalone gap to the (optimistic) two-context bound is ~2× — richer
