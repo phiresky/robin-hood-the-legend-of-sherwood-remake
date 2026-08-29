@@ -1108,10 +1108,18 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // -35..43% decode time). The constant is part of the bitstream contract, so
 // chunks encoded either way are mutually undecodable and both magics
 // advance.
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA11";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN06";
-pub const SHIPPING_DATADIR_VERSION: u32 = 11;
-pub const SHIPPING_MISSION_VERSION: u32 = 6;
+//
+// Schema v12 / mission v7: binary escape coding in the VQ codec. The
+// hit-vs-escape decision at each PPM chain level is now one LZMA-style
+// adaptive bit (11-bit probability per SEE bucket) instead of SEE-priced
+// escape mass folded into the coding interval — this removes both per-level
+// divisions from the escape path (another decode-speed/size trade; the
+// container layout is unchanged, but the entropy bitstream is incompatible,
+// so both magics advance).
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA12";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN07";
+pub const SHIPPING_DATADIR_VERSION: u32 = 12;
+pub const SHIPPING_MISSION_VERSION: u32 = 7;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -1370,7 +1378,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA11");
+        assert_eq!(&encoded[..8], b"RHDDNA12");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -1427,7 +1435,7 @@ mod tests {
             .audio_durations_ms
             .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
-        assert_eq!(&encoded[..8], b"RHMISN06");
+        assert_eq!(&encoded[..8], b"RHMISN07");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));

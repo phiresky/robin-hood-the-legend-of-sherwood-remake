@@ -1582,3 +1582,83 @@ phase (~4 s hidden); a schema-v12 binary escape coder (the SEE
 division are ~2 divisions per visited level, an estimated 15-20% of
 decode); SIMD/block-skip symbol scans (`find_by_target` ~10%); and the
 ~6 s session-setup phase, which is engine work, not codec.
+
+## Schema v12: binary escape coding (2026-08-29)
+
+The escape lever from the list above, shipped as RHDDNA12/RHMISN07.
+Hit-vs-escape at each PPM chain level is now one LZMA-style adaptive
+binary decision — an 11-bit probability per SEE bucket (same bucketing:
+level, log2 distinct, log2 sum, top-skew quartile), init 1024, shift
+update `p ± delta >> 5` — coded via `encode_bit`/`decode_bit`
+(`bound = (range >> 11) * p`, multiply-only). On a hit the symbol is
+then coded in the context's plain frequency interval over `sum` (ONE
+division), skipped entirely when the context has a single candidate
+(`freq == sum`); on an escape nothing further is coded at that level.
+This removes both per-level escape divisions (v11: SEE `esc_freq`'s
+64-bit mul+div plus the enlarged-total `decode_target` div on every
+visited level).
+
+Adaptation shift tuned on coded bytes (Knight01 + RobinTown +
+Guard A00->A02 total): shift 3 = 5,449,385 B, 4 = 5,419,538 B,
+5 = 5,420,021 B, 6 = 5,445,021 B. 4 and 5 within 0.01%; 5 kept (LZMA
+default).
+
+Size and speed vs v11 (same probes; decode times interleaved
+old/new binaries on a loaded box, minimums):
+
+```
+                       v11             v12            size delta
+Knight01               2,882,599 B     2,887,813 B    +0.18%
+RobinTown              2,001,621 B     2,002,372 B    +0.04%
+Guard A00->A02           522,768 B       529,836 B    +1.35%
+Knight01 decode (min)  1.9 s           1.7 s          -10%
+```
+
+Fullgame web tree (fresh convert, jxl-q80 maps/interface, opus,
+window-log 30): verify-shipping green — 223 chunks (133 VQ blobs,
+76,656,179 blob bytes), 402,303 sprites, 1,101,554,622 pixels, all
+identical to source bank, dependency closure covered. H01_Lin_VL
+blocking set: 68 files, 22,859,249 B (v11: 22,809,615 B, +0.22%).
+Single-thread materialize, 6 interleaved rounds v11-binary-on-v11-tree
+vs v12-binary-on-v12-tree (box load 12-40 throughout, so minimums are
+the honest statistic): v11 min 12.56 s, v12 min 11.52 s, pairwise
+median ratio 0.90 — **~8-10% decode saved for +0.22% blocking bytes**.
+Short of the 15-20% hoped for from division counting alone: the escape
+bit adds a data-dependent branch per level, and the surviving hit-path
+`decode_target` division was always the more predictable of the two.
+
+## Negative result: block-skip symbol scan (2026-08-29)
+
+Tried the other decode lever from the v11 ledger: `Ctx::find_by_target`
+(the frequency-ordered interval walk, ~10% of decode) rewritten to scan
+the first 8 (symbol, count) pairs element-wise, then skip whole
+8-pair blocks by a branchless reduction-tree count sum
+(`target >= cum + block_sum`), resolving element-wise only inside the
+target's block. Identical (index, symbol, cum, count) results; all
+roundtrip tests green (default and ROBIN_EXCL_CAP=256).
+
+It measures SLOWER, and `perf stat` on the H01 single-thread
+decode-bench (two samples each, v12 tree) shows exactly why:
+
+```
+                      plain walk           block-skip
+instructions          66.7 / 67.0 G        54.4 / 54.4 G   (-19%)
+branches              13.1 G                7.5 G          (-42%)
+branch-miss rate      1.28%                2.40%
+cycles                50.9 / 55.5 G        56.7 / 59.2 G   (+8-11%)
+IPC                   1.20-1.32            0.92-0.96
+wall (interleaved
+ mins, loaded box)    12.48 s              12.83 s
+```
+
+Fewer instructions, more cycles: the plain walk's per-element exit
+branch is almost always correctly predicted "keep scanning", so the
+core speculates deep ahead and pipelines all the loads — the loop runs
+memory-parallel. The block variant makes each skip decision depend on
+a just-computed 8-count reduction (a serial chain the branch must wait
+for) and roughly doubles the mispredict rate, wiping out the
+instruction savings. Same physics as the 2026-08-29 dense-promotion
+regression (6.4 -> 11.8 s): these contexts are so skewed that the
+bubbled list answers from its cache-resident head, and any cleverness
+that adds latency to the head path loses. Change dropped; the plain
+walk stays.
