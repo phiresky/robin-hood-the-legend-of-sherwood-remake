@@ -198,7 +198,12 @@ pixels and comparing with the original bank — byte-identical across all
 65,058 demo sprites / 146.6 million pixels.
 
 Corpus effect (fullgame characters): 161.2 MB under the old zstd pipeline →
-**69.0 MB** (2.34×). Demo web payload `Data/`: 51.2 → 42.4 MB.
+**69.0 MB** (2.34×). The full RHS chunk bucket, converted and pixel-verified
+end to end: **193.7 → 97.8 MB (1.98×)**. Demo web payload `Data/`:
+51.2 → 42.4 MB.
+
+An illustrated version of this document is published as the "The Sprite
+Codec" artifact.
 
 ## 6. What we tried that *didn't* work — and what each failure teaches
 
