@@ -348,6 +348,11 @@ pub struct EnemyAi {
     pub soldier_profile_initiative: u16,
     /// Cached beer count — used by `Q_SHALL_I_TAKE_ALE`.
     pub soldier_profile_beer: u16,
+    /// Cached eligibility for the optional zero-beer reliability rule. This
+    /// is true only for a non-VIP soldier while the authoritative setting is
+    /// enabled, so live menu commands affect spawned AI on the same frame.
+    #[serde(default)]
+    pub ale_reliable_distraction: bool,
     /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
     /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
     pub soldier_profile_money: u16,
@@ -500,6 +505,7 @@ impl Default for EnemyAi {
             soldier_profile_rank: ProfileRank::Soldier,
             soldier_profile_initiative: 50,
             soldier_profile_beer: 0,
+            ale_reliable_distraction: false,
             soldier_profile_money: 0,
             soldier_profile_apple: 0,
             soldier_profile_whistle: 0,
@@ -4939,7 +4945,9 @@ impl EnemyAi {
         // Gate: hypothetical || (active && outside building).
         if hypothetical || (ctx.self_is_active && !ctx.in_building) {
             return match question {
-                Question::ShallITakeAle => self.soldier_profile_beer > 0,
+                Question::ShallITakeAle => {
+                    self.soldier_profile_beer > 0 || self.ale_reliable_distraction
+                }
                 Question::ShallITakeMoney => self.soldier_profile_money > 0,
                 Question::ShallIFightForMoney => self.soldier_profile_money > 0,
                 Question::ShallIReactOnApple => self.soldier_profile_apple > 0,

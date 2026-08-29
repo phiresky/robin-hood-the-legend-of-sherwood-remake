@@ -70,9 +70,10 @@ pub struct ReplayHeader {
 /// serialized command chains are non-recursive, stored movement actions carry
 /// exact routes, and point-Seek state carries explicit route provenance.
 /// Version 17 requires the full-fidelity campaign history and practice-return
-/// snapshot. There is deliberately no Rust-schema compatibility adapter:
+/// snapshot. Version 18 adds expanded item rules, cached ale eligibility, and
+/// ground-stone command/projectile state. There is deliberately no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 17;
+pub const REPLAY_SCHEMA_VERSION: u32 = 18;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -778,8 +779,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 17);
+    fn replay_schema_version_identifies_expanded_item_and_ground_stone_codec() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 18);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -1137,6 +1138,10 @@ mod tests {
             PlayerCommand::SetAmountOfSpeaking { amount: 9 },
             PlayerCommand::SetUnbindingEnabled { enabled: false },
             PlayerCommand::SetReusableCloaks { enabled: false },
+            PlayerCommand::SetItemGameplayConfig {
+                config: crate::gameplay_config::ItemGameplayConfig::classic(),
+            },
+            PlayerCommand::SetNoiseDistractionFeedback { enabled: false },
         ];
         let mut recorder = ReplayRecorder::new(
             &path,
@@ -1162,6 +1167,11 @@ mod tests {
         assert_eq!(live.control.sim_config.amount_of_speaking, 9);
         assert!(!live.control.sim_config.enable_unbinding);
         assert!(!live.control.sim_config.reusable_cloaks);
+        assert_eq!(
+            live.control.sim_config.item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!live.control.sim_config.noise_distraction_feedback);
 
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
@@ -1183,6 +1193,11 @@ mod tests {
         assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
         assert!(!replayed.control.sim_config.enable_unbinding);
         assert!(!replayed.control.sim_config.reusable_cloaks);
+        assert_eq!(
+            replayed.control.sim_config.item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!replayed.control.sim_config.noise_distraction_feedback);
         assert_eq!(state_hash(&live), state_hash(&replayed));
         let _ = std::fs::remove_file(path);
     }

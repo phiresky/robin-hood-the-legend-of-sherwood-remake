@@ -2842,47 +2842,79 @@ pub fn item_action_tooltip_extension(
                 previews.stone_direct_effect,
                 previews.stone_distraction_area,
                 rules.stone_ground_distraction,
+                rules.stone_longer_range,
             ) {
-                (true, true, true) => (
+                (true, true, true, true) => (
                     "item_tooltip.stone.direct_and_distraction",
-                    "Direct hit: 10 damage + strong concussion. Ground noise radius: 240.",
+                    "Direct hit: 10 damage + strong concussion; long base range 300. Ground noise radius: 240.",
                 ),
-                (true, _, _) => (
+                (true, true, true, false) => (
+                    "item_tooltip.stone.direct_and_distraction_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200. Ground noise radius: 240.",
+                ),
+                (true, _, _, true) => (
                     "item_tooltip.stone.direct",
-                    "Direct hit: 10 damage + strong concussion.",
+                    "Direct hit: 10 damage + strong concussion; long base range 300.",
                 ),
-                (false, true, true) => (
+                (true, _, _, false) => (
+                    "item_tooltip.stone.direct_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200.",
+                ),
+                (false, true, true, _) => (
                     "item_tooltip.stone.distraction",
                     "Ground noise attracts eligible hostiles within 240.",
                 ),
-                (false, true, false) => (
+                (false, true, false, _) => (
                     "item_tooltip.stone.distraction_disabled",
                     "Ground distraction is disabled in Gameplay settings.",
+                ),
+                (false, false, _, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Net if previews.net_capture_area || previews.net_crumple_prediction => Some(
+            match (
+                previews.net_capture_area,
+                previews.net_crumple_prediction,
+                rules.net_selective_immunity,
+            ) {
+                (true, true, true) => (
+                    "item_tooltip.net.capture_and_terrain_crumple",
+                    "Captures active people within 40, including allies; VIPs/riders/Net user are skipped; terrain can crumple it.",
+                ),
+                (true, true, false) => (
+                    "item_tooltip.net.capture_and_crumple",
+                    "Captures active people within 40, including allies; terrain or people can crumple it.",
+                ),
+                (true, false, true) => (
+                    "item_tooltip.net.selective_capture",
+                    "Captures active people within 40, including allies; VIPs, riders, and the Net user are skipped.",
+                ),
+                (true, false, false) => (
+                    "item_tooltip.net.capture",
+                    "Captures active people within 40, including allies.",
+                ),
+                (false, true, true) => (
+                    "item_tooltip.net.terrain_crumple",
+                    "Terrain can crumple the net; resistant people are skipped.",
+                ),
+                (false, true, false) => (
+                    "item_tooltip.net.crumple",
+                    "Terrain and some victim conditions can crumple the net.",
                 ),
                 (false, false, _) => unreachable!("tooltip guard checked above"),
             },
         ),
-        Action::Net if previews.net_capture_area || previews.net_crumple_prediction => Some(
-            match (previews.net_capture_area, previews.net_crumple_prediction) {
-                (true, true) => (
-                    "item_tooltip.net.capture_and_crumple",
-                    "Captures active people within 40, including allies; terrain or people can crumple it.",
-                ),
-                (true, false) => (
-                    "item_tooltip.net.capture",
-                    "Captures active people within 40, including allies.",
-                ),
-                (false, true) => (
-                    "item_tooltip.net.crumple",
-                    "Terrain and some victim conditions can crumple the net.",
-                ),
-                (false, false) => unreachable!("tooltip guard checked above"),
-            },
-        ),
-        Action::Ale if previews.ale_effect => Some((
-            "item_tooltip.ale.effect",
-            "Visible outdoor enemies need beer interest; drunk enemies accept.",
-        )),
+        Action::Ale if previews.ale_effect => Some(if rules.ale_reliable_distraction {
+            (
+                "item_tooltip.ale.reliable",
+                "Zero-interest outdoor non-VIP soldiers also accept at potency 20; authored interest and drunk behavior stay unchanged.",
+            )
+        } else {
+            (
+                "item_tooltip.ale.classic",
+                "Visible outdoor enemies need authored beer interest; drunk enemies accept.",
+            )
+        }),
         Action::Purse if previews.purse_effect => Some((
             "item_tooltip.purse.effect",
             "Scatters 5 coins worth £50; visible outdoor enemies need money interest.",
@@ -3769,6 +3801,37 @@ mod tests {
                 .expect("net crumple explanation");
         assert!(crumple_text.contains("crumple"));
         assert!(!crumple_text.contains("within 40"));
+    }
+
+    #[test]
+    fn item_tooltips_explain_selective_net_and_reliable_ale_without_changing_previews() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let net_preview = ItemPreviewConfig {
+            net_capture_area: true,
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, net_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::default(), net_preview)
+                .expect("selective net explanation");
+        assert!(net_text.contains("skipped"));
+        assert!(net_text.contains("terrain can crumple"));
+        assert!(!net_text.contains("people can crumple"));
+
+        let ale_preview = ItemPreviewConfig {
+            ale_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, reliable_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::default(), ale_preview)
+                .expect("reliable ale explanation");
+        let (_, classic_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::classic(), ale_preview)
+                .expect("classic ale explanation");
+        assert!(reliable_text.contains("potency 20"));
+        assert!(classic_text.contains("authored beer interest"));
     }
 
     #[test]

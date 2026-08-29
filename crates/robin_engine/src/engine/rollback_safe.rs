@@ -2822,6 +2822,20 @@ impl Engine {
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
     fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
+        self.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.mission_start_sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.sim_config.noise_distraction_feedback = false;
+        self.inner
+            .control
+            .mission_start_sim_config
+            .noise_distraction_feedback = false;
+        for (_, entity) in self.inner.world.entities.actors_mut() {
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.ale_reliable_distraction = false;
+            }
+        }
         self.inner.control.rng.replace_original_replay(draws);
     }
 
@@ -3926,6 +3940,33 @@ mod tests {
         )
         .expect("construct frame API fixture");
         (engine, assets)
+    }
+
+    #[test]
+    fn item_rules_apply_on_the_command_frame_and_survive_native_snapshot() {
+        let (mut engine, assets) = frame_api_fixture();
+        let rules = crate::gameplay_config::ItemGameplayConfig {
+            apple_combat_interrupt: true,
+            wasp_reliable_acquisition: false,
+            stone_ground_distraction: true,
+            stone_longer_range: false,
+            net_selective_immunity: true,
+            ale_reliable_distraction: false,
+        };
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig { config: rules }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("item rules command frame");
+        assert_eq!(engine.sim_config().item_gameplay, rules);
+
+        let restored = Engine::decode_native_snapshot(&engine.encode_native_snapshot())
+            .expect("decode item rules snapshot");
+        assert_eq!(restored.sim_config().item_gameplay, rules);
     }
 
     #[test]

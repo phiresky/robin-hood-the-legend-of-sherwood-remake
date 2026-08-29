@@ -442,6 +442,15 @@ A list of which additional features we have added, which ones we might still wan
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
+- Item reliability rebalances are implemented as independent Gameplay
+  settings. Direct apples can interrupt active swordfights; wasps acquire
+  valid initial targets within 75 instead of 50 units; Will Scarlet's stone
+  can use the sibling throwable base range 300 instead of its shipped 200;
+  resistant VIPs/riders/Stuteley are skipped while a net catches other people
+  in its original strict 40-unit circle; and outdoor non-VIP soldiers with
+  authored beer value zero accept ale at minimum potency 20. Positive authored
+  beer, net terrain crumpling, ally capture, and purse behavior are unchanged.
+  Each rule defaults on independently; Original-parity sessions force them off.
 - Ground-targeted stone noise distractions are implemented. With the
   independent gameplay toggle enabled, a real Stone projectile may target
   valid ground and emits one deterministic 240-unit noise stimulus on its

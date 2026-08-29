@@ -368,4 +368,78 @@ mod tests {
         assert!(config.item_previews.net_capture_area);
         assert!(!config.item_previews.net_crumple_prediction);
     }
+
+    #[test]
+    fn every_item_mechanic_can_be_disabled_without_disabling_a_sibling() {
+        let enabled = ItemGameplayConfig::default();
+        let variants = [
+            ItemGameplayConfig { apple_combat_interrupt: false, ..enabled },
+            ItemGameplayConfig { wasp_reliable_acquisition: false, ..enabled },
+            ItemGameplayConfig { stone_ground_distraction: false, ..enabled },
+            ItemGameplayConfig { stone_longer_range: false, ..enabled },
+            ItemGameplayConfig { net_selective_immunity: false, ..enabled },
+            ItemGameplayConfig { ale_reliable_distraction: false, ..enabled },
+        ];
+        for variant in variants {
+            assert_eq!(
+                [
+                    variant.apple_combat_interrupt,
+                    variant.wasp_reliable_acquisition,
+                    variant.stone_ground_distraction,
+                    variant.stone_longer_range,
+                    variant.net_selective_immunity,
+                    variant.ale_reliable_distraction,
+                ]
+                .into_iter()
+                .filter(|enabled| *enabled)
+                .count(),
+                5
+            );
+        }
+    }
+
+    #[test]
+    fn every_item_preview_can_be_disabled_without_disabling_a_sibling() {
+        let enabled = ItemPreviewConfig::default();
+        let variants = [
+            ItemPreviewConfig { apple_effect: false, ..enabled },
+            ItemPreviewConfig { stone_direct_effect: false, ..enabled },
+            ItemPreviewConfig { stone_distraction_area: false, ..enabled },
+            ItemPreviewConfig { net_capture_area: false, ..enabled },
+            ItemPreviewConfig { net_crumple_prediction: false, ..enabled },
+            ItemPreviewConfig { ale_effect: false, ..enabled },
+            ItemPreviewConfig { purse_effect: false, ..enabled },
+            ItemPreviewConfig { wasp_area: false, ..enabled },
+        ];
+        for variant in variants {
+            assert_eq!(
+                [
+                    variant.apple_effect,
+                    variant.stone_direct_effect,
+                    variant.stone_distraction_area,
+                    variant.net_capture_area,
+                    variant.net_crumple_prediction,
+                    variant.ale_effect,
+                    variant.purse_effect,
+                    variant.wasp_area,
+                ]
+                .into_iter()
+                .filter(|enabled| *enabled)
+                .count(),
+                7
+            );
+        }
+    }
+
+    #[test]
+    fn original_parity_resolves_item_settings_to_classic() {
+        assert_eq!(
+            ItemGameplayConfig::default().effective_for_original_parity(true),
+            ItemGameplayConfig::classic()
+        );
+        assert_eq!(
+            ItemPreviewConfig::default().effective_for_original_parity(true),
+            ItemPreviewConfig::classic()
+        );
+    }
 }

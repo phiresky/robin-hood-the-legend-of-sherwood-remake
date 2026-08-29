@@ -27,7 +27,14 @@ use crate::position_interface::INVERSE_ASPECT_RATIO_PROJECTILES as INVERSE_ASPEC
 const THROW_ANGLE_BOW: f32 = 0.3;
 
 const THROW_DISTANCE_APPLE: f32 = 300.0 * RANGE_BALANCE_FACTOR;
-const THROW_DISTANCE_STONE: f32 = 200.0 * RANGE_BALANCE_FACTOR;
+const fn stone_throw_distance(longer_range: bool) -> f32 {
+    let base = if longer_range {
+        crate::gameplay_config::REBALANCED_STONE_BASE_THROW_RANGE
+    } else {
+        crate::gameplay_config::CLASSIC_STONE_BASE_THROW_RANGE
+    };
+    base * RANGE_BALANCE_FACTOR
+}
 const THROW_DISTANCE_PURSE: f32 = 300.0 * RANGE_BALANCE_FACTOR;
 const THROW_DISTANCE_NET: f32 = 300.0 * RANGE_BALANCE_FACTOR;
 const THROW_DISTANCE_WASP_NEST: f32 = 300.0 * RANGE_BALANCE_FACTOR;
@@ -2507,7 +2514,9 @@ impl EngineInner {
 
         let throw_radius = match action {
             crate::profiles::Action::Apple => THROW_DISTANCE_APPLE,
-            crate::profiles::Action::Stone => THROW_DISTANCE_STONE,
+            crate::profiles::Action::Stone => {
+                stone_throw_distance(self.control.sim_config.item_gameplay.stone_longer_range)
+            }
             crate::profiles::Action::Purse => THROW_DISTANCE_PURSE,
             crate::profiles::Action::Net => THROW_DISTANCE_NET,
             crate::profiles::Action::WaspNest => THROW_DISTANCE_WASP_NEST,
@@ -3336,5 +3345,14 @@ mod tests {
             (BowTarget::Valid, ShootMode::Normal),
             "when the belt is unavailable, Original falls back to the valid head shot",
         );
+    }
+
+    #[test]
+    fn stone_range_uses_exact_shipped_factor_and_sibling_throwable_base() {
+        assert_eq!(stone_throw_distance(false), 200.0 * 1.153);
+        assert_eq!(stone_throw_distance(true), 300.0 * 1.153);
+        assert_eq!(stone_throw_distance(true), THROW_DISTANCE_APPLE);
+        assert!(stone_throw_distance(false) < 300.0);
+        assert!(stone_throw_distance(true) > 300.0);
     }
 }

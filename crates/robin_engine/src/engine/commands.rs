@@ -1462,9 +1462,43 @@ impl EngineInner {
                 } else {
                     self.control.sim_config.item_gameplay = *config;
                 }
+                let reliable_ale = self
+                    .control
+                    .sim_config
+                    .item_gameplay
+                    .ale_reliable_distraction;
+                for (actor_id, entity) in self.world.entities.actors_mut() {
+                    // Ale completion resolves a SoldierProfile from SoldierData;
+                    // autonomous PC enemies must not gain the soldier-only
+                    // zero-beer eligibility without that completion contract.
+                    let reliable_for_actor = if !reliable_ale {
+                        false
+                    } else if let Entity::Soldier(soldier) = entity {
+                        !assets
+                            .profile_manager
+                            .get_soldier(soldier.soldier.soldier_profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "ale reliability requires missing soldier profile {:?} for {actor_id:?}",
+                                    soldier.soldier.soldier_profile_index,
+                                )
+                            })
+                            .vip
+                    } else {
+                        false
+                    };
+                    if let Some(enemy) = entity.enemy_ai_mut() {
+                        enemy.ale_reliable_distraction = reliable_for_actor;
+                    }
+                }
             }
             SetNoiseDistractionFeedback { enabled } => {
-                self.control.sim_config.noise_distraction_feedback = *enabled;
+                if self.control.rng.original_replay_cursor().is_some() {
+                    tracing::warn!("ignoring stone-feedback command during Original-parity replay");
+                    self.control.sim_config.noise_distraction_feedback = false;
+                } else {
+                    self.control.sim_config.noise_distraction_feedback = *enabled;
+                }
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -5980,6 +6014,114 @@ mod tests {
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
     use crate::sprite::Sprite;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
+
+    #[test]
+    fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .extend([
+                crate::profiles::SoldierProfile::default(),
+                crate::profiles::SoldierProfile {
+                    vip: true,
+                    ..Default::default()
+                },
+            ]);
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            soldier: SoldierData::default(),
+        }));
+        let vip_soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                soldier_profile_index: crate::profiles::SoldierProfileIdx(1),
+                ..Default::default()
+            },
+        }));
+        let autonomous_pc_id = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                autonomous: true,
+                ai: Some(Box::new(crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        }));
+
+        let mut rules = crate::gameplay_config::ItemGameplayConfig::classic();
+        rules.ale_reliable_distraction = true;
+        engine.apply_command(
+            &sim_context,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SetItemGameplayConfig { config: rules },
+        );
+
+        assert!(
+            engine
+                .get_entity(soldier_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test soldier enemy AI")
+                .ale_reliable_distraction
+        );
+        assert!(
+            !engine
+                .get_entity(vip_soldier_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test VIP soldier enemy AI")
+                .ale_reliable_distraction
+        );
+        assert!(
+            !engine
+                .get_entity(autonomous_pc_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test autonomous PC enemy AI")
+                .ale_reliable_distraction
+        );
+    }
 
     #[test]
     fn recorded_failed_group_move_does_not_emit_accept_bark() {

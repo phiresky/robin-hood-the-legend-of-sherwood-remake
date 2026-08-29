@@ -1314,12 +1314,17 @@ fn cursor_for_stone(
                     if item_preview_enabled(engine, host.item_previews.stone_direct_effect)
                         && let Some(center) = target_pos
                     {
+                        let text = if engine.sim_config().item_gameplay.stone_longer_range {
+                            "Stone hit: 10 damage, strong concussion; base range 300"
+                        } else {
+                            "Stone hit: 10 damage, strong concussion; classic base range 200"
+                        };
                         set_item_effect_preview(
                             host,
                             center,
                             None,
                             "item_preview.stone.direct",
-                            "Stone hit: 10 damage and strong concussion",
+                            text,
                             false,
                         );
                     }
@@ -1327,10 +1332,7 @@ fn cursor_for_stone(
                     host.valid_trajectory = false;
                 }
             } else {
-                let ground_allowed = engine
-                    .sim_config()
-                    .item_gameplay
-                    .stone_ground_distraction
+                let ground_allowed = engine.sim_config().item_gameplay.stone_ground_distraction
                     && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
                     && (shift_held
                         || pc_id.is_some_and(|pid| {
@@ -1686,27 +1688,41 @@ fn cursor_for_net(
                         // enhanced crumple prediction on Medium or Hard.
                         host.net_crumpled
                     };
-                    let (key, text) = match (preview_capture, preview_crumple, crumpled) {
-                        (true, true, true) => (
+                    let selective = engine.sim_config().item_gameplay.net_selective_immunity;
+                    let (key, text) = match (preview_capture, preview_crumple, crumpled, selective)
+                    {
+                        (true, true, true, _) => (
                             "item_preview.net.capture_and_crumple",
                             "Net: will crumple here; captures people within 40 when clear",
                         ),
-                        (true, true, false) => (
+                        (true, true, false, true) => (
+                            "item_preview.net.capture_and_clear_selective",
+                            "Net: clear; captures people within 40 including allies; resistant actors skipped",
+                        ),
+                        (true, true, false, false) => (
                             "item_preview.net.capture_and_clear",
                             "Net: clear landing; captures active people within 40 (including allies)",
                         ),
-                        (true, false, _) => (
+                        (true, false, _, true) => (
+                            "item_preview.net.capture_selective",
+                            "Net: captures people within 40 including allies; resistant actors skipped",
+                        ),
+                        (true, false, _, false) => (
                             "item_preview.net.capture",
                             "Net: captures active people within 40 (including allies)",
                         ),
-                        (false, true, true) => (
+                        (false, true, true, _) => (
                             "item_preview.net.crumple",
                             "Net: will crumple at this landing point",
                         ),
-                        (false, true, false) => {
+                        (false, true, false, true) => (
+                            "item_preview.net.clear_selective",
+                            "Net: terrain is clear; resistant actors are skipped",
+                        ),
+                        (false, true, false, false) => {
                             ("item_preview.net.clear", "Net: landing point is clear")
                         }
-                        (false, false, _) => unreachable!("preview gate checked above"),
+                        (false, false, _, _) => unreachable!("preview gate checked above"),
                     };
                     set_item_effect_preview(
                         host,
@@ -1761,12 +1777,17 @@ fn cursor_for_ale(
         // Validate mouse sector (no door, no wall/ladder).
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
             if item_preview_enabled(engine, host.item_previews.ale_effect) {
+                let text = if engine.sim_config().item_gameplay.ale_reliable_distraction {
+                    "Ale: zero-interest outdoor non-VIPs also accept at potency 20; authored/drunk behavior unchanged"
+                } else {
+                    "Ale: visible outdoor enemies need authored beer interest; drunk enemies accept"
+                };
                 set_item_effect_preview(
                     host,
                     mouse_map_pt,
                     None,
                     "item_preview.ale.effect",
-                    "Ale: visible outdoor enemies need beer interest; drunk enemies accept",
+                    text,
                     false,
                 );
             }

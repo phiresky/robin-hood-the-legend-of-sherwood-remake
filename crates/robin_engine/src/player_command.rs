@@ -1103,6 +1103,30 @@ mod tests {
     }
 
     #[test]
+    fn item_gameplay_command_roundtrips_for_replay_and_network() {
+        let command = PlayerCommand::SetItemGameplayConfig {
+            config: crate::gameplay_config::ItemGameplayConfig {
+                apple_combat_interrupt: true,
+                wasp_reliable_acquisition: false,
+                stone_ground_distraction: true,
+                stone_longer_range: false,
+                net_selective_immunity: true,
+                ale_reliable_distraction: false,
+            },
+        };
+        let native = bitcode::encode(&command);
+        let decoded_native: PlayerCommand = bitcode::decode(&native).expect("decode item command");
+        let json = serde_json::to_string(&command).expect("serialize item command");
+        let decoded_json: PlayerCommand = serde_json::from_str(&json).expect("decode item JSON");
+        for decoded in [decoded_native, decoded_json] {
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded item command"),
+                serde_json::to_value(&command).expect("serialize source item command")
+            );
+        }
+    }
+
+    #[test]
     fn queued_quick_action_rejects_truncated_current_payloads() {
         let command = PlayerCommand::QueueQuickAction {
             action: Action::Hit,

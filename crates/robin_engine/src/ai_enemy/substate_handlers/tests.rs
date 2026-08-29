@@ -121,6 +121,37 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
 }
 
 #[test]
+fn reliable_ale_only_expands_zero_beer_eligibility_outdoors_for_non_vips() {
+    let mut ai = EnemyAi::new(90);
+    ai.soldier_profile_beer = 0;
+    let outdoors = AiContext {
+        self_is_active: true,
+        in_building: false,
+        ..AiContext::default()
+    };
+    let indoors = AiContext {
+        self_is_active: true,
+        in_building: true,
+        ..AiContext::default()
+    };
+
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    ai.ale_reliable_distraction = true;
+    assert!(ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &indoors, false));
+
+    // VIP profiles cache the new-rule eligibility as false even when the
+    // setting itself is on.
+    ai.ale_reliable_distraction = false;
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    ai.soldier_profile_beer = 35;
+    assert!(
+        ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false),
+        "positive authored beer remains eligible"
+    );
+}
+
+#[test]
 fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(90);

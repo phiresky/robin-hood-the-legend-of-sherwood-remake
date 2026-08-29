@@ -768,10 +768,7 @@ fn resolve_action_left_click(
             // valid ground. It remains a real projectile and consumes one
             // stone; only the impact's AI stimulus differs from an ordinary
             // entity-targeted throw.
-            if engine
-                .sim_config()
-                .item_gameplay
-                .stone_ground_distraction
+            if engine.sim_config().item_gameplay.stone_ground_distraction
                 && engine.is_mouse_sector_valid_for_ground_target(map_pt)
                 && (is_deferred
                     || (valid_trajectory
