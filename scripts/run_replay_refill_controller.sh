@@ -37,7 +37,7 @@ for number in "$max_lanes" "$min_lanes" "$poll_seconds" "$enqueue_seconds" \
     "$scale_up_available_kib" "$scale_down_available_kib" "$timeout_seconds"; do
     [[ "$number" =~ ^[0-9]+$ ]] || exit 2
 done
-(( min_lanes > 0 && max_lanes >= min_lanes && poll_seconds > 0 \
+(( min_lanes >= 0 && max_lanes > 0 && max_lanes >= min_lanes && poll_seconds > 0 \
     && enqueue_seconds >= poll_seconds \
     && scale_up_available_kib > scale_down_available_kib )) || exit 2
 [[ -x "$state_tool" && -x "$worker_script" ]] || exit 2
