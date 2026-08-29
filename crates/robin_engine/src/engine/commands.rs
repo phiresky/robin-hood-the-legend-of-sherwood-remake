@@ -6562,6 +6562,16 @@ mod tests {
 
     #[test]
     fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit() {
+        std::thread::Builder::new()
+            .name("restored-auto-launch-snapshot".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner)
+            .expect("spawn large-stack snapshot regression")
+            .join()
+            .expect("large-stack snapshot regression panicked");
+    }
+
+    fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
         engine.players.seats[0].selection.push(pc_id);
         let sim = crate::sim_rng::test_context();
