@@ -1383,3 +1383,18 @@ aligned through the script offsets that already ship (--entropy-temporal,
   Zero shipped bytes; converter/schema wiring pending (fold into the next
   chunk version bump alongside star-2). Recovering the x-misaligned 38% via
   shifted-pixel-hash contexts is the known follow-up.
+
+## Decode-speed round 2 (2026-08-29)
+
+- Cached the range-coder division between decode_target and commit
+  (bitstream identical): Knight01 decode ~6.5 -> 5.8 s.
+- Capped exclusion (escaped contexts with >256 distinct symbols no longer
+  feed the exclusion set; bitstream change, rides the v10 schema): decode
+  -10..15% for +0.4..0.6% standalone size; variant/sibling/aux streams
+  unchanged within 0.5%. Measured curve at caps 64/128/256 in the
+  EXCL_SOURCE_CAP doc comment. Knight01 5.8 -> 5.5 s, RobinTown ~4.6 ->
+  3.9 s (timings under background load; relative deltas from same-session
+  A/B runs).
+- Still open: parallel chunk decode at install (after the star-2 branch
+  merges; chunks are independent), and exclusion-adjusted Fenwick coding if
+  single-thread decode ever needs another 2x.
