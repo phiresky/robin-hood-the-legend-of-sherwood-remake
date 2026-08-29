@@ -51,6 +51,17 @@ impl GpuResources {
         if let Some(c) = self.sprite_cache.entries.get(&key) {
             return Some((c.width, c.height));
         }
+        // A still-streaming sprite must not enter the permanent cache as a
+        // blank texture — skip the draw; it pops in once its grid lands.
+        if frame_holder.sprite_pixels_pending(bank_id) {
+            let skips = robin_assets::late_sprites::note_skipped_draw();
+            tracing::debug!(
+                bank_id,
+                skips,
+                "skipped draw: sprite pixels still streaming"
+            );
+            return None;
+        }
         let w = frame_holder.sprite_width(bank_id);
         let h = frame_holder.sprite_height(bank_id);
         if w == 0 || h == 0 {
@@ -107,6 +118,16 @@ impl GpuResources {
         let key = outline_cache_key(bank_id, variant, shadow_color);
         if let Some(c) = self.sprite_cache.entries.get(&key) {
             return Some((c.width, c.height));
+        }
+        // See `ensure_sprite_cached`: never cache a still-streaming sprite.
+        if frame_holder.sprite_pixels_pending(bank_id) {
+            let skips = robin_assets::late_sprites::note_skipped_draw();
+            tracing::debug!(
+                bank_id,
+                skips,
+                "skipped draw: sprite pixels still streaming"
+            );
+            return None;
         }
 
         let w = frame_holder.sprite_width(bank_id);

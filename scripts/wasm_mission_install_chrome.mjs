@@ -110,6 +110,20 @@ try {
 
 let bootAt = null;
 let done = false;
+let activatedAt = null;
+let inGameAt = null;
+// Lazy character-chunk streaming: activation can precede the deferred
+// sprite-decode tail. When the install announces a deferred tail, keep the
+// page alive until the tail's completion line so its duration is measured.
+let tailExpected = false;
+let tailDone = false;
+const maybeFinish = () => {
+    if (done || activatedAt === null || inGameAt === null) return;
+    if (tailExpected && !tailDone) return;
+    done = true;
+    // Give trailing logs a moment, then finish.
+    setTimeout(() => finish(0), 1500);
+};
 const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (isolated) {
@@ -125,13 +139,23 @@ const server = createServer((req, res) => {
             for (const line of JSON.parse(body)) {
                 console.log(`[page] ${line}`);
                 if (line.includes('boot t0')) bootAt = performance.now();
-                if (line.includes('activated shipping mission') && bootAt !== null && !done) {
-                    done = true;
-                    const secs = ((performance.now() - bootAt) / 1000).toFixed(1);
-                    console.log(`RESULT: mission installed ${secs}s after wasm_boot`);
-                    // Give trailing logs a moment, then finish.
-                    setTimeout(() => finish(0), 1500);
+                const secs = () => ((performance.now() - bootAt) / 1000).toFixed(1);
+                if (line.includes('activated shipping mission') && bootAt !== null
+                    && activatedAt === null) {
+                    activatedAt = performance.now();
+                    console.log(`RESULT: mission installed ${secs()}s after wasm_boot`);
                 }
+                if (line.includes('deferred sprite chunks')) tailExpected = true;
+                if (line.includes('background sprite streaming complete') && bootAt !== null
+                    && !tailDone) {
+                    tailDone = true;
+                    console.log(`RESULT: sprite streaming tail complete ${secs()}s after wasm_boot`);
+                }
+                if (line.includes('Recording replay') && bootAt !== null && inGameAt === null) {
+                    inGameAt = performance.now();
+                    console.log(`RESULT: in-game (recording replay) ${secs()}s after wasm_boot`);
+                }
+                maybeFinish();
             }
         });
         return;

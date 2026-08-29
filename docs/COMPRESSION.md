@@ -1928,3 +1928,58 @@ also gained a boot progress bar (streamed byte progress through engine
 download/compile, assets, datadir, boot) and, for static hosts, the
 coi-serviceworker so threads work on GitHub Pages after one automatic
 first-visit reload.
+
+## Lazy character-chunk streaming: activate before the decode tail (2026-08-29)
+
+The browser install no longer waits for every VQ sprite chunk before
+activating the mission. Chunks are partitioned at install time
+(`SpriteDeferral` in `crates/robin_rs/src/shipping_mission.rs`):
+
+- **Critical (blocks activation)**: everything referenced by entities
+  present at mission start — the mission team, the level's authored
+  soldiers/civilians/PCs-to-rescue, all mission-core chunks (targets,
+  patches, animations, objects, Blip00), plus any family-hub chunk a
+  critical chunk names as a coding base (`base_rhs`/`base2_rhs`
+  promotion runs to a fixpoint, so hub-before-variant ordering is
+  preserved).
+- **Deferred (streams after activation)**: reinforcement-only gang
+  characters — uninstanced non-VIP gang profiles whose RHS is not also
+  needed by the team or the level. Unknown/ambiguous chunks default to
+  critical, so a misjudgment can only delay activation, never a
+  start-visible sprite.
+
+After `install_mission`, a `spawn_local` driver streams the deferred
+chunks on the same rayon worker pool (strict dependency dispatch on a
+sparse `Arc`-shared row clone) and publishes each decoded grid through
+the new `robin_assets::late_sprites` registry: every not-yet-decoded VQ
+row in the live `FrameHolder` holds a shared `OnceLock` cell
+(`PackedSprite::late_grid`), so grids appear to rendering and mouse
+hit-testing in place, with no frame-holder republish. A draw that races
+a pending grid degrades safely: `ensure_sprite_cached`/
+`ensure_outline_cached` skip (and crucially do not cache) the sprite
+with a `skipped draw: sprite pixels still streaming` debug line, the
+`uncompress_frame*` family paints transparent instead of panicking, and
+`is_pixel_opaque` reports transparent. Determinism is untouched — the
+simulation never reads pixel data; the only pixel consumers are the
+renderer and host-side mouse focus, whose *results* are recorded into
+the replay command stream. Post-activation decode failures warn and
+leave those sprites skipped; a superseding mission install invalidates
+the tail via a registry epoch. Serial (non-cross-origin-isolated) and
+native installs keep the old fully-blocking behavior. Mission restarts
+reuse the registry cells, so a finished tail survives re-entry.
+
+The loading bar is now work-weighted instead of files-counted: fetch
+progress by bytes received (bodies read through `ReadableStream`
+readers with `Content-Length` learned from the parallel headers; totals
+reconciled to actual body sizes), decode progress by critical VQ blob
+bytes materialized (weight 6.0 per byte vs. one network byte), combined
+into one monotonic fraction (`InstallWorkModel`, reported as n/100 work
+units through the existing `MissionLoadProgress` interface, with a
+150 ms ticker so the bar moves during long bodies). After activation,
+the deferred tail reports honest blob-byte progress as a small
+"Streaming sprites N% (done/total)" HUD line (`hud_text.rs`,
+`late_sprites::tail_status`) until it completes.
+
+No shipping formats changed: same magics (`RHDDNA12`/`RHMISN07`), no
+converter changes, `shipping_datadir.rs` untouched — the partition and
+driver reuse the existing `VqDecodeScheduler` entry points.
