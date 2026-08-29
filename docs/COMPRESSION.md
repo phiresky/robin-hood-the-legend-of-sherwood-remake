@@ -1455,3 +1455,72 @@ verifier additionally gained a dependency-closure check: for every mission
 / character-profile / saved-world list it asserts the listed chunks
 provide every base/base2 sprite id the listed variant chunks reference
 (the merged verify alone cannot catch a missing hub edge).
+
+## Shipped self-refs, usage-weighted hubs, and the v10 browser measurement (2026-08-29)
+
+Production wiring landed for the remaining v10 pieces:
+
+- **Self-referential aux contexts ship at zero bytes.** Standalone chunks
+  (hub or family-less) derive temporal/adjacent-direction tile predictions
+  from the `RhsData` script metadata already in the payload
+  (`derive_chunk_self_refs`): pass 1 links each animation frame to its
+  temporal predecessor, pass 2 falls back to the same frame in an adjacent
+  direction; refs must be tile-aligned (`dx % 4 == 0`) and causal
+  (`ref_id < cur_id`). The decoder resolves them against its own earlier
+  output, so the bitstream carries only a `self_refs` flag per chunk.
+- **Family hubs are picked by mission usage.** Among members whose
+  standalone (or pair) cost is within 5% of the best
+  (`FAMILY_HUB_PROXY_TOLERANCE = 1.05`), the converter now picks the one
+  required by the most mission builds, so first-load closures pull hubs
+  the mission needs anyway instead of an unused proxy (Guard A05 → A01,
+  Archer01 → Archer02, …).
+- `--prune-unreferenced` (probe): `convert_datadir --resume` leaves the
+  previous run's content-addressed chunks behind when content changes;
+  this deletes everything no manifest list references (42 orphans,
+  32.4 MB, after the hub reselection).
+
+Fullgame web recipe (q80 JXL, Opus, windowLog 30), rhs bucket:
+
+```
+v10 star-2 (proxy hubs, no aux)    96,658,119 B
+v10 + self-refs + usage hubs       94,677,379 B   (-1,980,740 B, -2.0%)
+v8-era zstd chunks                193.7 MB        (2.05x overall)
+```
+
+verify-shipping: 223 chunks (133 VQ blobs, 75,044,019 blob bytes),
+402,303 sprites, 1,101,554,622 pixels — identical to the source bank;
+dependency-closure check green.
+
+**H01_Lin_VL browser measurement** (fresh-profile headless Chrome,
+localhost, same accounting as the schema-v8 run):
+
+```
+                                   v8 (2026-08-28)    v10 (2026-08-29)
+wasm gzip + bindgen JS gzip         4,633,216 B        5,921,549 B
+shell + preload manifest + overlay    208,845 B          272,776 B
+boot datadir                        9,352,150 B        9,324,395 B
+blocking mission files             26,142,522 B (59)  24,857,987 B (73)
+audio played through startup        1,322,900 B        1,322,900 B
+total through first-mission        41,659,633 B       41,699,607 B
+```
+
+The 1.28 MB blocking-set win is offset by 1.29 MB of wasm growth (present
+before this campaign's codec work; the wasm was 4.63 MB gzip at v8 and
+5.90 MB at current HEAD — needs its own bisection). The mission pulls 73
+files instead of 59 because family variants now ride with their hub
+chunks; usage-weighted hubs removed the pure dependency tax (A05) but the
+mission uses most family members anyway, so H01's closure moved only
+-1.3 MB. The global rhs halving pays off on later missions and full
+predownload, not mission 1.
+
+Load time, measured for the first time (12-core desktop, software GL,
+localhost so transfer is ~free): navigation → in-game (replay recording
+starts) = **71.6 s**, of which 61.7 s is the single-threaded wasm VQ
+context-model decode of the 68 blocking rhs chunks (fetch 5.5 s, boot
+1.5 s, session setup 4.5 s). v8 was never timed, but its chunk decode was
+plain zstd (the same path that inflates the 9.3 MB boot datadir in ~1 s),
+so v8's equivalent figure is ~10-15 s. **Wasm decode speed is now the
+gating cost of the codec**, worth roughly its own workstream: wasm
+threads, further codec hot-path work, decode-cost-aware chunk format
+choice (keep first-mission closures on plain zstd), or lazy/streamed
+chunk install behind the loading screen.

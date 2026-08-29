@@ -102,6 +102,14 @@ struct Cli {
     #[arg(long)]
     mission_closure: Vec<String>,
 
+    /// Delete files under a converted shipping tree's `rhs/` and `missions/`
+    /// that no manifest list references. `convert_datadir --resume` leaves
+    /// the previous run's content-addressed chunks behind when their content
+    /// (and thus hash) changes; those orphans break whole-directory merges
+    /// like --verify-shipping.
+    #[arg(long)]
+    prune_unreferenced: Option<PathBuf>,
+
     /// Context-mixing prototype (PAQ-lite): binary-decompose tile indices
     /// and code each bit with a logistic mix of order-2/order-1/order-0
     /// adaptive predictors. Exact cost accounting, no bitstream.
@@ -2367,6 +2375,41 @@ fn mix(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
 }
 
 /// Blocking-download accounting for one mission of a converted tree.
+fn prune_unreferenced(data_out: &std::path::Path) -> Result<()> {
+    use robin_assets::shipping_datadir::ShippingDatadir;
+    let dd = ShippingDatadir::load_from_file(&data_out.join("datadir.bin"))?;
+    let mut referenced = HashSet::<String>::new();
+    for mission_ref in dd.missions.values() {
+        referenced.extend(mission_ref.files.iter().cloned());
+    }
+    for files in dd.character_rhs_files.values() {
+        referenced.extend(files.iter().cloned());
+    }
+    referenced.extend(dd.saved_world_rhs_files.iter().cloned());
+    let mut removed = (0usize, 0u64);
+    for bucket in ["rhs", "missions"] {
+        let dir = data_out.join(bucket);
+        for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+            let entry = entry?;
+            let rel = format!("{bucket}/{}", entry.file_name().to_string_lossy());
+            if !referenced.contains(&rel) {
+                let size = entry.metadata()?.len();
+                fs::remove_file(entry.path())?;
+                println!("  pruned {rel} ({size} bytes)");
+                removed.0 += 1;
+                removed.1 += size;
+            }
+        }
+    }
+    println!(
+        "## prune-unreferenced {}: removed {} orphaned files, {} bytes",
+        data_out.display(),
+        removed.0,
+        removed.1
+    );
+    Ok(())
+}
+
 fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
     use robin_assets::shipping_datadir::ShippingDatadir;
     let manifest_path = data_out.join("datadir.bin");
@@ -2402,7 +2445,14 @@ fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
     let mut sized: Vec<(u64, &String)> = mission_ref
         .files
         .iter()
-        .map(|rel| (fs::metadata(data_out.join(rel)).map(|m| m.len()).unwrap_or(0), rel))
+        .map(|rel| {
+            (
+                fs::metadata(data_out.join(rel))
+                    .map(|m| m.len())
+                    .unwrap_or(0),
+                rel,
+            )
+        })
         .collect();
     sized.sort_unstable_by(|a, b| b.cmp(a));
     for (size, rel) in sized.iter().take(20) {
@@ -2500,6 +2550,9 @@ fn main() -> Result<()> {
             .split_once(':')
             .ok_or_else(|| anyhow!("--code2 wants A:B, got {pair}"))?;
         code2(&holder, &cli.data_dir, a, b)?;
+    }
+    if let Some(dir) = &cli.prune_unreferenced {
+        prune_unreferenced(dir)?;
     }
     if let Some(dir) = &cli.verify_shipping {
         verify_shipping(&holder, dir)?;
