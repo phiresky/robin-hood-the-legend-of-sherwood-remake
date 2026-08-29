@@ -11,7 +11,6 @@
 mod ai;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod ale;
-mod allied_control;
 mod animation;
 pub(crate) mod anti_collision;
 mod beggar;
@@ -21,6 +20,7 @@ mod commands;
 mod console_dispatch;
 mod corpse_intersection;
 mod display_state;
+mod tactical_control;
 pub use display_state::DrawOrder;
 mod door_pass;
 #[cfg(test)]
@@ -700,7 +700,10 @@ impl EngineInner {
                 let Entity::Pc(pc) = self.world.entities.get(pc_id)? else {
                     return None;
                 };
-                if !pc.pc.playable {
+                if !pc.pc.playable
+                    || pc.pc.command_interface
+                        != crate::human_control::CommandInterface::HeroActions
+                {
                     return None;
                 }
                 let priority = assets
@@ -4166,20 +4169,32 @@ impl EngineInner {
     /// Single-player host code (HUD, renderer, input translation)
     /// always reads this accessor — there's only one seat in
     /// single-player and it's the host.  Multi-seat callers should use
-    /// [`Self::seat_selection`] with their own
+    /// [`Self::hero_selection`] with their own
     /// [`crate::player_command::PlayerId`].
-    pub fn selected_pc_ids(&self) -> &[EntityId] {
+    pub fn selected_hero_ids(&self) -> &[EntityId] {
         &self.players.seats[0].selection
     }
 
     /// Selection for a specific seat, or `&[]` if the seat hasn't
     /// joined yet.  Multi-seat read path.
-    pub fn seat_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
+    pub fn hero_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
         self.players
             .seats
             .get(player_id.0 as usize)
             .map(|s| s.selection.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Logical selection across both command surfaces. The two slices remain
+    /// physically separate for save/replay compatibility, but gameplay which
+    /// applies to every player-commandable actor should consume this view.
+    pub fn controlled_selection(
+        &self,
+        player_id: crate::player_command::PlayerId,
+    ) -> impl Iterator<Item = &EntityId> {
+        self.hero_selection(player_id)
+            .iter()
+            .chain(self.tactical_selection(player_id))
     }
 
     /// Look up [`SeatState`] for a `PlayerId`.  `None` when the seat
@@ -4249,15 +4264,13 @@ impl EngineInner {
         false
     }
 
-    /// `true` when a hero or directly controlled allied selection for this
+    /// `true` when any player-commandable selection for this
     /// seat has at least one entity eligible for the persistent ground ring.
     pub fn any_selection_drawing_selection_mark(
         &self,
         seat: crate::player_command::PlayerId,
     ) -> bool {
-        self.seat_selection(seat)
-            .iter()
-            .chain(self.allied_selection(seat))
+        self.controlled_selection(seat)
             .copied()
             .any(|id| self.pc_draws_selection_mark(id))
     }
@@ -5228,7 +5241,7 @@ impl EngineInner {
     /// 1. Look up the PC by profile index.
     /// 2. Clear it from the current selection (forwards
     ///    `MSG_UNSELECT_CHARACTER`).  `remove_entity` would retain it
-    ///    out of `selected_pc_ids` too, but doing it here keeps any
+    ///    out of `selected_hero_ids` too, but doing it here keeps any
     ///    intermediate inspection consistent.
     /// 3. Flag the PC as no longer playable (`SetPlayable(false)`).
     /// 4. Detach the entity slot from all ID lists
@@ -5660,7 +5673,7 @@ impl EngineInner {
         // against the per-PC `interface_hidden` / `playable` /
         // life-points flags.  The HUD is immediate-mode and re-derives
         // every frame, so the only state that can drift is
-        // `selected_pc_ids` itself — serde restored it as it was at
+        // `selected_hero_ids` itself — serde restored it as it was at
         // save time, but the per-PC `interface_hidden` / `playable`
         // flags also restored from disk may now be inconsistent with
         // the cached selection (e.g. a mid-recording quick-save where

@@ -7,5 +7,5 @@
   "uploaded": "Aug 27, 2026",
   "tags": ["Hackable", "Test"],
   "description": "Four mutually hostile allegiances field twelve soldiers each on a spacious obstacle-free battlefield, with three soldiers of each of four profiles per faction.",
-  "hackable_mission": "MultiTeamFourArmies"
+  "hackable_missions": ["MultiTeamFourArmies"]
 }

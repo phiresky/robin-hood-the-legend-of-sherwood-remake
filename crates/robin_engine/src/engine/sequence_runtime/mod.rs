@@ -2717,7 +2717,7 @@ impl AvailabilityImmediateContext<'_> {
                 if let Some(owner) = owner
                     && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
                 {
-                    pc.playable = available;
+                    pc.set_playable(available);
                     let message = if available {
                         crate::messenger::PcMessage::EnableCharacter
                     } else {
@@ -3244,6 +3244,44 @@ mod sequence_phase_context_tests {
                 }
             ] if *id == owner && *action_id == owner
         ));
+    }
+
+    #[test]
+    fn making_a_rescue_hero_available_joins_the_player_party() {
+        use crate::sequence::{Field, FieldValue, SequenceElement};
+
+        let mut engine = EngineInner::new();
+        let mut entity = shield_pc(crate::element::ActionState::Waiting);
+        let pc = entity.pc_data_mut().expect("test hero");
+        pc.playable = false;
+        pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.mission_role = crate::human_control::MissionRole::RescueTarget;
+        let owner = engine.add_entity(entity);
+        let mut character =
+            SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
+        character.set_property(Field::CharacterAvailable, FieldValue::Bool(true));
+        let sequence = engine.orders.sequence_manager.launch_element(character);
+
+        AvailabilityImmediateContext {
+            entities: &mut engine.world.entities,
+            messenger: &mut engine.orders.messenger,
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(Command::CharacterAvailable, sequence, 0);
+
+        let pc = engine
+            .get_entity(owner)
+            .and_then(Entity::pc_data)
+            .expect("available rescue hero");
+        assert!(pc.playable);
+        assert_eq!(
+            pc.command_interface,
+            crate::human_control::CommandInterface::HeroActions
+        );
+        assert_eq!(
+            pc.mission_role,
+            crate::human_control::MissionRole::PlayerParty
+        );
     }
 
     #[test]

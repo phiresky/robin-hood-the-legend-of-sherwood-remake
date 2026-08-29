@@ -10,5 +10,5 @@
     "Test"
   ],
   "description": "Ten mutually hostile allegiances, one soldier in each team.",
-  "hackable_mission": "MultiTeamTenWay"
+  "hackable_missions": ["MultiTeamTenWay"]
 }

@@ -648,7 +648,8 @@ impl EngineInner {
             );
 
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let officer_id = EntityId::Soldier(SoldierId(officer));
+            let officer_id =
+                self.expect_human_id_for_ai_handle(officer, "reporting Charly's officer");
             let officer_building_sector = self
                 .world
                 .entities
@@ -689,7 +690,7 @@ impl EngineInner {
                 assets,
             );
 
-            let charly_id = EntityId::Soldier(SoldierId(charly));
+            let charly_id = self.expect_human_id_for_ai_handle(charly, "officer-report Charly");
             let charly_building_sector = self
                 .world
                 .entities

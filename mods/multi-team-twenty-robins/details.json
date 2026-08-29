@@ -7,5 +7,5 @@
   "uploaded": "Aug 27, 2026",
   "tags": ["Hackable", "Battle"],
   "description": "Ten forest Robins and ten town-disguise Robins meet twenty advanced Black Knights in two compact, inward-facing formations on open ground.",
-  "hackable_mission": "MultiTeamTwentyRobins"
+  "hackable_missions": ["MultiTeamTwentyRobins"]
 }

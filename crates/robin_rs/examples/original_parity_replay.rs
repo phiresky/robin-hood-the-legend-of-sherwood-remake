@@ -1405,7 +1405,7 @@ impl TraceCommand {
                 // The Original resolves the action-bar shortcut against
                 // the single selected PC and does nothing at all for any
                 // other selection cardinality.
-                match engine.selected_pc_ids() {
+                match engine.selected_hero_ids() {
                     [pc_id] => PlayerCommand::SelectAction {
                         pc_id: *pc_id,
                         action_index: index,
@@ -3440,7 +3440,7 @@ impl VisualReplay {
     /// live keyboard/mouse commands. The trace remains the only input source.
     fn queue_frame(&mut self, engine: &Engine) {
         let focus = engine
-            .selected_pc_ids()
+            .selected_hero_ids()
             .first()
             .and_then(|id| engine.get_entity(*id))
             .or_else(|| {
@@ -9140,10 +9140,10 @@ fn compare_frame(
         .copied()
         .map(|id| entity_map.translate(id))
         .collect();
-    if engine.selected_pc_ids() != selected {
+    if engine.selected_hero_ids() != selected {
         differences.push(format!(
             "selected_pcs: original={selected:?} rust={:?}",
-            engine.selected_pc_ids()
+            engine.selected_hero_ids()
         ));
     }
 

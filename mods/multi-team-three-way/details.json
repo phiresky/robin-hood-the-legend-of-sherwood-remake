@@ -10,5 +10,5 @@
     "Test"
   ],
   "description": "Three mutually hostile soldier allegiances in a compact arena.",
-  "hackable_mission": "MultiTeamThreeWay"
+  "hackable_missions": ["MultiTeamThreeWay"]
 }

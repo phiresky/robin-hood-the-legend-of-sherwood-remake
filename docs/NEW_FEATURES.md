@@ -15,7 +15,7 @@ A list of which additional features we have added, which ones we might still wan
   Hackable descriptors also accept `spawn_player`, `soldiers`, and `pcs`;
   soldier `profile` values may use readable CPF-filename identifiers such as
   `guard_a01` (legacy numeric indices remain accepted);
-  autonomous PCs with `aggressive_combat: true` run through the normal enemy
+  AI-controlled heroes with `decision_policy: "enemy_ai"` run through the normal enemy
   perception, pursuit, target-reacquisition, and battle-decision lifecycle
   instead of receiving one-off mission-start pairings. Their required readable
   `ai_profile` (for example `soldier_b04`) selects the behavior personality;
@@ -30,6 +30,20 @@ A list of which additional features we have added, which ones we might still wan
   soldier retinues.
   Diplomacy beyond the current
   different-ID-is-hostile rule remains a future extension.
+
+- **Orthogonal human-actor roles and control.** `Pc`, `Soldier`, and
+  `Civilian` now describe body/profile archetypes only. Runtime and hackable
+  level data independently describe decision ownership (`player_directed`,
+  `enemy_ai`, `friendly_ai`, or `scripted`), the player command surface
+  (`hero_actions`, `tactical_orders`, or `none`), mission bookkeeping role,
+  combat stance, and allegiance. This permits AI heroes and tactically
+  commandable soldiers or villains without pretending that body type or camp
+  determines control. Legacy RHM Royalist troop commandability and the old
+  custom-level `autonomous`/`aggressive_combat` fields are translated once at
+  load time. Existing replay command names and structured snapshot keys remain
+  readable for compatibility. Rescue heroes explicitly transition from
+  `rescue_target`/no commands to `player_party`/hero actions when the original
+  `CharacterAvailable(true)` sequence fires.
 
 - **Mission-selective shipping data.** Converted shipping datadirs now contain
   a compact boot manifest plus independently compressed mission cores and
@@ -112,10 +126,30 @@ A list of which additional features we have added, which ones we might still wan
   mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
   with `--proto <map>` when the mission and proto-level basenames differ.
 
-- **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
-  game option enables direct control of active green/Royalist soldiers. Click
+- **Optional tactical-unit control.** A persistent `Control Tactical Units`
+  game option enables high-level control of actors whose level data exposes
+  `command_interface: "tactical_orders"`, independently of allegiance. Click
   or drag a selection box to create a temporary portrait beside the heroes;
-  its illustrated pin button preserves an individual or group portrait. Allied portraits
+  its illustrated pin button preserves an individual or group portrait.
+  Named soldier profiles can supply dedicated 112x50 visage art; Guy of
+  Guisbourne, Longchamp, Prince John, Scathlock, and the Sheriff use portraits
+  cropped from the Original's dialogue resources, while ordinary and mixed
+  groups retain the helmet portrait. The bundled `mods/five-villains` custom
+  mission remixes the original Save Stuteley mission: Guy starts in Robin's
+  place and frees the other four villains from its original prisoner slots.
+  Legacy roster mods can preserve compiled-script actor indices while
+  overriding beam-me, rescue-PC, and tied-prisoner visuals. A per-mission
+  `.text.patch.json` can override popup, short-briefing, and dialogue strings
+  while retaining the base mission's descriptor pictures and timing.
+  Mod-added character profiles keep their visible name and NPC exclamation
+  bank separate from the internal RHS profile key, so promoted villains retain
+  their own voices. NPC sprite sets used as PCs also fall back to compatible
+  authored attack rows for target interactions they do not natively animate.
+  Promoted NPCs can import their retail soldier combat statistics while
+  retaining a playable character template's action layout. Mods can remove
+  inherited contextual actions unsupported by the NPC sprite; Five Villains
+  disables wall jumping while retaining authored ladder climbing.
+  Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
   and type-aware line, box, staggered, and flank formations. Selecting soldiers
   visualizes both player-issued patrols and authored mission patrol paths as an
@@ -126,8 +160,11 @@ A list of which additional features we have added, which ones we might still wan
   central positions. When heroes move with the selection, soldiers deploy
   behind them instead of overlapping their formation. Long moves automatically
   narrow to a two-wide marching column before deploying at the destination.
+  Double-click runs allied soldiers even when a drag selection also contains a
+  hero.
   Controlled soldiers can enter swordfights, execute the normal drawn strike
-  gestures, and parry with right-click. Combat autonomy follows stance: Hold
+  gestures, and parry once while releasing the allied selection with
+  right-click. Combat autonomy follows stance: Hold
   permits only explicit gestures, smalltalk, and reactive parries; Defensive
   returns attacks without AI pursuit; Aggressive retains full combat AI.
   Explicit gestures supersede combat work the soldier AI had already queued. Hover
@@ -371,12 +408,24 @@ A list of which additional features we have added, which ones we might still wan
 - Overlay mods can append soldier profiles through
   `Data/Configuration/soldier-profiles.patch.json` without replacing the
   retail CPF profile table.
+- Added profiles may specify `progression_from` alongside their `template` to
+  extrapolate one additional combat-stat tier from two adjacent retail tiers.
+  This supports elite variants beyond the original black-guard ceiling while
+  retaining each unit role's established progression.
+- Readable soldier identifiers use normalized CPF filenames. When the retail
+  CPF repeats a filename, hackable levels retain the original numeric identity
+  with `<name>__<cpf-index>` (for example `archer05__47`) instead of silently
+  choosing one record.
 - Hackable RHS manifests explicitly select `rgba` or `legacy_color_keys` PNG
   semantics. Legacy green transparency and blue cast-shadow masks remain
   available to ambience-aware rendering instead of being baked into alpha.
 - One overlay mod may expose multiple hackable missions through the
   `hackable_missions` array, and large character packs may opt into
   mission-scoped sprite loading.
+- Native builds compile each hackable `.rhs.d` PNG tree into an atomic,
+  zstd-compressed runtime cache beside its manifest. Cache hits reuse packed
+  engine sprites and animation tables; manifest hashes and source file
+  metadata invalidate stale caches automatically.
 
 ### Code Quality
 

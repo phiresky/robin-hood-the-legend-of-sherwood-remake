@@ -27,7 +27,7 @@ const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 
 /// Toggle rows shown on the screen, in display order.
-const OPTION_LABELS: &[&str] = &["Fix Hard Reaction Times", "Control Allied Soldiers"];
+const OPTION_LABELS: &[&str] = &["Fix Hard Reaction Times", "Control Tactical Units"];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
@@ -202,7 +202,7 @@ pub async fn show_gameplay(
 fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
     match idx {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
-        1 => config.control_allied_soldiers = !config.control_allied_soldiers,
+        1 => config.control_tactical_units = !config.control_tactical_units,
         _ => {}
     }
 }
@@ -210,7 +210,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
 fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
     match idx {
         0 => config.fix_hard_reaction_times,
-        1 => config.control_allied_soldiers,
+        1 => config.control_tactical_units,
         _ => false,
     }
 }

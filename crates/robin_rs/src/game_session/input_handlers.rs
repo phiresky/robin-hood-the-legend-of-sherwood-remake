@@ -122,7 +122,7 @@ pub(super) fn handle_gamepad_events(
             QaEvent::LaunchMacroForSelected => {
                 let Some(&pc) = manager
                     .engine
-                    .seat_selection(host.transport.local_seat)
+                    .hero_selection(host.transport.local_seat)
                     .first()
                 else {
                     return;

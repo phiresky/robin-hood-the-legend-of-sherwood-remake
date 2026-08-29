@@ -35,7 +35,9 @@ impl EngineInner {
         let Some(Entity::Pc(pc)) = self.get_entity(id) else {
             return false;
         };
-        if !pc.pc.playable {
+        if !pc.pc.playable
+            || pc.pc.command_interface != crate::human_control::CommandInterface::HeroActions
+        {
             return false;
         }
 
@@ -105,7 +107,7 @@ impl EngineInner {
     ///
     /// When `multi_select` is false, clears the existing selection first.
     ///
-    /// Robin is always inserted at the front so `selected_pc_ids.first()`
+    /// Robin is always inserted at the front so `selected_hero_ids.first()`
     /// consistently resolves to Robin when he is in the selection.
     ///
     /// `speak` fires the `HERO_SELECT` exclamation after a successful add.
@@ -351,7 +353,9 @@ impl EngineInner {
             Some(Entity::Pc(pc)) => (
                 pc.pc.profile_index,
                 !pc.human.opponents.is_empty(),
-                pc.pc.playable,
+                pc.pc.playable
+                    && pc.pc.command_interface
+                        == crate::human_control::CommandInterface::HeroActions,
             ),
             _ => return,
         };
@@ -410,7 +414,9 @@ impl EngineInner {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
                 continue;
             };
-            if !pc.pc.playable {
+            if !pc.pc.playable
+                || pc.pc.command_interface != crate::human_control::CommandInterface::HeroActions
+            {
                 continue;
             }
             let priority = match profiles.get_character(pc.pc.profile_index) {
@@ -1203,7 +1209,10 @@ impl EngineInner {
                 continue;
             };
             // Playable filter.
-            let playable = matches!(entity, Entity::Pc(pc) if pc.pc.playable);
+            let playable = matches!(entity, Entity::Pc(pc)
+                if pc.pc.playable
+                    && pc.pc.command_interface
+                        == crate::human_control::CommandInterface::HeroActions);
             if !playable {
                 continue;
             }
@@ -1243,7 +1252,7 @@ impl EngineInner {
         &self,
         player_id: crate::player_command::PlayerId,
     ) -> bool {
-        self.seat_selection(player_id).iter().any(|&id| {
+        self.hero_selection(player_id).iter().any(|&id| {
             self.get_entity(id)
                 .and_then(|e| e.human_data())
                 .is_some_and(|h| !h.opponents.is_empty())

@@ -1,0 +1,12 @@
+{
+  "initial_character": "Guisbourne",
+  "descriptor_mission": "S01_Not_VL",
+  "rescue_characters": ["Longchamp", "PrinceJohn", "Scatlock", "sherif"],
+  "rescue_directions": [14, 12, 15, 13],
+  "rescue_target_scripts": [
+    "StuelyTarget_8000059d",
+    "MMaTarget_800005c7",
+    "MMbtarget_800005c8",
+    "MMCTarget_800005c9"
+  ]
+}

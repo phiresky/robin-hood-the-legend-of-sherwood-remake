@@ -625,6 +625,10 @@ pub struct CharacterProfile {
     pub index: u32,
     pub filename: String,
     pub profile_name: String,
+    /// Host-facing label for mod-added characters. Retail profiles leave this
+    /// empty and continue to use their localized `CharacterKind` name.
+    #[serde(default)]
+    pub display_name: String,
     pub alternative_profile_name: String,
     pub valid_alternative_profile: bool,
     pub vip: bool,
@@ -911,9 +915,41 @@ impl ProfileManager {
     }
 
     /// Resolve the stable hackable-level identifier derived from a soldier's
-    /// CPF filename (for example `Guard A01` becomes `guard_a01`). Duplicate
-    /// identifiers are rejected rather than silently selecting a variant.
+    /// CPF filename (for example `Guard A01` becomes `guard_a01`).
+    ///
+    /// Original level data identifies soldier profiles by their numeric CPF
+    /// index, so repeated filenames are valid. Hackable JSON keeps the short
+    /// name for unique filenames and disambiguates repeats by appending their
+    /// original index, for example `archer05__47`.
     pub fn soldier_idx_by_identifier(&self, identifier: &str) -> Result<SoldierProfileIdx, String> {
+        if let Some((base, raw_index)) = identifier.rsplit_once("__") {
+            let index = raw_index.parse::<usize>().map_err(|_| {
+                format!(
+                    "invalid soldier profile identifier {identifier:?}; expected <name>__<cpf-index>"
+                )
+            })?;
+            let profile = self.soldiers.get(index).ok_or_else(|| {
+                format!("soldier profile identifier {identifier:?} uses missing CPF index {index}")
+            })?;
+            let actual_base = soldier_profile_identifier(profile);
+            if actual_base != base {
+                return Err(format!(
+                    "soldier profile identifier {identifier:?} names CPF index {index}, whose identifier is {actual_base:?}"
+                ));
+            }
+            let duplicate_count = self
+                .soldiers
+                .iter()
+                .filter(|candidate| soldier_profile_identifier(candidate) == base)
+                .count();
+            if duplicate_count < 2 {
+                return Err(format!(
+                    "soldier profile identifier {identifier:?} unnecessarily uses a CPF index; use {base:?}"
+                ));
+            }
+            return Ok(SoldierProfileIdx(index as u32));
+        }
+
         let mut matches = self
             .soldiers
             .iter()
@@ -923,8 +959,16 @@ impl ProfileManager {
             return Err(format!("unknown soldier profile identifier {identifier:?}"));
         };
         if matches.next().is_some() {
+            let alternatives = self
+                .soldiers
+                .iter()
+                .enumerate()
+                .filter(|(_, profile)| soldier_profile_identifier(profile) == identifier)
+                .map(|(index, _)| format!("{identifier}__{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(format!(
-                "ambiguous soldier profile identifier {identifier:?}; CPF filenames must be unique"
+                "ambiguous soldier profile identifier {identifier:?}; use one of: {alternatives}"
             ));
         }
         Ok(SoldierProfileIdx(index as u32))
@@ -1364,6 +1408,7 @@ impl CharacterProfile {
             priority,
             filename,
             profile_name,
+            display_name: String::new(),
             alternative_profile_name,
             valid_alternative_profile,
             vip,
@@ -1671,12 +1716,48 @@ mod tests {
             SoldierProfileIdx(0)
         );
 
-        profiles.soldiers.push(profiles.soldiers[0].clone());
+        profiles.soldiers.push(SoldierProfile {
+            filename: "Guard A01".to_owned(),
+            hostile: true,
+            ..Default::default()
+        });
+        let error = profiles.soldier_idx_by_identifier("guard_a01").unwrap_err();
+        assert!(error.contains("ambiguous"));
+        assert!(error.contains("guard_a01__0"));
+        assert!(error.contains("guard_a01__1"));
+        assert_eq!(
+            profiles.soldier_idx_by_identifier("guard_a01__0").unwrap(),
+            SoldierProfileIdx(0)
+        );
+        assert_eq!(
+            profiles.soldier_idx_by_identifier("guard_a01__1").unwrap(),
+            SoldierProfileIdx(1)
+        );
         assert!(
             profiles
-                .soldier_idx_by_identifier("guard_a01")
+                .soldier_idx_by_identifier("archer01__1")
                 .unwrap_err()
-                .contains("ambiguous")
+                .contains("whose identifier is")
+        );
+        assert!(
+            profiles
+                .soldier_idx_by_identifier("guard_a01__99")
+                .unwrap_err()
+                .contains("missing CPF index")
+        );
+
+        let unique = ProfileManager {
+            soldiers: vec![SoldierProfile {
+                filename: "Archer01".to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(
+            unique
+                .soldier_idx_by_identifier("archer01__0")
+                .unwrap_err()
+                .contains("unnecessarily")
         );
     }
     #[test]

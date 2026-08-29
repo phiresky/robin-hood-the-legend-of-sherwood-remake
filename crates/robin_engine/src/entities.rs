@@ -330,7 +330,7 @@ impl Entities {
     }
 
     /// Actors participating in the shared AI owner scheduler. This is the
-    /// NPC set plus explicitly configured autonomous PCs with an AI runtime.
+    /// NPC set plus explicitly configured AI-controlled heroes with an AI runtime.
     pub fn ai_owner_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.occupied()
             .filter(|(_, entity)| entity.ai_controller().is_some())

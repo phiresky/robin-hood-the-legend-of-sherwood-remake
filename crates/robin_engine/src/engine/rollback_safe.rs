@@ -3624,6 +3624,22 @@ impl Engine {
         )
     }
 
+    /// Return the authoritative director camera while a script owns the
+    /// player's view. The host mirrors this into its local viewport for
+    /// cutscenes but remains independent during ordinary player scrolling.
+    pub fn director_camera_view(&self) -> Option<(crate::coordinates::MapPoint, f32)> {
+        let camera = &self.inner.feedback.cutscene_camera;
+        let script_owns_view = self.inner.players.user_locked
+            || camera.sequence_element.is_some()
+            || self
+                .inner
+                .players
+                .seats
+                .first()
+                .is_some_and(|seat| seat.locker_active);
+        script_owns_view.then_some((camera.view_position, camera.zoom_factor))
+    }
+
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub fn test_assert_level_assets_attached(&self, assets: &LevelAssets) {
@@ -5304,6 +5320,9 @@ mod tests {
             profile_number: 0,
             profile_id: None,
             allegiance: None,
+            command_interface: crate::human_control::CommandInterface::None,
+            mission_role: crate::human_control::MissionRole::Combatant,
+            combat_stance: crate::human_control::CombatStance::Aggressive,
             revealed: false,
             tower_guard: false,
             company_number: 0,

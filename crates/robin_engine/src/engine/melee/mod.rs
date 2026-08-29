@@ -937,13 +937,13 @@ impl EngineInner {
         entity_id: EntityId,
         killer: Option<EntityId>,
     ) {
-        let (is_pc, is_npc, allied_soldier, killer_is_pc) = {
+        let (is_pc, is_ai_owner, allied_soldier, killer_is_pc) = {
             let entity = self
                 .get_entity(entity_id)
                 .expect("script-killed actor vanished before virtual Kill");
             (
                 entity.is_pc(),
-                entity.is_npc(),
+                entity.ai_controller().is_some(),
                 entity.is_soldier() && entity.camp() == crate::element::Camp::Royalists,
                 killer
                     .and_then(|killer_id| self.get_entity(killer_id))
@@ -954,7 +954,7 @@ impl EngineInner {
         if is_pc {
             self.apply_pc_kill_cascade(sim, assets, entity_id);
         }
-        if is_npc {
+        if is_ai_owner {
             self.delete_detectable_for_all_npc(entity_id, crate::element::DetectableType::Friend);
             self.delete_detectable_for_all_npc(
                 entity_id,
@@ -962,18 +962,13 @@ impl EngineInner {
             );
             let entity = self
                 .get_entity_mut(entity_id)
-                .expect("script-killed NPC vanished during virtual Kill");
-            let forced_attentive = if entity.is_soldier() {
-                entity
-                    .enemy_ai()
-                    .expect("script-killed soldier NPC has no EnemyAi")
-                    .forced_attentive
-            } else {
-                false
-            };
+                .expect("script-killed AI owner vanished during virtual Kill");
+            let forced_attentive = entity
+                .enemy_ai()
+                .is_some_and(|enemy| enemy.forced_attentive);
             let ai = entity
                 .ai_controller_mut()
-                .expect("script-killed NPC has no AI controller");
+                .expect("script-killed AI owner has no AI controller");
             ai.set_alert_status_with_flags(
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
@@ -984,8 +979,8 @@ impl EngineInner {
             ai.clear_emoticon();
             ai.clear_all_pending();
             let npc = entity
-                .npc_data_mut()
-                .expect("script-killed NPC has no NPCData");
+                .ai_actor_data_mut()
+                .expect("script-killed AI owner has no AI actor data");
             npc.alerted = false;
             if npc.eye_status != EyeStatus::Closed {
                 crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
@@ -1046,7 +1041,7 @@ impl EngineInner {
                     self.add_unconscious_star(entity_id);
                     if let Some(npc) = self
                         .get_entity_mut(entity_id)
-                        .and_then(|entity| entity.npc_data_mut())
+                        .and_then(|entity| entity.ai_actor_data_mut())
                     {
                         npc.clear_all_suspects();
                     }
@@ -1056,17 +1051,23 @@ impl EngineInner {
                     );
                     if let Some(npc) = self
                         .get_entity_mut(entity_id)
-                        .and_then(|entity| entity.npc_data_mut())
+                        .and_then(|entity| entity.ai_actor_data_mut())
                     {
                         // Script setters have no who-dunnit actor.
                         npc.inform_my_friends = false;
                     }
                 }
                 ConcussionOutcome::WokeUp => {
-                    let is_pc = self
+                    let (is_pc, has_ai) = self
                         .get_entity(entity_id)
-                        .is_some_and(crate::element::Entity::is_pc);
-                    if is_pc {
+                        .map(|entity| (entity.is_pc(), entity.ai_controller().is_some()))
+                        .unwrap_or((false, false));
+                    if has_ai {
+                        self.dispatch_ai_stimulus(
+                            entity_id,
+                            crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+                        );
+                    } else if is_pc {
                         // PCs have no NPC Hourglass slot or AI Think call.
                         self.apply_wake_redetection_blinks(entity_id);
                     } else {
@@ -1101,7 +1102,7 @@ impl EngineInner {
             return;
         }
         let waker_camp = waker.camp();
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             if npc_id == waker_id {
                 continue;
@@ -1112,9 +1113,9 @@ impl EngineInner {
             if entity.camp() == waker_camp {
                 continue;
             }
-            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
                 panic!(
-                    "NPC {} lost its NPC data while queueing wake blink for {}",
+                    "AI owner {} lost its AI actor data while queueing wake blink for {}",
                     npc_id.index(),
                     waker_id.index()
                 )

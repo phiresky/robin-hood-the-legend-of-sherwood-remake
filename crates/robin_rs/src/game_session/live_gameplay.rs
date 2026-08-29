@@ -146,7 +146,7 @@ fn dispatch_gameplay_action(
             );
         }
         GameAction::SelectAction { index } => {
-            let selected = manager.engine.seat_selection(host.transport.local_seat);
+            let selected = manager.engine.hero_selection(host.transport.local_seat);
             if selected.len() == 1 {
                 let command = PlayerCommand::SelectAction {
                     pc_id: selected[0],
@@ -246,7 +246,7 @@ fn dispatch_gameplay_action(
             if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {
                 if !manager
                     .engine
-                    .seat_selection(host.transport.local_seat)
+                    .hero_selection(host.transport.local_seat)
                     .is_empty()
                 {
                     let accessible = manager

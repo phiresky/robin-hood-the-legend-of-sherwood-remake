@@ -1841,6 +1841,31 @@ fn camera_slide_approaches_target() {
 }
 
 #[test]
+fn frame_hourglass_preserves_and_advances_the_owned_camera_display() {
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+    engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.feedback.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.control.speed = 2.0;
+
+    // The first frame consumes the initial Redraw operation. The second must
+    // retain that reset and apply the director's Scroll operation.
+    engine.perform_frame_hourglass(&assets, false);
+    engine.perform_frame_hourglass(&assets, false);
+
+    assert_ne!(
+        engine.feedback.cutscene_camera.view_position,
+        crate::coordinates::MapPoint::new(100.0, 100.0)
+    );
+    assert_eq!(
+        engine.feedback.cutscene_camera.display.display_op,
+        DisplayOpCode::NoBackgroundMove
+    );
+}
+
+#[test]
 fn camera_slide_cancels_at_target() {
     let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
@@ -1934,7 +1959,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 }
 
 #[test]
-fn all_autonomous_pc_battle_does_not_trigger_default_loss() {
+fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let mut assets = LevelAssets::new();
@@ -1952,7 +1977,8 @@ fn all_autonomous_pc_battle_does_not_trigger_default_loss() {
             human: Default::default(),
             pc: crate::element::PcData {
                 playable: false,
-                autonomous: true,
+                command_interface: crate::human_control::CommandInterface::None,
+                mission_role: crate::human_control::MissionRole::Combatant,
                 life_points: 100,
                 ..Default::default()
             },

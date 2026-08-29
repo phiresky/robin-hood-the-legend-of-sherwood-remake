@@ -461,7 +461,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   sequence point Seeks require explicit live-versus-Original route
 ///   provenance. Obsolete Rust saves are rejected instead of re-running
 ///   spatial placement or silently re-enabling reconstructed gate search.
-pub const SAVE_FORMAT_VERSION: u32 = 55;
+pub const SAVE_FORMAT_VERSION: u32 = 56;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn save_format_version_requires_resolved_moves_and_point_seek_provenance() {
-        assert_eq!(SAVE_FORMAT_VERSION, 55);
+        assert_eq!(SAVE_FORMAT_VERSION, 56);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

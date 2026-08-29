@@ -10,7 +10,6 @@
 use crate::host::Host;
 use crate::mouse_way::MouseWayPattern;
 use crate::shadow_polygon::ASPECT_RATIO;
-use robin_engine::allied_control::AlliedFormation;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
@@ -25,6 +24,7 @@ use robin_engine::sector as engine_sector;
 use robin_engine::sector::SectorNumber;
 use robin_engine::sequence::Field;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
+use robin_engine::tactical_control::TacticalFormation;
 
 // ─── Left-click resolution ──────────────────────────────────────────
 
@@ -41,23 +41,23 @@ pub fn resolve_left_click(
     is_double: bool,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat;
-    let selected = engine.seat_selection(local_seat);
+    let selected = engine.hero_selection(local_seat);
     let num_selected = selected.len();
-    let allied_selected = engine.allied_selection(local_seat).to_vec();
+    let tactical_selected = engine.tactical_selection(local_seat).to_vec();
 
     // The optional allied-control layer keeps soldier selection separate from
     // the original PC selection so scripts and hero action bars retain their
     // five-PC assumptions. A direct click still feels like ordinary unit
     // selection and may coexist with heroes when Shift is held.
-    if host.control_allied_soldiers
+    if host.control_tactical_units
         && let Some(soldier) =
-            engine.find_controllable_allied_soldier(assets, &host.draw_order.ids, map_pt)
+            engine.find_tactically_controllable_unit(assets, &host.draw_order.ids, map_pt)
     {
         let mut commands = Vec::new();
         if !shift_held {
             commands.push(PlayerCommand::UnselectAllPcs);
         }
-        commands.push(PlayerCommand::SelectAlliedSoldiers {
+        commands.push(PlayerCommand::SelectTacticalUnits {
             soldiers: vec![soldier],
             append: shift_held,
         });
@@ -167,8 +167,8 @@ pub fn resolve_left_click(
         {
             host.input.element_old_click = Some(pc_id);
             let mut commands = Vec::new();
-            if !shift_held && !allied_selected.is_empty() {
-                commands.push(PlayerCommand::ClearAlliedSelection);
+            if !shift_held && !tactical_selected.is_empty() {
+                commands.push(PlayerCommand::ClearTacticalSelection);
             }
             commands.push(PlayerCommand::SelectPc {
                 pc_id,
@@ -176,12 +176,12 @@ pub fn resolve_left_click(
             });
             return commands;
         }
-        if host.control_allied_soldiers && !allied_selected.is_empty() {
+        if host.control_tactical_units && !tactical_selected.is_empty() {
             if let Some(target_id) =
                 engine.find_focusable_entity(assets, &host.draw_order.ids, map_pt, Focus::Sword)
             {
                 host.input.element_old_click = Some(target_id);
-                return allied_selected
+                return tactical_selected
                     .into_iter()
                     .map(|actor| PlayerCommand::EnterSwordfight {
                         actor,
@@ -190,9 +190,9 @@ pub fn resolve_left_click(
                     })
                     .collect();
             }
-            return vec![PlayerCommand::MoveAlliedSoldiers {
-                formation: selected_allied_formation(engine, &allied_selected),
-                soldiers: allied_selected,
+            return vec![PlayerCommand::MoveTacticalUnits {
+                formation: selected_tactical_formation(engine, &tactical_selected),
+                soldiers: tactical_selected,
                 destination: map_pt,
                 running: is_double,
             }];
@@ -212,8 +212,8 @@ pub fn resolve_left_click(
             return vec![PlayerCommand::TogglePcSelection { pc_id }];
         } else {
             let mut commands = Vec::new();
-            if !shift_held && !allied_selected.is_empty() {
-                commands.push(PlayerCommand::ClearAlliedSelection);
+            if !shift_held && !tactical_selected.is_empty() {
+                commands.push(PlayerCommand::ClearTacticalSelection);
             }
             commands.push(PlayerCommand::SelectPc {
                 pc_id,
@@ -303,7 +303,7 @@ pub fn resolve_left_click(
             .unwrap_or(false);
         let selected: Vec<EntityId> = selected
             .iter()
-            .chain(allied_selected.iter())
+            .chain(tactical_selected.iter())
             .copied()
             .collect();
         let engagers: Vec<EntityId> = if target_is_soldier {
@@ -343,10 +343,24 @@ pub fn resolve_left_click(
     // recording arm honours the patch redirect.
     if is_double && !is_recording {
         if host.input.valid_position_for_move && host.input.selected_sector_idx.is_some() {
-            return selected
+            let mut commands: Vec<_> = selected
                 .iter()
                 .map(|&pc_id| PlayerCommand::MakePcFast { pc_id })
                 .collect();
+            // A box selection may contain both PCs and controllable allied
+            // soldiers. The original-PC acceleration return above used to
+            // discard the soldiers' half of that mixed selection, making the
+            // gallery troops appear unable to run whenever Robin was boxed
+            // with them.
+            if host.control_tactical_units && !tactical_selected.is_empty() {
+                commands.push(PlayerCommand::MoveTacticalUnits {
+                    formation: selected_tactical_formation(engine, &tactical_selected),
+                    soldiers: tactical_selected.clone(),
+                    destination: map_pt,
+                    running: true,
+                });
+            }
+            return commands;
         }
         return vec![];
     }
@@ -397,10 +411,10 @@ pub fn resolve_left_click(
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
         }];
-        if host.control_allied_soldiers && !allied_selected.is_empty() {
-            commands.push(PlayerCommand::MoveAlliedSoldiers {
-                formation: selected_allied_formation(engine, &allied_selected),
-                soldiers: allied_selected.clone(),
+        if host.control_tactical_units && !tactical_selected.is_empty() {
+            commands.push(PlayerCommand::MoveTacticalUnits {
+                formation: selected_tactical_formation(engine, &tactical_selected),
+                soldiers: tactical_selected.clone(),
                 destination: patch.waypoint,
                 running: is_double,
             });
@@ -440,10 +454,10 @@ pub fn resolve_left_click(
         recorded_gate_routes: Vec::new(),
         recorded_failed_gate_routes: Vec::new(),
     }];
-    if host.control_allied_soldiers && !allied_selected.is_empty() {
-        commands.push(PlayerCommand::MoveAlliedSoldiers {
-            formation: selected_allied_formation(engine, &allied_selected),
-            soldiers: allied_selected.clone(),
+    if host.control_tactical_units && !tactical_selected.is_empty() {
+        commands.push(PlayerCommand::MoveTacticalUnits {
+            formation: selected_tactical_formation(engine, &tactical_selected),
+            soldiers: tactical_selected.clone(),
             destination: map_pt,
             running: is_double,
         });
@@ -490,8 +504,8 @@ pub fn queue_shift_click_commands(
             // click-result variants must opt into queuing explicitly above.
             command @ (PlayerCommand::SelectPc { .. }
             | PlayerCommand::TogglePcSelection { .. }
-            | PlayerCommand::SelectAlliedSoldiers { .. }
-            | PlayerCommand::ClearAlliedSelection
+            | PlayerCommand::SelectTacticalUnits { .. }
+            | PlayerCommand::ClearTacticalSelection
             | PlayerCommand::UnselectAllPcs
             | PlayerCommand::StopRecordingMacro) => Some(command),
             other => {
@@ -502,10 +516,10 @@ pub fn queue_shift_click_commands(
         .collect()
 }
 
-fn selected_allied_formation(engine: &Engine, soldiers: &[EntityId]) -> AlliedFormation {
+fn selected_tactical_formation(engine: &Engine, soldiers: &[EntityId]) -> TacticalFormation {
     soldiers
         .iter()
-        .find_map(|soldier| engine.allied_order(*soldier).map(|order| order.formation))
+        .find_map(|soldier| engine.tactical_order(*soldier).map(|order| order.formation))
         .unwrap_or_default()
 }
 
@@ -535,7 +549,7 @@ fn resolve_action_left_click(
     is_planning: bool,
 ) -> Vec<PlayerCommand> {
     let draw_order = &host.draw_order.ids;
-    let pc_id = match engine.seat_selection(local_seat).first().copied() {
+    let pc_id = match engine.hero_selection(local_seat).first().copied() {
         Some(id) => id,
         None => return vec![],
     };
@@ -1122,7 +1136,7 @@ pub fn resolve_action_drag(
         _ => return vec![],
     };
 
-    let Some(pc_id) = engine.seat_selection(local_seat).first().copied() else {
+    let Some(pc_id) = engine.hero_selection(local_seat).first().copied() else {
         return vec![];
     };
     let is_recording = engine.is_recording_macro();
@@ -1272,7 +1286,7 @@ fn resolve_double_click_repeat(
         Some(_) | None => return vec![],
     };
 
-    let selected_pcs = engine.seat_selection(local_seat).to_vec();
+    let selected_pcs = engine.hero_selection(local_seat).to_vec();
     let selected_combatants = selected_units(engine, local_seat);
     if selected_combatants.is_empty() {
         return vec![];
@@ -1355,10 +1369,10 @@ fn resolve_double_click_repeat(
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
     let selected_combatants = selected_units(engine, local_seat);
-    let clear_allied = !engine.allied_selection(local_seat).is_empty();
+    let clear_tactical = !engine.tactical_selection(local_seat).is_empty();
     let finish = |mut commands: Vec<PlayerCommand>| {
-        if clear_allied {
-            commands.push(PlayerCommand::ClearAlliedSelection);
+        if clear_tactical {
+            commands.push(PlayerCommand::ClearTacticalSelection);
         }
         commands
     };
@@ -1378,13 +1392,13 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
                 });
             }
         }
-        return cmds;
+        return finish(cmds);
     }
 
-    if engine.seat_selection(local_seat).is_empty() {
+    if engine.hero_selection(local_seat).is_empty() {
         return finish(Vec::new());
     }
-    let selected = engine.seat_selection(local_seat);
+    let selected = engine.hero_selection(local_seat);
 
     // Action selected → cancel
     let selected_action = engine.selected_action_for_seat(local_seat);
@@ -1458,7 +1472,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
 /// else-branch is disabled, so the right-click is ignored).
 fn resolve_right_click_stop(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
     let mut cmds = Vec::new();
-    for &pc_id in engine.seat_selection(local_seat) {
+    for &pc_id in engine.hero_selection(local_seat) {
         let (posture, action_state, in_motion, sector_is_building) = match engine.get_entity(pc_id)
         {
             Some(e) => {
@@ -1704,9 +1718,9 @@ pub fn resolve_swordfight(
 
 fn selected_units(engine: &Engine, local_seat: PlayerId) -> Vec<EntityId> {
     engine
-        .seat_selection(local_seat)
+        .hero_selection(local_seat)
         .iter()
-        .chain(engine.allied_selection(local_seat).iter())
+        .chain(engine.tactical_selection(local_seat).iter())
         .copied()
         .collect()
 }
@@ -1821,6 +1835,32 @@ fn determine_use_command(
     target_id: EntityId,
 ) -> Option<Command> {
     let entity = engine.get_entity(target_id)?;
+
+    // Targets are not humans: their Element::is_dead default is true. Resolve
+    // their authored action filter before the corpse-search fallback below,
+    // exactly like RHElementTarget::GetCommand in the original. Otherwise
+    // every target click is incorrectly dispatched as SearchCmd.
+    if let Entity::Target(target) = entity {
+        let pc_has_search = engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            engine_profiles::Action::Search,
+        );
+        let pc_has_lever = engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            engine_profiles::Action::Lever,
+        );
+        let pc_is_vip = engine
+            .get_entity(pc_id)
+            .is_some_and(|pc| engine.is_entity_vip(assets, pc));
+        return engine_api::target_interaction::target_use_command(
+            target.target.action_filter,
+            pc_has_search,
+            pc_has_lever,
+            pc_is_vip,
+        );
+    }
 
     // Object-class targets (Net, Bonus, Scroll, landed Projectile).
     // The engine-side `object_pickup_command` is the authoritative
@@ -1967,8 +2007,8 @@ mod tests {
     use super::*;
     use robin_engine::campaign::Campaign;
     use robin_engine::element::{
-        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, HumanData,
-        NpcData, ObjectData, PcData, SoldierData,
+        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementTarget,
+        FxData, HumanData, NpcData, ObjectData, PcData, SoldierData, TargetData, TargetFilter,
     };
 
     /// `PlayerCommand` intentionally has no `PartialEq` (it carries f32
@@ -2107,10 +2147,14 @@ mod tests {
             },
             npc: NpcData {
                 life_points: 100,
-                ..Default::default()
+                ai: robin_engine::element::AiActorData {
+                    ai_brain: robin_engine::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
             },
             soldier: SoldierData {
                 cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                command_interface: robin_engine::human_control::CommandInterface::TacticalOrders,
                 ..Default::default()
             },
         }))
@@ -2130,10 +2174,14 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 life_points: 100,
-                ..Default::default()
+                ai: robin_engine::element::AiActorData {
+                    ai_brain: robin_engine::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
             },
             soldier: SoldierData {
                 cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                command_interface: robin_engine::human_control::CommandInterface::TacticalOrders,
                 ..Default::default()
             },
         }))
@@ -2143,7 +2191,7 @@ mod tests {
         apply(
             engine,
             assets,
-            PlayerCommand::SelectAlliedSoldiers {
+            PlayerCommand::SelectTacticalUnits {
                 soldiers: vec![soldier],
                 append: false,
             },
@@ -2372,6 +2420,43 @@ mod tests {
         );
 
         assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
+    }
+
+    #[test]
+    fn double_click_ground_runs_allies_in_mixed_selection() {
+        let (mut engine, assets, mut host) = fixture();
+        host.control_tactical_units = true;
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select(&mut engine, &assets, pc);
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SelectTacticalUnits {
+                soldiers: vec![ally],
+                append: false,
+            },
+        );
+        host.input.valid_position_for_move = true;
+        host.input.selected_sector_idx =
+            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+
+        let destination = MapPoint::new(300.0, 300.0);
+        let commands =
+            resolve_left_click(&mut host, &engine, &assets, destination, false, false, true);
+
+        assert_cmds!(
+            commands,
+            vec![
+                PlayerCommand::MakePcFast { pc_id: pc },
+                PlayerCommand::MoveTacticalUnits {
+                    soldiers: vec![ally],
+                    destination,
+                    running: true,
+                    formation: TacticalFormation::Line,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -2686,7 +2771,7 @@ mod tests {
             resolve_right_click(&engine, host.transport.local_seat),
             vec![
                 PlayerCommand::StopPc { pc_id: pc },
-                PlayerCommand::ClearAlliedSelection,
+                PlayerCommand::ClearTacticalSelection,
             ]
         );
     }
@@ -2697,22 +2782,22 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let soldier = add_allied_soldier(&mut engine, 20.0, 20.0);
         select_allied(&mut engine, &assets, soldier);
-        apply(&mut engine, &assets, PlayerCommand::PinAlliedSelection);
+        apply(&mut engine, &assets, PlayerCommand::PinTacticalSelection);
 
         select(&mut engine, &assets, pc);
-        assert_eq!(engine.seat_selection(PlayerId(0)), &[pc]);
-        assert!(engine.allied_selection(PlayerId(0)).is_empty());
+        assert_eq!(engine.hero_selection(PlayerId(0)), &[pc]);
+        assert!(engine.tactical_selection(PlayerId(0)).is_empty());
 
         apply(
             &mut engine,
             &assets,
-            PlayerCommand::SelectAlliedGroup {
+            PlayerCommand::SelectTacticalGroup {
                 group_id: 1,
                 append: false,
             },
         );
-        assert!(engine.seat_selection(PlayerId(0)).is_empty());
-        assert_eq!(engine.allied_selection(PlayerId(0)), &[soldier]);
+        assert!(engine.hero_selection(PlayerId(0)).is_empty());
+        assert_eq!(engine.tactical_selection(PlayerId(0)), &[soldier]);
     }
 
     #[test]
@@ -2857,10 +2942,13 @@ mod tests {
         assert!(is_selected_unit_swordfighting(&engine, PlayerId(0)));
         assert_cmds!(
             resolve_right_click(&engine, PlayerId(0)),
-            vec![PlayerCommand::LaunchSelfAbility {
-                actor: soldier,
-                command: Command::ParrySword,
-            }]
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: soldier,
+                    command: Command::ParrySword,
+                },
+                PlayerCommand::ClearTacticalSelection,
+            ]
         );
 
         // A full circle is the game's Thrust-H gesture. It exercises the
@@ -2900,14 +2988,14 @@ mod tests {
         apply(
             &mut engine,
             &assets,
-            PlayerCommand::BoxSelectAlliedSoldiers {
+            PlayerCommand::BoxSelectTacticalUnits {
                 pt1: MapPoint::new(0.0, 0.0),
                 pt2: MapPoint::new(20.0, 20.0),
                 shift: false,
             },
         );
 
-        assert_eq!(engine.allied_selection(PlayerId(0)), &[inside]);
+        assert_eq!(engine.tactical_selection(PlayerId(0)), &[inside]);
         assert_ne!(inside, outside);
     }
 
@@ -2920,6 +3008,29 @@ mod tests {
         let ghost = EntityId::Soldier(robin_engine::entity_id::SoldierId(99));
 
         assert_eq!(determine_use_command(&engine, &assets, pc, ghost), None);
+    }
+
+    #[test]
+    fn use_command_on_target_resolves_its_action_filter_before_dead_fallback() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let target = engine.test_add_entity(Entity::Target(ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                active: true,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+            target: TargetData {
+                action_filter: TargetFilter::CUT,
+                ..Default::default()
+            },
+        }));
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc, target),
+            Some(Command::HitTarget)
+        );
     }
 
     #[test]

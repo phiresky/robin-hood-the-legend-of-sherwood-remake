@@ -132,7 +132,7 @@ impl EngineInner {
             // original still enters each NPC's busy/ladder/speech/lock gate,
             // where all three deadlines are extended before returning.
             if positions_before_movement.is_some() {
-                let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+                let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
                 for npc_id in npc_ids {
                     self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
                 }
@@ -805,13 +805,16 @@ impl EngineInner {
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI
         // wrote its own `guarded_pc` field already; here we flip the
         // reciprocal `pc.guard` on the old and new target PCs.
-        let guard_delta = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-            && let Some(base) = s.npc.ai_brain.base_mut()
-        {
-            base.outbox.actor.set_guarded_pc.take()
-        } else {
-            None
-        };
+        let guard_delta = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("guard-delta owner {} lost its AI", npc_id.index()))
+            .outbox
+            .actor
+            .set_guarded_pc
+            .take();
         if let Some(guard_delta) = guard_delta {
             // Clear `pc.guard` on the old target
             // (`guarded_pc.set_guard(NULL)`).
@@ -872,38 +875,51 @@ impl EngineInner {
         // `charly.set_reported_to_officer(false)` call inside
         // `missed_charly_alert`.  Writes the other NPC's
         // `EnemyAi::reported_to_officer` flag.
-        let reported_updates = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-            && let Some(ai) = s.npc.ai_brain.base_mut()
-        {
-            std::mem::take(&mut ai.outbox.actor.set_reported_to_officer)
-        } else {
-            Vec::new()
-        };
+        let reported_updates = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(|ai| std::mem::take(&mut ai.outbox.actor.set_reported_to_officer))
+            .unwrap_or_else(|| panic!("report-update owner {} lost its AI", npc_id.index()));
         for (target_handle, value) in reported_updates {
-            let target_id = EntityId::Soldier(SoldierId(target_handle));
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
-                continue;
-            };
-            if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                enemy_ai.reported_to_officer = value;
-            }
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle, "set-reported-to-officer target");
+            self.world
+                .entities
+                .get_mut(target_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!("set-reported-to-officer target human {target_handle} has no EnemyAi")
+                })
+                .reported_to_officer = value;
         }
 
         // Process pending bow-ammo refill — the
         // `set_ammo_amount(BOW, MAX_NPC_ARROWS)` call inside
         // `fleeing_run_for_arrow_reserves`.
         {
-            let refill = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && let Some(ai) = s.npc.ai_brain.base_mut()
-            {
-                let r = ai.outbox.actor.refill_bow_ammo;
-                ai.outbox.actor.refill_bow_ammo = false;
-                r
-            } else {
-                false
+            let refill = {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| panic!("bow-ammo owner {} lost its AI", npc_id.index()));
+                std::mem::take(&mut ai.outbox.actor.refill_bow_ammo)
             };
-            if refill && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                s.npc.number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
+            if refill {
+                self.world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_actor_data_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow-ammo refill owner {} lost AI actor data",
+                            npc_id.index()
+                        )
+                    })
+                    .number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
             }
         }
 
@@ -918,8 +934,11 @@ impl EngineInner {
         // the AI layer already cleared its own `my_shooting_point`
         // field synchronously in `set_state`.
         {
-            let release = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && let Some(enemy) = s.npc.ai_brain.enemy_mut()
+            let release = if let Some(enemy) = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::enemy_ai_mut)
             {
                 let effect = enemy.base.outbox.actor.take_archery_reservation_release();
                 let sector = if effect.release_sector {
@@ -957,23 +976,21 @@ impl EngineInner {
         // dispatches `CALL_CHARLY_IS_BACK` carrying charly's handle.
         // The pending field's payload selects either self or an
         // explicit Charly handle.
-        let unalert = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-            && let Some(ai) = s.npc.ai_brain.base_mut()
-        {
-            ai.outbox.actor.take_unalert_near_charly_seekers()
-        } else {
-            None
-        };
+        let unalert = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("unalert owner {} lost its AI", npc_id.index()))
+            .outbox
+            .actor
+            .take_unalert_near_charly_seekers();
         if let Some((target_charly, my_antagonist)) = unalert {
-            let my_rank = match self.get_entity(npc_id) {
-                Some(Entity::Soldier(s)) => s
-                    .npc
-                    .ai_brain
-                    .enemy()
-                    .map(|e| e.soldier_profile_rank)
-                    .unwrap_or(crate::profiles::ProfileRank::None),
-                _ => crate::profiles::ProfileRank::None,
-            };
+            let my_rank = self
+                .get_entity(npc_id)
+                .and_then(Entity::enemy_ai)
+                .map(|enemy| enemy.soldier_profile_rank)
+                .unwrap_or(crate::profiles::ProfileRank::None);
             let charly_handle = match target_charly {
                 crate::ai::CharlySeekerTarget::SelfNpc => npc_id.index(),
                 crate::ai::CharlySeekerTarget::Npc(handle) => handle,
@@ -1201,8 +1218,10 @@ impl EngineInner {
                 .world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+                .and_then(Entity::ai_actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
+                });
             crate::ai_vision::unfocus(npc);
             let mut seq = crate::sequence::Sequence::new();
             for (i, cmd) in cmds.iter().enumerate() {
@@ -1269,8 +1288,8 @@ impl EngineInner {
                     .world
                     .entities
                     .get(npc_id)
-                    .and_then(Entity::npc_data)
-                    .expect("DETMUT pending-effect owner lost NPC data")
+                    .and_then(Entity::ai_actor_data)
+                    .expect("DETMUT pending-effect owner lost AI actor data")
                     .detectable_lists
                     .iter()
                     .flatten()
@@ -1575,22 +1594,16 @@ impl EngineInner {
         // second half (`other_seen_money.clear()`) is performed
         // synchronously on the AI side in
         // `EnemyAi::forget_all_nearby_coins`.
-        let forget_pos = {
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                s.npc
-                    .ai_brain
-                    .base_mut()
-                    .unwrap_or_else(|| {
-                        panic!("pending-drain soldier {} lost its AI", npc_id.index())
-                    })
-                    .outbox
-                    .actor
-                    .forget_nearby_coins
-                    .take()
-            } else {
-                None
-            }
-        };
+        let forget_pos = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("pending-drain owner {} lost its AI", npc_id.index()))
+            .outbox
+            .actor
+            .forget_nearby_coins
+            .take();
         if let Some(pos) = forget_pos {
             use crate::element::DetectableType;
             use crate::element_kinds::ObjectType;
@@ -1600,10 +1613,14 @@ impl EngineInner {
             // `entities` immutably while iterating, then mutate the
             // detectable list in a second pass.
             let mut to_remove: Vec<crate::element::EntityId> = Vec::new();
-            if let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id)
-                && det_idx < s.npc.detectable_lists.len()
+            if let Some(ai_actor) = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::ai_actor_data)
+                && det_idx < ai_actor.detectable_lists.len()
             {
-                for det in &s.npc.detectable_lists[det_idx] {
+                for det in &ai_actor.detectable_lists[det_idx] {
                     let Some(elem_id) = det.element else {
                         continue;
                     };
@@ -1625,10 +1642,14 @@ impl EngineInner {
                 }
             }
             if !to_remove.is_empty()
-                && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && det_idx < s.npc.detectable_lists.len()
+                && let Some(ai_actor) = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_actor_data_mut)
+                && det_idx < ai_actor.detectable_lists.len()
             {
-                s.npc.detectable_lists[det_idx]
+                ai_actor.detectable_lists[det_idx]
                     .retain(|d| d.element.is_none_or(|id| !to_remove.contains(&id)));
             }
         }
@@ -1696,16 +1717,13 @@ impl EngineInner {
         // (`init_battle_before_door` + `send_before_door_to_fight`
         // in `engine/soldier_helpers.rs`) are wired below.
         let in_house_alert = {
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
-                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
-                });
-                let v = ai.outbox.actor.enemy_in_house_alert;
-                ai.outbox.actor.enemy_in_house_alert = false;
-                v
-            } else {
-                false
-            }
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost its AI", npc_id.index()));
+            std::mem::take(&mut ai.outbox.actor.enemy_in_house_alert)
         };
         if in_house_alert {
             self.dispatch_enemy_in_house_alert(sim, npc_id, assets);
@@ -1785,8 +1803,7 @@ impl EngineInner {
             self.world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .and_then(|npc| npc.ai_brain.enemy_mut())
+                .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} has no enemy AI"))
                 .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
             // The resumed source tail contains SetState/Focus/GoTo calls.
@@ -1915,8 +1932,7 @@ impl EngineInner {
             self.world
                 .entities
                 .get_mut(npc_id)
-                .and_then(Entity::npc_data_mut)
-                .and_then(|npc| npc.ai_brain.enemy_mut())
+                .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} has no enemy AI"))
                 .get_battle_overview(0, &ctx, &tick);
             self.drain_pending_for_npc_mode(

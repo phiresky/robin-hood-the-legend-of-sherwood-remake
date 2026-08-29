@@ -3,6 +3,8 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
+use std::collections::BTreeMap;
+
 use crate::audio_backend::KiraAudioBackend;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -53,7 +55,15 @@ pub(super) const LOADING_FINAL_PROGRESS: f32 = 1.0;
 
 #[derive(Debug, serde::Deserialize)]
 struct HackableRhsManifest {
+    pixel_format: HackableRhsPixelFormat,
     profiles: Vec<HackableRhsProfile>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HackableRhsPixelFormat {
+    Rgba,
+    LegacyColorKeys,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -67,12 +77,23 @@ struct HackableRhsProfile {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustomMissionTextPatch {
+    #[serde(default)]
+    popup_texts: BTreeMap<usize, String>,
+    #[serde(default)]
+    short_briefings: BTreeMap<usize, String>,
+    #[serde(default)]
+    dialogues: BTreeMap<usize, Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct HackableRhsRow {
     action_id: u16,
     action_done: u16,
     average_speed: f32,
-    #[serde(default)]
-    direction: u16,
+    #[serde(default, rename = "direction")]
+    _direction: u16,
     hotspot_x: f32,
     hotspot_y: f32,
     path: String,
@@ -89,6 +110,34 @@ struct HackableRhsFrame {
     sound_id: u16,
 }
 
+const HACKABLE_RHS_CACHE_VERSION: u32 = 2;
+// Retain the original filename so v1 caches can be repaired in place without
+// decoding hundreds of thousands of source PNGs again.
+const HACKABLE_RHS_CACHE_FILE: &str = ".robin-rhs-cache-v1.zst";
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
+struct HackableRhsCache {
+    version: u32,
+    manifest_hash: [u8; 32],
+    sources: Vec<HackableRhsCacheSource>,
+    frames: Vec<assets_frame_holder::RuntimeSprite>,
+    profiles: Vec<HackableRhsCacheProfile>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
+struct HackableRhsCacheSource {
+    relative_path: String,
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
+struct HackableRhsCacheProfile {
+    name: String,
+    info: SpriteInfo,
+}
+
 fn overlay_roots_from_env() -> Vec<std::path::PathBuf> {
     engine_sbfile::SbFile::overlay_paths()
         .into_iter()
@@ -98,20 +147,24 @@ fn overlay_roots_from_env() -> Vec<std::path::PathBuf> {
 
 fn decode_png_rgba(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decode_png_rgba_bytes(&bytes, &path.display().to_string())
+}
+
+fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8>), String> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder
         .read_info()
-        .map_err(|e| format!("decode {}: {e}", path.display()))?;
+        .map_err(|e| format!("decode {source}: {e}"))?;
     let mut buf = vec![
         0;
-        reader.output_buffer_size().ok_or_else(|| format!(
-            "unknown PNG output size for {}",
-            path.display()
-        ))?
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| format!("unknown PNG output size for {source}"))?
     ];
     let info = reader
         .next_frame(&mut buf)
-        .map_err(|e| format!("read frame {}: {e}", path.display()))?;
+        .map_err(|e| format!("read frame {source}: {e}"))?;
     let data = &buf[..info.buffer_size()];
     let rgba = match info.color_type {
         png::ColorType::Rgba => data.to_vec(),
@@ -122,108 +175,418 @@ fn decode_png_rgba(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), String
             }
             out
         }
+        png::ColorType::Grayscale => {
+            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
+            for &value in data {
+                out.extend_from_slice(&[value, value, value, 255]);
+            }
+            out
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
+            for px in data.as_chunks::<2>().0 {
+                out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
+            }
+            out
+        }
         other => {
             return Err(format!(
-                "unsupported PNG color type {:?} for {}",
-                other,
-                path.display()
+                "PNG decoder did not expand color type {other:?} for {source}"
             ));
         }
     };
     Ok((info.width as u16, info.height as u16, rgba))
 }
 
-fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
+fn current_hackable_character_filenames(
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+) -> Option<std::collections::HashSet<String>> {
+    let mission_index = campaign.current_mission_idx?;
+    let mission = campaign.missions.get(mission_index)?.profile(profiles);
+    let descriptor_path =
+        robin_engine::level_data::hackable_level_descriptor_path(&mission.mission_filename);
+    if !engine_sbfile::SbFile::exists(&descriptor_path) {
+        return None;
+    }
+    let bytes = match engine_sbfile::SbFile::read_all(&descriptor_path) {
+        Ok(bytes) => bytes,
+        Err(status) => {
+            tracing::warn!("Failed to read {descriptor_path}: SBFile error {status}");
+            return Some(std::collections::HashSet::new());
+        }
+    };
+    let descriptor: robin_engine::level_data::HackableLevelDescriptor =
+        match serde_json::from_slice(&bytes) {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                tracing::warn!("Failed to parse {descriptor_path}: {error}");
+                return Some(std::collections::HashSet::new());
+            }
+        };
+    let mut filenames = std::collections::HashSet::new();
+    for soldier in descriptor.soldiers {
+        let profile = match soldier.profile {
+            robin_engine::level_data::HackableSoldierProfile::Identifier(identifier) => profiles
+                .soldier_idx_by_identifier(&identifier)
+                .ok()
+                .and_then(|index| profiles.get_soldier(index)),
+            robin_engine::level_data::HackableSoldierProfile::LegacyIndex(index) => {
+                profiles.get_soldier(index)
+            }
+        };
+        if let Some(profile) = profile {
+            filenames.insert(profile.filename.clone());
+        }
+    }
+    Some(filenames)
+}
+
+fn hackable_manifest_hash(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes).into()
+}
+
+fn hackable_source_stamp(
+    root: &std::path::Path,
+    relative_path: &str,
+) -> Result<HackableRhsCacheSource, String> {
+    let path = root.join(relative_path);
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("stat hackable sprite {}: {error}", path.display()))?;
+    let modified = metadata
+        .modified()
+        .map_err(|error| format!("read mtime for {}: {error}", path.display()))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("invalid mtime for {}: {error}", path.display()))?;
+    Ok(HackableRhsCacheSource {
+        relative_path: relative_path.to_owned(),
+        len: metadata.len(),
+        modified_secs: modified.as_secs(),
+        modified_nanos: modified.subsec_nanos(),
+    })
+}
+
+fn hackable_cache_sources_are_current(
+    root: &std::path::Path,
+    cache: &HackableRhsCache,
+    manifest_hash: [u8; 32],
+) -> bool {
+    cache.manifest_hash == manifest_hash
+        && cache.sources.iter().all(|source| {
+            hackable_source_stamp(root, &source.relative_path).is_ok_and(|current| {
+                current.len == source.len
+                    && current.modified_secs == source.modified_secs
+                    && current.modified_nanos == source.modified_nanos
+            })
+        })
+}
+
+fn read_hackable_cache(
+    root: &std::path::Path,
+    manifest_hash: [u8; 32],
+) -> Option<HackableRhsCache> {
+    let cache_path = root.join(HACKABLE_RHS_CACHE_FILE);
+    let compressed = match std::fs::read(&cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!("Failed to read {}: {error}", cache_path.display());
+            return None;
+        }
+    };
+    let encoded = match zstd::stream::decode_all(std::io::Cursor::new(compressed)) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!("Failed to decompress {}: {error}", cache_path.display());
+            return None;
+        }
+    };
+    let mut cache: HackableRhsCache = match bitcode::decode(&encoded) {
+        Ok(cache) => cache,
+        Err(error) => {
+            tracing::warn!("Failed to decode {}: {error}", cache_path.display());
+            return None;
+        }
+    };
+    if !hackable_cache_sources_are_current(root, &cache, manifest_hash) {
+        return None;
+    }
+    match cache.version {
+        HACKABLE_RHS_CACHE_VERSION => Some(cache),
+        1 => {
+            // Version 1 eagerly installed walking fallbacks while reading
+            // rows. A later explicit RunningUpright row therefore could not
+            // replace the fallback and resolved to WalkingUpright. Rebuild
+            // only the small action tables; packed pixels remain valid.
+            for profile in &mut cache.profiles {
+                profile.info.conversion = std::sync::Arc::new(hackable_animation_conversion(
+                    profile.info.scripts.as_ref(),
+                ));
+            }
+            cache.version = HACKABLE_RHS_CACHE_VERSION;
+            if let Err(error) = write_hackable_cache(root, &cache) {
+                tracing::warn!("Failed to upgrade {}: {error}", cache_path.display());
+            }
+            Some(cache)
+        }
+        version => {
+            tracing::warn!(
+                "Ignoring {} with unsupported cache version {version}",
+                cache_path.display()
+            );
+            None
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_hackable_cache(root: &std::path::Path, cache: &HackableRhsCache) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let encoded = bitcode::encode(cache);
+    let compressed = zstd::stream::encode_all(std::io::Cursor::new(encoded), 3)
+        .map_err(|error| format!("compress hackable sprite cache: {error}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(root).map_err(|error| {
+        format!(
+            "create hackable sprite cache in {}: {error}",
+            root.display()
+        )
+    })?;
+    temporary
+        .write_all(&compressed)
+        .map_err(|error| format!("write hackable sprite cache in {}: {error}", root.display()))?;
+    temporary
+        .persist(root.join(HACKABLE_RHS_CACHE_FILE))
+        .map_err(|error| {
+            format!(
+                "persist hackable sprite cache in {}: {error}",
+                root.display()
+            )
+        })?;
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_hackable_cache(_root: &std::path::Path, _cache: &HackableRhsCache) -> Result<(), String> {
+    Ok(())
+}
+
+fn hackable_animation_conversion(scripts: &[SpriteScript]) -> Vec<u16> {
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    for (row_index, script) in scripts.iter().enumerate() {
+        if let Some(slot) = conversion.get_mut(script.action_id as usize)
+            && *slot == UNMAPPED
+        {
+            *slot = row_index as u16;
+        }
+    }
+
+    // Minimal hackable characters may only provide idle and walking loops.
+    // Install fallbacks only after every authored action has claimed its own
+    // slot, so a real run row always wins over the walking fallback.
+    for (source, aliases) in [
+        (3usize, &[0usize, 1, 2, 4, 8][..]),
+        (6, &[5, 7, 9, 10, 11, 12][..]),
+    ] {
+        let source_row = conversion[source];
+        if source_row == UNMAPPED {
+            continue;
+        }
+        for &alias in aliases {
+            if conversion[alias] == UNMAPPED {
+                conversion[alias] = source_row;
+            }
+        }
+    }
+    conversion
+}
+
+fn build_hackable_cache(
+    root: &std::path::Path,
+    manifest_hash: [u8; 32],
+    manifest: HackableRhsManifest,
+) -> (HackableRhsCache, bool) {
+    let mut frames = Vec::new();
+    let mut sources = Vec::new();
+    let mut local_frames = std::collections::HashMap::<String, u32>::new();
+    let mut profiles = Vec::with_capacity(manifest.profiles.len());
+    let mut complete = true;
+    let legacy_color_keys = matches!(
+        manifest.pixel_format,
+        HackableRhsPixelFormat::LegacyColorKeys
+    );
+
+    for profile in manifest.profiles {
+        let mut scripts = Vec::with_capacity(profile.rows.len());
+        for row in profile.rows {
+            let mut script = SpriteScript {
+                action_id: row.action_id,
+                action_done: row.action_done,
+                average_speed: row.average_speed,
+                hotspot: SpriteLocalPoint::new(row.hotspot_x, row.hotspot_y),
+                ..SpriteScript::default()
+            };
+            for frame in row.frames {
+                let relative_path = std::path::Path::new(&row.path)
+                    .join(&frame.file)
+                    .to_string_lossy()
+                    .into_owned();
+                let local_id = if let Some(local_id) = local_frames.get(&relative_path) {
+                    *local_id
+                } else {
+                    let frame_path = root.join(&relative_path);
+                    let (width, height, rgba) = match decode_png_rgba(&frame_path) {
+                        Ok(decoded) => decoded,
+                        Err(error) => {
+                            tracing::warn!("{error}");
+                            complete = false;
+                            continue;
+                        }
+                    };
+                    let source = match hackable_source_stamp(root, &relative_path) {
+                        Ok(source) => source,
+                        Err(error) => {
+                            tracing::warn!("{error}");
+                            complete = false;
+                            continue;
+                        }
+                    };
+                    let local_id = frames.len() as u32;
+                    frames.push(assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                        width,
+                        height,
+                        &rgba,
+                        legacy_color_keys,
+                    ));
+                    sources.push(source);
+                    local_frames.insert(relative_path, local_id);
+                    local_id
+                };
+                script.frame_ids.push(local_id);
+                script.delays.push(frame.delay);
+                script.distances.push(frame.distance);
+                script
+                    .offsets
+                    .push(SpriteFrameOffset::new(frame.offset_x, frame.offset_y));
+                script.sound_ids.push(frame.sound_id);
+                script.sum_distance = script.sum_distance.saturating_add(frame.distance);
+            }
+            scripts.push(script);
+        }
+        let conversion = hackable_animation_conversion(&scripts);
+        profiles.push(HackableRhsCacheProfile {
+            name: profile.name,
+            info: SpriteInfo {
+                scripts: std::sync::Arc::new(scripts),
+                conversion: std::sync::Arc::new(conversion),
+                size: SpriteSize::new(profile.width, profile.height),
+                center: SpriteAnchor::new(profile.center_x, profile.center_y),
+            },
+        });
+    }
+
+    (
+        HackableRhsCache {
+            version: HACKABLE_RHS_CACHE_VERSION,
+            manifest_hash,
+            sources,
+            frames,
+            profiles,
+        },
+        complete,
+    )
+}
+
+fn install_hackable_cache(
+    host: &mut Host,
+    assets: &mut LevelAssets,
+    filename: &str,
+    cache: HackableRhsCache,
+) -> Result<(), String> {
+    let frame_ids: Vec<u32> = cache
+        .frames
+        .into_iter()
+        .map(|frame| host.frame_holder_mut().append_runtime_sprite(frame))
+        .collect();
+    for profile in cache.profiles {
+        let mut info = profile.info;
+        let scripts = std::sync::Arc::make_mut(&mut info.scripts);
+        for script in scripts {
+            for frame_id in &mut script.frame_ids {
+                *frame_id = *frame_ids.get(*frame_id as usize).ok_or_else(|| {
+                    format!(
+                        "hackable sprite cache {filename}/{} references missing local frame {}",
+                        profile.name, *frame_id
+                    )
+                })?;
+            }
+        }
+        let cache_key = format!("{filename}/{}", profile.name);
+        assets.sprite_scriptor_mut().insert(cache_key.clone(), info);
+        tracing::info!("Loaded hackable character profile {cache_key}");
+    }
+    Ok(())
+}
+
+fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets, campaign: &Campaign) {
+    let mission_filenames = current_hackable_character_filenames(campaign, &assets.profile_manager);
     for root in overlay_roots_from_env() {
         let chars = root.join("Data/Characters");
+        let mission_scoped = chars.join("mission-scoped.json").is_file();
         let Ok(entries) = std::fs::read_dir(&chars) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
             let Some(filename) = name.strip_suffix(".rhs.d") else {
                 continue;
             };
+            if mission_scoped
+                && !mission_filenames
+                    .as_ref()
+                    .is_some_and(|filenames| filenames.contains(filename))
+            {
+                continue;
+            }
+
             let manifest_path = path.join("manifest.json");
-            let Ok(manifest_json) = std::fs::read_to_string(&manifest_path) else {
+            let Ok(manifest_bytes) = std::fs::read(&manifest_path) else {
                 continue;
             };
-            let manifest: HackableRhsManifest = match serde_json::from_str(&manifest_json) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to parse {}: {e}", manifest_path.display());
+            let manifest_hash = hackable_manifest_hash(&manifest_bytes);
+            if let Some(cache) = read_hackable_cache(&path, manifest_hash) {
+                tracing::info!("Using compiled hackable sprite cache for {filename}");
+                if let Err(error) = install_hackable_cache(host, assets, filename, cache) {
+                    tracing::warn!("{error}");
+                }
+                continue;
+            }
+
+            let manifest: HackableRhsManifest = match serde_json::from_slice(&manifest_bytes) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    tracing::warn!("Failed to parse {}: {error}", manifest_path.display());
                     continue;
                 }
             };
-            for profile in manifest.profiles {
-                let mut scripts = Vec::with_capacity(profile.rows.len());
-                let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-                for row in profile.rows {
-                    let row_index = scripts.len() as u16;
-                    if let Some(slot) = conversion.get_mut(row.action_id as usize)
-                        && *slot == UNMAPPED
-                    {
-                        *slot = row_index;
-                    }
-                    // Minimal hackable characters may only provide idle
-                    // and walking loops. Reuse those for the engine's
-                    // nearby idle/transition action requests.
-                    let aliases: &[usize] = match row.action_id {
-                        3 => &[0, 1, 2, 4, 8],
-                        6 => &[5, 7, 9, 10, 11, 12],
-                        _ => &[],
-                    };
-                    if row.direction == 0 {
-                        for &alias in aliases {
-                            if let Some(slot) = conversion.get_mut(alias)
-                                && *slot == UNMAPPED
-                            {
-                                *slot = row_index;
-                            }
-                        }
-                    }
-                    let mut script = SpriteScript {
-                        action_id: row.action_id,
-                        action_done: row.action_done,
-                        average_speed: row.average_speed,
-                        hotspot: SpriteLocalPoint::new(row.hotspot_x, row.hotspot_y),
-                        ..SpriteScript::default()
-                    };
-                    for frame in row.frames {
-                        let frame_path = path.join(&row.path).join(&frame.file);
-                        let (w, h, rgba) = match decode_png_rgba(&frame_path) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                tracing::warn!("{e}");
-                                continue;
-                            }
-                        };
-                        let bank_id = host.frame_holder_mut().append_rgba_sprite(w, h, &rgba);
-                        script.frame_ids.push(bank_id);
-                        script.delays.push(frame.delay);
-                        script.distances.push(frame.distance);
-                        script
-                            .offsets
-                            .push(SpriteFrameOffset::new(frame.offset_x, frame.offset_y));
-                        script.sound_ids.push(frame.sound_id);
-                        script.sum_distance = script.sum_distance.saturating_add(frame.distance);
-                    }
-                    scripts.push(script);
+            let (cache, complete) = build_hackable_cache(&path, manifest_hash, manifest);
+            if complete {
+                if let Err(error) = write_hackable_cache(&path, &cache) {
+                    tracing::warn!("Failed to cache hackable sprites for {filename}: {error}");
+                } else {
+                    tracing::info!("Compiled hackable sprite cache for {filename}");
                 }
-                let cache_key = format!("{filename}/{}", profile.name);
-                assets.sprite_scriptor_mut().insert(
-                    cache_key.clone(),
-                    SpriteInfo {
-                        scripts: std::sync::Arc::new(scripts),
-                        conversion: std::sync::Arc::new(conversion),
-                        size: SpriteSize::new(profile.width, profile.height),
-                        center: SpriteAnchor::new(profile.center_x, profile.center_y),
-                    },
+            } else {
+                tracing::warn!(
+                    "Hackable sprite source {filename} was incomplete; not writing a compiled cache"
                 );
-                tracing::info!("Loaded hackable character profile {cache_key}");
+            }
+            if let Err(error) = install_hackable_cache(host, assets, filename, cache) {
+                tracing::warn!("{error}");
             }
         }
     }
@@ -420,6 +783,97 @@ pub(super) struct LoadedInteractiveResources {
     pub(super) hud_fonts: Option<HudFonts>,
 }
 
+fn descriptor_mission_id(campaign: &Campaign, profiles: &engine_profiles::ProfileManager) -> u32 {
+    let current_id = current_mission_id(campaign, profiles);
+    let current_profile = campaign
+        .current_mission_idx
+        .and_then(|index| campaign.missions.get(index))
+        .map(|mission| mission.profile(profiles))
+        .expect("descriptor lookup requires a current campaign mission");
+    let patch_path = format!(
+        "Data/Levels/{}.characters.patch.json",
+        current_profile.mission_filename
+    );
+    if !engine_sbfile::SbFile::exists(&patch_path) {
+        return current_id;
+    }
+    let bytes = engine_sbfile::SbFile::read_all(&patch_path)
+        .unwrap_or_else(|status| panic!("read descriptor alias patch {patch_path}: {status}"));
+    let patch: serde_json::Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parse descriptor alias patch {patch_path}: {error}"));
+    let alias = patch
+        .get("descriptor_mission")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("{patch_path} is missing descriptor_mission"));
+    let mut matches = profiles
+        .missions
+        .iter()
+        .filter(|profile| profile.mission_filename == alias);
+    let id = matches
+        .next()
+        .unwrap_or_else(|| panic!("{patch_path} descriptor mission {alias:?} does not exist"))
+        .id;
+    assert!(
+        matches.next().is_none(),
+        "{patch_path} descriptor mission {alias:?} is ambiguous"
+    );
+    id
+}
+
+fn apply_custom_mission_text_patch(
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    descriptors: &mut assets_res_descr::LevelDescriptors,
+) {
+    let mission_filename = campaign
+        .current_mission_idx
+        .and_then(|index| campaign.missions.get(index))
+        .map(|mission| mission.profile(profiles).mission_filename.as_str())
+        .expect("custom mission text lookup requires a current campaign mission");
+    let path = format!("Data/Levels/{mission_filename}.text.patch.json");
+    if !engine_sbfile::SbFile::exists(&path) {
+        return;
+    }
+    let bytes = engine_sbfile::SbFile::read_all(&path)
+        .unwrap_or_else(|status| panic!("read custom mission text patch {path}: {status}"));
+    let patch: CustomMissionTextPatch = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parse custom mission text patch {path}: {error}"));
+    let install = |target: &mut Vec<Option<String>>, values: BTreeMap<usize, String>| {
+        if let Some(max_index) = values.keys().next_back().copied() {
+            target.resize(target.len().max(max_index + 1), None);
+        }
+        for (index, text) in values {
+            target[index] = Some(text);
+        }
+    };
+    install(&mut descriptors.custom_popup_texts, patch.popup_texts);
+    install(
+        &mut descriptors.custom_short_briefings,
+        patch.short_briefings,
+    );
+    if let Some(max_index) = patch.dialogues.keys().next_back().copied() {
+        descriptors.custom_dialogue_texts.resize(
+            descriptors.custom_dialogue_texts.len().max(max_index + 1),
+            None,
+        );
+    }
+    for (index, sentences) in patch.dialogues {
+        let expected = descriptors
+            .dialogues
+            .get(index)
+            .unwrap_or_else(|| panic!("{path} dialogue {index} has no base descriptor"))
+            .portrait_ids
+            .len();
+        assert_eq!(
+            sentences.len(),
+            expected,
+            "{path} dialogue {index} requires {expected} sentences"
+        );
+        descriptors.custom_dialogue_texts[index] = Some(sentences);
+    }
+    tracing::info!("Applied custom mission text patch {path}");
+}
+
 /// Process-only resources acquired before the deterministic engine is built.
 ///
 /// The text and interface archives provide both construction metadata and the
@@ -528,7 +982,7 @@ impl MissionProcessResources {
             return std::collections::HashMap::new();
         };
         let table_id = descriptor.short_briefing.text_table_id;
-        match self.text.get_string_count(table_id) {
+        let mut resolved = match self.text.get_string_count(table_id) {
             Ok(count) => (0..count)
                 .filter_map(|index| {
                     self.text
@@ -543,7 +997,13 @@ impl MissionProcessResources {
                 );
                 std::collections::HashMap::new()
             }
+        };
+        for (index, text) in descriptor.custom_short_briefings.iter().enumerate() {
+            if let Some(text) = text {
+                resolved.insert(index as u32, text.clone());
+            }
         }
+        resolved
     }
 }
 
@@ -585,9 +1045,9 @@ pub(super) fn pre_decode_maps_and_resources(
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
-    let level_descriptors = (|| {
+    let mut level_descriptors = (|| {
         let campaign = engine.campaign();
-        let mission_id = current_mission_id(campaign, profiles);
+        let mission_id = descriptor_mission_id(campaign, profiles);
         let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
             && let Some(desc) = dd.red_files.get(&filename)
@@ -613,6 +1073,9 @@ pub(super) fn pre_decode_maps_and_resources(
             }
         }
     })();
+    if let Some(descriptors) = level_descriptors.as_mut() {
+        apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors);
+    }
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -1160,7 +1623,7 @@ pub(super) fn load_level_and_sprite_bank(
         }
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }
-    preload_hackable_character_dirs(host, &mut assets);
+    preload_hackable_character_dirs(host, &mut assets, &campaign);
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
     assets.bank_signature = host.frame_holder.signature();
@@ -1659,6 +2122,109 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    #[test]
+    fn png_decoder_expands_indexed_pixels_and_palette_transparency() {
+        let mut encoded = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut encoded, 2, 1);
+            encoder.set_color(png::ColorType::Indexed);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_palette(vec![0, 255, 0, 0, 0, 255]);
+            encoder.set_trns(vec![0, 127]);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[0, 1]).unwrap();
+        }
+
+        let (width, height, rgba) = decode_png_rgba_bytes(&encoded, "indexed test").unwrap();
+
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(rgba, [0, 255, 0, 0, 0, 0, 255, 127]);
+    }
+
+    #[test]
+    fn hackable_animation_fallbacks_do_not_override_authored_actions() {
+        let script = |action_id| SpriteScript {
+            action_id,
+            ..SpriteScript::default()
+        };
+        let conversion = hackable_animation_conversion(&[script(3), script(6), script(10)]);
+
+        assert_eq!(conversion[9], 1, "missing transition reuses walking");
+        assert_eq!(conversion[10], 2, "authored running row must win");
+
+        let minimal = hackable_animation_conversion(&[script(3), script(6)]);
+        assert_eq!(minimal[10], 1, "minimal sprites may reuse walking");
+    }
+
+    #[test]
+    fn hackable_sprite_cache_round_trips_and_invalidates_changed_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
+        let manifest_hash = hackable_manifest_hash(b"manifest");
+        let cache = HackableRhsCache {
+            version: HACKABLE_RHS_CACHE_VERSION,
+            manifest_hash,
+            sources: vec![hackable_source_stamp(directory.path(), "frame.png").unwrap()],
+            frames: vec![assets_frame_holder::RuntimeSprite {
+                width: 2,
+                height: 1,
+                packed_data: vec![0, 1, 0x1234, 0x5678],
+                rgba_data: None,
+            }],
+            profiles: Vec::new(),
+        };
+
+        write_hackable_cache(directory.path(), &cache).unwrap();
+        let decoded = read_hackable_cache(directory.path(), manifest_hash).unwrap();
+        assert_eq!(decoded.frames.len(), 1);
+        assert_eq!(decoded.frames[0].packed_data, cache.frames[0].packed_data);
+
+        std::fs::write(directory.path().join("frame.png"), b"source changed").unwrap();
+        assert!(read_hackable_cache(directory.path(), manifest_hash).is_none());
+        assert!(read_hackable_cache(directory.path(), [7; 32]).is_none());
+    }
+
+    #[test]
+    fn version_one_hackable_cache_repairs_walking_over_run_alias() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
+        let manifest_hash = hackable_manifest_hash(b"manifest");
+        let scripts = vec![
+            SpriteScript {
+                action_id: 6,
+                ..SpriteScript::default()
+            },
+            SpriteScript {
+                action_id: 10,
+                ..SpriteScript::default()
+            },
+        ];
+        let mut broken_conversion = vec![UNMAPPED; NONANIMATION_END];
+        broken_conversion[6] = 0;
+        broken_conversion[10] = 0;
+        let cache = HackableRhsCache {
+            version: 1,
+            manifest_hash,
+            sources: vec![hackable_source_stamp(directory.path(), "frame.png").unwrap()],
+            frames: Vec::new(),
+            profiles: vec![HackableRhsCacheProfile {
+                name: "test".to_owned(),
+                info: SpriteInfo {
+                    scripts: std::sync::Arc::new(scripts),
+                    conversion: std::sync::Arc::new(broken_conversion),
+                    size: SpriteSize::new(1.0, 1.0),
+                    center: SpriteAnchor::new(0.0, 0.0),
+                },
+            }],
+        };
+        write_hackable_cache(directory.path(), &cache).unwrap();
+
+        let upgraded = read_hackable_cache(directory.path(), manifest_hash).unwrap();
+        assert_eq!(upgraded.version, HACKABLE_RHS_CACHE_VERSION);
+        assert_eq!(upgraded.profiles[0].info.conversion[6], 0);
+        assert_eq!(upgraded.profiles[0].info.conversion[10], 1);
+    }
 
     #[test]
     fn spectator_camera_focus_is_actor_centroid() {

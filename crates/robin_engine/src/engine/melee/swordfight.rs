@@ -584,7 +584,13 @@ impl EngineInner {
             // OUTOFVIEW arrived, which changed how that event was routed.
             if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
                 self.enable_pc_actions_temp(assets, 0, entity_id);
-            } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+            }
+            if self
+                .world
+                .entities
+                .get(entity_id)
+                .is_some_and(|entity| entity.enemy_ai().is_some())
+            {
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                     sim,
                     entity_id,

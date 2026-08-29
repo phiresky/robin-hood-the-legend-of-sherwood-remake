@@ -44,14 +44,14 @@ pub struct ModDetails {
     pub images: Vec<String>,
     #[serde(default)]
     pub versions: Vec<ModVersion>,
-    /// When set, this mod is a hackable JSON level shipped as an
+    /// Hackable JSON levels shipped as an
     /// always-mounted overlay datadir (see [`crate::main_entry`]'s
-    /// `MODS_DIR`) rather than a downloadable zip: the value is the
+    /// `MODS_DIR`) rather than a downloadable zip. Each value is the
     /// `<mission>` of a `Data/Levels/<mission>.level.json` descriptor.
     /// Such mods need no `versions` — the picker launches them through
     /// the hackable-level path instead of mounting a zip.
     #[serde(default)]
-    pub hackable_mission: Option<String>,
+    pub hackable_missions: Vec<String>,
 }
 
 /// One uploaded version of the mod. Each version is mirrored as a separate
@@ -208,7 +208,7 @@ pub struct MissionEntry {
     /// this is the hackable mission filename instead.
     pub rhm_basename: String,
 
-    /// True for hackable JSON levels (`ModDetails::hackable_mission`):
+    /// True for hackable JSON levels (`ModDetails::hackable_missions`):
     /// launched through the hackable-level path with no zip mount.
     pub hackable: bool,
 
@@ -252,35 +252,35 @@ pub fn enumerate_missions(mods: &[DiscoveredMod]) -> Vec<MissionEntry> {
     let mut out = Vec::new();
     for m in mods {
         let preview = m.preview_image_path();
-        if let Some(mission) = &m.details.hackable_mission {
-            // Hackable JSON level: no zip to enumerate. Launchable iff
-            // the descriptor resolves through the mounted overlays.
-            let status = if robin_engine::level_data::hackable_level_exists(mission) {
-                MissionStatus::Ok {
-                    map_filename: mission.clone(),
-                }
-            } else {
-                MissionStatus::Broken {
-                    reason: format!(
-                        "Data/Levels/{mission}.level.json not found in any overlay datadir"
-                    ),
-                }
-            };
-            out.push(MissionEntry {
-                mod_slug: m.details.slug.clone(),
-                mod_title: m.details.title.clone(),
-                author: m.details.author.clone(),
-                description: m.details.description.clone(),
-                map: m.details.map.clone(),
-                requires_spellforge: m.details.requires_spellforge(),
-                version_label: "overlay".to_string(),
-                version_zip: PathBuf::new(),
-                rhm_zip_entry: String::new(),
-                rhm_basename: mission.clone(),
-                hackable: true,
-                status,
-                preview_image: preview,
-            });
+        if !m.details.hackable_missions.is_empty() {
+            for mission in &m.details.hackable_missions {
+                let status = if robin_engine::level_data::hackable_level_exists(mission) {
+                    MissionStatus::Ok {
+                        map_filename: mission.clone(),
+                    }
+                } else {
+                    MissionStatus::Broken {
+                        reason: format!(
+                            "Data/Levels/{mission}.level.json not found in any overlay datadir"
+                        ),
+                    }
+                };
+                out.push(MissionEntry {
+                    mod_slug: m.details.slug.clone(),
+                    mod_title: m.details.title.clone(),
+                    author: m.details.author.clone(),
+                    description: m.details.description.clone(),
+                    map: m.details.map.clone(),
+                    requires_spellforge: m.details.requires_spellforge(),
+                    version_label: mission.clone(),
+                    version_zip: PathBuf::new(),
+                    rhm_zip_entry: String::new(),
+                    rhm_basename: mission.clone(),
+                    hackable: true,
+                    status,
+                    preview_image: preview.clone(),
+                });
+            }
             continue;
         }
         if m.details.versions.is_empty() {
@@ -637,6 +637,23 @@ mod tests {
         assert_eq!(d.slug, "derby-attack-siege");
         assert!(!d.requires_spellforge());
         assert_eq!(d.versions[0].local_file, "2025-01-07.zip");
+        assert!(d.hackable_missions.is_empty());
+    }
+
+    #[test]
+    fn parse_multiple_hackable_missions() {
+        let json = r#"{
+          "slug": "gallery",
+          "title": "Gallery",
+          "page_url": "",
+          "author": "Artist",
+          "map": "OpenBattlefield",
+          "uploaded": "Aug 27, 2026",
+          "versions": [],
+          "hackable_missions": ["GalleryAll", "GalleryDetail"]
+        }"#;
+        let details: ModDetails = serde_json::from_str(json).unwrap();
+        assert_eq!(details.hackable_missions, ["GalleryAll", "GalleryDetail"]);
     }
 
     #[test]

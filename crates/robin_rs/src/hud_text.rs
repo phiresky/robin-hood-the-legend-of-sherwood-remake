@@ -143,14 +143,27 @@ fn entity_display_name(
     entity: &Entity,
 ) -> Option<String> {
     match entity {
-        Entity::Pc(_) => {
-            let kind = engine.pc_character_kind(id)?;
-            // Prefer the localized override from the host portrait
-            // cache (VIP branch).
-            if let Some(localized) = portraits.get_localized_name(kind) {
-                return Some(localized.to_string());
+        Entity::Pc(pc) => {
+            if let Some(kind) = engine.pc_character_kind(id) {
+                // Prefer the localized override from the host portrait
+                // cache (VIP branch).
+                if let Some(localized) = portraits.get_localized_name(kind) {
+                    return Some(localized.to_string());
+                }
+                return Some(kind.profile_name().to_string());
             }
-            Some(kind.profile_name().to_string())
+            // Mod-added PCs deliberately have no retail CharacterKind. Keep
+            // their visible label separate from the RHS-internal profile key.
+            assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .map(|profile| {
+                    if profile.display_name.is_empty() {
+                        profile.profile_name.clone()
+                    } else {
+                        profile.display_name.clone()
+                    }
+                })
         }
         Entity::Soldier(s) => {
             if s.soldier.cached_camp == Camp::Royalists
@@ -585,8 +598,8 @@ fn render_portrait_text_gpu(
         };
 
         let is_selected = match item.target {
-            PortraitTarget::Pc(_) => engine.seat_selection(local_seat).contains(&pc_id),
-            _ => engine.allied_selection(local_seat) == item.members,
+            PortraitTarget::Pc(_) => engine.hero_selection(local_seat).contains(&pc_id),
+            _ => engine.tactical_selection(local_seat) == item.members,
         };
         let is_burned = matches!(entity, Entity::Pc(pc) if pc.pc.life_points <= 0);
         if is_burned {
@@ -762,7 +775,7 @@ fn render_ammo_counts_gpu(
         let PortraitTarget::Pc(pc_id) = item.target else {
             continue;
         };
-        if !engine.seat_selection(local_seat).contains(&pc_id) {
+        if !engine.hero_selection(local_seat).contains(&pc_id) {
             continue;
         }
         let entity = match engine.get_entity(pc_id) {

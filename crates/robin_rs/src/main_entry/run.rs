@@ -87,7 +87,7 @@ pub async fn run_rust_game(
         };
         let (replay_campaign, idx, location, replay_args, replay_rng_seed, replay_sim_config) =
             crate::game_session::prepare_replay_mission(
-                &profiles,
+                std::sync::Arc::make_mut(&mut profiles),
                 args,
                 pending.data,
                 pending.paused,
@@ -115,7 +115,12 @@ pub async fn run_rust_game(
     let replay_data = requested_replay_data(args)?;
     if let Some(data) = replay_data {
         let (replay_campaign, idx, location, replay_args, rng_seed, sim_config) =
-            crate::game_session::prepare_replay_mission(&profiles, args, data, false)?;
+            crate::game_session::prepare_replay_mission(
+                std::sync::Arc::make_mut(&mut profiles),
+                args,
+                data,
+                false,
+            )?;
         let mut callbacks = RustCallbacks::new(application_context.clone());
         let outcome = Box::pin(run_mission(
             window,
@@ -300,7 +305,7 @@ pub async fn run_rust_game(
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
-                    &profiles,
+                    std::sync::Arc::make_mut(&mut profiles),
                     &application_context,
                     args,
                     None,
@@ -333,7 +338,7 @@ pub async fn run_rust_game(
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
-                    &profiles,
+                    std::sync::Arc::make_mut(&mut profiles),
                     &application_context,
                     args,
                     Some(SaveLoadRequest::Load {
@@ -392,7 +397,7 @@ pub async fn run_rust_game(
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
-                    &profiles,
+                    std::sync::Arc::make_mut(&mut profiles),
                     &application_context,
                     &mp_args,
                     None,
@@ -526,7 +531,7 @@ pub async fn run_rust_game(
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
-                    &profiles,
+                    std::sync::Arc::make_mut(&mut profiles),
                     &application_context,
                     &session_args,
                     None,
@@ -574,7 +579,12 @@ pub async fn run_rust_game_headless(
     let mut prepared_args = None;
     let replay_data = requested_replay_data(args)?;
     let launch = if let Some(data) = replay_data {
-        let prepared = crate::game_session::prepare_replay_mission(&profiles, args, data, false)?;
+        let prepared = crate::game_session::prepare_replay_mission(
+            std::sync::Arc::make_mut(&mut profiles),
+            args,
+            data,
+            false,
+        )?;
         campaign = prepared.0;
         prepared_args = Some(prepared.3);
         Some((prepared.1, prepared.2, prepared.4, prepared.5))

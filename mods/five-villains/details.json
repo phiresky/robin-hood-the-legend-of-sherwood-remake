@@ -1,0 +1,18 @@
+{
+  "slug": "five-villains",
+  "title": "The Five Villains",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Nottingham",
+  "uploaded": "Aug 28, 2026",
+  "tags": ["Custom Mission", "Villains", "Rescue"],
+  "description": "After Richard and Robin retake Nottingham, play as Guy of Guisbourne and rescue Longchamp, Prince John, Scathlock, and the Sheriff from their cells.",
+  "versions": [
+    {
+      "date_uploaded": "Aug 28, 2026",
+      "version_notes": "Bundled edition",
+      "download_url": "",
+      "local_file": "five-villains.zip"
+    }
+  ]
+}

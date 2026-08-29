@@ -610,6 +610,19 @@ fn get_transition_flags_pc(ctx: &TransitionCtx) -> (EX, CP, EA) {
             CP::MUST_BE_UPRIGHT | CP::CAN_BE_CROUCHED,
             EA::empty(),
         ),
+        // Rust-authored AI-controlled heroes reuse the enemy NPC overview AI.
+        // Original never dispatched these commands to a PC, so apply the
+        // soldier transition contract explicitly for that extension.
+        LookLeft | LookRight => (
+            EX::MUST_BE_WAITING | EX::CAN_BE_ALERTED,
+            CP::MUST_BE_UPRIGHT,
+            EA::empty(),
+        ),
+        LeanOut => (
+            EX::MUST_BE_WAITING | EX::CAN_BE_ALERTED,
+            CP::MUST_BE_UPRIGHT | CP::CAN_BE_LEANING_OUT,
+            EA::empty(),
+        ),
         _ => get_transition_flags_human(ctx),
     }
 }
@@ -2306,10 +2319,8 @@ mod tests {
     #[test]
     fn sword_exit_transition_synchronously_quits_the_fight() {
         let mut engine = EngineInner::new();
-        // LOOK_LEFT only carries transition flags in the soldier arm of
-        // GetTransitionFlags; a PC ordered to look sideways generates no
-        // transition at all, so the sword-exit translation must be
-        // exercised through a soldier owner.
+        // Exercise the soldier path because its synchronous quit also drives
+        // the ordinary NPC AI callbacks covered by this regression.
         let owner = engine.add_entity(make_soldier(P::Upright, AS::WaitingSword, false));
         let opponent = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
         // The synchronous quit notifies the AI, which reads every live PC's

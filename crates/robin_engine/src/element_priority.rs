@@ -115,6 +115,12 @@ fn pc_branch(ctx: ActorPriorityContext, elem: &SequenceElement) -> SequencePrior
             SequencePriority::None
         }
 
+        // Original PCs never owned an NPC AI, so these commands only appear
+        // in RHElementActorNPC::DeterminePriority. Rust custom missions can
+        // attach that same battle AI to an AI-controlled hero; preserve the NPC's
+        // normal-priority arbitration for its overview animations.
+        Command::LookLeft | Command::LookRight | Command::LeanOut => SequencePriority::Normal,
+
         _ => human_branch(ctx, elem),
     }
 }
@@ -378,6 +384,17 @@ mod tests {
     fn pc_teleport_is_none() {
         let elem = make_elem(Command::Teleport);
         assert_eq!(determine_priority(pc_ctx(), &elem), SequencePriority::None);
+    }
+
+    #[test]
+    fn enemy_ai_hero_overview_commands_use_npc_priority() {
+        for command in [Command::LookLeft, Command::LookRight, Command::LeanOut] {
+            assert_eq!(
+                determine_priority(pc_ctx(), &make_elem(command)),
+                SequencePriority::Normal,
+                "{command:?}",
+            );
+        }
     }
 
     #[test]

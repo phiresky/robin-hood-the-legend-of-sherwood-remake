@@ -912,7 +912,7 @@ impl EngineInner {
                 .expect_entity(atk_id, "sword-damage Provoke attacker")
                 .kind()
                 .is_pc()
-                && self.selected_pc_ids().contains(&atk_id);
+                && self.selected_hero_ids().contains(&atk_id);
             if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
                 && !attacker_is_selected_pc
             {
@@ -2633,19 +2633,19 @@ impl EngineInner {
         kind: crate::element::DetectableType,
     ) {
         let det_idx = kind as usize;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             if npc_id == subject {
                 continue;
             }
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && det_idx < s.npc.detectable_lists.len()
+            if let Some(ai_actor) = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_actor_data_mut)
+                && det_idx < ai_actor.detectable_lists.len()
             {
-                s.npc.delete_detectable(subject, kind);
-            } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(npc_id)
-                && det_idx < c.npc.detectable_lists.len()
-            {
-                c.npc.delete_detectable(subject, kind);
+                ai_actor.delete_detectable(subject, kind);
             }
         }
     }
@@ -2749,7 +2749,7 @@ impl EngineInner {
     /// reaching the corpse.  Extract both the current relationship and any
     /// already-queued old relationship before that reset so teardown cannot
     /// leave a PC, combat neighbour, or archery reservation pointing at the
-    /// dead soldier.
+    /// dead AI-controlled human.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
         let (
             guarded_pcs,
@@ -2760,10 +2760,12 @@ impl EngineInner {
             shield_bearers,
             archers,
         ) = {
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
-                return;
-            };
-            let Some(enemy) = soldier.npc.ai_brain.enemy_mut() else {
+            let Some(enemy) = self
+                .world
+                .entities
+                .get_mut(victim_id)
+                .and_then(Entity::enemy_ai_mut)
+            else {
                 return;
             };
 
@@ -2891,77 +2893,67 @@ impl EngineInner {
         };
 
         for shield_bearer in shield_bearers {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        shield_bearer,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier shield bearer \
-                     {shield_bearer}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("dead soldier {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi")
-            });
+            let shield_bearer_id =
+                self.expect_human_id_for_ai_handle(shield_bearer, "dead AI owner's shield bearer");
+            let enemy = self
+                .world
+                .entities
+                .get_mut(shield_bearer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
+                    )
+                });
             enemy.archer_behind_me = 0;
         }
         for archer in archers {
-            let Some(Entity::Soldier(soldier)) = self
+            let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
+            let enemy = self
                 .world
                 .entities
-                .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(archer)))
-            else {
-                panic!("dead soldier {victim_id:?} has missing/non-soldier archer {archer}");
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("dead soldier {victim_id:?}'s archer {archer} has no EnemyAi")
-            });
+                .get_mut(archer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi")
+                });
             enemy.shield_bearer_before_me = 0;
         }
 
         for left_neighbour in left_neighbours {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        left_neighbour,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier left combat neighbour \
-                     {left_neighbour}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!(
-                    "dead soldier {victim_id:?}'s left combat neighbour {left_neighbour} has no \
-                     EnemyAi"
-                )
-            });
+            let left_id = self.expect_human_id_for_ai_handle(
+                left_neighbour,
+                "dead AI owner's left combat neighbour",
+            );
+            let enemy = self
+                .world
+                .entities
+                .get_mut(left_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s left combat neighbour {left_neighbour} has \
+                         no EnemyAi"
+                    )
+                });
             enemy.right_combat_neighbour = 0;
         }
         for right_neighbour in right_neighbours {
-            let Some(Entity::Soldier(soldier)) =
-                self.world
-                    .entities
-                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
-                        right_neighbour,
-                    )))
-            else {
-                panic!(
-                    "dead soldier {victim_id:?} has missing/non-soldier right combat neighbour \
-                     {right_neighbour}"
-                );
-            };
-            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!(
-                    "dead soldier {victim_id:?}'s right combat neighbour {right_neighbour} has no \
-                     EnemyAi"
-                )
-            });
+            let right_id = self.expect_human_id_for_ai_handle(
+                right_neighbour,
+                "dead AI owner's right combat neighbour",
+            );
+            let enemy = self
+                .world
+                .entities
+                .get_mut(right_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "dead AI owner {victim_id:?}'s right combat neighbour {right_neighbour} has \
+                         no EnemyAi"
+                    )
+                });
             enemy.left_combat_neighbour = 0;
         }
 
@@ -3202,7 +3194,7 @@ impl EngineInner {
             ai.clear_emoticon();
         }
 
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             if clear_beggar_detectables {
                 npc.detectable_lists[crate::element::DetectableType::Beggar as usize].clear();
             }
@@ -3410,7 +3402,7 @@ impl EngineInner {
         if human.concussion_healing_timeout == 0 {
             human.concussion_healing_timeout = healing_speed;
         }
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             // The NPC override performs this after the base-human
             // QuitSwordFight/titbit/healing work and before Think.
             npc.clear_all_suspects();
@@ -3418,10 +3410,12 @@ impl EngineInner {
 
         // RHElementActorNPC::SetConcussionOfTheBrain calls Think inline
         // after the base-human relationship/titbit work.
-        if matches!(
-            self.world.entities.get(victim_id),
-            Some(Entity::Soldier(_) | Entity::Civilian(_))
-        ) {
+        if self
+            .world
+            .entities
+            .get(victim_id)
+            .is_some_and(|entity| entity.ai_controller().is_some())
+        {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
                 victim_id,
@@ -3440,7 +3434,7 @@ impl EngineInner {
             .entities
             .get_mut(victim_id)
             .expect("knockout victim disappeared after AI callback");
-        if let Some(npc) = victim.npc_data_mut() {
+        if let Some(npc) = victim.ai_actor_data_mut() {
             // The Original assigns this only after EVENT_LOSE_CONSCIOUSNESS
             // returns.
             npc.inform_my_friends = attacker_is_pc;

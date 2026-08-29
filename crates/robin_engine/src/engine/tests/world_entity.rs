@@ -183,6 +183,55 @@ fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiContro
 }
 
 #[test]
+fn enemy_ai_hero_speech_completion_clears_enemy_ai_latch() {
+    use crate::ai::Remark;
+    use crate::element::{ActorPc, AiActorData, AiBrain, ElementData, ElementKind, PcData};
+
+    let mut enemy = crate::ai_enemy::EnemyAi::default();
+    enemy.base.current_remark = Remark::Arrow;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(Entity::Pc(ActorPc {
+        element: ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            ..ElementData::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        pc: PcData {
+            command_interface: crate::human_control::CommandInterface::None,
+            mission_role: crate::human_control::MissionRole::Combatant,
+            combat_stance: crate::human_control::CombatStance::Aggressive,
+            ai: Some(Box::new(AiActorData {
+                ai_brain: AiBrain::Enemy(Box::new(enemy)),
+                ..AiActorData::default()
+            })),
+            ..PcData::default()
+        },
+    }));
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    engine
+        .feedback
+        .sound_sim
+        .finished_exclamations
+        .push((owner.index(), Remark::Arrow as u32));
+
+    engine.settle_npc_speech_completions(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .and_then(Entity::ai_controller)
+            .expect("AI-controlled hero retains its AI")
+            .current_remark,
+        Remark::TheSoundOfSilence
+    );
+}
+
+#[test]
 fn mytalk_completion_obeys_exact_asset_duration_frame() {
     use crate::ai::{LogLineType, Remark, StimulusType};
 
@@ -3985,6 +4034,153 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
     assert_eq!(links(&engine, old_left_handle), (0, 0));
     assert_eq!(links(&engine, victim_handle), (0, 0));
     assert_eq!(links(&engine, old_right_handle), (0, 0));
+}
+
+#[test]
+fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
+    use crate::ai::CrossNpcAction;
+    use crate::element::{AiActorData, AiBrain};
+
+    let mut engine = EngineInner::new();
+    // EnemyAi reserves raw handle zero as its null human pointer.
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let make_enemy_ai_hero = || {
+        let mut entity = make_test_pc(crate::element::Posture::Upright);
+        let Entity::Pc(pc) = &mut entity else {
+            unreachable!()
+        };
+        pc.element.active = true;
+        pc.pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+        pc.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
+        pc.pc.ai = Some(Box::new(AiActorData {
+            ai_brain: AiBrain::Enemy(Box::default()),
+            ..AiActorData::default()
+        }));
+        entity
+    };
+    let owner = engine.add_entity(make_enemy_ai_hero());
+    let left = engine.add_entity(make_enemy_ai_hero());
+    for id in [owner, left] {
+        engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("AI-controlled hero has EnemyAi")
+            .base
+            .me = id.index();
+    }
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AI-controlled hero has AI controller")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::UpdateLeftCombatNeighbour {
+            target: owner.index(),
+            old_left: 0,
+            new_left: left.index(),
+        });
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.process_synchronous_reentrant_actions_for(
+        &crate::sim_rng::test_context(),
+        owner,
+        &assets,
+    );
+
+    let owner_enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("owner PC retains EnemyAi");
+    assert_eq!(owner_enemy.left_combat_neighbour, left.index());
+    let left_enemy = engine
+        .get_entity(left)
+        .and_then(Entity::enemy_ai)
+        .expect("left PC retains EnemyAi");
+    assert_eq!(left_enemy.right_combat_neighbour, owner.index());
+}
+
+#[test]
+fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
+    use crate::element::{AiActorData, AiBrain};
+
+    let mut engine = EngineInner::new();
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let make_enemy_ai_hero = || {
+        let mut entity = make_test_pc(crate::element::Posture::Upright);
+        let Entity::Pc(pc) = &mut entity else {
+            unreachable!()
+        };
+        pc.element.active = true;
+        pc.pc.life_points = 100;
+        pc.pc.command_interface = crate::human_control::CommandInterface::None;
+        pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+        pc.pc.combat_stance = crate::human_control::CombatStance::Aggressive;
+        pc.pc.ai = Some(Box::new(AiActorData {
+            ai_brain: AiBrain::Enemy(Box::default()),
+            ..AiActorData::default()
+        }));
+        entity
+    };
+    let left = engine.add_entity(make_enemy_ai_hero());
+    let victim = engine.add_entity(make_enemy_ai_hero());
+    let right = engine.add_entity(make_enemy_ai_hero());
+    for id in [left, victim, right] {
+        engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("AI-controlled hero has EnemyAi")
+            .base
+            .me = id.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(left)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("left PC has EnemyAi");
+        enemy.right_combat_neighbour = victim.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(victim)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("victim PC has EnemyAi");
+        enemy.left_combat_neighbour = left.index();
+        enemy.right_combat_neighbour = right.index();
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(right)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("right PC has EnemyAi");
+        enemy.left_combat_neighbour = victim.index();
+    }
+
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+
+    assert_eq!(
+        engine
+            .get_entity(left)
+            .and_then(Entity::enemy_ai)
+            .expect("left PC retains EnemyAi")
+            .right_combat_neighbour,
+        0
+    );
+    assert_eq!(
+        engine
+            .get_entity(right)
+            .and_then(Entity::enemy_ai)
+            .expect("right PC retains EnemyAi")
+            .left_combat_neighbour,
+        0
+    );
 }
 
 #[test]

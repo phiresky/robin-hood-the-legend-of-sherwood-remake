@@ -474,18 +474,30 @@ impl EngineInner {
                         if profile.vip {
                             // Original maps the seven fixed French profile
                             // identities to localized menu IDs 144..150 and
-                            // performs no random draws.
-                            status.name = assets
-                                .fixed_vip_names
-                                .get(&profile.profile_name)
-                                .cloned()
-                                .ok_or_else(|| EngineError::MissionLevelStage {
+                            // performs no random draws. Mod-added VIP profiles
+                            // have no retail menu-text slot, so their stable
+                            // authored profile name is the only valid name.
+                            status.name = if let Some(name) =
+                                assets.fixed_vip_names.get(&profile.profile_name)
+                            {
+                                name.clone()
+                            } else if kind.is_none() {
+                                // TODO(mod-localization): allow profile patches
+                                // to provide locale-specific display names.
+                                if profile.display_name.is_empty() {
+                                    profile.profile_name.clone()
+                                } else {
+                                    profile.display_name.clone()
+                                }
+                            } else {
+                                return Err(EngineError::MissionLevelStage {
                                     stage: "rescue PCs",
                                     reason: format!(
                                         "missing localized fixed VIP name for profile {:?}",
                                         profile.profile_name
                                     ),
-                                })?;
+                                });
+                            };
                         } else {
                             const ORIGINAL_NAME_COUNT: usize = 22;
                             const MAX_ATTEMPTS: usize = 10;
@@ -554,30 +566,30 @@ impl EngineInner {
                     ),
                 })?;
 
-            let autonomous_ai = if raw.autonomous && raw.aggressive_combat {
-                let behavior_profile_id = raw.ai_profile.as_deref().ok_or_else(|| {
-                    EngineError::MissionLevelStage {
-                        stage: "rescue PCs",
-                        reason: format!(
-                            "aggressive autonomous PC profile {} requires a readable ai_profile",
-                            raw.profile_index
-                        ),
-                    }
-                })?;
+            let actor_ai = if raw.decision_policy == crate::human_control::DecisionPolicy::EnemyAi {
+                let behavior_profile_id =
+                    raw.ai_profile
+                        .as_deref()
+                        .ok_or_else(|| EngineError::MissionLevelStage {
+                            stage: "rescue PCs",
+                            reason: format!(
+                                "enemy-AI hero profile {} requires a readable ai_profile",
+                                raw.profile_index
+                            ),
+                        })?;
                 let behavior_profile_index = profiles
                     .soldier_idx_by_identifier(behavior_profile_id)
                     .map_err(|reason| EngineError::ProfileSpriteLoadFailed {
-                        kind: "autonomous PC AI",
+                        kind: "enemy-AI hero",
                         profile_id: raw.profile_index,
                         reason,
                     })?;
-                let behavior_profile = profiles.get_soldier(behavior_profile_index).unwrap_or_else(
-                    || {
-                        panic!(
-                            "resolved autonomous-PC AI profile {behavior_profile_id:?} disappeared"
-                        )
-                    },
-                );
+                let behavior_profile =
+                    profiles
+                        .get_soldier(behavior_profile_index)
+                        .unwrap_or_else(|| {
+                            panic!("resolved hero AI profile {behavior_profile_id:?} disappeared")
+                        });
                 let mut ai = crate::ai_enemy::EnemyAi::new(0);
                 ai.base.initial_action = raw.action;
                 configure_enemy_ai_profile(
@@ -595,6 +607,15 @@ impl EngineInner {
                     ..Default::default()
                 }))
             } else {
+                if raw.decision_policy == crate::human_control::DecisionPolicy::FriendlyAi {
+                    return Err(EngineError::MissionLevelStage {
+                        stage: "rescue PCs",
+                        reason: format!(
+                            "hero profile {} requests friendly_ai, which has no hero decision runtime",
+                            raw.profile_index
+                        ),
+                    });
+                }
                 None
             };
 
@@ -630,9 +651,11 @@ impl EngineInner {
                     has_jump,
                     immortal: config.highlander,
                     playable: raw.playable,
-                    autonomous: raw.autonomous,
-                    aggressive_combat: raw.aggressive_combat,
-                    ai: autonomous_ai,
+                    interface_hidden: !raw.playable,
+                    command_interface: raw.command_interface,
+                    mission_role: raw.mission_role,
+                    combat_stance: raw.combat_stance,
+                    ai: actor_ai,
                     ..Default::default()
                 },
             });
@@ -727,6 +750,22 @@ impl EngineInner {
                         crate::element::Camp::Royalists
                     }
                 });
+            // Legacy RHM files encoded commandability indirectly: every
+            // Royalist soldier was eligible for the optional troop-control
+            // UI. Resolve that historical convention once at the data
+            // boundary. Hackable descriptors author the command interface
+            // explicitly and never infer it from allegiance.
+            let (command_interface, mission_role) = if raw.allegiance.is_none()
+                && raw.command_interface == crate::human_control::CommandInterface::None
+                && cached_camp == crate::element::Camp::Royalists
+            {
+                (
+                    crate::human_control::CommandInterface::TacticalOrders,
+                    crate::human_control::MissionRole::TacticalAlly,
+                )
+            } else {
+                (raw.command_interface, raw.mission_role)
+            };
 
             // Modify life points for Lacklandist (enemy) soldiers based
             // on difficulty level.  VIPs are excluded from the modifier.
@@ -867,6 +906,9 @@ impl EngineInner {
                     // Seed the cached rider flag from the profile at spawn,
                     // same pattern as `ai.is_vip = p.vip` above.
                     rider: soldier_profile.rider,
+                    command_interface,
+                    mission_role,
+                    combat_stance: raw.combat_stance,
                     ..Default::default()
                 },
             });
@@ -923,15 +965,25 @@ impl EngineInner {
         // direction)` is applied. Accessory targets reuse the object-master
         // profile preloaded before mission entities, matching the original
         // filename/profile-keyed SpriteScriptor cache.
-        let anim_base_dir = "Data/Animations";
         let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
         for raw in &loaded.mission.targets {
             let mut sprite = crate::sprite::Sprite::default();
+            let (frame_kind, base_dir) = if raw.character_sprite {
+                (
+                    crate::sprite_script::FrameKind::Character,
+                    "Data/Characters",
+                )
+            } else {
+                (
+                    crate::sprite_script::FrameKind::Animation,
+                    "Data/Animations",
+                )
+            };
 
             match sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
-                crate::sprite_script::FrameKind::Animation,
-                anim_base_dir,
+                frame_kind,
+                base_dir,
                 &raw.filename,
                 &raw.profile_name,
                 bank_signature,

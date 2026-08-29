@@ -2682,7 +2682,7 @@ pub fn load_mission_for_campaign(
     // The is_beggar predicate is needed because beggar civilians have
     // extra scroll-set data in the mission file.  We parse raw data
     // before constructing entities so we pass the check as a closure.
-    crate::level_data::load_level(
+    let mut level = crate::level_data::load_level(
         mission_filename,
         proto_level_filename,
         level_directory,
@@ -2693,7 +2693,188 @@ pub fn load_mission_for_campaign(
         },
         progress,
     )
-    .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))
+    .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
+    apply_character_roster_patch(&mut level, profiles, mission_filename)?;
+    Ok(level)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CharacterRosterPatch {
+    initial_character: String,
+    rescue_characters: Vec<String>,
+    rescue_target_scripts: Vec<String>,
+    rescue_directions: Vec<u32>,
+    #[serde(rename = "descriptor_mission")]
+    _descriptor_mission: String,
+}
+
+fn character_profile_index_by_filename(
+    profiles: &crate::profiles::ProfileManager,
+    filename: &str,
+) -> Result<crate::profiles::CharacterProfileIdx, EngineError> {
+    let mut matches = profiles
+        .characters
+        .iter()
+        .enumerate()
+        .filter(|(_, profile)| profile.filename == filename);
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!("unknown character profile filename {filename:?}"),
+        })?;
+    if matches.next().is_some() {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!("ambiguous character profile filename {filename:?}"),
+        });
+    }
+    Ok(crate::profiles::CharacterProfileIdx(index as u32))
+}
+
+fn apply_character_roster_patch(
+    level: &mut crate::level_data::LoadedLevel,
+    profiles: &crate::profiles::ProfileManager,
+    mission_filename: &str,
+) -> Result<(), EngineError> {
+    let path = format!("Data/Levels/{mission_filename}.characters.patch.json");
+    if !crate::sbfile::SbFile::exists(&path) {
+        return Ok(());
+    }
+    let bytes = crate::sbfile::SbFile::read_all(&path).map_err(|error| {
+        EngineError::Io(std::io::Error::other(format!(
+            "read required character roster patch {path}: error {error}"
+        )))
+    })?;
+    let patch: CharacterRosterPatch =
+        serde_json::from_slice(&bytes).map_err(|error| EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!("parse {path}: {error}"),
+        })?;
+    if level.mission.beam_mes.len() != 1 {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!(
+                "{path} requires exactly one initial beam-me, found {}",
+                level.mission.beam_mes.len()
+            ),
+        });
+    }
+    if patch.rescue_characters.len() != level.mission.pcs_to_rescue.len() {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!(
+                "{path} supplies {} rescue profiles for {} rescue slots",
+                patch.rescue_characters.len(),
+                level.mission.pcs_to_rescue.len()
+            ),
+        });
+    }
+    if patch.rescue_target_scripts.len() != patch.rescue_characters.len() {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!(
+                "{path} supplies {} rescue target scripts for {} rescue characters",
+                patch.rescue_target_scripts.len(),
+                patch.rescue_characters.len()
+            ),
+        });
+    }
+    if patch.rescue_directions.len() != patch.rescue_characters.len() {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!(
+                "{path} supplies {} rescue directions for {} rescue characters",
+                patch.rescue_directions.len(),
+                patch.rescue_characters.len()
+            ),
+        });
+    }
+    if let Some(direction) = patch
+        .rescue_directions
+        .iter()
+        .copied()
+        .find(|direction| !(12..=15).contains(direction))
+    {
+        return Err(EngineError::MissionLevelStage {
+            stage: "character roster patch",
+            reason: format!("{path} rescue direction {direction} is outside 12..=15"),
+        });
+    }
+
+    let initial_profile = character_profile_index_by_filename(profiles, &patch.initial_character)?;
+    let rescue_profiles = patch
+        .rescue_characters
+        .iter()
+        .map(|filename| character_profile_index_by_filename(profiles, filename))
+        .collect::<Result<Vec<_>, _>>()?;
+    for ((rescue, profile), direction) in level
+        .mission
+        .pcs_to_rescue
+        .iter_mut()
+        .zip(rescue_profiles.iter().copied())
+        .zip(patch.rescue_directions.iter().copied())
+    {
+        rescue.profile_index = profile.0;
+        rescue.direction = direction;
+    }
+    for ((script_class, profile_index), direction) in patch
+        .rescue_target_scripts
+        .iter()
+        .zip(rescue_profiles.iter().copied())
+        .zip(patch.rescue_directions.iter().copied())
+    {
+        let matches = level
+            .mission
+            .targets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, target)| {
+                (target.script_class.as_deref() == Some(script_class.as_str())).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let [target_index] = matches.as_slice() else {
+            let reason = if matches.is_empty() {
+                format!("{path} target script {script_class:?} does not exist")
+            } else {
+                format!("{path} target script {script_class:?} is ambiguous")
+            };
+            return Err(EngineError::MissionLevelStage {
+                stage: "character roster patch",
+                reason,
+            });
+        };
+        let profile = profiles.get_character(profile_index).ok_or_else(|| {
+            EngineError::MissionLevelStage {
+                stage: "character roster patch",
+                reason: format!("{path} resolved missing character profile {profile_index}"),
+            }
+        })?;
+        let target = &mut level.mission.targets[*target_index];
+        target.filename = profile.filename.clone();
+        target.profile_name = profile.profile_name.clone();
+        target.action = crate::order::OrderType::BeingTied as u32;
+        target.direction = direction;
+        target.character_sprite = true;
+    }
+    let beam = level
+        .mission
+        .beam_mes
+        .first_mut()
+        .expect("exactly one beam-me was validated above");
+    beam.profile_override = Some(initial_profile.0);
+    beam.robin_role = true;
+    // Save Stuteley authors Robin's cape/disguise idle at this slot. Villain
+    // NPC sprite sets do not contain that hero-only animation, so begin the
+    // replacement in the ordinary upright idle instead.
+    beam.action = crate::order::OrderType::WaitingUpright as u32;
+    tracing::info!(
+        "Applied character roster patch {path}: initial={:?}, rescues={:?}",
+        patch.initial_character,
+        patch.rescue_characters
+    );
+    Ok(())
 }
 
 /// Map a beam-me `actionInitial` value to a `(posture, action_state)` pair for

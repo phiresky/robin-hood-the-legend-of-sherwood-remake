@@ -10,5 +10,5 @@
     "Test"
   ],
   "description": "Robin and Little John are non-playable autonomous PCs on different allegiances and begin a swordfight automatically.",
-  "hackable_mission": "MultiTeamRobinVsLittleJohn"
+  "hackable_missions": ["MultiTeamRobinVsLittleJohn"]
 }

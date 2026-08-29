@@ -34,7 +34,7 @@ pub enum CustomMissionChoice {
     /// via [`crate::mod_pack::mount_for_launch`] before the session.
     Mod(CustomMissionLaunch),
     /// A hackable JSON level shipped in an always-mounted overlay
-    /// datadir (see `ModDetails::hackable_mission`): launched directly
+    /// datadir (see `ModDetails::hackable_missions`): launched directly
     /// by mission filename, no mount step.
     Hackable { mission: String, title: String },
 }

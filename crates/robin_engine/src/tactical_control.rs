@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::human_control::CombatStance;
 use crate::{coordinates::MapPoint, element::EntityId};
 
 #[derive(
@@ -19,40 +20,7 @@ use crate::{coordinates::MapPoint, element::EntityId};
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub enum AlliedStance {
-    /// Do not acquire targets or leave the assigned position.
-    Hold,
-    /// Return fire, but resume the assigned patrol/follow duty afterwards.
-    Defensive,
-    /// Let the soldier AI pursue threats without a defensive leash.
-    #[default]
-    Aggressive,
-}
-
-impl AlliedStance {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Hold => Self::Defensive,
-            Self::Defensive => Self::Aggressive,
-            Self::Aggressive => Self::Hold,
-        }
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum AlliedFormation {
+pub enum TacticalFormation {
     #[default]
     #[serde(alias = "PatrolColumn", alias = "Battle", alias = "Column")]
     Line,
@@ -63,7 +31,7 @@ pub enum AlliedFormation {
     Flank,
 }
 
-impl AlliedFormation {
+impl TacticalFormation {
     pub fn next(self) -> Self {
         match self {
             Self::Line => Self::Box,
@@ -84,7 +52,7 @@ impl AlliedFormation {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub enum AlliedDuty {
+pub enum TacticalDuty {
     Hold { anchor: MapPoint },
     Patrol { points: [MapPoint; 2], next: u8 },
     Follow { hero: EntityId, offset: MapPoint },
@@ -100,10 +68,10 @@ pub enum AlliedDuty {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct AlliedSoldierOrder {
-    pub stance: AlliedStance,
-    pub formation: AlliedFormation,
-    pub duty: AlliedDuty,
+pub struct TacticalUnitOrder {
+    pub stance: CombatStance,
+    pub formation: TacticalFormation,
+    pub duty: TacticalDuty,
     /// Last destination sent to the path system. Follow orders use this to
     /// avoid replacing an active route for insignificant hero movement.
     pub last_destination: MapPoint,
@@ -129,7 +97,7 @@ pub struct AlliedSoldierOrder {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct AlliedPinnedGroup {
+pub struct TacticalPinnedGroup {
     pub id: u32,
     pub members: Vec<EntityId>,
 }
@@ -146,9 +114,9 @@ pub struct AlliedPinnedGroup {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct AlliedSeatState {
+pub struct TacticalSeatState {
     pub selection: Vec<EntityId>,
-    pub pinned_groups: Vec<AlliedPinnedGroup>,
+    pub pinned_groups: Vec<TacticalPinnedGroup>,
     pub first_visible_portrait: usize,
 }
 
@@ -161,27 +129,27 @@ pub struct AlliedSeatState {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct AlliedControlState {
-    pub seats: Vec<AlliedSeatState>,
+pub struct TacticalControlState {
+    pub seats: Vec<TacticalSeatState>,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub orders: BTreeMap<EntityId, AlliedSoldierOrder>,
+    pub orders: BTreeMap<EntityId, TacticalUnitOrder>,
     pub next_group_id: u32,
 }
 
-impl Default for AlliedControlState {
+impl Default for TacticalControlState {
     fn default() -> Self {
         Self {
-            seats: vec![AlliedSeatState::default()],
+            seats: vec![TacticalSeatState::default()],
             orders: BTreeMap::new(),
             next_group_id: 1,
         }
     }
 }
 
-impl AlliedControlState {
-    pub fn ensure_seat(&mut self, seat: usize) -> &mut AlliedSeatState {
+impl TacticalControlState {
+    pub fn ensure_seat(&mut self, seat: usize) -> &mut TacticalSeatState {
         if self.seats.len() <= seat {
-            self.seats.resize_with(seat + 1, AlliedSeatState::default);
+            self.seats.resize_with(seat + 1, TacticalSeatState::default);
         }
         &mut self.seats[seat]
     }
@@ -194,20 +162,20 @@ mod tests {
 
     #[test]
     fn default_stance_preserves_normal_autonomous_ai() {
-        assert_eq!(AlliedStance::default(), AlliedStance::Aggressive);
+        assert_eq!(CombatStance::default(), CombatStance::Aggressive);
     }
 
     #[test]
     fn controlled_orders_serialize_to_json() {
         let soldier = EntityId::Soldier(SoldierId(17));
         let point = MapPoint::new(12.0, 34.0);
-        let mut state = AlliedControlState::default();
+        let mut state = TacticalControlState::default();
         state.orders.insert(
             soldier,
-            AlliedSoldierOrder {
-                stance: AlliedStance::Defensive,
-                formation: AlliedFormation::Line,
-                duty: AlliedDuty::Hold { anchor: point },
+            TacticalUnitOrder {
+                stance: CombatStance::Defensive,
+                formation: TacticalFormation::Line,
+                duty: TacticalDuty::Hold { anchor: point },
                 last_destination: point,
                 path_fallback: None,
                 deploy_destination: None,
@@ -215,7 +183,7 @@ mod tests {
         );
 
         let json = serde_json::to_string(&state).expect("allied control state serializes");
-        let restored: AlliedControlState =
+        let restored: TacticalControlState =
             serde_json::from_str(&json).expect("allied control state deserializes");
         assert_eq!(restored.orders.get(&soldier), state.orders.get(&soldier));
     }
@@ -224,13 +192,13 @@ mod tests {
     fn older_controlled_orders_default_missing_path_fallback() {
         let soldier = EntityId::Soldier(SoldierId(17));
         let point = MapPoint::new(12.0, 34.0);
-        let mut state = AlliedControlState::default();
+        let mut state = TacticalControlState::default();
         state.orders.insert(
             soldier,
-            AlliedSoldierOrder {
-                stance: AlliedStance::Defensive,
-                formation: AlliedFormation::Line,
-                duty: AlliedDuty::Hold { anchor: point },
+            TacticalUnitOrder {
+                stance: CombatStance::Defensive,
+                formation: TacticalFormation::Line,
+                duty: TacticalDuty::Hold { anchor: point },
                 last_destination: point,
                 path_fallback: Some(MapPoint::new(50.0, 60.0)),
                 deploy_destination: None,
@@ -250,7 +218,7 @@ mod tests {
         order.remove("path_fallback");
         order.remove("deploy_destination");
 
-        let restored: AlliedControlState =
+        let restored: TacticalControlState =
             serde_json::from_value(value).expect("older allied order deserializes");
         assert_eq!(restored.orders[&soldier].path_fallback, None);
         assert_eq!(restored.orders[&soldier].deploy_destination, None);
@@ -259,16 +227,16 @@ mod tests {
     #[test]
     fn previous_formation_names_remain_loadable() {
         assert_eq!(
-            serde_json::from_str::<AlliedFormation>("\"Compact\"").unwrap(),
-            AlliedFormation::Box
+            serde_json::from_str::<TacticalFormation>("\"Compact\"").unwrap(),
+            TacticalFormation::Box
         );
         assert_eq!(
-            serde_json::from_str::<AlliedFormation>("\"PatrolColumn\"").unwrap(),
-            AlliedFormation::Line
+            serde_json::from_str::<TacticalFormation>("\"PatrolColumn\"").unwrap(),
+            TacticalFormation::Line
         );
         assert_eq!(
-            serde_json::from_str::<AlliedFormation>("\"Battle\"").unwrap(),
-            AlliedFormation::Line
+            serde_json::from_str::<TacticalFormation>("\"Battle\"").unwrap(),
+            TacticalFormation::Line
         );
     }
 }

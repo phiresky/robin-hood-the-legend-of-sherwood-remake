@@ -1984,10 +1984,10 @@ impl EngineInner {
     ) -> Vec<crate::ai::PhalanxMemberThemList> {
         use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
         use crate::element::Human;
-        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
+        let Some(owner) = self.world.entities.get(npc_id) else {
             return Vec::new();
         };
-        let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
+        let Some(enemy_ai) = owner.enemy_ai() else {
             return Vec::new();
         };
 
@@ -2041,21 +2041,27 @@ impl EngineInner {
             if current == 0 {
                 break;
             }
-            let Some(s) = self.world.entities.get_soldier(SoldierId(current)) else {
-                break;
-            };
-            let Some(neighbour_ai) = s.npc.ai_brain.enemy() else {
-                break;
-            };
-            let pos = s.element.position_map();
-            let member_camp = s.soldier.cached_camp;
+            let member_id = self.expect_human_id_for_ai_handle(current, "phalanx member");
+            let member = self
+                .world
+                .entities
+                .get(member_id)
+                .expect("validated phalanx member vanished");
+            let ai_actor = member
+                .ai_actor_data()
+                .unwrap_or_else(|| panic!("phalanx member human {current} has no AI actor data"));
+            let neighbour_ai = member
+                .enemy_ai()
+                .unwrap_or_else(|| panic!("phalanx member human {current} has no EnemyAi"));
+            let element = member.element_data();
+            let pos = element.position_map();
+            let member_camp = member.camp();
             let current_them_list = neighbour_ai
                 .list_them
                 .iter()
                 .map(|&handle| snapshot_enemy(handle, member_camp))
                 .collect();
-            let enemy_list = s
-                .npc
+            let enemy_list = ai_actor
                 .detectable_lists
                 .get(crate::element::DetectableType::Enemy as usize)
                 .unwrap_or_else(|| panic!("phalanx member {current} has no detectable-enemy list"));
@@ -2078,20 +2084,20 @@ impl EngineInner {
                 position: Position {
                     x: pos.x,
                     y: pos.y,
-                    sector: s.element.sector(),
-                    level: s.element.layer(),
+                    sector: element.sector(),
+                    level: element.layer(),
                 },
-                world_position: s.element.sprite.position_iface.get_position(),
-                direction: s.element.direction() as u16,
-                posture: s.element.posture,
-                elevation: s.element.sprite.position_iface.get_elevation(),
-                is_rider: s.soldier.rider,
-                active: s.element.active,
-                in_building: self.entity_data_in_building_sector(&s.element),
-                view_radius: s.npc.view_radius,
-                view_direction: s.npc.view_direction,
-                real_half_aperture: s.npc.real_half_aperture,
-                sq_view_radius: (s.npc.view_radius as f32) * (s.npc.view_radius as f32),
+                world_position: member.position_iface().get_position(),
+                direction: element.direction() as u16,
+                posture: element.posture,
+                elevation: member.position_iface().get_elevation(),
+                is_rider: member.soldier_data().is_some_and(|soldier| soldier.rider),
+                active: element.active,
+                in_building: self.entity_data_in_building_sector(element),
+                view_radius: ai_actor.view_radius,
+                view_direction: ai_actor.view_direction,
+                real_half_aperture: ai_actor.real_half_aperture,
+                sq_view_radius: (ai_actor.view_radius as f32) * (ai_actor.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
             if next == 0 || next == current {

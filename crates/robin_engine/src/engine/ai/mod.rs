@@ -781,7 +781,7 @@ mod panic_boundary_tests {
         })
     }
 
-    fn autonomous_enemy_pc() -> Entity {
+    fn enemy_ai_hero() -> Entity {
         let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
         enemy_ai.hth_weapon_id = 1;
         Entity::Pc(ActorPc {
@@ -794,8 +794,9 @@ mod panic_boundary_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData {
-                autonomous: true,
-                aggressive_combat: true,
+                command_interface: crate::human_control::CommandInterface::None,
+                mission_role: crate::human_control::MissionRole::Combatant,
+                combat_stance: crate::human_control::CombatStance::Aggressive,
                 ai: Some(Box::new(AiActorData {
                     ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
                     ..AiActorData::default()
@@ -806,9 +807,9 @@ mod panic_boundary_tests {
     }
 
     #[test]
-    fn panic_state_dispatch_accepts_autonomous_pc_enemy_ai() {
+    fn panic_state_dispatch_accepts_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let pc_id = engine.add_entity(enemy_ai_hero());
 
         engine.set_typed_npc_state(
             pc_id,
@@ -820,16 +821,33 @@ mod panic_boundary_tests {
         let ai = engine
             .get_entity(pc_id)
             .and_then(Entity::enemy_ai)
-            .expect("autonomous PC must retain its Enemy AI");
+            .expect("AI-controlled hero must retain its Enemy AI");
         assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingPanic);
     }
 
     #[test]
-    fn autonomous_pc_completes_new_no_door_panic_boundary() {
+    fn script_think_entry_dispatches_to_enemy_ai_hero_enemy_ai() {
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(enemy_ai_hero());
+
+        engine.start_script_ai_native_think_pre_filter(pc_id);
+
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::ai_controller)
+                .expect("AI-controlled hero retains its AI")
+                .think_recursion_depth,
+            1
+        );
+    }
+
+    #[test]
+    fn enemy_ai_hero_completes_new_no_door_panic_boundary() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(autonomous_enemy_pc());
+        let pc_id = engine.add_entity(enemy_ai_hero());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -858,7 +876,7 @@ mod panic_boundary_tests {
         let ai = engine
             .get_entity(pc_id)
             .and_then(Entity::enemy_ai)
-            .expect("autonomous PC must retain its Enemy AI");
+            .expect("AI-controlled hero must retain its Enemy AI");
         assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingHiding);
     }
@@ -900,6 +918,44 @@ mod panic_boundary_tests {
         assert_eq!(
             change.incoming_substate,
             crate::ai::Substate::FleeingRunToDoor
+        );
+    }
+
+    #[test]
+    fn enemy_ai_hero_recovers_from_stuck_ladder_through_enemy_ai() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut pc = enemy_ai_hero();
+        pc.set_posture(Posture::OnLadder);
+        pc.ai_actor_data_mut()
+            .expect("AI-controlled hero has AI actor data")
+            .stuck_on_ladder_emergency_counter = 25;
+        let pc_id = engine.add_entity(pc);
+        let mut assets = LevelAssets::default();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::CharacterProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+
+        engine.tick_npc_stuck_on_ladder_for_npc(&sim, pc_id, &assets);
+
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::ai_actor_data)
+                .expect("AI-controlled hero retains its AI actor data")
+                .stuck_on_ladder_emergency_counter,
+            0
+        );
+        assert!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::enemy_ai)
+                .is_some()
         );
     }
 
@@ -5754,35 +5810,19 @@ impl EngineInner {
     /// Enter the pre-filter half of typed `StartThink(NO_EVENT)`.
     pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
-        match self.world.entities.get_mut(npc_id) {
-            Some(Entity::Soldier(s)) => s
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "SetAIState StartThink owner {} requires Enemy AI",
-                        npc_id.index()
-                    )
-                })
-                .start_think_pre_filter(&stimulus),
-            Some(Entity::Civilian(c)) => c
-                .npc
-                .ai_brain
-                .friendly_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "SetAIState StartThink owner {} requires Friendly AI",
-                        npc_id.index()
-                    )
-                })
-                .start_think_pre_filter(&stimulus),
-            Some(other) => panic!(
-                "SetAIState StartThink owner {} has invalid entity kind {:?}",
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!("SetAIState StartThink owner {} disappeared", npc_id.index())
+        });
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.start_think_pre_filter(&stimulus);
+        } else if let Some(friendly) = entity.friendly_ai_mut() {
+            friendly.start_think_pre_filter(&stimulus);
+        } else {
+            panic!(
+                "SetAIState StartThink owner {} has no typed AI for entity kind {:?}",
                 npc_id.index(),
-                other.element_data().kind
-            ),
-            None => panic!("SetAIState StartThink owner {} disappeared", npc_id.index()),
+                entity.element_data().kind
+            );
         }
     }
 
@@ -5864,7 +5904,11 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let enemy_tick = matches!(self.world.entities.get(npc_id), Some(Entity::Soldier(_)))
+        let enemy_tick = self
+            .world
+            .entities
+            .get(npc_id)
+            .is_some_and(|entity| entity.enemy_ai().is_some())
             .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets));
         let stimulus_depth = self
             .world
@@ -5879,46 +5923,31 @@ impl EngineInner {
             npc_id.index()
         );
         let global = &mut self.ai.global;
-        match self.world.entities.get_mut(npc_id) {
-            Some(Entity::Soldier(s)) => s
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .unwrap_or_else(|| {
+        let entity =
+            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!("SetAIState EndThink owner {} disappeared", npc_id.index())
+            });
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.end_think(
+                sim,
+                global,
+                &ctx,
+                enemy_tick.as_ref().unwrap_or_else(|| {
                     panic!(
-                        "SetAIState EndThink owner {} requires Enemy AI",
+                        "SetAIState EndThink owner {} lost its Enemy tick context",
                         npc_id.index()
                     )
-                })
-                .end_think(
-                    sim,
-                    global,
-                    &ctx,
-                    enemy_tick.as_ref().unwrap_or_else(|| {
-                        panic!(
-                            "SetAIState EndThink owner {} lost its Enemy tick context",
-                            npc_id.index()
-                        )
-                    }),
-                    None,
-                ),
-            Some(Entity::Civilian(c)) => c
-                .npc
-                .ai_brain
-                .friendly_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "SetAIState EndThink owner {} requires Friendly AI",
-                        npc_id.index()
-                    )
-                })
-                .end_think(sim, global, &ctx),
-            Some(other) => panic!(
-                "SetAIState EndThink owner {} has invalid entity kind {:?}",
+                }),
+                None,
+            );
+        } else if let Some(friendly) = entity.friendly_ai_mut() {
+            friendly.end_think(sim, global, &ctx);
+        } else {
+            panic!(
+                "SetAIState EndThink owner {} has no typed AI for entity kind {:?}",
                 npc_id.index(),
-                other.element_data().kind
-            ),
-            None => panic!("SetAIState EndThink owner {} disappeared", npc_id.index()),
+                entity.element_data().kind
+            );
         }
     }
 
@@ -5958,24 +5987,17 @@ impl EngineInner {
             })
         };
 
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            panic!(
-                "accepted SetAIState SEEKING owner {} disappeared before typed SeekArea",
-                npc_id.index()
-            );
-        };
-        let Entity::Soldier(s) = entity else {
-            panic!(
-                "accepted SetAIState SEEKING owner {} is not a soldier",
-                npc_id.index()
-            );
-        };
-        let enemy_ai = s.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-            panic!(
-                "accepted SetAIState SEEKING owner {} requires Enemy AI",
-                npc_id.index()
-            )
-        });
+        let enemy_ai = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "accepted SetAIState SEEKING owner {} requires Enemy AI",
+                    npc_id.index()
+                )
+            });
         if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
             && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
                 ctx.frame,

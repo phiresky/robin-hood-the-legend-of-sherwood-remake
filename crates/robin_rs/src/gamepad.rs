@@ -408,7 +408,7 @@ impl GamePadState {
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let selected = engine.selected_pc_ids();
+        let selected = engine.selected_hero_ids();
         if selected.is_empty() {
             return cmds;
         }
@@ -501,7 +501,7 @@ impl GamePadState {
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let selected = engine.selected_pc_ids();
+        let selected = engine.selected_hero_ids();
         let leader = selected.first().copied();
         let leader_entity = leader.and_then(|id| engine.get_entity(id));
         let swordfighting = leader_entity
@@ -567,7 +567,7 @@ impl GamePadState {
         let num_pcs = pc_ids.len();
 
         let selected_idx = engine
-            .selected_pc_ids()
+            .selected_hero_ids()
             .first()
             .and_then(|sel| pc_ids.iter().position(|id| id == sel));
 
@@ -619,7 +619,7 @@ impl GamePadState {
         engine: &robin_engine::engine::Engine,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
-        let selected = engine.selected_pc_ids();
+        let selected = engine.selected_hero_ids();
         if !selected.is_empty() {
             let leader = selected[0];
             let leader_entity = engine.get_entity(leader);
@@ -711,7 +711,7 @@ impl GamePadState {
         now_ms: u32,
         engine: &robin_engine::engine::Engine,
     ) -> Option<QaEvent> {
-        if engine.selected_pc_ids().is_empty() {
+        if engine.selected_hero_ids().is_empty() {
             return None;
         }
 
@@ -1429,7 +1429,7 @@ mod tests {
         let engine = empty_engine();
 
         // No selected PC → no QA events.
-        // (Real test would need to populate engine.selected_pc_ids, but
+        // (Real test would need to populate engine.selected_hero_ids, but
         // the dispatcher's early-return branch is important to verify.)
         assert!(pad.manage_qa(1000, &engine).is_none());
     }
@@ -1438,7 +1438,7 @@ mod tests {
     fn manage_qa_timer_expiration_with_selected_pc() {
         // Build a minimal engine with one selected PC so manage_qa's
         // early-return guard passes. We can't easily synthesise a full
-        // PC entity without a level, but engine exposes selected_pc_ids
+        // PC entity without a level, but engine exposes selected_hero_ids
         // as a mutator — push a dummy id in and verify the timer flow.
         let mut pad = GamePadState::new();
         // Arm the timer: release QA while ALT is held.

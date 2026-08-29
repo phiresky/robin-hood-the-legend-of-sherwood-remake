@@ -950,7 +950,7 @@ impl EngineInner {
                     if let Some(actor) = entity.actor_data_mut() {
                         clear_fatal_push_path(actor);
                     }
-                    if let Some(npc) = entity.npc_data_mut() {
+                    if let Some(npc) = entity.ai_actor_data_mut() {
                         crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
                         npc.alerted = false;
                     }
@@ -993,7 +993,7 @@ impl EngineInner {
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.clear_path();
                     }
-                    if let Some(npc) = entity.npc_data_mut() {
+                    if let Some(npc) = entity.ai_actor_data_mut() {
                         crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
                         npc.alerted = false;
                     }

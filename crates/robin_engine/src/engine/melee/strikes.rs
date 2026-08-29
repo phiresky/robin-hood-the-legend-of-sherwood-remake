@@ -2779,15 +2779,8 @@ impl EngineInner {
         // delayed AI strike queued behind it. The flag is still consumed below
         // so the rejected proposal cannot leak out after a stance change or
         // after the player action completes.
-        let mut suppressed_considerations: std::collections::HashSet<EntityId> = self
-            .players
-            .allied
-            .orders
-            .keys()
-            .copied()
-            .filter(|&id| !self.allied_allows_normal_strikes(id))
-            .collect();
-        for seat in &self.players.allied.seats {
+        let mut suppressed_considerations = std::collections::HashSet::new();
+        for seat in &self.players.tactical.seats {
             for &id in &seat.selection {
                 if self
                     .orders
@@ -2823,7 +2816,10 @@ impl EngineInner {
                 continue;
             };
             let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
-            if pending && !suppressed_considerations.contains(&npc_id) {
+            if pending
+                && !suppressed_considerations.contains(&npc_id)
+                && self.tactical_allows_normal_strikes(npc_id)
+            {
                 pending_considerations.insert(npc_id);
             }
         }
@@ -3270,7 +3266,7 @@ impl EngineInner {
             // are EnemyAi combatants rather than players awaiting a warning,
             // so PC-vs-PC battle missions use the normal immediate cadence.
             let target_is_player_controlled_pc = match self.get_entity(attack.target_id) {
-                Some(Entity::Pc(pc)) => !pc.pc.autonomous,
+                Some(entity @ Entity::Pc(_)) => entity.accepts_hero_commands(),
                 Some(_) => false,
                 None => panic!(
                     "sword-strike target {:?} disappeared before preparation",
@@ -3727,18 +3723,23 @@ impl EngineInner {
                 });
         }
 
-        if naturally_woke && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        let owner_has_ai = self
+            .world
+            .entities
+            .get(owner)
+            .is_some_and(|entity| entity.ai_controller().is_some());
+        if naturally_woke && owner_has_ai {
             self.dispatch_ai_stimulus(
                 owner,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
         }
-        let dispatched_wake = if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        let dispatched_wake = if owner_has_ai {
             self.dispatch_pending_fit_again_for_npc(sim, owner, assets)
         } else {
             naturally_woke
         };
-        if dispatched_wake && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+        if dispatched_wake && owner_has_ai {
             // EVENT_FITAGAIN's resurrection fan-out and eye reset are inline
             // consequences of Think in Original, including under FrozenAll.
             self.tick_ai_pending_resurrection_and_eyes_for_npc(owner);

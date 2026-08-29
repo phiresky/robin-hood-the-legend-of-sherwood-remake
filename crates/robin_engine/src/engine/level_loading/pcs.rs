@@ -403,6 +403,9 @@ impl EngineInner {
             let plan_entry = pc_spawn_plan.iter().find(|&&(_, _, bi, _)| bi == bm_idx);
 
             if let Some(&(char_idx, mut profile_idx, _, sherwood_placement_roll)) = plan_entry {
+                if let Some(override_index) = beam_me.profile_override {
+                    profile_idx = crate::profiles::CharacterProfileIdx(override_index);
+                }
                 // A "Robin des villes" PC in a forest level is rewritten
                 // to "Robin des bois", and vice-versa in a town level.
                 // Swap both `profile_idx` and the campaign character's
@@ -446,6 +449,16 @@ impl EngineInner {
                         ),
                     }
                 })?;
+                if beam_me.profile_override.is_some() {
+                    let description = self
+                        .mission_domain
+                        .campaign
+                        .characters
+                        .get_mut(char_idx)
+                        .expect("beam-me campaign character disappeared after assignment");
+                    description.character_profile_idx = Some(profile_idx);
+                    description.status.name = profile.profile_name.clone();
+                }
 
                 // PCs always use the Character frame kind, unlike NPCs
                 // which use the level's frame_kind (Character vs CharacterBlipped).
@@ -492,7 +505,7 @@ impl EngineInner {
                     &profile.filename,
                     &profile.profile_name,
                 );
-                let is_robin = kind.is_some_and(|k| k.is_robin());
+                let is_robin = beam_me.robin_role || kind.is_some_and(|k| k.is_robin());
                 let (has_lockpick, has_climb, has_jump) =
                     crate::element::PcData::movement_auth_from_profile(profile);
 

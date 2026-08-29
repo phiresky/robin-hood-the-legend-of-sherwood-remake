@@ -10993,7 +10993,7 @@ impl EngineInner {
                     | OrderType::WalkingAlerted
                     | OrderType::RiderCharging
             );
-            if is_movement && !self.allied_allows_combat_movement(entity_id) {
+            if is_movement && !self.tactical_allows_combat_movement(entity_id) {
                 tracing::trace!(
                     ?entity_id,
                     order = ?intent.order_type,

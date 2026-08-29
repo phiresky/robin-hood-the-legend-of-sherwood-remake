@@ -30,7 +30,7 @@
     {
       "position": [
         1375,
-        1450
+        1561
       ],
       "profile": "guard_a03",
       "allegiance": 2,
@@ -39,7 +39,7 @@
     {
       "position": [
         1565,
-        1450
+        1561
       ],
       "profile": "guard_a03",
       "allegiance": 2,
@@ -48,7 +48,7 @@
     {
       "position": [
         1375,
-        1390
+        1501
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -57,7 +57,7 @@
     {
       "position": [
         1440,
-        1390
+        1501
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -66,7 +66,7 @@
     {
       "position": [
         1500,
-        1390
+        1501
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -75,7 +75,7 @@
     {
       "position": [
         1565,
-        1390
+        1501
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -84,7 +84,7 @@
     {
       "position": [
         1405,
-        1330
+        1441
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -93,7 +93,7 @@
     {
       "position": [
         1535,
-        1330
+        1441
       ],
       "profile": "archer03",
       "allegiance": 2,
@@ -102,7 +102,7 @@
     {
       "position": [
         1375,
-        2070
+        1959
       ],
       "profile": "guard_a03",
       "allegiance": 3,
@@ -111,7 +111,7 @@
     {
       "position": [
         1565,
-        2070
+        1959
       ],
       "profile": "guard_a03",
       "allegiance": 3,
@@ -120,7 +120,7 @@
     {
       "position": [
         1375,
-        2130
+        2019
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -129,7 +129,7 @@
     {
       "position": [
         1440,
-        2130
+        2019
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -138,7 +138,7 @@
     {
       "position": [
         1500,
-        2130
+        2019
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -147,7 +147,7 @@
     {
       "position": [
         1565,
-        2130
+        2019
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -156,7 +156,7 @@
     {
       "position": [
         1405,
-        2190
+        2079
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -165,7 +165,7 @@
     {
       "position": [
         1535,
-        2190
+        2079
       ],
       "profile": "archer03",
       "allegiance": 3,
@@ -173,7 +173,7 @@
     },
     {
       "position": [
-        1160,
+        1271,
         1680
       ],
       "profile": "guard_a03",
@@ -182,7 +182,7 @@
     },
     {
       "position": [
-        1160,
+        1271,
         1840
       ],
       "profile": "guard_a03",
@@ -191,7 +191,7 @@
     },
     {
       "position": [
-        1100,
+        1211,
         1660
       ],
       "profile": "archer03",
@@ -200,7 +200,7 @@
     },
     {
       "position": [
-        1100,
+        1211,
         1725
       ],
       "profile": "archer03",
@@ -209,7 +209,7 @@
     },
     {
       "position": [
-        1100,
+        1211,
         1790
       ],
       "profile": "archer03",
@@ -218,7 +218,7 @@
     },
     {
       "position": [
-        1100,
+        1211,
         1855
       ],
       "profile": "archer03",
@@ -227,7 +227,7 @@
     },
     {
       "position": [
-        1040,
+        1151,
         1700
       ],
       "profile": "archer03",
@@ -236,7 +236,7 @@
     },
     {
       "position": [
-        1040,
+        1151,
         1820
       ],
       "profile": "archer03",
@@ -245,7 +245,7 @@
     },
     {
       "position": [
-        1780,
+        1669,
         1680
       ],
       "profile": "guard_a03",
@@ -254,7 +254,7 @@
     },
     {
       "position": [
-        1780,
+        1669,
         1840
       ],
       "profile": "guard_a03",
@@ -263,7 +263,7 @@
     },
     {
       "position": [
-        1840,
+        1729,
         1660
       ],
       "profile": "archer03",
@@ -272,7 +272,7 @@
     },
     {
       "position": [
-        1840,
+        1729,
         1725
       ],
       "profile": "archer03",
@@ -281,7 +281,7 @@
     },
     {
       "position": [
-        1840,
+        1729,
         1790
       ],
       "profile": "archer03",
@@ -290,7 +290,7 @@
     },
     {
       "position": [
-        1840,
+        1729,
         1855
       ],
       "profile": "archer03",
@@ -299,7 +299,7 @@
     },
     {
       "position": [
-        1900,
+        1789,
         1700
       ],
       "profile": "archer03",
@@ -308,7 +308,7 @@
     },
     {
       "position": [
-        1900,
+        1789,
         1820
       ],
       "profile": "archer03",

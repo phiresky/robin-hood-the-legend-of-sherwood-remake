@@ -449,7 +449,7 @@ impl TitbitRenderer {
             {
                 let mgr = titbit.element_manager.0;
                 if !engine
-                    .seat_selection(host.transport.local_seat)
+                    .hero_selection(host.transport.local_seat)
                     .iter()
                     .any(|&id| id.index() == mgr)
                 {
@@ -461,7 +461,7 @@ impl TitbitRenderer {
             if titbit.kind == TitbitKind::DangerPoint {
                 let mgr = titbit.element_manager.0;
                 if !engine
-                    .seat_selection(host.transport.local_seat)
+                    .hero_selection(host.transport.local_seat)
                     .iter()
                     .any(|&id| id.index() == mgr)
                 {

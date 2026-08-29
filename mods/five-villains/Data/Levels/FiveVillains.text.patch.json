@@ -1,0 +1,10 @@
+{
+  "popup_texts": {
+    "0": "King Richard has returned, and with Robin Hood's help he has retaken Nottingham. The outlaws are heroes now, while their former enemies wait in chains. Guy of Guisbourne alone remains free. Slip into the town, release Longchamp, Prince John, Scathlock, and the Sheriff, and lead the five villains to safety.",
+    "22": "Only Guy of Guisbourne can release this prisoner."
+  },
+  "short_briefings": {
+    "0": "Free the four captive villains.",
+    "1": "Get the five villains out of Nottingham."
+  }
+}

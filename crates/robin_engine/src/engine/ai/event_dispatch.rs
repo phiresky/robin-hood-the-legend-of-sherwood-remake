@@ -590,7 +590,7 @@ impl EngineInner {
             .world
             .entities
             .get_mut(npc_id)
-            .and_then(Entity::npc_data_mut)
+            .and_then(Entity::ai_actor_data_mut)
             .is_some_and(|npc| {
                 let pending = npc.inform_my_friends;
                 npc.inform_my_friends = false;
@@ -699,8 +699,7 @@ impl EngineInner {
             let is_soldier = matches!(entity, Entity::Soldier(_));
             let pos = entity.element_data().position_map();
             let ko = entity
-                .npc_data()
-                .and_then(|n| n.ai_brain.base())
+                .ai_controller()
                 .map(|b| b.knocked_out_in_money_fight)
                 .unwrap_or(false);
             (pos, ko, is_soldier)
@@ -712,7 +711,7 @@ impl EngineInner {
         // `get_worst_detected_type` never climbs past DETECTABLE_FRIEND
         // for civilians, dropping their emoticon / alert reactions to
         // nearby bodies.
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         let det_idx = DetectableType::Body as usize;
         for friend_id in npc_ids {
             if friend_id == body_id {
@@ -726,7 +725,7 @@ impl EngineInner {
                 continue;
             };
             let friend_pos = entity.element_data().position_map();
-            let Some(npc) = entity.npc_data_mut() else {
+            let Some(npc) = entity.ai_actor_data_mut() else {
                 continue;
             };
 
@@ -812,7 +811,7 @@ impl EngineInner {
             && detection::detectable_mutation_debug_target_slot_matches(beggar_id.index()))
         .then(|| self.original_static_creation_order(beggar_id))
         .unwrap_or(0);
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for friend_id in npc_ids {
             let mutation_owner_creation_order = (mutation_debug_enabled
                 && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
@@ -821,7 +820,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
-            let Some(npc) = entity.npc_data_mut() else {
+            let Some(npc) = entity.ai_actor_data_mut() else {
                 continue;
             };
             if det_idx < npc.detectable_lists.len() {
@@ -897,10 +896,10 @@ impl EngineInner {
             .world
             .entities
             .get_mut(npc_id)
-            .and_then(Entity::npc_data_mut)
+            .and_then(Entity::ai_actor_data_mut)
             .unwrap_or_else(|| {
                 panic!(
-                    "recovery owner {} vanished before RestoreDetectableObjects",
+                    "recovery owner {} lost AI actor data before RestoreDetectableObjects",
                     npc_id.index()
                 )
             });
@@ -978,7 +977,7 @@ impl EngineInner {
     pub(in crate::engine) fn broadcast_resurrection(&mut self, resurrected_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for friend_id in npc_ids {
             if friend_id == resurrected_id {
                 continue;
@@ -986,7 +985,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
-            let Some(npc) = entity.npc_data_mut() else {
+            let Some(npc) = entity.ai_actor_data_mut() else {
                 continue;
             };
             if det_idx < npc.detectable_lists.len() {
@@ -1009,7 +1008,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
         }
@@ -1839,27 +1838,41 @@ impl EngineInner {
                         actor_slot, completed_id
                     )
                 });
-            let (active, expected_id, flags, is_pc) = {
+            let (active, expected_id, flags) = {
                 let entity = self.world.entities.get(actor_id).unwrap_or_else(|| {
                     panic!(
                         "speech completion owner {} vanished after slot resolution",
                         actor_id.index()
                     )
                 });
-                if entity.is_pc() {
-                    (Remark::TheSoundOfSilence, 0, 0, true)
-                } else {
-                    let ai = entity.ai_controller().unwrap_or_else(|| {
-                        panic!(
-                            "speech completion owner {} is neither PC nor an NPC with AI",
-                            actor_id.index()
-                        )
-                    });
-                    let active = ai.current_remark;
-                    let raw = active as u32;
-                    let expected = match entity {
-                        Entity::Soldier(s) => {
-                            let profile = assets
+                let Some(ai) = entity.ai_controller() else {
+                    // Player-controlled PCs use the character speech path and
+                    // do not own RHElementActorNPC's completion latch.
+                    assert!(
+                        entity.is_pc(),
+                        "speech completion owner {} has no AI",
+                        actor_id.index()
+                    );
+                    continue;
+                };
+                let active = ai.current_remark;
+                let raw = active as u32;
+                let expected = match entity {
+                    Entity::Pc(pc) => {
+                        assets
+                                .profile_manager
+                                .get_character(pc.pc.profile_index)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "speech completion owner {} requires missing character profile {}",
+                                        actor_id.index(),
+                                        pc.pc.profile_index
+                                    )
+                                });
+                        raw
+                    }
+                    Entity::Soldier(s) => {
+                        let profile = assets
                                 .profile_manager
                                 .get_soldier(s.soldier.soldier_profile_index)
                                 .unwrap_or_else(|| {
@@ -1869,14 +1882,14 @@ impl EngineInner {
                                         s.soldier.soldier_profile_index
                                     )
                                 });
-                            if profile.vip {
-                                raw.wrapping_sub(Remark::FIRST_VIP as u32)
-                            } else {
-                                raw
-                            }
+                        if profile.vip {
+                            raw.wrapping_sub(Remark::FIRST_VIP as u32)
+                        } else {
+                            raw
                         }
-                        Entity::Civilian(c) => {
-                            let profile = assets
+                    }
+                    Entity::Civilian(c) => {
+                        let profile = assets
                                 .profile_manager
                                 .civilians
                                 .get(usize::from(c.civilian.civilian_profile_index))
@@ -1887,24 +1900,20 @@ impl EngineInner {
                                         c.civilian.civilian_profile_index
                                     )
                                 });
-                            if profile.civilian_type == crate::profiles::CivilianType::Vip {
-                                raw.wrapping_sub(Remark::FIRST_VIP as u32)
-                            } else {
-                                raw.wrapping_sub(Remark::FIRST_CIVILIAN as u32)
-                            }
+                        if profile.civilian_type == crate::profiles::CivilianType::Vip {
+                            raw.wrapping_sub(Remark::FIRST_VIP as u32)
+                        } else {
+                            raw.wrapping_sub(Remark::FIRST_CIVILIAN as u32)
                         }
-                        other => panic!(
-                            "speech completion owner {} has invalid entity kind {:?}",
-                            actor_id.index(),
-                            other.element_data().kind
-                        ),
-                    };
-                    (active, expected, ai.current_remark_flags, false)
-                }
+                    }
+                    other => panic!(
+                        "speech completion owner {} has invalid entity kind {:?}",
+                        actor_id.index(),
+                        other.element_data().kind
+                    ),
+                };
+                (active, expected, ai.current_remark_flags)
             };
-            if is_pc {
-                continue;
-            }
             if active == Remark::TheSoundOfSilence || expected_id != completed_id {
                 tracing::warn!(
                     actor = actor_id.index(),
