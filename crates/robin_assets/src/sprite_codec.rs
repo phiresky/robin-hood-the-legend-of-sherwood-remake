@@ -97,6 +97,10 @@ impl RangeEncoder {
 struct RangeDecoder<'a> {
     range: u32,
     code: u32,
+    /// `range / total` from the preceding [`Self::decode_target`], reused by
+    /// [`Self::commit`] (every commit follows a decode_target with the same
+    /// total, and the division is the hottest single instruction here).
+    last_r: u32,
     input: &'a [u8],
     pos: usize,
 }
@@ -106,6 +110,7 @@ impl<'a> RangeDecoder<'a> {
         let mut d = Self {
             range: u32::MAX,
             code: 0,
+            last_r: 0,
             input,
             pos: 1, // first byte is the encoder's initial cache byte (0)
         };
@@ -125,11 +130,14 @@ impl<'a> RangeDecoder<'a> {
     /// interval contains it and confirms with `commit`.
     fn decode_target(&mut self, total: u32) -> u32 {
         let r = self.range / total;
+        self.last_r = r;
         (self.code / r).min(total - 1)
     }
 
-    fn commit(&mut self, start: u32, size: u32, total: u32) {
-        let r = self.range / total;
+    /// Must directly follow the [`Self::decode_target`] call whose `total`
+    /// produced the interval being committed.
+    fn commit(&mut self, start: u32, size: u32, _total: u32) {
+        let r = self.last_r;
         self.code -= start * r;
         self.range = r * size;
         while self.range < RC_TOP {
@@ -490,6 +498,14 @@ impl Ctx {
 
     /// Append this context's symbols to the exclusion list.
     fn exclude_into(&self, excl: &mut Excl) {
+        // Capped exclusion: a large escaped context would flood the
+        // exclusion set and force full filtered scans at every fallback
+        // level for marginal probability-mass savings. Skipping those
+        // contexts must match on both coder sides (it does: this is the
+        // single exclusion entry point).
+        if self.distinct() > EXCL_SOURCE_CAP {
+            return;
+        }
         match self {
             Ctx::Small { syms, .. } => {
                 for &(s, _) in syms {
@@ -585,6 +601,14 @@ const SEE_LEVEL_PAIR2: usize = 4;
 
 /// See-statistics slot for the auxiliary-reference (aux, above) level.
 const SEE_LEVEL_AUX: usize = 5;
+
+/// Escaped contexts holding more than this many distinct symbols do not
+/// contribute to the exclusion set (see [`Ctx::exclude_into`]). Part of the
+/// bitstream contract: both coder sides must share the value, so changing
+/// it is a chunk-schema version change. Measured trade (Knight01/RobinTown,
+/// size vs uncapped exclusion, decode time): 256 -> +0.4/+0.6%, -10..15%;
+/// 128 -> +0.8/+1.2%, -14..24%; 64 -> +1.1/+1.7%, -16..30%.
+const EXCL_SOURCE_CAP: u32 = 256;
 
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
 /// membership, O(1) reset per coded symbol (bump the generation).
@@ -880,9 +904,7 @@ impl Model {
                 if target >= sum {
                     dec.commit(sum, total - sum, total);
                     see.update(key, true);
-                    for &(s, _) in scratch.iter() {
-                        excl.insert(s);
-                    }
+                    ctx.exclude_into(excl);
                     continue;
                 }
                 let mut cum = 0u32;
@@ -965,9 +987,7 @@ impl Model {
                 if target >= sum {
                     dec.commit(sum, total - sum, total);
                     see.update(key, true);
-                    for &(s, _) in scratch.iter() {
-                        excl.insert(s);
-                    }
+                    ctx.exclude_into(excl);
                     continue;
                 }
                 let mut cum = 0u32;
@@ -1050,9 +1070,7 @@ impl Model {
                 if target >= sum {
                     dec.commit(sum, total - sum, total);
                     see.update(key, true);
-                    for &(s, _) in scratch.iter() {
-                        excl.insert(s);
-                    }
+                    ctx.exclude_into(excl);
                     continue;
                 }
                 let mut cum = 0u32;
