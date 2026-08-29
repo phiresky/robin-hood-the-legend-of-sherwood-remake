@@ -608,12 +608,48 @@ impl SoldierSightContext {
             return None;
         }
 
-        let ai = entity.ai_controller().unwrap_or_else(|| {
-            panic!(
-                "eligible AI owner {} has no controller during detection",
-                npc_id.index()
-            )
-        });
+        // Original fixes the concrete AI implementation in the actor
+        // hierarchy: soldiers inherit RHArtificialMalignity and civilians
+        // inherit RHArtificialBonhomie. Autonomous PCs are a Rust extension
+        // which deliberately reuse the malignity lifecycle. Do not accept an
+        // arbitrary base controller here: corrupt actor/brain combinations
+        // would otherwise enter detection and fail later in type-specific AI.
+        let ai = match entity {
+            Entity::Pc(_) => {
+                &npc.ai_brain
+                    .enemy()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "eligible autonomous PC {} has no EnemyAi brain during detection",
+                            npc_id.index()
+                        )
+                    })
+                    .base
+            }
+            Entity::Soldier(_) => {
+                &npc.ai_brain
+                    .enemy()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "eligible soldier NPC {} has no EnemyAi brain during detection",
+                            npc_id.index()
+                        )
+                    })
+                    .base
+            }
+            Entity::Civilian(_) => {
+                &npc.ai_brain
+                    .friendly()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "eligible civilian NPC {} has no FriendlyAi brain during detection",
+                            npc_id.index()
+                        )
+                    })
+                    .base
+            }
+            _ => unreachable!("non-AI entity passed the AI viewer kind gate"),
+        };
         let current_substate = ai.current_substate;
         let ignore_bodies = matches!(
             current_substate,

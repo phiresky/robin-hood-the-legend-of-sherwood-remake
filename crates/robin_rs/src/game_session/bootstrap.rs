@@ -649,6 +649,7 @@ impl LoadedInteractiveStage {
         let background = self.bootstrap.loaded.pre_decoded_background.take();
         let minimap = self.bootstrap.loaded.pre_decoded_minimap.take();
 
+        let mut timer = super::setup::PhaseTimer::new("frontend assembly");
         let renderer_config = self
             .loading
             .take()
@@ -656,12 +657,14 @@ impl LoadedInteractiveStage {
             .close_before_renderer();
         let mut renderer =
             InteractiveRendererAssembly::new_after_loading_screen(window, renderer_config);
+        timer.step("game renderer construction");
         renderer.upload_maps(
             &self.bootstrap.loaded.engine,
             &mut self.bootstrap.host,
             background,
             minimap,
         );
+        timer.step("map upload");
 
         renderer.assemble_process_frontend(
             window,
@@ -968,6 +971,7 @@ impl InteractiveMissionBuilder {
             ));
         }
         let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
+        let mut timer = super::setup::PhaseTimer::new("mission bootstrap");
         let loading = match InteractiveLoadStage::begin(
             window,
             &campaign,
@@ -1000,6 +1004,7 @@ impl InteractiveMissionBuilder {
                 ));
             }
         };
+        timer.step("load stage begin");
         let mut stage = match loading.load_level(
             window,
             campaign,
@@ -1020,6 +1025,7 @@ impl InteractiveMissionBuilder {
                 ));
             }
         };
+        timer.step("level load");
 
         if let Err(error) = stage.bootstrap.start_required_spellforge() {
             let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
@@ -1030,8 +1036,11 @@ impl InteractiveMissionBuilder {
                 Err(error.to_string()),
             ));
         }
+        timer.step("spellforge startup");
         stage.prepare_audio(profiles);
+        timer.step("audio prepare");
         let mut frontend = stage.assemble_frontend(window, profiles, args);
+        timer.step("frontend assembly");
 
         if let Some(code) = run_lost_sherwood_gate(
             window,
@@ -1050,11 +1059,18 @@ impl InteractiveMissionBuilder {
             ));
         }
 
+        // The gate can await user input on a lost campaign; keep its time
+        // out of the restart-save step.
+        timer.step("lost-sherwood gate");
         stage.bootstrap.start_campaign_clock(callbacks);
         stage.bootstrap.setup_restart_or_sherwood(callbacks, args);
+        timer.step("restart save");
         let frontend = frontend.finish(window.width, window.height);
+        timer.step("HUD sprite finish");
         let bootstrap = stage.bootstrap;
         let mission = bootstrap.finish_interactive(frontend, args, profiles);
+        timer.step("runtime + replay init");
+        timer.total();
         InteractiveBuildOutcome::Ready(BuiltInteractiveMission { mission })
     }
 }

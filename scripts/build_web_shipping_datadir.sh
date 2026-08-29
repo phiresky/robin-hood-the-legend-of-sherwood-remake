@@ -17,12 +17,14 @@ fi
 # This is the canonical browser artifact recipe. Keep these explicit: the
 # converter's source-preserving defaults are appropriate for native builds,
 # but would silently produce the much larger raw-map/source-audio artifact.
+# JXL is q70 across the board (maps, minimaps, interface images).
 cargo build --release --bin convert_datadir
 target/release/convert_datadir \
     --input "$source_datadir" \
     --output "$output_dir" \
     --format shipping \
-    --map-format jxl-q80 \
+    --map-format jxl-q70 \
+    --interface-image-format jxl-q70 \
     --audio-format opus \
     --zstd-window-log 30 \
     "$mode"

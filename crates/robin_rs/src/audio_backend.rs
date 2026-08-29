@@ -687,58 +687,102 @@ pub fn ogg_duration_ms(data: &[u8]) -> Option<u32> {
     u32::try_from(duration_ms).ok()
 }
 
+/// A sample located by [`locate_sample`]: either authoritative metadata
+/// from the active shipping datadir (wasm — the encoded bytes stay with
+/// Web Audio) or the encoded bytes themselves.
+enum LocatedSample {
+    /// Only constructed on wasm, where the shipping datadir carries audio
+    /// metadata instead of encoded bytes.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Metadata { size: u32, duration_ms: u32 },
+    Bytes {
+        data: robin_util::asset_fs::AssetBytes,
+        source_path: PathBuf,
+    },
+}
+
+/// Resolve a sample name against the loader's candidate paths and read it.
+///
+/// Single source of truth for the candidate order used by
+/// [`create_sample_loader`] and [`sample_duration_ms`] — the two must
+/// resolve identically or cached durations could diverge from loads.
+fn locate_sample(base_dir: &Path, file_name: &str) -> Option<LocatedSample> {
+    let normalised = file_name.replace('\\', "/");
+    let absolute = Path::new(&normalised).is_absolute();
+    let path = if absolute {
+        PathBuf::from(&normalised)
+    } else {
+        base_dir.join(&normalised)
+    };
+    let candidates = if absolute {
+        vec![path]
+    } else {
+        vec![path, base_dir.join("Exclamations").join(&normalised)]
+    };
+    #[cfg(target_arch = "wasm32")]
+    if let Some((size, duration_ms)) =
+        robin_assets::shipping_datadir::global().and_then(|shipping| {
+            candidates
+                .iter()
+                .find_map(|path| shipping.active_audio_metadata(path))
+        })
+    {
+        // Web Audio already owns the decoded buffer. SoundCache needs only
+        // authoritative bookkeeping, not another encoded-byte copy.
+        return Some(LocatedSample::Metadata { size, duration_ms });
+    }
+    let candidates = candidates.into_iter().flat_map(|candidate| {
+        let opus = candidate.with_extension("opus");
+        [candidate, opus]
+    });
+    let (data, source_path) = candidates.into_iter().find_map(|candidate| {
+        if let Ok(data) = robin_util::asset_fs::read_shared(&candidate) {
+            return Some((data, candidate));
+        }
+        let resolved =
+            robin_engine::sbfile::resolve_case_insensitive(&candidate).or_else(|| {
+                candidate
+                    .to_str()
+                    .and_then(robin_engine::sbfile::resolve_data_path)
+            })?;
+        robin_util::asset_fs::read_shared(&resolved)
+            .ok()
+            .map(|data| (data, resolved))
+    })?;
+    Some(LocatedSample::Bytes { data, source_path })
+}
+
 pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
     Box::new(move |file_name: &str| {
         tracing::trace!(file_name, "SampleLoader: enter");
-        let normalised = file_name.replace('\\', "/");
-        let absolute = Path::new(&normalised).is_absolute();
-        let path = if absolute {
-            PathBuf::from(&normalised)
-        } else {
-            base_dir.join(&normalised)
-        };
-        let candidates = if absolute {
-            vec![path]
-        } else {
-            vec![path, base_dir.join("Exclamations").join(&normalised)]
-        };
-        #[cfg(target_arch = "wasm32")]
-        if let Some((size, duration_ms)) =
-            robin_assets::shipping_datadir::global().and_then(|shipping| {
-                candidates
-                    .iter()
-                    .find_map(|path| shipping.active_audio_metadata(path))
-            })
-        {
-            // Web Audio already owns the decoded buffer. SoundCache needs only
-            // authoritative bookkeeping, not another encoded-byte copy.
-            return Some((Vec::new(), size, duration_ms));
-        }
-        let candidates = candidates.into_iter().flat_map(|candidate| {
-            let opus = candidate.with_extension("opus");
-            [candidate, opus]
-        });
-        let (data, source_path) = candidates.into_iter().find_map(|candidate| {
-            if let Ok(data) = robin_util::asset_fs::read(&candidate) {
-                return Some((data, candidate));
+        match locate_sample(&base_dir, file_name)? {
+            LocatedSample::Metadata { size, duration_ms } => Some((Vec::new(), size, duration_ms)),
+            LocatedSample::Bytes { data, source_path } => {
+                let size = data.len() as u32;
+                let duration_ms = robin_assets::shipping_datadir::global()
+                    .and_then(|shipping| shipping.active_audio_duration_ms(&source_path))
+                    .or_else(|| wav_duration_ms(&data))
+                    .unwrap_or(0);
+                Some((data.into_vec(), size, duration_ms))
             }
-            let resolved =
-                robin_engine::sbfile::resolve_case_insensitive(&candidate).or_else(|| {
-                    candidate
-                        .to_str()
-                        .and_then(robin_engine::sbfile::resolve_data_path)
-                })?;
-            robin_util::asset_fs::read(&resolved)
-                .ok()
-                .map(|data| (data, resolved))
-        })?;
-        let size = data.len() as u32;
-        let duration_ms = robin_assets::shipping_datadir::global()
-            .and_then(|shipping| shipping.active_audio_duration_ms(&source_path))
-            .or_else(|| wav_duration_ms(&data))
-            .unwrap_or(0);
-        Some((data, size, duration_ms))
+        }
     })
+}
+
+/// Duration of a sample in milliseconds, resolved and derived exactly like
+/// [`create_sample_loader`] but without handing out (or copying) the encoded
+/// bytes. `Send + Sync` closure material — mission setup fans the cold-cache
+/// duration probes out across a thread pool.
+pub fn sample_duration_ms(base_dir: &Path, file_name: &str) -> Option<u32> {
+    match locate_sample(base_dir, file_name)? {
+        LocatedSample::Metadata { duration_ms, .. } => Some(duration_ms),
+        LocatedSample::Bytes { data, source_path } => Some(
+            robin_assets::shipping_datadir::global()
+                .and_then(|shipping| shipping.active_audio_duration_ms(&source_path))
+                .or_else(|| wav_duration_ms(&data))
+                .unwrap_or(0),
+        ),
+    }
 }
 
 #[cfg(test)]

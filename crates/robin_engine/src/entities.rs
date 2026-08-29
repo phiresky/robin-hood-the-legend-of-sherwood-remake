@@ -332,9 +332,11 @@ impl Entities {
     /// Actors participating in the shared AI owner scheduler. This is the
     /// NPC set plus explicitly configured AI-controlled heroes with an AI runtime.
     pub fn ai_owner_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.occupied()
-            .filter(|(_, entity)| entity.ai_controller().is_some())
-            .map(|(id, _)| id)
+        self.occupied().filter_map(|(id, entity)| match entity {
+            Entity::Soldier(_) | Entity::Civilian(_) => Some(id),
+            Entity::Pc(pc) if pc.pc.ai.is_some() => Some(id),
+            _ => None,
+        })
     }
 
     pub fn npcs_mut(&mut self) -> impl Iterator<Item = (NpcId, &mut Entity)> + '_ {

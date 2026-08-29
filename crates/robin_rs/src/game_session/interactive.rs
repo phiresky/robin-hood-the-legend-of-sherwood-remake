@@ -291,6 +291,7 @@ impl InteractiveRendererAssembly {
             &mut cursor,
             &mut text,
         );
+        let mut timer = super::setup::PhaseTimer::new("process frontend");
         let sample_loader = crate::audio_backend::create_sample_loader(std::path::PathBuf::from(
             &game.global_options.sound_directory,
         ));
@@ -305,6 +306,7 @@ impl InteractiveRendererAssembly {
             mission_idx,
         );
         window.grab_mouse(true);
+        timer.step("input + camera");
 
         let menu = IngameMenuResources::new(&mut self.renderer, host.shipping.as_deref());
         if menu.is_none() {
@@ -312,6 +314,7 @@ impl InteractiveRendererAssembly {
                 "In-game menu resources unavailable — pause actions require a successful reload"
             );
         }
+        timer.step("in-game menu resources");
 
         InteractiveFrontendAssembly {
             input: MissionInput::new(threaded_input, input_translator),

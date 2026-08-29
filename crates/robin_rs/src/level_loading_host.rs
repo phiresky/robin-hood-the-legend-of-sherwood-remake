@@ -292,6 +292,59 @@ pub fn pre_decode_background_map(
     }))
 }
 
+/// Probe the background map's pixel dimensions without decoding pixels,
+/// using the same candidate order as [`pre_decode_background_map`].
+///
+/// `None` means the probe can't say (missing map, unreadable header, or an
+/// empty map name); the caller must then wait for the full decode before
+/// engine construction so the existing error path reports the failure.
+pub fn probe_background_map_dims(
+    map_name: &str,
+    ambiance_dir: &str,
+    level_directory: &str,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+) -> Option<(u16, u16)> {
+    if map_name.is_empty() {
+        return None;
+    }
+    let shipping_keys = [
+        format!("levels/{}/{}.map", ambiance_dir, map_name).to_ascii_lowercase(),
+        format!("levels/day/{}.map", map_name).to_ascii_lowercase(),
+        format!("levels/{}.map", map_name).to_ascii_lowercase(),
+    ];
+    if let Some(dd) = shipping {
+        for key in &shipping_keys {
+            if let Some(bytes) = dd.raw_asset(key) {
+                return Picture::terrain_dimensions(bytes).ok();
+            }
+        }
+    }
+    let disk_candidates = [
+        format!("{}/{}/{}.map", level_directory, ambiance_dir, map_name),
+        format!("{}/Day/{}.map", level_directory, map_name),
+        format!("{}/{}.map", level_directory, map_name),
+    ];
+    for path in &disk_candidates {
+        // Hackable PNG overlays take priority in `load_terrain_candidate`;
+        // their pixel dimensions come straight from the PNG header.
+        let png_path = format!("{path}.png");
+        if sbfile::SbFile::exists(&png_path) {
+            let bytes = sbfile::SbFile::read_all(&png_path).ok()?;
+            let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+            let reader = decoder.read_info().ok()?;
+            let info = reader.info();
+            return Some((
+                u16::try_from(info.width).ok()?,
+                u16::try_from(info.height).ok()?,
+            ));
+        }
+        if let Ok(bytes) = sbfile::SbFile::read_all(path) {
+            return Picture::terrain_dimensions(&bytes).ok();
+        }
+    }
+    None
+}
+
 /// Upload the decoded background bitmap to the renderer and upload the
 /// level's mask textures. Runs *after* `Engine::new` so
 /// `engine.fast_grid().level.masks` is populated.

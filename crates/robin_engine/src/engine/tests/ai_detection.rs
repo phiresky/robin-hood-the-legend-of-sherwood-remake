@@ -6410,6 +6410,29 @@ fn mixed_enemy_walk_rejects_friendly_ai_on_a_soldier() {
 }
 
 #[test]
+#[should_panic(expected = "eligible autonomous PC 0 has no EnemyAi brain during detection")]
+fn autonomous_pc_detection_rejects_friendly_ai_brain() {
+    use crate::element::{AiActorData, AiBrain, Entity};
+
+    let mut engine = EngineInner::new();
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(pc_id)
+        .expect("wrong-AI autonomous PC exists")
+    else {
+        panic!("wrong-AI autonomous PC changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
+    pc.pc.ai = Some(Box::new(AiActorData {
+        ai_brain: AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(pc_id.index()))),
+        ..AiActorData::default()
+    }));
+
+    let _ = engine.enemy_optical_viewer_context_for_test(pc_id);
+}
+
+#[test]
 fn mixed_enemy_cleanup_removes_negative_life_targets() {
     use crate::element::{DetectableType, Entity};
 

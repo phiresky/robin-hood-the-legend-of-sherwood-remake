@@ -15,6 +15,91 @@ type BuildSelection = {
     readonly buildBase?: string;
 };
 
+// --- boot progress overlay -------------------------------------------------
+// One weighted bar from page load until the game's own canvas rendering
+// takes over. Weights approximate the byte/time split of a cold load; byte
+// progress interpolates inside each phase.
+const BOOT_PHASES = [
+    ['engine-js', 2],
+    ['engine', 48],
+    ['engine-start', 6],
+    ['assets', 4],
+    ['gamedata', 35],
+    ['boot', 5],
+] as const;
+type BootPhase = (typeof BOOT_PHASES)[number][0];
+const bpRoot = document.getElementById('boot-progress');
+const bpFill = document.getElementById('bp-fill');
+const bpLabel = document.getElementById('bp-label');
+const bpDetail = document.getElementById('bp-detail');
+
+function bootProgress(phase: BootPhase, label: string, frac: number, detail = ''): void {
+    if (bpFill === null || bpLabel === null || bpDetail === null) {
+        return;
+    }
+    let base = 0;
+    let width = 0;
+    let total = 0;
+    for (const [name, weight] of BOOT_PHASES) {
+        if (name === phase) {
+            base = total;
+            width = weight;
+        }
+        total += weight;
+    }
+    const clamped = Math.min(Math.max(frac, 0), 1);
+    bpFill.style.width = `${(((base + width * clamped) / total) * 100).toFixed(1)}%`;
+    bpLabel.textContent = label;
+    bpDetail.textContent = detail;
+}
+
+function bootProgressDone(): void {
+    bpRoot?.remove();
+}
+
+function bootProgressError(message: string): void {
+    bpRoot?.classList.add('bp-error');
+    if (bpLabel !== null) {
+        bpLabel.textContent = message;
+    }
+}
+
+const progressMb = (n: number): string => `${(n / 1e6).toFixed(1)} MB`;
+const progressDetail = (loaded: number, total: number): string =>
+    total > 0 ? `${progressMb(loaded)} / ${progressMb(total)}` : progressMb(loaded);
+
+/// Fetch with per-chunk byte progress against Content-Length, preserving a
+/// streamable body (so wasm keeps `instantiateStreaming`). The counted
+/// Response carries only the Content-Type we set, which is all downstream
+/// consumers need. When the server applied Content-Encoding, counted bytes
+/// are decoded while Content-Length is the encoded size — the bar clamps.
+async function fetchWithProgress(
+    url: string,
+    cache: RequestCache,
+    contentType: string,
+    onProgress: (loaded: number, total: number) => void,
+): Promise<Response> {
+    const resp = await fetch(url, { cache });
+    if (!resp.ok) {
+        throw new Error(`fetch ${url}: HTTP ${resp.status}`);
+    }
+    if (resp.body === null) {
+        throw new Error(`fetch ${url}: response has no body`);
+    }
+    const total = Number(resp.headers.get('Content-Length') ?? 0);
+    let loaded = 0;
+    const counted = resp.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller): void {
+                loaded += chunk.byteLength;
+                onProgress(loaded, total);
+                controller.enqueue(chunk);
+            },
+        }),
+    );
+    return new Response(counted, { headers: { 'Content-Type': contentType } });
+}
+
 type BuildManifest = {
     readonly commit?: unknown;
     readonly short?: unknown;
@@ -184,6 +269,7 @@ async function resolveBuild(): Promise<BuildSelection> {
 }
 
 async function main(): Promise<void> {
+    bootProgress('engine-js', 'loading engine…', 0);
     const build = await resolveBuild();
     const buildBase = build.buildBase ?? `${WASM_BUILDS_BASE}/${build.short}`;
     logOk(`[selected ${build.source} build ${build.short}]`);
@@ -203,12 +289,19 @@ async function main(): Promise<void> {
     logOk('[wasm module ready, fetching datadir]');
 
     const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
-    const resp = await fetch(dataUrl, {
-        cache: build.source === 'latest' ? 'no-cache' : 'force-cache',
-    });
-    if (!resp.ok) {
-        throw new Error(`fetch ${dataUrl}: HTTP ${resp.status}`);
-    }
+    const resp = await fetchWithProgress(
+        dataUrl,
+        build.source === 'latest' ? 'no-cache' : 'force-cache',
+        'application/zstd',
+        (loaded, total) => {
+            bootProgress(
+                'gamedata',
+                'loading game data…',
+                total > 0 ? loaded / total : 0,
+                progressDetail(loaded, total),
+            );
+        },
+    );
     const buf = await resp.arrayBuffer();
     logOk(`[datadir fetched: ${buf.byteLength} bytes]`);
 
@@ -216,8 +309,12 @@ async function main(): Promise<void> {
 
     const rpc = installRpcClient(wasm);
 
+    bootProgress('boot', 'starting game…', 0.5);
     wasm.wasm_boot(new Uint8Array(buf), dataUrl.slice(0, dataUrl.lastIndexOf('/')));
     logOk('[handed off to Rust - winit drives rAF from here]');
+    // The game draws its own loading screen from the next animation frame;
+    // drop the shell's bar once the canvas is live.
+    requestAnimationFrame(() => bootProgressDone());
     await waitForRpcBridge(rpc);
     if (shareReplayButton !== null) {
         installShareButton(shareReplayButton, rpc);
@@ -248,23 +345,39 @@ async function loadWasmModule(
     // (unlike the wasm binary below) nothing is lost by skipping the
     // precompressed `.gz` sibling.
     const wasm = await import(/* @vite-ignore */ jsUrl) as RobinWasmModule;
+    bootProgress('engine-js', 'loading engine…', 1);
 
+    const onWasmBytes = (loaded: number, total: number): void => {
+        bootProgress(
+            'engine',
+            'loading engine…',
+            total > 0 ? loaded / total : 0,
+            progressDetail(loaded, total),
+        );
+    };
     // GitHub Pages serves checked-in `.gz` files as opaque gzip downloads,
     // without a Content-Encoding header, and does not compress binary
     // types. Decompress the wasm sibling in the browser so the large module
     // does not cross the network uncompressed. Local development keeps the
     // ordinary URL path instead of paying a failed `.gz` probe on every
-    // boot.
+    // boot. The counted body streams while WebAssembly compiles it, so the
+    // byte callback drives the bar through the whole download+compile
+    // stretch.
     const wasmResponse = preferPrecompressed
-        ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache)
+        ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache, onWasmBytes)
         : undefined;
-    await wasm.default({ module_or_path: wasmResponse ?? wasmUrl });
+    await wasm.default({
+        module_or_path: wasmResponse
+            ?? await fetchWithProgress(wasmUrl, cache, 'application/wasm', onWasmBytes),
+    });
+    bootProgress('engine-start', 'engine ready', 1);
     return wasm;
 }
 
 async function fetchPrecompressedWasm(
     url: string,
     cache: RequestCache,
+    onProgress: (loaded: number, total: number) => void,
 ): Promise<Response | undefined> {
     if (typeof DecompressionStream === 'undefined') {
         return undefined;
@@ -279,9 +392,22 @@ async function fetchPrecompressedWasm(
     if (resp.body === null) {
         throw new Error(`fetch ${url}: response has no body`);
     }
+    // Count the network-side bytes (before decompression) so progress lines
+    // up with the `.gz` Content-Length actually crossing the wire.
+    const total = Number(resp.headers.get('Content-Length') ?? 0);
+    let loaded = 0;
+    const countedBody = resp.body.pipeThrough(
+        new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+            transform(chunk, controller): void {
+                loaded += chunk.byteLength;
+                onProgress(loaded, total);
+                controller.enqueue(chunk);
+            },
+        }),
+    );
     const body = resp.headers.get('Content-Encoding')?.toLowerCase().includes('gzip') === true
-        ? resp.body
-        : resp.body.pipeThrough(new DecompressionStream('gzip'));
+        ? countedBody
+        : countedBody.pipeThrough(new DecompressionStream('gzip'));
     // A Response lets wasm-bindgen retain instantiateStreaming. Static hosts
     // generally label `.wasm.gz` as generic binary data, so provide the MIME
     // type WebAssembly.instantiateStreaming requires.
@@ -345,6 +471,7 @@ async function preloadAssets(
     // Fetch and install in the same bounded worker. Keeping every completed
     // ArrayBuffer until all requests finish doubles the preload peak: JS owns
     // all downloads while wasm_preload_asset copies them into Rust.
+    let preloaded = 0;
     await forEachConcurrent(
         entries,
         PRELOAD_FETCH_CONCURRENCY,
@@ -357,6 +484,13 @@ async function preloadAssets(
             }
             const bytes = new Uint8Array(await assetResp.arrayBuffer());
             preloadAsset(path, bytes);
+            preloaded += 1;
+            bootProgress(
+                'assets',
+                'loading interface assets…',
+                preloaded / entries.length,
+                `${preloaded} / ${entries.length}`,
+            );
             logOk(`[preloaded ${path}: ${bytes.byteLength} bytes]`);
         },
     );
@@ -397,5 +531,6 @@ main().catch((e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e);
     // eslint-disable-next-line no-console
     console.error(msg);
+    bootProgressError(`boot failed: ${msg}`);
     logErr(`[boot failed] ${msg}`);
 });

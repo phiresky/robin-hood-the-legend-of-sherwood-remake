@@ -5388,6 +5388,7 @@ dependencies = [
  "js-sys",
  "jxl",
  "memmap2",
+ "png",
  "rayon",
  "robin_engine",
  "robin_util",

@@ -11,14 +11,20 @@
 //!   standalone: (above, left) -> above -> order-0 -> uniform
 //!   vs base:    (base, above) -> base -> above -> order-0 -> uniform
 //!
-//! Escape mass is estimated adaptively (SEE: learned hit/escape ratios
-//! bucketed by chain level, context size, maturity, and top-symbol skew —
-//! measured -1..4% over PPMC's fixed distinct-count heuristic), with full
-//! exclusion: symbols ruled out by an escape at a more specific level cost
-//! no probability mass further down (measured ~-3%). Counts update at every
-//! level on each symbol, and each context halves its counts when they
-//! saturate, which keeps the model adaptive and the range-coder totals well
-//! inside precision.
+//! Hit-vs-escape at each level is coded as one LZMA-style adaptive binary
+//! decision (schema v12): an 11-bit probability per SEE bucket (chain level,
+//! context size, maturity, top-symbol skew), updated by shift toward the
+//! coded outcome. This replaced v11's SEE-priced escape-in-total scheme
+//! (learned hit/escape ratios folded into the coding interval) because the
+//! binary form needs no division at all — `bound = (range >> 11) * p` — and
+//! escape pricing was ~15-20% of decode time; on a hit the symbol is then
+//! coded in the context's plain frequency interval (the one remaining
+//! division per level). The model also supports full exclusion (symbols
+//! ruled out by an escape at a more specific level cost no probability mass
+//! further down), though shipping chunks disable it for decode speed
+//! (`EXCL_SOURCE_CAP = 0`). Counts update at every level on each symbol,
+//! and each context halves its counts when they saturate, which keeps the
+//! model adaptive and the range-coder totals well inside precision.
 //!
 //! The entropy stage is a carry-aware LZMA-style range coder rather than
 //! rANS: rANS emits symbols last-in-first-out, which fights adaptive
@@ -40,6 +46,18 @@ type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState
 // ---------------------------------------------------------------------------
 
 const RC_TOP: u32 = 1 << 24;
+
+/// Adaptive binary probabilities are 11-bit, LZMA style: `p` out of
+/// [`PROB_ONE`] is the probability of the `bit == false` outcome.
+const PROB_BITS: u32 = 11;
+const PROB_ONE: u16 = 1 << PROB_BITS;
+const PROB_INIT: u16 = PROB_ONE / 2;
+/// Adaptation rate: `p` moves 1/2^SHIFT of the way toward the coded outcome
+/// per update. Measured on Knight01/RobinTown/Guard-pair coded bytes
+/// (2026-08-29): shift 4 and 5 are within 0.01% of each other (5,419,538 vs
+/// 5,420,021 B total), 3 and 6 are +0.5% worse; 5 is kept (the LZMA
+/// default). Part of the bitstream contract — changing it is a schema bump.
+const PROB_SHIFT: u32 = 5;
 
 struct RangeEncoder {
     low: u64,
@@ -66,6 +84,29 @@ impl RangeEncoder {
         let r = self.range / total;
         self.low += start as u64 * r as u64;
         self.range = r * size;
+        while self.range < RC_TOP {
+            self.shift_low();
+            self.range <<= 8;
+        }
+    }
+
+    /// Encode one adaptive binary decision. `p` is the 11-bit probability of
+    /// the `false` outcome and adapts toward what was coded (LZMA shift
+    /// update) — multiply-only, no division. Interoperates freely with
+    /// [`Self::encode`]: both keep the same `low`/`range` invariants
+    /// (`range >= RC_TOP` after every call, carries resolved by
+    /// [`Self::shift_low`]).
+    #[inline]
+    fn encode_bit(&mut self, p: &mut u16, bit: bool) {
+        let bound = (self.range >> PROB_BITS) * (*p as u32);
+        if !bit {
+            self.range = bound;
+            *p += (PROB_ONE - *p) >> PROB_SHIFT;
+        } else {
+            self.low += bound as u64;
+            self.range -= bound;
+            *p -= *p >> PROB_SHIFT;
+        }
         while self.range < RC_TOP {
             self.shift_low();
             self.range <<= 8;
@@ -124,6 +165,28 @@ impl<'a> RangeDecoder<'a> {
         let b = self.input.get(self.pos).copied().unwrap_or(0);
         self.pos += 1;
         b
+    }
+
+    /// Decoder mirror of [`RangeEncoder::encode_bit`]: same probability
+    /// state, same update, multiply-only.
+    #[inline]
+    fn decode_bit(&mut self, p: &mut u16) -> bool {
+        let bound = (self.range >> PROB_BITS) * (*p as u32);
+        let bit = if self.code < bound {
+            self.range = bound;
+            *p += (PROB_ONE - *p) >> PROB_SHIFT;
+            false
+        } else {
+            self.code -= bound;
+            self.range -= bound;
+            *p -= *p >> PROB_SHIFT;
+            true
+        };
+        while self.range < RC_TOP {
+            self.code = (self.code << 8) | self.next_byte() as u32;
+            self.range <<= 8;
+        }
+        bit
     }
 
     /// Returns a value in `[0, total)`; caller finds the symbol whose
@@ -267,33 +330,38 @@ impl Default for Ctx {
 const DENSE_MIRROR_AT: usize = 128;
 
 enum CtxCode {
-    /// (cum, freq, total, see bucket) of the coded symbol.
+    /// (cum, freq, interval sum, see bucket) of the coded symbol: a hit bit
+    /// in the bucket's binary model, then the symbol's plain frequency
+    /// interval over `sum`. When `freq == sum` (single candidate) the
+    /// interval spans the whole range and is skipped on both coder sides.
     Sym(u32, u32, u32, SeeKey),
-    /// (cum, freq, total, see bucket) of the escape.
-    Escape(u32, u32, u32, SeeKey),
+    /// See bucket of the escape: one escape bit, nothing further here.
+    Escape(SeeKey),
     /// Context was empty: nothing is coded (probability-1 escape).
     Empty,
 }
 
 /// Escape weight for a context with `distinct` non-excluded symbols: PPMC.
-/// PPMD-style `distinct.div_ceil(2)` was measured worse net: +1.3..1.9% on
-/// standalone characters (the bulk of the coded bytes), -0.3..0.5% on
-/// cross-variant streams.
-///
-/// Used for bookkeeping totals (`Ctx::total` fast paths); actual coding
-/// uses [`See`]-adaptive escape frequencies where a `See` table is passed.
+/// Since schema v12 this is bookkeeping only — it pads the count-halving
+/// threshold ([`CTX_HALVE_LIMIT`]) exactly as it did when escapes shared the
+/// coding interval, keeping halving points deterministic on both sides.
+/// Escape *pricing* is the [`See`] binary model.
 #[inline]
 fn escape_weight(distinct: u32) -> u32 {
     distinct
 }
 
-/// Secondary escape estimation: adaptive escape statistics per
-/// (chain level, log2 distinct-symbol count) bucket, replacing PPMC's fixed
-/// "escape mass = distinct" heuristic with learned hit/escape ratios.
+/// Secondary escape estimation, schema v12 form: one adaptive 11-bit binary
+/// probability (hit vs escape) per (chain level, log2 distinct, log2 sum,
+/// top-symbol skew quartile) bucket, coded via
+/// [`RangeEncoder::encode_bit`] / [`RangeDecoder::decode_bit`]. Replaces the
+/// v11 hit/escape counters whose `(sum * esc) / hits` pricing put a 64-bit
+/// division (plus the enlarged coding total's division) on every visited
+/// level.
 struct See {
     /// [level][log2 distinct][log2 sum][top-symbol skew quartile]
-    /// -> (symbol hits, escapes).
-    stats: [[[[(u32, u32); 4]; 15]; 13]; 6],
+    /// -> P(hit) in 11 bits.
+    prob: [[[[u16; 4]; 15]; 13]; 6],
 }
 
 /// A flattened See bucket index.
@@ -303,7 +371,7 @@ struct SeeKey(usize, usize, usize, usize);
 impl See {
     fn new() -> Self {
         Self {
-            stats: [[[[(1, 1); 4]; 15]; 13]; 6],
+            prob: [[[[PROB_INIT; 4]; 15]; 13]; 6],
         }
     }
 
@@ -317,27 +385,12 @@ impl See {
         SeeKey(level, d, s, skew)
     }
 
-    /// Escape frequency for a context whose non-excluded interval has `sum`
-    /// total counts. Never 0, and capped so the coder total stays well
-    /// inside range precision.
+    /// The bucket's adaptive hit-probability slot; the range coder's bit
+    /// primitives read and update it in one call, so encoder and decoder
+    /// stay in lockstep by construction.
     #[inline]
-    fn esc_freq(&self, k: SeeKey, sum: u32) -> u32 {
-        let (hits, esc) = self.stats[k.0][k.1][k.2][k.3];
-        ((sum as u64 * esc as u64) / hits.max(1) as u64).clamp(1, (4 * sum.max(1)) as u64) as u32
-    }
-
-    #[inline]
-    fn update(&mut self, k: SeeKey, escaped: bool) {
-        let slot = &mut self.stats[k.0][k.1][k.2][k.3];
-        if escaped {
-            slot.1 += 1;
-        } else {
-            slot.0 += 1;
-        }
-        if slot.0 + slot.1 >= 1 << 13 {
-            slot.0 = (slot.0 / 2).max(1);
-            slot.1 = (slot.1 / 2).max(1);
-        }
+    fn esc_prob(&mut self, k: SeeKey) -> &mut u16 {
+        &mut self.prob[k.0][k.1][k.2][k.3]
     }
 }
 
@@ -372,8 +425,9 @@ impl Ctx {
     /// Locate `x` for encoding, ignoring symbols in `excl` (PPM exclusion:
     /// an escape at a more specific level proves the symbol is none of that
     /// level's candidates, so they must not cost probability mass here).
-    /// Escape mass comes from the adaptive `see` table for `level`.
-    fn code_for(&self, x: u16, excl: &Excl, see: &See, level: usize) -> CtxCode {
+    /// Hit-vs-escape is priced by the caller through the [`See`] binary
+    /// model for `level`; this only reports the bucket and the interval.
+    fn code_for(&self, x: u16, excl: &Excl, level: usize) -> CtxCode {
         if self.is_empty() {
             return CtxCode::Empty;
         }
@@ -381,26 +435,24 @@ impl Ctx {
             // Fast path: `sum` is tracked, so the scan can stop at `x`.
             let sum = self.sum();
             let key = See::key(level, sum, self.distinct(), self.top());
-            let esc = see.esc_freq(key, sum);
-            let total = sum + esc;
             let mut cum = 0u32;
             match self {
                 Ctx::Small { syms, .. } => {
                     for &(s, c) in syms {
                         if s == x {
-                            return CtxCode::Sym(cum, c as u32, total, key);
+                            return CtxCode::Sym(cum, c as u32, sum, key);
                         }
                         cum += c as u32;
                     }
-                    CtxCode::Escape(sum, esc, total, key)
+                    CtxCode::Escape(key)
                 }
                 Ctx::Big { counts, tree, .. } => {
                     let c = counts[x as usize] as u32;
                     if c > 0 {
                         cum += fenwick_prefix(tree, x as usize);
-                        CtxCode::Sym(cum, c, total, key)
+                        CtxCode::Sym(cum, c, sum, key)
                     } else {
-                        CtxCode::Escape(sum, esc, total, key)
+                        CtxCode::Escape(key)
                     }
                 }
             }
@@ -438,11 +490,9 @@ impl Ctx {
             // Bucket by the context's overall top count (not the non-excluded
             // top): an approximation, but identical on both coder sides.
             let key = See::key(level, cum, distinct, self.top());
-            let esc = see.esc_freq(key, cum);
-            let total = cum + esc;
             match found {
-                Some((start, freq)) => CtxCode::Sym(start, freq, total, key),
-                None => CtxCode::Escape(cum, esc, total, key),
+                Some((start, freq)) => CtxCode::Sym(start, freq, cum, key),
+                None => CtxCode::Escape(key),
             }
         }
     }
@@ -470,14 +520,15 @@ impl Ctx {
         unreachable!("target beyond context sum");
     }
 
-    /// Sum and total of the non-excluded interval (pass 1 of the exclusion
-    /// path). Symbols are re-walked by [`Self::find_by_target_excl`] on a
-    /// hit instead of being materialized into a scratch list: the copy's
-    /// `Vec` pushes were over half the decode profile, and the escape case
-    /// (the common one — an exclusion set exists because a more specific
-    /// level already escaped) never needs the individual pairs at all.
+    /// Sum and distinct count of the non-excluded interval (pass 1 of the
+    /// exclusion path). Symbols are re-walked by
+    /// [`Self::find_by_target_excl`] on a hit instead of being materialized
+    /// into a scratch list: the copy's `Vec` pushes were over half the
+    /// decode profile, and the escape case (the common one — an exclusion
+    /// set exists because a more specific level already escaped) never needs
+    /// the individual pairs at all.
     /// Returns `(0, 0, _)` when every present symbol is excluded.
-    fn excl_stats(&self, excl: &Excl, see: &See, level: usize) -> (u32, u32, SeeKey) {
+    fn excl_stats(&self, excl: &Excl, level: usize) -> (u32, u32, SeeKey) {
         let mut sum = 0u32;
         let mut distinct = 0u32;
         match self {
@@ -527,7 +578,7 @@ impl Ctx {
             (0, 0, See::key(level, 0, 1, 0))
         } else {
             let key = See::key(level, sum, distinct, self.top());
-            (sum, sum + see.esc_freq(key, sum), key)
+            (sum, distinct, key)
         }
     }
 
@@ -723,10 +774,10 @@ enum LevelCode {
     Miss,
 }
 
-/// Decode one chain level: price the escape, pull the target, and either
-/// resolve the symbol or record the escape (feeding the exclusion set).
-/// Shared by all three decoder chains; mirrors `Ctx::code_for` + the encode
-/// loops exactly.
+/// Decode one chain level: pull the adaptive hit/escape bit, then either
+/// resolve the symbol from the context's plain frequency interval or record
+/// the escape (feeding the exclusion set). Shared by all three decoder
+/// chains; mirrors `Ctx::code_for` + the encode loops exactly.
 fn decode_level(
     ctx: &Ctx,
     level: usize,
@@ -735,42 +786,48 @@ fn decode_level(
     excl: &mut Excl,
 ) -> LevelCode {
     if excl.is_empty() {
-        // Fast path: `sum` is tracked and the escape interval starts at it,
-        // so escapes are O(1) and symbol scans stop at the target (hot
-        // symbols sit at the front).
+        // Fast path: the escape decision is one adaptive bit (no division),
+        // and on a hit the symbol scan stops at the target (hot symbols sit
+        // at the front).
         if ctx.is_empty() {
             return LevelCode::Miss;
         }
         let sum = ctx.sum();
-        let key = See::key(level, sum, ctx.distinct(), ctx.top());
-        let esc = see.esc_freq(key, sum);
-        let total = sum + esc;
-        let target = dec.decode_target(total);
-        if target >= sum {
-            dec.commit(sum, esc, total);
-            see.update(key, true);
+        let distinct = ctx.distinct();
+        let key = See::key(level, sum, distinct, ctx.top());
+        if dec.decode_bit(see.esc_prob(key)) {
             ctx.exclude_into(excl);
             return LevelCode::Miss;
         }
-        let (i, s, cum, c) = ctx.find_by_target(target);
-        dec.commit(cum, c, total);
-        see.update(key, false);
+        // Hit. A single-candidate context codes no interval at all (it
+        // would span the whole range; the encoder skips it identically via
+        // the `freq == sum` check), so the division disappears too.
+        let (i, s, _, _) = if distinct == 1 {
+            ctx.find_by_target(0)
+        } else {
+            let target = dec.decode_target(sum);
+            let f = ctx.find_by_target(target);
+            dec.commit(f.2, f.3, sum);
+            f
+        };
         LevelCode::Hit(i, s)
     } else {
-        let (sum, total, key) = ctx.excl_stats(excl, see, level);
-        if total == 0 {
+        let (sum, distinct, key) = ctx.excl_stats(excl, level);
+        if distinct == 0 {
             return LevelCode::Miss;
         }
-        let target = dec.decode_target(total);
-        if target >= sum {
-            dec.commit(sum, total - sum, total);
-            see.update(key, true);
+        if dec.decode_bit(see.esc_prob(key)) {
             ctx.exclude_into(excl);
             return LevelCode::Miss;
         }
-        let (i, s, cum, c) = ctx.find_by_target_excl(excl, target);
-        dec.commit(cum, c, total);
-        see.update(key, false);
+        let (i, s, _, _) = if distinct == 1 {
+            ctx.find_by_target_excl(excl, 0)
+        } else {
+            let target = dec.decode_target(sum);
+            let f = ctx.find_by_target_excl(excl, target);
+            dec.commit(f.2, f.3, sum);
+            f
+        };
         LevelCode::Hit(i, s)
     }
 }
@@ -809,7 +866,8 @@ const SEE_LEVEL_AUX: usize = 5;
 /// Escaped contexts holding more than this many distinct symbols do not
 /// contribute to the exclusion set (see [`Ctx::exclude_into`]). Part of the
 /// bitstream contract: both coder sides must share the value, so changing
-/// it is a chunk-schema version change (RHMISN06 shipped with 0). Measured
+/// it is a chunk-schema version change (RHMISN06 and RHMISN07 ship with 0).
+/// Measured
 /// trade vs uncapped exclusion (Knight01/RobinTown, size, decode time):
 /// 256 -> +0.4/+0.6%, -10..15%; 128 -> +0.8/+1.2%, -14..24%;
 /// 64 -> +1.1/+1.7%, -16..30%.
@@ -955,16 +1013,17 @@ impl Model {
         .into_iter()
         .enumerate()
         {
-            match ctx.code_for(x, excl, see, level) {
-                CtxCode::Sym(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, false);
+            match ctx.code_for(x, excl, level) {
+                CtxCode::Sym(cum, f, sum, key) => {
+                    enc.encode_bit(see.esc_prob(key), false);
+                    if f != sum {
+                        enc.encode(cum, f, sum);
+                    }
                     ctx.bump(x, alphabet);
                     return;
                 }
-                CtxCode::Escape(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, true);
+                CtxCode::Escape(key) => {
+                    enc.encode_bit(see.esc_prob(key), true);
                     ctx.exclude_into(excl);
                 }
                 CtxCode::Empty => {}
@@ -993,16 +1052,17 @@ impl Model {
             (2, &mut self.c1b[(above as usize).min(alphabet as usize)]),
             (3, &mut self.c0),
         ] {
-            match ctx.code_for(x, excl, see, level) {
-                CtxCode::Sym(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, false);
+            match ctx.code_for(x, excl, level) {
+                CtxCode::Sym(cum, f, sum, key) => {
+                    enc.encode_bit(see.esc_prob(key), false);
+                    if f != sum {
+                        enc.encode(cum, f, sum);
+                    }
                     ctx.bump(x, alphabet);
                     return;
                 }
-                CtxCode::Escape(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, true);
+                CtxCode::Escape(key) => {
+                    enc.encode_bit(see.esc_prob(key), true);
                     ctx.exclude_into(excl);
                 }
                 CtxCode::Empty => {}
@@ -1049,16 +1109,17 @@ impl Model {
             if skip {
                 continue;
             }
-            match ctx.code_for(x, excl, see, level) {
-                CtxCode::Sym(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, false);
+            match ctx.code_for(x, excl, level) {
+                CtxCode::Sym(cum, f, sum, key) => {
+                    enc.encode_bit(see.esc_prob(key), false);
+                    if f != sum {
+                        enc.encode(cum, f, sum);
+                    }
                     ctx.bump(x, alphabet);
                     return;
                 }
-                CtxCode::Escape(cum, f, t, key) => {
-                    enc.encode(cum, f, t);
-                    see.update(key, true);
+                CtxCode::Escape(key) => {
+                    enc.encode_bit(see.esc_prob(key), true);
                     ctx.exclude_into(excl);
                 }
                 CtxCode::Empty => {}
