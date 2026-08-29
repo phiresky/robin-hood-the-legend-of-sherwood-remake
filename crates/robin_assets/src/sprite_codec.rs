@@ -919,9 +919,12 @@ struct Model {
 impl Model {
     fn new(alphabet: u16) -> Self {
         Self {
-            c2: HashMap::default(),
-            c2pair: HashMap::default(),
-            c2aux: HashMap::default(),
+            // Pre-size the context maps: models routinely end with tens of
+            // thousands of order-2 contexts, and growing there from empty
+            // shows up as rehash churn in decode profiles.
+            c2: HashMap::with_capacity_and_hasher(1 << 15, Default::default()),
+            c2pair: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
+            c2aux: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
