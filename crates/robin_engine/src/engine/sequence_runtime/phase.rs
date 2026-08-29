@@ -1802,10 +1802,10 @@ impl EngineInner {
                                             break 'action;
                                         }
                                     };
-                                if let Some(entity) = self.world.entities.get_mut(owner) {
-                                    if let Some(actor) = entity.actor_data_mut() {
-                                        actor.clear_path();
-                                    }
+                                if let Some(entity) = self.world.entities.get_mut(owner)
+                                    && let Some(actor) = entity.actor_data_mut()
+                                {
+                                    actor.clear_path();
                                 }
                                 let mut order = crate::order::Order::new(
                                     crate::order::OrderType::StrikingDownSword,

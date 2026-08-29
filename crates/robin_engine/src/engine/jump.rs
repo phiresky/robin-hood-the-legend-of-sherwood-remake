@@ -1054,7 +1054,30 @@ impl EngineInner {
                 return;
             };
 
-            if jump.current.is_none() {
+            if let Some(current) = jump.current.as_ref() {
+                // A step is in progress — advance interpolation.
+                let current_anim = current.step.anim;
+                // Ground take-off / landing steps end when their own sprite
+                // animation terminates inside the owner slot, which routes the
+                // `NextJumpStep` completion back here. Their authored tick
+                // total only drives interpolation, never step advance.
+                if jump_step_turns(current_anim) {
+                    entity.position_iface_mut().turn();
+                }
+                advance_step_interpolation(entity);
+
+                // If the step has a max-frames cap (TIME_FLYSEGMENT for
+                // airborne trajectory segments), mark it for early
+                // advance once the cap is reached.
+                if let Some(actor) = entity.actor_data()
+                    && let Some(jump) = actor.active_jump.as_ref()
+                    && let Some(state) = jump.current.as_ref()
+                    && let Some(cap) = state.step.max_frames
+                    && state.frames_elapsed >= cap
+                {
+                    force_advance = true;
+                }
+            } else {
                 match jump.steps.pop_front() {
                     Some(step) => {
                         if matches!(
@@ -1078,30 +1101,6 @@ impl EngineInner {
                         actor.jump_z_offset = 0.0;
                         actor.action_state = ActionState::Waiting;
                     }
-                }
-            } else {
-                // A step is in progress — advance interpolation.
-                let current = jump.current.as_ref().expect("current step exists");
-                let current_anim = current.step.anim;
-                // Ground take-off / landing steps end when their own sprite
-                // animation terminates inside the owner slot, which routes the
-                // `NextJumpStep` completion back here. Their authored tick
-                // total only drives interpolation, never step advance.
-                if jump_step_turns(current_anim) {
-                    entity.position_iface_mut().turn();
-                }
-                advance_step_interpolation(entity);
-
-                // If the step has a max-frames cap (TIME_FLYSEGMENT for
-                // airborne trajectory segments), mark it for early
-                // advance once the cap is reached.
-                if let Some(actor) = entity.actor_data()
-                    && let Some(jump) = actor.active_jump.as_ref()
-                    && let Some(state) = jump.current.as_ref()
-                    && let Some(cap) = state.step.max_frames
-                    && state.frames_elapsed >= cap
-                {
-                    force_advance = true;
                 }
             }
         }
@@ -1160,52 +1159,44 @@ impl EngineInner {
         &mut self,
         entity_id: EntityId,
     ) -> Option<(u16, Option<u16>, MapPoint)> {
-        let Some(entity) = self.world.entities.get_mut(entity_id) else {
-            return None;
-        };
+        let entity = self.world.entities.get_mut(entity_id)?;
 
         // Take the completed step out of the jump state.
         let (finished, next_anim, landing_finalize, jump_completion, next_step_publish) = {
-            let Some(actor) = entity.actor_data_mut() else {
-                return None;
-            };
-            let Some(jump) = actor.active_jump.as_mut() else {
-                return None;
-            };
-            match jump.current.take() {
-                Some(s) => {
-                    let next_anim = jump.steps.front().map(|step| step.anim);
-                    let landing_finalize = (s.step.airborne && next_anim != Some(s.step.anim))
-                        .then_some((
-                            jump.dest_layer,
-                            jump.dest_sector,
-                            jump.dest_projection_point,
-                        ));
-                    let jump_completion = next_anim
-                        .is_none()
-                        .then_some((jump.sequence_id, jump.element_index));
-                    // Retiring an order makes the following one current in the
-                    // same frame: the actor's order pointer never reads the
-                    // exhausted animation once its motion terminated. The step
-                    // itself does not begin until the next frame, so only the
-                    // order is authored here.
-                    let next_step_publish = jump.steps.front().map(|step| {
-                        let target_map = step
-                            .target_3d
-                            .filter(|_| !step.airborne)
-                            .map(crate::coordinates::WorldPoint3D::to_map)
-                            .unwrap_or_default();
-                        (jump.sequence_id, jump.element_index, step.anim, target_map)
-                    });
-                    (
-                        s,
-                        next_anim,
-                        landing_finalize,
-                        jump_completion,
-                        next_step_publish,
-                    )
-                }
-                None => return None,
+            let actor = entity.actor_data_mut()?;
+            let jump = actor.active_jump.as_mut()?;
+            {
+                let s = jump.current.take()?;
+                let next_anim = jump.steps.front().map(|step| step.anim);
+                let landing_finalize = (s.step.airborne && next_anim != Some(s.step.anim))
+                    .then_some((
+                        jump.dest_layer,
+                        jump.dest_sector,
+                        jump.dest_projection_point,
+                    ));
+                let jump_completion = next_anim
+                    .is_none()
+                    .then_some((jump.sequence_id, jump.element_index));
+                // Retiring an order makes the following one current in the
+                // same frame: the actor's order pointer never reads the
+                // exhausted animation once its motion terminated. The step
+                // itself does not begin until the next frame, so only the
+                // order is authored here.
+                let next_step_publish = jump.steps.front().map(|step| {
+                    let target_map = step
+                        .target_3d
+                        .filter(|_| !step.airborne)
+                        .map(crate::coordinates::WorldPoint3D::to_map)
+                        .unwrap_or_default();
+                    (jump.sequence_id, jump.element_index, step.anim, target_map)
+                });
+                (
+                    s,
+                    next_anim,
+                    landing_finalize,
+                    jump_completion,
+                    next_step_publish,
+                )
             }
         };
 
@@ -1292,11 +1283,11 @@ impl EngineInner {
         if jump_landing_restores_anti_collision(finished.step.anim) {
             entity.position_iface_mut().set_anti_collision_on(true);
         }
-        if jump_completion.is_some() {
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.active_jump = None;
-                actor.jump_z_offset = 0.0;
-            }
+        if jump_completion.is_some()
+            && let Some(actor) = entity.actor_data_mut()
+        {
+            actor.active_jump = None;
+            actor.jump_z_offset = 0.0;
         }
 
         // For the three jump landing transitions: re-broadcast
@@ -1809,7 +1800,7 @@ fn jump_step_turns(anim: OrderType) -> bool {
 fn jump_flight_rate(anim: OrderType) -> f32 {
     match anim {
         OrderType::JumpingLong | OrderType::JumpingLongSword => 0.125,
-        OrderType::JumpingUp => 0.066_666_666_666_666_67,
+        OrderType::JumpingUp => 0.066_666_67,
         OrderType::JumpingDown => 0.05,
         _ => {
             tracing::warn!(

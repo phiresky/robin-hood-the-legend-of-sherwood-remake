@@ -2634,8 +2634,8 @@ mod tests {
         ];
         obstacle.rebuild_geometry();
 
-        let origin = WorldPoint3D::new(1032.0369873046875, 1994.0145263671875, 144.74258422851562);
-        let destination = WorldPoint3D::new(1060.244384765625, 1990.617431640625, 77.18310546875);
+        let origin = WorldPoint3D::new(1_032.037, 1_994.014_5, 144.742_58);
+        let destination = WorldPoint3D::new(1_060.244_4, 1_990.617_4, 77.183_105);
         let result = is_reachable_impact_3d(
             origin,
             destination,
@@ -2712,14 +2712,14 @@ mod tests {
         // order independently of the more forgiving midpoint test above.
         let result = is_reachable_impact_3d(
             WorldPoint3D {
-                x: 1462.1060791015625,
-                y: 286.5855407714844,
+                x: 1_462.106_1,
+                y: 286.585_54,
                 z: 11.0,
             },
             WorldPoint3D {
-                x: 1395.727294921875,
-                y: 270.90264892578125,
-                z: -54.47200012207031,
+                x: 1_395.727_3,
+                y: 270.902_65,
+                z: -54.472,
             },
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(&[]),

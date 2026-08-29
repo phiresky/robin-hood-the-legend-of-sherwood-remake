@@ -68,15 +68,15 @@ impl LegacyElementEnvelope {
                 LegacyElementRecord::read(reader, slot, config)
             })?;
 
-            if let Some(previous) = previous_creation_order {
-                if record.creation_order <= previous {
-                    return Err(reader.invalid_value(
-                        record.creation_order_offset,
-                        format_args!("elements[{slot}].creation_order"),
-                        record.creation_order,
-                        "unique creation order greater than the preceding phase-one record",
-                    ));
-                }
+            if let Some(previous) = previous_creation_order
+                && record.creation_order <= previous
+            {
+                return Err(reader.invalid_value(
+                    record.creation_order_offset,
+                    format_args!("elements[{slot}].creation_order"),
+                    record.creation_order,
+                    "unique creation order greater than the preceding phase-one record",
+                ));
             }
             previous_creation_order = Some(record.creation_order);
 

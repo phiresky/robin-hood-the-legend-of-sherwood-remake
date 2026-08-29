@@ -691,7 +691,7 @@ fn family(holder: &FrameHolder, data_dir: &Path, base: &str, variants: &[&str]) 
             tiles: vtiles,
         };
         for (v, t) in vd.tiles.iter().enumerate() {
-            let has_key = t.iter().any(|&p| p == TRANSPARENT_COLOR_16);
+            let has_key = t.contains(&TRANSPARENT_COLOR_16);
             if has_key {
                 vd.tiles_with_key_px += 1;
             } else {
@@ -1335,14 +1335,14 @@ mod codec {
         grids: &[SpriteGrid],
         base: Option<&[Option<&[u16]>]>,
     ) -> Result<Vec<u8>> {
-        if let Some(base) = base {
-            if base.len() != grids.len() {
-                return Err(anyhow!(
-                    "base list length {} != grid count {}",
-                    base.len(),
-                    grids.len()
-                ));
-            }
+        if let Some(base) = base
+            && base.len() != grids.len()
+        {
+            return Err(anyhow!(
+                "base list length {} != grid count {}",
+                base.len(),
+                grids.len()
+            ));
         }
         let mut enc = RangeEncoder::new();
         let mut model = Model::new(alphabet);
@@ -1357,10 +1357,10 @@ mod codec {
                 ));
             }
             let b = base.and_then(|b| b[gi]);
-            if let Some(b) = b {
-                if b.len() != g.indices.len() {
-                    return Err(anyhow!("grid {gi}: base length mismatch"));
-                }
+            if let Some(b) = b
+                && b.len() != g.indices.len()
+            {
+                return Err(anyhow!("grid {gi}: base length mismatch"));
             }
             for (i, &x) in g.indices.iter().enumerate() {
                 if x as u32 >= alphabet as u32 {
@@ -1386,14 +1386,14 @@ mod codec {
         base: Option<&[Option<&[u16]>]>,
         blob: &[u8],
     ) -> Result<Vec<Vec<u16>>> {
-        if let Some(base) = base {
-            if base.len() != dims.len() {
-                return Err(anyhow!(
-                    "base list length {} != grid count {}",
-                    base.len(),
-                    dims.len()
-                ));
-            }
+        if let Some(base) = base
+            && base.len() != dims.len()
+        {
+            return Err(anyhow!(
+                "base list length {} != grid count {}",
+                base.len(),
+                dims.len()
+            ));
         }
         let mut dec = RangeDecoder::new(blob);
         let mut model = Model::new(alphabet);
@@ -1402,10 +1402,10 @@ mod codec {
             let cols = cols16 as usize;
             let n = cols * rows as usize;
             let b = base.and_then(|b| b[gi]);
-            if let Some(b) = b {
-                if b.len() != n {
-                    return Err(anyhow!("grid {gi}: base length mismatch"));
-                }
+            if let Some(b) = b
+                && b.len() != n
+            {
+                return Err(anyhow!("grid {gi}: base length mismatch"));
             }
             let mut g: Vec<u16> = Vec::with_capacity(n);
             for i in 0..n {

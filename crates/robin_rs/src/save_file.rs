@@ -866,10 +866,12 @@ mod tests {
         use robin_engine::engine::SimConfig;
         use robin_engine::player_profile::DifficultyLevel;
 
-        let mut construction_config = SimConfig::default();
-        construction_config.difficulty = DifficultyLevel::Hard;
-        construction_config.amount_of_speaking = 9;
-        construction_config.golden_eye = true;
+        let construction_config = SimConfig {
+            difficulty: DifficultyLevel::Hard,
+            amount_of_speaking: 9,
+            golden_eye: true,
+            ..Default::default()
+        };
 
         let campaign = crate::game_session::establish_mission_restart_boundary(
             Campaign::default(),

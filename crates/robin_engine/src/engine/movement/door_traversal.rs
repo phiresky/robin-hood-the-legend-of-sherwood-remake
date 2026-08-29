@@ -134,9 +134,7 @@ impl EngineInner {
         }
 
         let gate_shots = {
-            if self.scripts.mission.is_none() {
-                return None;
-            }
+            self.scripts.mission.as_ref()?;
             let shots: Vec<GateShot> = gate_path
                 .iter()
                 .filter_map(|step| {

@@ -47,12 +47,12 @@ fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, Stri
     };
     match info.color_type {
         png::ColorType::Rgb => {
-            for pixel in data.chunks_exact(3) {
+            for pixel in data.as_chunks::<3>().0 {
                 push_pixel(pixel[0], pixel[1], pixel[2]);
             }
         }
         png::ColorType::Rgba => {
-            for pixel in data.chunks_exact(4) {
+            for pixel in data.as_chunks::<4>().0 {
                 push_pixel(pixel[0], pixel[1], pixel[2]);
             }
         }
@@ -109,7 +109,9 @@ fn decode_occlusion_depth_png(
     }
     let data = &buffer[..info.buffer_size()];
     Ok(data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
         .collect())
 }

@@ -928,10 +928,10 @@ impl<'a> ShieldCommandContext<'a> {
         }
         // Only call `SetShieldProtected` when the Generic property is
         // non-null.
-        if let Some(prot) = new_protected {
-            if let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut) {
-                pc.shield_protected = Some(prot);
-            }
+        if let Some(prot) = new_protected
+            && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
+        {
+            pc.shield_protected = Some(prot);
         }
 
         // Human-base Translate treats only HOLDING_SHIELD as redundant.

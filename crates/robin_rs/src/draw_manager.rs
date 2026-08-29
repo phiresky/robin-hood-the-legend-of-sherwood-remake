@@ -267,7 +267,7 @@ impl DrawManager {
         color: u16,
     ) {
         // cos(55°), the game's isometric projection angle.
-        const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158f32 as f64;
+        const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573_576_45_f32 as f64;
 
         let center = self.map_to_screen(position);
         // Cast through u16 to truncate to 16 bits.

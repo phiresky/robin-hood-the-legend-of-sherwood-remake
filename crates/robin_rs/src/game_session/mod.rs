@@ -1102,8 +1102,10 @@ mod required_state_tests {
         campaign.current_mission_idx = current_mission_idx;
         campaign.snapshot_with_simulation(0x1010, robin_engine::engine::SimConfig::default());
         campaign.current_mission_idx = current_mission_idx;
-        let mut sim_config = robin_engine::engine::SimConfig::default();
-        sim_config.highlander2 = true;
+        let sim_config = robin_engine::engine::SimConfig {
+            highlander2: true,
+            ..Default::default()
+        };
         let data = ReplayFile {
             header: ReplayHeader {
                 mission_id: "MissionA".into(),
@@ -1144,12 +1146,16 @@ mod required_state_tests {
 
     #[test]
     fn direct_launch_restart_restores_the_exact_preselected_boundary() {
-        let mut campaign = Campaign::default();
-        campaign.current_mission_idx = Some(3);
-        campaign.next_mission_idx = None;
+        let mut campaign = Campaign {
+            current_mission_idx: Some(3),
+            next_mission_idx: None,
+            ..Default::default()
+        };
         campaign.values[CampaignValue::Custom20] = 17;
-        let mut config = robin_engine::engine::SimConfig::default();
-        config.amount_of_speaking = 8;
+        let config = robin_engine::engine::SimConfig {
+            amount_of_speaking: 8,
+            ..Default::default()
+        };
 
         let mut launched = establish_mission_restart_boundary(campaign, 0x5151, config);
         launched.values[CampaignValue::Custom20] = 99;
@@ -1163,9 +1169,11 @@ mod required_state_tests {
     }
 
     fn commanded_level_restart_fixture() -> (robin_engine::engine::SimConfig, MissionOutcome) {
-        let mut checkpoint = robin_engine::engine::SimConfig::default();
-        checkpoint.amount_of_speaking = 3;
-        checkpoint.highlander2 = true;
+        let checkpoint = robin_engine::engine::SimConfig {
+            amount_of_speaking: 3,
+            highlander2: true,
+            ..Default::default()
+        };
         let mut assets = robin_engine::engine::LevelAssets::new();
         let mut engine = robin_engine::engine::Engine::new_for_test_with_simulation(
             1024.0,

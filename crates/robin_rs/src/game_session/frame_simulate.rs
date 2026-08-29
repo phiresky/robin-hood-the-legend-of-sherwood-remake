@@ -763,7 +763,7 @@ impl InteractiveFrameSimulation {
         let actions = crate::http_server::drain_global(
             manager,
             host,
-            &assets,
+            assets,
             net.as_ref(),
             &mut frame.post_commands,
         );
@@ -847,7 +847,7 @@ impl InteractiveFrameSimulation {
         // cursor themselves: forward pulls the next recorded commands
         // and applies them before the tick; back seeks the cursor to
         // the rewound frame so playback resumes from there.
-        if step_forward_pressed && !modal_state_pending(&host) {
+        if step_forward_pressed && !modal_state_pending(host) {
             // Stepping into a save-marker / load-back frame must pin or
             // swap state exactly like the normal playback admission path.
             runtime
@@ -891,7 +891,7 @@ impl InteractiveFrameSimulation {
 
                 runtime
                     .rewind_buffer
-                    .begin_frame(step_frame, &manager.engine, &assets);
+                    .begin_frame(step_frame, &manager.engine, assets);
 
                 let simulation_frame = match (buffered_frame, replay_input) {
                     (Some(buffered), _) => buffered,
@@ -933,7 +933,7 @@ impl InteractiveFrameSimulation {
                     "step-forward: frame lies inside recorded history but its commands are missing"
                 );
             }
-        } else if step_back_pressed && !modal_state_pending(&host) {
+        } else if step_back_pressed && !modal_state_pending(host) {
             if let Some(target) = runtime.current_frame().previous()
                 && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
                 && target.number() >= oldest

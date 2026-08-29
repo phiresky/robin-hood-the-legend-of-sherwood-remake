@@ -324,8 +324,8 @@ mod tests {
 
     #[test]
     fn task194_roll_initialises_direction_before_selecting_sprite_row() {
-        let position = MapPoint::new(1215.356_1, 1141.408_7);
-        let goal = MapPoint::new(1215.505_4, 1168.039_6);
+        let position = MapPoint::new(1_215.356_1, 1_141.408_7);
+        let goal = MapPoint::new(1_215.505_4, 1_168.039_6);
 
         let direction = rolling_initial_direction(position, goal);
 
@@ -337,8 +337,8 @@ mod tests {
     #[test]
     fn task194_deviation_step_selects_original_direction_goal() {
         let direct = rolling_initial_direction(
-            MapPoint::new(1215.356_1, 1141.408_7),
-            MapPoint::new(1215.505_4, 1168.039_6),
+            MapPoint::new(1_215.356_1, 1_141.408_7),
+            MapPoint::new(1_215.505_4, 1_168.039_6),
         );
         let original_step = MapPoint::new(-2.106_323_2, 2.136_230_5);
 
@@ -353,8 +353,8 @@ mod tests {
     fn translated_roll_retains_order_direction_computation() {
         let order = crate::order::Order::new(
             OrderType::Rolling,
-            1215.505_4,
-            1168.039_6,
+            1_215.505_4,
+            1_168.039_6,
             std::num::NonZeroU32::new(1).unwrap(),
         );
 
@@ -363,8 +363,8 @@ mod tests {
 
     #[test]
     fn stopped_rolling_uses_rewritten_live_goal_not_order_destination() {
-        let authored_order_destination = MapPoint::new(1213.184_1, 1172.210_4);
-        let stopped_here = MapPoint::new(1208.699_5, 1156.473_4);
+        let authored_order_destination = MapPoint::new(1_213.184_1, 1_172.210_4);
+        let stopped_here = MapPoint::new(1_208.699_5, 1_156.473_4);
         let mut position = crate::position_interface::PositionInterface::new();
         position.set_map_position(stopped_here);
         position.set_map_goal(authored_order_destination);

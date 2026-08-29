@@ -571,8 +571,8 @@ fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer()
     ai.base.current_substate = Substate::SeekingSoldierReturnToOfficer;
     ai.base.antagonist = 85;
     ai.officers_position = Position {
-        x: 1_503.6351,
-        y: 1_097.0138,
+        x: 1_503.635_1,
+        y: 1_097.013_8,
         ..Position::default()
     };
 
@@ -591,8 +591,8 @@ fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer()
     let ctx = AiContext {
         frame: 14_748,
         position: Position {
-            x: 2_006.4349,
-            y: 1_735.3752,
+            x: 2_006.434_9,
+            y: 1_735.375_2,
             ..Position::default()
         },
         sq_standard_view_radius: 300.0 * 300.0,
@@ -628,7 +628,6 @@ fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() 
         y: 1604.3259,
         level: 0,
         sector: crate::position_interface::SectorHandle::new(18),
-        ..Position::default()
     };
     let ctx = AiContext {
         frame: 44_683,
@@ -637,7 +636,6 @@ fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() 
             y: 1818.9901,
             level: 0,
             sector: crate::position_interface::SectorHandle::new(18),
-            ..Position::default()
         },
         ..AiContext::default()
     };
@@ -1007,23 +1005,25 @@ fn avenger_roof_timeout_seeks_from_live_owner_position() {
         y: 2_200.0,
         ..Position::default()
     };
-    let mut global = AiGlobalState::default();
-    global.seek_points = [(1_810.0, 2_200.0), (1_820.0, 2_200.0), (1_830.0, 2_200.0)]
-        .into_iter()
-        .enumerate()
-        .map(|(id, (x, y))| SeekPoint {
-            position: Position {
-                x,
-                y,
-                ..Position::default()
-            },
-            frame_when_full_interest: 0,
-            directions: vec![0],
-            last_calculated_interest: 100,
-            locked: false,
-            id: id as u16,
-        })
-        .collect();
+    let mut global = AiGlobalState {
+        seek_points: [(1_810.0, 2_200.0), (1_820.0, 2_200.0), (1_830.0, 2_200.0)]
+            .into_iter()
+            .enumerate()
+            .map(|(id, (x, y))| SeekPoint {
+                position: Position {
+                    x,
+                    y,
+                    ..Position::default()
+                },
+                frame_when_full_interest: 0,
+                directions: vec![0],
+                last_calculated_interest: 100,
+                locked: false,
+                id: id as u16,
+            })
+            .collect(),
+        ..Default::default()
+    };
     let ctx = AiContext {
         frame: 12_000,
         position: live_position,
@@ -1267,7 +1267,7 @@ fn approaching_new_enemy_close_gate_stretches_world_y() {
     };
     let target = Position {
         x: 710.678_9,
-        y: 2049.651_1,
+        y: 2_049.651_1,
         ..Position::default()
     };
     let dx = target.x - owner.x;
@@ -1413,7 +1413,7 @@ fn bow_running_behind_shield_faces_target_with_its_elevation() {
     let mut target = pc_view(crate::element::Posture::Upright);
     target.position = Position {
         x: 265.357_67,
-        y: 1023.334_5,
+        y: 1_023.334_5,
         ..Position::default()
     };
     target.elevation = 151.123_84;
@@ -1438,7 +1438,7 @@ fn bow_running_behind_shield_faces_target_with_its_elevation() {
     assert_eq!(
         crate::position_interface::vector_to_sector_0_to_15_iso(
             265.357_67 - 436.932_5,
-            1023.334_5 - 1227.554
+            1_023.334_5 - 1227.554
         ),
         15
     );
@@ -1488,12 +1488,12 @@ fn shield_reestablish_uses_raw_door_passing_target_position() {
             handle: 174,
             position: Position {
                 x: 598.0,
-                y: 2490.781_3,
+                y: 2_490.781_3,
                 ..Position::default()
             },
             raw_position: Position {
                 x: 591.982_4,
-                y: 2475.868_2,
+                y: 2_475.868_2,
                 ..Position::default()
             },
             elevation: 0.0,
@@ -1503,7 +1503,7 @@ fn shield_reestablish_uses_raw_door_passing_target_position() {
         frame: 2027,
         position: Position {
             x: 725.584_17,
-            y: 2499.990_2,
+            y: 2_499.990_2,
             ..Position::default()
         },
         ..AiContext::default()
@@ -1519,7 +1519,7 @@ fn shield_reestablish_uses_raw_door_passing_target_position() {
         element.get_property(Field::ShieldDangerPoint),
         Some(FieldValue::Point3D {
             x: 591.982_4,
-            y: 2475.868_2,
+            y: 2_475.868_2,
             z: 0.0,
         })
     ));
@@ -1983,7 +1983,7 @@ fn heardsteps_arrival_starts_zero_radius_walking_seek() {
     };
     let here = Position {
         x: 1630.6875,
-        y: 1630.921875,
+        y: 1_630.921_9,
         ..Position::default()
     };
     let ctx = AiContext {
@@ -2132,8 +2132,8 @@ fn running_to_officer_tracks_rejected_civilian_alert_antagonist() {
         ..Position::default()
     };
     let civilian_position = Position {
-        x: 847.573_975,
-        y: 2436.898_19,
+        x: 847.574,
+        y: 2_436.898_2,
         ..Position::default()
     };
     let mut views = crate::ai_entity_view::AiEntityViewMap::new();
@@ -3048,7 +3048,7 @@ fn goto_chief_reach_faces_live_chief_with_elevation() {
         crate::order::OrderType::NonanimationEnd,
     );
     chief_view.position = Position {
-        x: 1033.585_9,
+        x: 1_033.585_9,
         y: 2036.767,
         ..Position::default()
     };
@@ -3059,7 +3059,7 @@ fn goto_chief_reach_faces_live_chief_with_elevation() {
         frame: 34_866,
         position: Position {
             x: 1021.08,
-            y: 2031.790_4,
+            y: 2_031.790_4,
             ..Position::default()
         },
         elevation: 27.711_25,

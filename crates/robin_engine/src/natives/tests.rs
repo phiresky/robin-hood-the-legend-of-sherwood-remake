@@ -3316,9 +3316,9 @@ fn compute_border_point_matches_original_rounded_half_line_arithmetic() {
     let (border, outside) = compute_border_point_bbox(map_bbox, (8.0, 2272.0), 5);
 
     assert_eq!(border.0.to_bits(), 0.0f32.to_bits());
-    assert_eq!(border.1.to_bits(), 2268.687_3f32.to_bits());
+    assert_eq!(border.1.to_bits(), 2_268.687_3_f32.to_bits());
     assert_eq!(outside.0.to_bits(), (-55.432_774f32).to_bits());
-    assert_eq!(outside.1.to_bits(), 2245.725_8f32.to_bits());
+    assert_eq!(outside.1.to_bits(), 2_245.725_8_f32.to_bits());
 }
 
 #[test]
@@ -3433,7 +3433,6 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
         1_234
     );
     drop(context);
-    drop(capabilities);
 
     assert_eq!(
         campaign.get_value(crate::campaign::CampaignValue::Ransom),

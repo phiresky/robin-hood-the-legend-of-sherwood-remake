@@ -1239,7 +1239,7 @@ pub(crate) fn preflight_vm(
             });
         }
         let address = saved_member.schema.address as usize;
-        let end = address.checked_add(4).unwrap_or(usize::MAX);
+        let end = address.saturating_add(4);
         if end > heap.len() {
             return Err(LegacyObjectLeafAdoptError::VmHeapRange {
                 owner_kind: owner_kind.name(),
@@ -1285,7 +1285,8 @@ pub(crate) fn preflight_vm(
                         member: saved_member.schema.name.clone(),
                         index: usize::MAX,
                     })?;
-                let bits = if let Some(location) = location {
+
+                if let Some(location) = location {
                     let sector_count = assets
                         .legacy_grid_topology
                         .as_ref()
@@ -1345,8 +1346,7 @@ pub(crate) fn preflight_vm(
                 } else {
                     computed_locations.push(None);
                     0
-                };
-                bits
+                }
             }
             _ => {
                 return Err(LegacyObjectLeafAdoptError::VmSchemaMismatch {

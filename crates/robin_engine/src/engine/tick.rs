@@ -290,8 +290,10 @@ mod mobile_owner_boundary_tests {
             .world
             .mobile_elements
             .push(mobile(vec![first, second]));
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
 
         let sprite_before =
             serde_json::to_value(&engine.get_entity(first).unwrap().element_data().sprite).unwrap();
@@ -349,8 +351,10 @@ mod mobile_owner_boundary_tests {
             engine.add_entity(inactive_civilian(MapPoint::new(10.0, 0.0)));
         }
         engine.world.mobile_elements.push(mobile(vec![child]));
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
         let mut observations = Vec::new();
         engine.tick_actor_animation_action_change_slots_with_hooks(
             &sim_context,
@@ -390,8 +394,10 @@ mod mobile_owner_boundary_tests {
         let second = engine.add_entity(mobile_fx(1, MapPoint::new(20.0, 0.0)));
         engine.world.mobile_elements.push(mobile(vec![first]));
         engine.world.mobile_elements.push(mobile(vec![second]));
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
         let visited = std::cell::RefCell::new(Vec::new());
         let spawned = std::cell::Cell::new(None);
         engine.tick_actor_animation_action_change_slots_with_hooks(
@@ -434,8 +440,10 @@ mod mobile_owner_boundary_tests {
             fx: FxData::default(),
         }));
         engine.world.mobile_elements.push(mobile(vec![child]));
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
 
         let trace = std::cell::RefCell::new(Vec::new());
         engine.tick_actor_animation_action_change_slots_with_hooks(
@@ -495,25 +503,27 @@ mod mobile_owner_boundary_tests {
             owner.goal = MapPoint::new(2.0, 0.0);
             owner.current_waypoint = 1;
             engine.world.mobile_elements.push(owner);
-            let mut assets = LevelAssets::default();
-            assets.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
-                waypoints: vec![
-                    RawWaypoint {
-                        x: 0,
-                        y: 0,
-                        sector: 0,
-                        level: 0,
-                        command: WaypointCommand::None,
-                    },
-                    RawWaypoint {
-                        x: 2,
-                        y: 0,
-                        sector: 0,
-                        level: 0,
-                        command: speed_macro(3.0),
-                    },
-                ],
-            }]);
+            let assets = LevelAssets {
+                hiking_paths: std::sync::Arc::new(vec![RawHikingPath {
+                    waypoints: vec![
+                        RawWaypoint {
+                            x: 0,
+                            y: 0,
+                            sector: 0,
+                            level: 0,
+                            command: WaypointCommand::None,
+                        },
+                        RawWaypoint {
+                            x: 2,
+                            y: 0,
+                            sector: 0,
+                            level: 0,
+                            command: speed_macro(3.0),
+                        },
+                    ],
+                }]),
+                ..Default::default()
+            };
 
             let (_, trace) = crate::sim_rng::with_draw_trace(|| {
                 engine.tick_mobile_child_owner_boundary(sim, &assets, child);
@@ -567,8 +577,10 @@ mod mobile_owner_boundary_tests {
         owner.old_position = MapPoint::new(0.0, 0.0);
         owner.stopped = true;
         engine.world.mobile_elements.push(owner);
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
         let _ = super::super::movement::take_last_mobile_crossing_increment();
 
         engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
@@ -616,8 +628,10 @@ mod mobile_owner_boundary_tests {
             .world
             .mobile_elements
             .push(mobile(vec![first, second]));
-        let mut assets = LevelAssets::default();
-        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+        let assets = LevelAssets {
+            hiking_paths: std::sync::Arc::new(vec![path()]),
+            ..Default::default()
+        };
 
         engine.tick_mobile_child_owner_boundary(&sim_context, &assets, first);
     }
@@ -4321,7 +4335,7 @@ impl EngineInner {
             )
         });
         match entity {
-            Entity::Fx(fx) if fx.fx.mobile_index.is_some() => return,
+            Entity::Fx(fx) if fx.fx.mobile_index.is_some() => (),
             Entity::Fx(_) => {
                 if !entity.is_active() || frozen {
                     return;
@@ -6094,19 +6108,19 @@ impl EngineInner {
             return;
         }
 
-        if live_command == Some(crate::element::Command::WaitFreeLift) {
-            if let Some((seq_id, elem_idx)) = live_element {
-                let world = &mut self.world;
-                let authorized = super::sequence_runtime::LiftWaitCommandContext {
-                    entities: &mut world.entities,
-                    fast_grid: std::sync::Arc::make_mut(&mut world.fast_grid),
-                    doors: self.script_domains.interactables.doors.as_slice(),
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .authorize_and_reserve(owner, seq_id, elem_idx);
-                if authorized {
-                    *motion = crate::sprite::MotionState::Terminated;
-                }
+        if live_command == Some(crate::element::Command::WaitFreeLift)
+            && let Some((seq_id, elem_idx)) = live_element
+        {
+            let world = &mut self.world;
+            let authorized = super::sequence_runtime::LiftWaitCommandContext {
+                entities: &mut world.entities,
+                fast_grid: std::sync::Arc::make_mut(&mut world.fast_grid),
+                doors: self.script_domains.interactables.doors.as_slice(),
+                sequence_manager: &mut self.orders.sequence_manager,
+            }
+            .authorize_and_reserve(owner, seq_id, elem_idx);
+            if authorized {
+                *motion = crate::sprite::MotionState::Terminated;
             }
         }
     }

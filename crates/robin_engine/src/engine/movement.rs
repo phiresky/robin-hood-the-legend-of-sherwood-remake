@@ -183,11 +183,11 @@ mod post_seek_hit_handoff_tests {
 
     #[test]
     fn hit_init_range_uses_raw_map_square_norm_and_includes_exact_boundary() {
-        let owner = MapPoint::new(1099.375_2, 1823.835_4);
+        let owner = MapPoint::new(1_099.375_2, 1_823.835_4);
         let nescafe_target = MapPoint::new(1055.0, 1790.0);
         assert!(interaction_exceeds_init_range(owner, nescafe_target));
 
-        let owner = MapPoint::new(1483.855_8, 2720.03);
+        let owner = MapPoint::new(1_483.855_8, 2720.03);
         let cyrdach_target = MapPoint::new(1470.0, 2759.0);
         assert!(interaction_exceeds_init_range(owner, cyrdach_target));
 
@@ -793,7 +793,7 @@ mod group_move_authorization_tests {
             ..crate::gate::Door::default()
         };
         let adapted = adapt_source_to_current_door_with_identity(
-            &[exact_door.clone()],
+            std::slice::from_ref(&exact_door),
             crate::position_interface::DoorHandle(0),
             true,
         )
@@ -1261,7 +1261,7 @@ mod exact_lift_sector_tests {
             posture: crate::element::Posture::OnWall,
             ..ElementData::default()
         };
-        element.set_position_map(MapPoint::new(2278.8799, 1257.0005));
+        element.set_position_map(MapPoint::new(2_278.88, 1257.0005));
         element.sprite.position_iface.set_sector_topology(
             crate::position_interface::SectorHandle::new(sector.get()),
             sector.arena_index(),
@@ -1503,10 +1503,7 @@ fn materialize_door_action_point_prefix(
     next_order_id: &mut u32,
 ) -> Vec<crate::order::Order> {
     let mut orders = Vec::new();
-    loop {
-        let Some(step) = pass.steps.front() else {
-            break;
-        };
+    while let Some(step) = pass.steps.front() {
         let mut order = match step {
             crate::element::DoorPassStep::Select { speed } => {
                 let mut order = crate::order::Order::new(
@@ -6139,34 +6136,32 @@ impl EngineInner {
                     tolerance: _,
                     element: target_elem,
                     destination,
-                    sector: _,
                     ..
                 } = &elem.data
+                    && flags.contains(crate::sequence::MoveFlags::SEEK)
                 {
-                    if flags.contains(crate::sequence::MoveFlags::SEEK) {
-                        // The per-tick seek-arrival predicate (and its
-                        // FROZEN-wait sibling) is a SEEK-only
-                        // mechanism.  Non-seek `GoNear`-style
-                        // stop-distances are enforced earlier, by
-                        // `insert_transition_end` adding the element's
-                        // tolerance to the end-transition shift
-                        // (`distance_remaining + tolerance`), which
-                        // truncates the walking phase before order
-                        // emission.  Gating here keeps the FinalTol
-                        // snapshot meaningful only for true seeks, so
-                        // the downstream tolerance-arrival check can
-                        // rely on the creation-slot target observation /
-                        // `shield_destination` being live. Gate-approach
-                        // legs of an entity seek deliberately carry zero
-                        // tolerance, but remain PerformSeek owners and must
-                        // still age the shared refresh countdown.
-                        let directional =
-                            flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE);
-                        let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
-                        let seek_shield = flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD);
-                        let (resolved_target_id, target_is_actor) = match target_elem
-                            .and_then(|id| self.get_entity(id))
-                        {
+                    // The per-tick seek-arrival predicate (and its
+                    // FROZEN-wait sibling) is a SEEK-only
+                    // mechanism.  Non-seek `GoNear`-style
+                    // stop-distances are enforced earlier, by
+                    // `insert_transition_end` adding the element's
+                    // tolerance to the end-transition shift
+                    // (`distance_remaining + tolerance`), which
+                    // truncates the walking phase before order
+                    // emission.  Gating here keeps the FinalTol
+                    // snapshot meaningful only for true seeks, so
+                    // the downstream tolerance-arrival check can
+                    // rely on the creation-slot target observation /
+                    // `shield_destination` being live. Gate-approach
+                    // legs of an entity seek deliberately carry zero
+                    // tolerance, but remain PerformSeek owners and must
+                    // still age the shared refresh countdown.
+                    let directional =
+                        flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE);
+                    let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
+                    let seek_shield = flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD);
+                    let (resolved_target_id, target_is_actor) =
+                        match target_elem.and_then(|id| self.get_entity(id)) {
                             Some(t) => (*target_elem, t.actor_data().is_some()),
                             // SEEK without antagonist = seek-to-point
                             // mode.  Skip the dist-vs-tolerance
@@ -6199,42 +6194,41 @@ impl EngineInner {
                                 (None, false)
                             }
                         };
-                        // Skip the FinalTol snapshot entirely for
-                        // seek-to-point + non-shield (target_id is
-                        // None and there's no shield destination), so
-                        // the seek-arrival predicate doesn't fire.
-                        if resolved_target_id.is_some() || seek_shield {
-                            // Original keeps an interaction following an
-                            // entity Seek in `mpPostSeekSequence`. Gate-route
-                            // construction in Rust currently represents that
-                            // continuation as later elements of the same
-                            // sequence. Treat either representation as a live
-                            // post-seek handoff: PerformSeek returns before
-                            // aging `mulWaitTime` when tolerance is reached.
-                            let has_post_seek = actor.post_seek_sequence.is_some()
-                                || self
-                                    .orders
-                                    .sequence_manager
-                                    .get_sequence(seq_id)
-                                    .is_some_and(|sequence| elem_idx + 1 < sequence.elements.len());
-                            final_tolerance = FinalTol {
-                                // `mfSeekDistance` remains the unadapted
-                                // interaction radius.  RefreshSeek may halve
-                                // the concrete movement element's tolerance
-                                // while chasing a moving target, but
-                                // PerformSeek never uses that adapted path
-                                // tolerance for its live-target arrival test.
-                                tol: actor.seek_distance,
-                                directional,
-                                target_is_actor,
-                                target_id: resolved_target_id,
-                                use_point,
-                                shield_destination: seek_shield.then_some(*destination),
-                                last_seek_target_position: actor.last_seek_target_position,
-                                has_post_seek,
-                                launches_post_seek: actor.post_seek_sequence.is_some(),
-                            };
-                        }
+                    // Skip the FinalTol snapshot entirely for
+                    // seek-to-point + non-shield (target_id is
+                    // None and there's no shield destination), so
+                    // the seek-arrival predicate doesn't fire.
+                    if resolved_target_id.is_some() || seek_shield {
+                        // Original keeps an interaction following an
+                        // entity Seek in `mpPostSeekSequence`. Gate-route
+                        // construction in Rust currently represents that
+                        // continuation as later elements of the same
+                        // sequence. Treat either representation as a live
+                        // post-seek handoff: PerformSeek returns before
+                        // aging `mulWaitTime` when tolerance is reached.
+                        let has_post_seek = actor.post_seek_sequence.is_some()
+                            || self
+                                .orders
+                                .sequence_manager
+                                .get_sequence(seq_id)
+                                .is_some_and(|sequence| elem_idx + 1 < sequence.elements.len());
+                        final_tolerance = FinalTol {
+                            // `mfSeekDistance` remains the unadapted
+                            // interaction radius.  RefreshSeek may halve
+                            // the concrete movement element's tolerance
+                            // while chasing a moving target, but
+                            // PerformSeek never uses that adapted path
+                            // tolerance for its live-target arrival test.
+                            tol: actor.seek_distance,
+                            directional,
+                            target_is_actor,
+                            target_id: resolved_target_id,
+                            use_point,
+                            shield_destination: seek_shield.then_some(*destination),
+                            last_seek_target_position: actor.last_seek_target_position,
+                            has_post_seek,
+                            launches_post_seek: actor.post_seek_sequence.is_some(),
+                        };
                     }
                 }
             }
@@ -6853,56 +6847,54 @@ impl EngineInner {
 
         // These calls are inside the Human/PC sword movement Execute arms,
         // after PerformMotion and before base Actor completion/DoNextOrder.
-        if executed_sword_movement {
-            if matches!(owner, EntityId::Pc(_)) {
-                let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
-                    entity.actor_data()?;
-                    // `RHElementActorPC::Execute` gates the override on the
-                    // live `mpSequenceElement`: it must exist AND must not
-                    // carry `RHPRIORITY_NON_INTERRUPTABLE`
-                    // (`RHelementactorpc.cpp:3667-3673`). A door pass is
-                    // exactly that priority
-                    // (`RHElementActor::DeterminePriority`,
-                    // `RHelementactor.cpp:5506-5507`), so a sword walk that
-                    // belongs to a PassDoor element never aborts — Hourglass'
-                    // ABORTED arm asserts the same invariant
-                    // (`RHelementactor.cpp:1206`). Without this gate the
-                    // aborted pop cancelled the door pass's own order advance
-                    // and the actor replayed the walk instead of reaching its
-                    // PASSING_DOOR action point.
-                    let selected_priority = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner)
-                        .and_then(|(seq_id, elem_idx)| {
-                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                        })
-                        .map(|element| element.priority)?;
-                    if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
-                        return None;
-                    }
-                    if !entity.position_iface().is_moving_map()
-                        || !crate::engine::melee::enemies_are_blocking_my_movement(
-                            &self.world.entities,
-                            owner,
-                        )
-                    {
-                        return None;
-                    }
-                    Some((selected.seq_id, selected.elem_idx))
-                });
-                if let Some((seq_id, elem_idx)) = pinch_abort {
-                    // RHElementActorPC::Execute overrides the nested Human
-                    // PerformMotion result with RHMOTION_ABORTED here.  The
-                    // base Actor::Hourglass therefore marks the entry-latched
-                    // element Impossible and does not run its TERMINATED
-                    // DoNextOrder arm, even when PerformMotion had already
-                    // reached the short step-back destination.
-                    cancel_aborted_order_pop(&mut order_pops, seq_id, elem_idx);
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(seq_id, elem_idx);
+        if executed_sword_movement && matches!(owner, EntityId::Pc(_)) {
+            let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
+                entity.actor_data()?;
+                // `RHElementActorPC::Execute` gates the override on the
+                // live `mpSequenceElement`: it must exist AND must not
+                // carry `RHPRIORITY_NON_INTERRUPTABLE`
+                // (`RHelementactorpc.cpp:3667-3673`). A door pass is
+                // exactly that priority
+                // (`RHElementActor::DeterminePriority`,
+                // `RHelementactor.cpp:5506-5507`), so a sword walk that
+                // belongs to a PassDoor element never aborts — Hourglass'
+                // ABORTED arm asserts the same invariant
+                // (`RHelementactor.cpp:1206`). Without this gate the
+                // aborted pop cancelled the door pass's own order advance
+                // and the actor replayed the walk instead of reaching its
+                // PASSING_DOOR action point.
+                let selected_priority = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner)
+                    .and_then(|(seq_id, elem_idx)| {
+                        self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                    })
+                    .map(|element| element.priority)?;
+                if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
+                    return None;
                 }
+                if !entity.position_iface().is_moving_map()
+                    || !crate::engine::melee::enemies_are_blocking_my_movement(
+                        &self.world.entities,
+                        owner,
+                    )
+                {
+                    return None;
+                }
+                Some((selected.seq_id, selected.elem_idx))
+            });
+            if let Some((seq_id, elem_idx)) = pinch_abort {
+                // RHElementActorPC::Execute overrides the nested Human
+                // PerformMotion result with RHMOTION_ABORTED here.  The
+                // base Actor::Hourglass therefore marks the entry-latched
+                // element Impossible and does not run its TERMINATED
+                // DoNextOrder arm, even when PerformMotion had already
+                // reached the short step-back destination.
+                cancel_aborted_order_pop(&mut order_pops, seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
             }
         }
 
@@ -7920,52 +7912,51 @@ impl EngineInner {
             // only when the order type isn't a movement animation
             // (shouldn't happen for a Move element but is
             // defensive).
-            let base =
-                literal_lift_sprite_action(order_action).unwrap_or_else(|| match order_action {
-                    OrderType::WalkingUpright
-                    | OrderType::WalkingCrouched
-                    | OrderType::WalkingAlerted
-                    | OrderType::RunningUpright
-                    | OrderType::TransitionWalkingUprightRunningUpright
-                    | OrderType::TransitionRunningUprightWalkingUpright
-                    | OrderType::TransitionWaitingUprightWalkingUpright
-                    | OrderType::TransitionWalkingUprightWaitingUpright
-                    | OrderType::TransitionWaitingUprightRunningUpright
-                    | OrderType::TransitionRunningUprightWaitingUpright
-                    | OrderType::TransitionWalkingCrouchedWalkingUpright
-                    | OrderType::TransitionWalkingUprightWalkingCrouched
-                    | OrderType::TransitionWalkingCrouchedRunningUpright
-                    | OrderType::TransitionRunningUprightWalkingCrouched
-                    | OrderType::TransitionWaitingCrouchedWalkingCrouched
-                    | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                    | OrderType::TransitionWaitingUprightSpecial
-                    | OrderType::TransitionSpecialWaitingUpright
-                    | OrderType::TransitionWaitingUprightBoredWaitingUpright
-                    | OrderType::TransitionWaitingUprightWaitingUprightBored
-                    | OrderType::TransitionCrouchingUp
-                    | OrderType::TransitionCrouchingDown
-                    | OrderType::TransitionSittingWaitingUpright
-                    | OrderType::TransitionLeaningOutWaitingAlerted
-                    | OrderType::LoweringShield
-                    | OrderType::WalkingStairs
-                    | OrderType::RunningStairs
-                    | OrderType::ClimbingWallUp
-                    | OrderType::ClimbingWallDown
-                    | OrderType::ClimbingWallUpFast
-                    | OrderType::ClimbingWallDownFast
-                    | OrderType::ClimbingLadderUp
-                    | OrderType::ClimbingLadderDown
-                    | OrderType::ClimbingLadderUpAlerted
-                    | OrderType::ClimbingLadderDownAlerted
-                    | OrderType::ClimbingLadderUpFast
-                    | OrderType::ClimbingLadderDownFast
-                    | OrderType::WalkingWithCorpse
-                    | OrderType::WalkingCarryingOnShoulders => order_action,
-                    _ => match action_state {
-                        crate::element::ActionState::MovingFast => OrderType::RunningUpright,
-                        _ => OrderType::WalkingUpright,
-                    },
-                });
+            let base = literal_lift_sprite_action(order_action).unwrap_or(match order_action {
+                OrderType::WalkingUpright
+                | OrderType::WalkingCrouched
+                | OrderType::WalkingAlerted
+                | OrderType::RunningUpright
+                | OrderType::TransitionWalkingUprightRunningUpright
+                | OrderType::TransitionRunningUprightWalkingUpright
+                | OrderType::TransitionWaitingUprightWalkingUpright
+                | OrderType::TransitionWalkingUprightWaitingUpright
+                | OrderType::TransitionWaitingUprightRunningUpright
+                | OrderType::TransitionRunningUprightWaitingUpright
+                | OrderType::TransitionWalkingCrouchedWalkingUpright
+                | OrderType::TransitionWalkingUprightWalkingCrouched
+                | OrderType::TransitionWalkingCrouchedRunningUpright
+                | OrderType::TransitionRunningUprightWalkingCrouched
+                | OrderType::TransitionWaitingCrouchedWalkingCrouched
+                | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                | OrderType::TransitionWaitingUprightSpecial
+                | OrderType::TransitionSpecialWaitingUpright
+                | OrderType::TransitionWaitingUprightBoredWaitingUpright
+                | OrderType::TransitionWaitingUprightWaitingUprightBored
+                | OrderType::TransitionCrouchingUp
+                | OrderType::TransitionCrouchingDown
+                | OrderType::TransitionSittingWaitingUpright
+                | OrderType::TransitionLeaningOutWaitingAlerted
+                | OrderType::LoweringShield
+                | OrderType::WalkingStairs
+                | OrderType::RunningStairs
+                | OrderType::ClimbingWallUp
+                | OrderType::ClimbingWallDown
+                | OrderType::ClimbingWallUpFast
+                | OrderType::ClimbingWallDownFast
+                | OrderType::ClimbingLadderUp
+                | OrderType::ClimbingLadderDown
+                | OrderType::ClimbingLadderUpAlerted
+                | OrderType::ClimbingLadderDownAlerted
+                | OrderType::ClimbingLadderUpFast
+                | OrderType::ClimbingLadderDownFast
+                | OrderType::WalkingWithCorpse
+                | OrderType::WalkingCarryingOnShoulders => order_action,
+                _ => match action_state {
+                    crate::element::ActionState::MovingFast => OrderType::RunningUpright,
+                    _ => OrderType::WalkingUpright,
+                },
+            });
             // DetermineMovementAnimation translates the movement
             // element's primary distance-producing action while it is
             // instructed. PostProcessPath runs afterwards and may insert
@@ -8394,7 +8385,7 @@ impl EngineInner {
                 anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
                 anti_snapshots.as_slice(),
                 &self.ai.global.repulsive_points,
-                &prepared,
+                prepared,
                 &self.world.fast_grid,
                 goal,
                 prepass.goal_target_info,
@@ -8661,7 +8652,7 @@ impl EngineInner {
                 anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
                 anti_snapshots.as_slice(),
                 &self.ai.global.repulsive_points,
-                &prepared,
+                prepared,
                 &self.world.fast_grid,
                 goal,
                 prepass.goal_target_info,

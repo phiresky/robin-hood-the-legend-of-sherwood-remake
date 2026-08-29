@@ -2285,9 +2285,9 @@ pub(crate) fn vector_to_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio:
     // Preserve `SBGeoVector2D::GetSector0to15`'s literal half-plane
     // classifier. An atan/round implementation is mathematically similar but
     // disagrees on f32 boundary vectors produced by anti-collision.
-    const SIN_PI_SIXTEENTH: f32 = 0.195_090_322_016_12;
-    const COS_PI_SIXTEENTH: f32 = 0.980_785_280_403_23;
-    const TAN_PI_EIGHTH: f32 = 0.414_213_562_373_09;
+    const SIN_PI_SIXTEENTH: f32 = 0.195_090_32;
+    const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
+    const TAN_PI_EIGHTH: f32 = 0.414_213_57;
 
     // Preserve Original's left-associative f32 operation order. Scaling Y by
     // the reciprocal before calling the aspect-1 classifier is algebraically
@@ -2749,7 +2749,7 @@ mod tests {
     fn increment_normalization_divides_like_original_vector() {
         let mut pi = PositionInterface::new();
         pi.set_map_position(MapPoint::new(1834.0, 1771.0));
-        pi.set_map_goal(MapPoint::new(1838.447_6, 1766.972_8));
+        pi.set_map_goal(MapPoint::new(1_838.447_6, 1_766.972_8));
 
         pi.compute_increment_all(false);
 

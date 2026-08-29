@@ -241,19 +241,17 @@ impl MissionBootstrap {
     ) {
         self.lifecycle
             .require(MissionBootstrapPhase::CampaignClockStarted);
-        if !self.game.is_sherwood {
-            if args.mission_start_map_output.is_none() {
-                let campaign = self.loaded.engine.campaign();
-                let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-                callbacks.save_manager.write_restart_save_background(
-                    &mut self.host,
-                    &self.game,
-                    &self.loaded.engine,
-                    mission_id,
-                    Some(&self.loaded.assets.profile_manager),
-                    None,
-                );
-            }
+        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
+            let campaign = self.loaded.engine.campaign();
+            let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
+            callbacks.save_manager.write_restart_save_background(
+                &mut self.host,
+                &self.game,
+                &self.loaded.engine,
+                mission_id,
+                Some(&self.loaded.assets.profile_manager),
+                None,
+            );
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,
@@ -664,7 +662,8 @@ impl LoadedInteractiveStage {
             background,
             minimap,
         );
-        let frontend = renderer.assemble_process_frontend(
+
+        renderer.assemble_process_frontend(
             window,
             &mut self.bootstrap.host,
             &self.bootstrap.game,
@@ -681,8 +680,7 @@ impl LoadedInteractiveStage {
             args,
             self.bootstrap.spec.mission_idx,
             self.bootstrap.spec.location,
-        );
-        frontend
+        )
     }
 }
 

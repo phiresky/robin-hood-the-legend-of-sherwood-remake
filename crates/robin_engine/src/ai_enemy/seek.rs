@@ -1714,33 +1714,35 @@ mod tests {
             sector: SectorHandle::new(19),
             level: 0,
         };
-        let mut global = AiGlobalState::default();
-        // The wrong duplicate is closer and would win Rust's old public-only
-        // comparison. Original's RHSector* comparison must skip it.
-        global.door_seek_infos = vec![
-            seek_test_building_door(
-                0,
-                MapPoint::new(101.0, 100.0),
-                wrong_inside,
-                Some(duplicate_outside),
-            ),
-            seek_test_building_door(
-                1,
-                MapPoint::new(110.0, 100.0),
-                correct_inside,
-                Some(exact_outside),
-            ),
-        ];
-        global.houses = vec![
-            House {
-                sector_index: 18,
-                ..House::default()
-            },
-            House {
-                sector_index: 19,
-                ..House::default()
-            },
-        ];
+        let global = AiGlobalState {
+            // The wrong duplicate is closer and would win Rust's old public-only
+            // comparison. Original's RHSector* comparison must skip it.
+            door_seek_infos: vec![
+                seek_test_building_door(
+                    0,
+                    MapPoint::new(101.0, 100.0),
+                    wrong_inside,
+                    Some(duplicate_outside),
+                ),
+                seek_test_building_door(
+                    1,
+                    MapPoint::new(110.0, 100.0),
+                    correct_inside,
+                    Some(exact_outside),
+                ),
+            ],
+            houses: vec![
+                House {
+                    sector_index: 18,
+                    ..House::default()
+                },
+                House {
+                    sector_index: 19,
+                    ..House::default()
+                },
+            ],
+            ..Default::default()
+        };
         let ai = EnemyAi::new(150);
         let ctx = AiContext::default();
         let direction = vec_to_sector(10.0, 0.0);
@@ -2397,40 +2399,42 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(131);
         let center = Position {
-            x: 1585.620_1,
-            y: 2454.293_2,
+            x: 1_585.620_1,
+            y: 2_454.293_2,
             sector: None,
             level: 0,
         };
-        let mut global = AiGlobalState::default();
-        global.seek_points = vec![
-            SeekPoint {
-                position: Position {
-                    x: 1547.0,
-                    y: 2488.0,
-                    sector: None,
-                    level: 0,
+        let mut global = AiGlobalState {
+            seek_points: vec![
+                SeekPoint {
+                    position: Position {
+                        x: 1547.0,
+                        y: 2488.0,
+                        sector: None,
+                        level: 0,
+                    },
+                    frame_when_full_interest: 0,
+                    directions: vec![],
+                    last_calculated_interest: 100,
+                    locked: false,
+                    id: 212,
                 },
-                frame_when_full_interest: 0,
-                directions: vec![],
-                last_calculated_interest: 100,
-                locked: false,
-                id: 212,
-            },
-            SeekPoint {
-                position: Position {
-                    x: 1753.0,
-                    y: 2670.0,
-                    sector: None,
-                    level: 0,
+                SeekPoint {
+                    position: Position {
+                        x: 1753.0,
+                        y: 2670.0,
+                        sector: None,
+                        level: 0,
+                    },
+                    frame_when_full_interest: 0,
+                    directions: vec![],
+                    last_calculated_interest: 100,
+                    locked: false,
+                    id: 218,
                 },
-                frame_when_full_interest: 0,
-                directions: vec![],
-                last_calculated_interest: 100,
-                locked: false,
-                id: 218,
-            },
-        ];
+            ],
+            ..Default::default()
+        };
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
             in_building: true,
@@ -2456,8 +2460,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(118);
         let search_center = Position {
-            x: 1397.772_9,
-            y: 1864.478_5,
+            x: 1_397.773,
+            y: 1_864.478_5,
             sector: None,
             level: 0,
         };
@@ -2504,25 +2508,27 @@ mod tests {
             x: 200.0,
             ..Position::default()
         };
-        let mut global = AiGlobalState::default();
-        global.seek_points = vec![
-            SeekPoint {
-                position: locked_position,
-                frame_when_full_interest: 1_000,
-                directions: vec![2],
-                last_calculated_interest: 7,
-                locked: true,
-                id: 0,
-            },
-            SeekPoint {
-                position: accepted_position,
-                frame_when_full_interest: 0,
-                directions: vec![4],
-                last_calculated_interest: 3,
-                locked: false,
-                id: 1,
-            },
-        ];
+        let mut global = AiGlobalState {
+            seek_points: vec![
+                SeekPoint {
+                    position: locked_position,
+                    frame_when_full_interest: 1_000,
+                    directions: vec![2],
+                    last_calculated_interest: 7,
+                    locked: true,
+                    id: 0,
+                },
+                SeekPoint {
+                    position: accepted_position,
+                    frame_when_full_interest: 0,
+                    directions: vec![4],
+                    last_calculated_interest: 3,
+                    locked: false,
+                    id: 1,
+                },
+            ],
+            ..Default::default()
+        };
         let ctx = AiContext {
             frame: 500,
             ..AiContext::default()
@@ -2595,29 +2601,31 @@ mod tests {
             y: 400.0,
             ..Position::default()
         };
-        let mut global = AiGlobalState::default();
-        global.seek_points = vec![
-            SeekPoint {
-                position: Position {
-                    x: 1176.0,
-                    y: 1958.0,
-                    ..Position::default()
+        let mut global = AiGlobalState {
+            seek_points: vec![
+                SeekPoint {
+                    position: Position {
+                        x: 1176.0,
+                        y: 1958.0,
+                        ..Position::default()
+                    },
+                    frame_when_full_interest: 0,
+                    directions: vec![2],
+                    last_calculated_interest: 55,
+                    locked: true,
+                    id: 0,
                 },
-                frame_when_full_interest: 0,
-                directions: vec![2],
-                last_calculated_interest: 55,
-                locked: true,
-                id: 0,
-            },
-            SeekPoint {
-                position: next_position,
-                frame_when_full_interest: 0,
-                directions: vec![4],
-                last_calculated_interest: 100,
-                locked: false,
-                id: 1,
-            },
-        ];
+                SeekPoint {
+                    position: next_position,
+                    frame_when_full_interest: 0,
+                    directions: vec![4],
+                    last_calculated_interest: 100,
+                    locked: false,
+                    id: 1,
+                },
+            ],
+            ..Default::default()
+        };
         let ctx = AiContext::default();
 
         ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());

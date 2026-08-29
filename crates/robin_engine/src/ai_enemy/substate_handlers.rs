@@ -121,31 +121,25 @@ impl EnemyAi {
         _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
-        match self.base.current_substate {
-            Substate::SleepingAwakening => {
-                if matches!(
-                    stimulus_type,
-                    StimulusType::EventDone | StimulusType::EventTimer
-                ) {
-                    if let Some(alert_path_id) = self.base.alert_path_id
-                        && !self.changed_to_alert_path
-                    {
-                        self.changed_to_alert_path = true;
-                        // Rebuild the patrol path from the alert-path
-                        // hiking path index.
-                        let hiking_paths = &ctx.hiking_paths;
-                        self.base.patrol_path =
-                            crate::ai::PatrolPath::new(alert_path_id, hiking_paths);
-                        self.base.has_patrol_path = self.base.patrol_path.is_some();
-                    }
-                    self.base.set_emoticon(EmoticonType::QuestionMark);
-                    self.set_state(AiState::Wondering, Substate::WonderingLooking1);
-                    self.base.launch_timer(30, ctx.frame);
-                }
+        if let Substate::SleepingAwakening = self.base.current_substate
+            && matches!(
+                stimulus_type,
+                StimulusType::EventDone | StimulusType::EventTimer
+            )
+        {
+            if let Some(alert_path_id) = self.base.alert_path_id
+                && !self.changed_to_alert_path
+            {
+                self.changed_to_alert_path = true;
+                // Rebuild the patrol path from the alert-path
+                // hiking path index.
+                let hiking_paths = &ctx.hiking_paths;
+                self.base.patrol_path = crate::ai::PatrolPath::new(alert_path_id, hiking_paths);
+                self.base.has_patrol_path = self.base.patrol_path.is_some();
             }
-
-            // ============ DEFAULT (common) ============
-            _ => {}
+            self.base.set_emoticon(EmoticonType::QuestionMark);
+            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
+            self.base.launch_timer(30, ctx.frame);
         }
         false
     }
@@ -2217,8 +2211,7 @@ impl EnemyAi {
             }
 
             Substate::SeekingSoldierGiveAlertingReportToOfficerPoint => {
-                return self
-                    .seeking_soldier_give_alerting_report_to_officer_point(stimulus_type, ctx);
+                self.seeking_soldier_give_alerting_report_to_officer_point(stimulus_type, ctx)
             }
 
             Substate::SeekingSoldierGiveAlertingReportToOfficerEnd => self
@@ -2317,13 +2310,11 @@ impl EnemyAi {
             }
 
             Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
-                return self
-                    .seeking_civilian_give_alerting_report_to_soldier_start(stimulus_type, ctx);
+                self.seeking_civilian_give_alerting_report_to_soldier_start(stimulus_type, ctx)
             }
 
             Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
-                return self
-                    .seeking_civilian_give_alerting_report_to_soldier_point(stimulus_type, ctx);
+                self.seeking_civilian_give_alerting_report_to_soldier_point(stimulus_type, ctx)
             }
 
             Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
@@ -5996,35 +5987,33 @@ impl EnemyAi {
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
-            Substate::MenacingPcInComa => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Assert IsPC + check MaxNormDistance < 100 &&
-                    // IsUnconscious() && IsInComa(). `is_pc` and `in_coma`
-                    // both live on `AiEntityView`, so the full triplet is
-                    // checkable here without approximation.
-                    let keep_watching = {
-                        let v = ctx
-                            .expect_entity_view(self.base.primary_target, "menacing-coma target");
-                        // `MaxNormDistance`
-                        // (`original-code/RHartificialintelligence.cpp:6950-6953`)
-                        // is the stretched **3D** Chebyshev distance between
-                        // the two `GetPosition()` world points, so a target
-                        // 110 units above the guard is already out of range.
-                        // A raw 2D map-space max-norm kept the soldier
-                        // menacing a PC standing on a wall walkway forever.
-                        let distance = ai_max_norm_distance(
-                            &v.position,
-                            v.elevation,
-                            &ctx.position,
-                            ctx.elevation,
-                        );
-                        v.is_pc && v.is_unconscious && v.in_coma && distance < 100.0
-                    };
-                    if keep_watching {
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                    }
+            Substate::MenacingPcInComa if stimulus_type == StimulusType::EventTimer => {
+                // Assert IsPC + check MaxNormDistance < 100 &&
+                // IsUnconscious() && IsInComa(). `is_pc` and `in_coma`
+                // both live on `AiEntityView`, so the full triplet is
+                // checkable here without approximation.
+                let keep_watching = {
+                    let v =
+                        ctx.expect_entity_view(self.base.primary_target, "menacing-coma target");
+                    // `MaxNormDistance`
+                    // (`original-code/RHartificialintelligence.cpp:6950-6953`)
+                    // is the stretched **3D** Chebyshev distance between
+                    // the two `GetPosition()` world points, so a target
+                    // 110 units above the guard is already out of range.
+                    // A raw 2D map-space max-norm kept the soldier
+                    // menacing a PC standing on a wall walkway forever.
+                    let distance = ai_max_norm_distance(
+                        &v.position,
+                        v.elevation,
+                        &ctx.position,
+                        ctx.elevation,
+                    );
+                    v.is_pc && v.is_unconscious && v.in_coma && distance < 100.0
+                };
+                if keep_watching {
+                    self.base.launch_timer(20, ctx.frame);
+                } else {
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 }
             }
 
@@ -6244,16 +6233,13 @@ impl EnemyAi {
             }
 
             // Turned: if detecting target, BattleDecisions, else overview.
-            Substate::FleeingRetireFromCombatTurn => {
-                if stimulus_type == StimulusType::EventDone {
-                    if self.base.primary_target != 0
-                        && self
-                            .is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
-                    {
-                        self.battle_decisions(sim, global, ctx, tick, grid);
-                    } else {
-                        self.get_battle_overview(0, ctx, tick);
-                    }
+            Substate::FleeingRetireFromCombatTurn if stimulus_type == StimulusType::EventDone => {
+                if self.base.primary_target != 0
+                    && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+                {
+                    self.battle_decisions(sim, global, ctx, tick, grid);
+                } else {
+                    self.get_battle_overview(0, ctx, tick);
                 }
             }
 

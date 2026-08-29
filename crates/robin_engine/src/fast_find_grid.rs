@@ -4358,8 +4358,8 @@ mod tests {
 
         let crossings = grid.get_crossing_elevation_line_indices(
             2,
-            MapPoint::new(1837.538_5, 1232.892_3),
-            MapPoint::new(1837.076_9, 1231.784_7),
+            MapPoint::new(1_837.538_5, 1_232.892_3),
+            MapPoint::new(1_837.076_9, 1_231.784_7),
         );
 
         assert_eq!(crossings, vec![line_index]);

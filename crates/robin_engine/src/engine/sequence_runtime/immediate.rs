@@ -168,9 +168,9 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<(i32, i32, i32, i32)> {
-        let cmd = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
-            Some(e) => e.command,
-            None => return None,
+        let cmd = {
+            let e = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+            e.command
         };
         match cmd {
             Command::StartMobile

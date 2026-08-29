@@ -366,8 +366,10 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
     let crate::element::Entity::Soldier(owner_soldier) = &mut owner_entity else {
         unreachable!();
     };
-    let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
-    enemy_ai.hth_weapon_id = 1;
+    let enemy_ai = crate::ai_enemy::EnemyAi {
+        hth_weapon_id: 1,
+        ..Default::default()
+    };
     owner_soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
     let owner = engine.add_entity(owner_entity);
     {

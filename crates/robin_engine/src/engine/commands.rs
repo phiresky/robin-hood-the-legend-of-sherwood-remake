@@ -3361,7 +3361,7 @@ impl EngineInner {
         // armed set, not the current selection — those can differ).
         self.stop_recording_macro();
         // Re-arm on whoever is currently selected.
-        let targets: Vec<EntityId> = self.players.seats[seat].selection.iter().copied().collect();
+        let targets: Vec<EntityId> = self.players.seats[seat].selection.to_vec();
         if targets.is_empty() {
             return;
         }
@@ -7797,7 +7797,7 @@ mod tests {
     fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
         let (mut engine, assets, pc_id, source_index, goal_index) =
             setup_drop_ale_sector_identity_scene();
-        let authorized = crate::coordinates::MapPoint::new(2607.467_041, 881.610_474);
+        let authorized = crate::coordinates::MapPoint::new(2_607.467, 881.610_5);
         let recorded_gate_path = crate::gate::RecordedGatePath {
             source_sector: crate::sector::SectorNumber::new(0),
             source_sector_index: Some(source_index),
@@ -9361,12 +9361,8 @@ mod tests {
             .map(|element| element.command)
             .collect();
         assert!(!commands.contains(&Command::EnterSwordfight));
-        assert!(
-            !commands
-                .iter()
-                .any(|command| *command == Command::SpeakHeroReachDestination)
-        );
-        assert!(!commands.iter().any(|command| *command == Command::EquipBow));
+        assert!(!commands.contains(&Command::SpeakHeroReachDestination));
+        assert!(!commands.contains(&Command::EquipBow));
 
         let approach = route
             .elements
@@ -9595,8 +9591,8 @@ mod tests {
         scroll_id: EntityId,
     ) {
         assert_eq!(sequence.elements.len(), 5);
-        assert_eq!(sequence.elements.get(0).unwrap().command, Command::LockAi);
-        assert_eq!(sequence.elements.get(0).unwrap().owner, Some(npc_id));
+        assert_eq!(sequence.elements.first().unwrap().command, Command::LockAi);
+        assert_eq!(sequence.elements.first().unwrap().owner, Some(npc_id));
         assert_eq!(
             sequence.elements.get(1).unwrap().command,
             Command::TurnElement

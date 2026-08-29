@@ -1351,9 +1351,7 @@ impl EngineInner {
             // `carrier_dir + 12` facing stamped above and turns toward
             // the carrier's own heading afterwards.
             if carried.human_data().is_some_and(|h| h.carrier.is_some()) {
-                carried
-                    .element_data_mut()
-                    .set_direction_goal(carrier_dir as i16);
+                carried.element_data_mut().set_direction_goal(carrier_dir);
                 carried
                     .human_data_mut()
                     .expect("carried body keeps its human payload across the carrier unlink")
@@ -2830,10 +2828,8 @@ impl EngineInner {
                     crate::ai::CrossNpcAction::SetLeftCombatNeighbour {
                         target,
                         neighbour: 0,
-                    } => {
-                        if target != 0 && !right_neighbours.contains(&target) {
-                            right_neighbours.push(target);
-                        }
+                    } if target != 0 && !right_neighbours.contains(&target) => {
+                        right_neighbours.push(target);
                     }
                     _ => {}
                 }
@@ -2868,10 +2864,8 @@ impl EngineInner {
                     crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
                         target,
                         shield_bearer: 0,
-                    } => {
-                        if target != 0 && !archers.contains(&target) {
-                            archers.push(target);
-                        }
+                    } if target != 0 && !archers.contains(&target) => {
+                        archers.push(target);
                     }
                     _ => {}
                 }

@@ -687,10 +687,13 @@ impl EngineInner {
         use crate::element::DetectableType;
 
         let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
-        let mutation_target_creation_order = (mutation_debug_enabled
-            && detection::detectable_mutation_debug_target_slot_matches(body_id.index()))
-        .then(|| self.original_static_creation_order(body_id))
-        .unwrap_or(0);
+        let mutation_target_creation_order = if mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(body_id.index())
+        {
+            self.original_static_creation_order(body_id)
+        } else {
+            0
+        };
 
         // Snapshot the body's position + `knocked_out_in_money_fight`
         // flag for the per-friend radius check below.
@@ -717,10 +720,13 @@ impl EngineInner {
             if friend_id == body_id {
                 continue;
             }
-            let mutation_owner_creation_order = (mutation_debug_enabled
-                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
-            .then(|| self.original_static_creation_order(friend_id))
-            .unwrap_or(0);
+            let mutation_owner_creation_order = if mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index())
+            {
+                self.original_static_creation_order(friend_id)
+            } else {
+                0
+            };
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -807,16 +813,22 @@ impl EngineInner {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
         let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
-        let mutation_target_creation_order = (mutation_debug_enabled
-            && detection::detectable_mutation_debug_target_slot_matches(beggar_id.index()))
-        .then(|| self.original_static_creation_order(beggar_id))
-        .unwrap_or(0);
+        let mutation_target_creation_order = if mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(beggar_id.index())
+        {
+            self.original_static_creation_order(beggar_id)
+        } else {
+            0
+        };
         let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for friend_id in npc_ids {
-            let mutation_owner_creation_order = (mutation_debug_enabled
-                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
-            .then(|| self.original_static_creation_order(friend_id))
-            .unwrap_or(0);
+            let mutation_owner_creation_order = if mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index())
+            {
+                self.original_static_creation_order(friend_id)
+            } else {
+                0
+            };
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -1469,7 +1481,7 @@ impl EngineInner {
                     }
                 });
             }
-            cached.clone().expect("speech profile cache was populated")
+            (*cached).expect("speech profile cache was populated")
         };
 
         {

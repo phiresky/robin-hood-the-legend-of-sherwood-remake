@@ -5708,8 +5708,8 @@ mod tests {
         // apart in Original GetPositionGround Y. Their projected map Y differs
         // by 471.49 because the PC stands roughly 314 units lower. A map-space
         // broad phase incorrectly suppresses the visibility query entirely.
-        let viewer_ground = GroundPoint::new(491.0, 1135.000_98);
-        let target_ground = GroundPoint::new(668.028_6, 1292.568_2);
+        let viewer_ground = GroundPoint::new(491.0, 1_135.001);
+        let target_ground = GroundPoint::new(668.028_6, 1_292.568_2);
         assert!(refresh_detection_scans_target(
             0.0,
             false,
@@ -5719,7 +5719,7 @@ mod tests {
         ));
 
         let viewer_map = MapPoint::new(491.0, 715.0);
-        let target_map = MapPoint::new(668.028_6, 1186.492_8);
+        let target_map = MapPoint::new(668.028_6, 1_186.492_8);
         let map_radius_y = 400.0 * crate::position_interface::ASPECT_RATIO;
         assert!((target_map.y - viewer_map.y).abs() > map_radius_y);
     }
@@ -5770,22 +5770,20 @@ mod tests {
         // it, leaving the soldier just inside Listen range. The old projected
         // map calculation incorrectly leaves it outside.
         let listener = WorldPoint3D::new(1061.0, 2717.0, 0.0);
-        let soldier = WorldPoint3D::new(1079.0, 2300.001_007, 150.001_007);
+        let soldier = WorldPoint3D::new(1079.0, 2_300.001, 150.001);
         assert!(listen_distance_squared(listener, soldier) < LIMIT_SQUARED);
         let projected_dy = (2150.0 - 2717.0) * INVERSE_ASPECT_RATIO;
-        let old_projected_square =
-            18.0_f32.powi(2) + projected_dy.powi(2) + 150.001_007_f32.powi(2);
+        let old_projected_square = 18.0_f32.powi(2) + projected_dy.powi(2) + 150.001_f32.powi(2);
         assert!(old_projected_square >= LIMIT_SQUARED);
 
         // Leicester frame 402 exercises the opposite sign: map-only Y places
         // Civilian 74 inside the sphere, but positive elevation increases
         // world Y separation and Original correctly keeps it blipped.
         let listener = WorldPoint3D::new(1130.0, 248.0, 0.0);
-        let civilian = WorldPoint3D::new(738.0, 740.001_007, 140.001_007);
+        let civilian = WorldPoint3D::new(738.0, 740.001, 140.001);
         assert!(listen_distance_squared(listener, civilian) >= LIMIT_SQUARED);
         let projected_dy = (600.0 - 248.0) * INVERSE_ASPECT_RATIO;
-        let old_projected_square =
-            392.0_f32.powi(2) + projected_dy.powi(2) + 140.001_007_f32.powi(2);
+        let old_projected_square = 392.0_f32.powi(2) + projected_dy.powi(2) + 140.001_f32.powi(2);
         assert!(old_projected_square < LIMIT_SQUARED);
     }
 
@@ -5808,8 +5806,8 @@ mod tests {
         // soldier is just inside the 1.5 * 400 world-eye radius.  Using map Y
         // here would incorrectly count the 218-unit elevation difference in
         // both Y and Z and leave the soldier blipped until frame 71.
-        let pc_eye = crate::coordinates::WorldPoint3D::new(1937.0, 1604.000_976_562_5, 265.001_007);
-        let blip_eye = crate::coordinates::WorldPoint3D::new(2494.211_7, 1623.488_9, 483.001_007);
+        let pc_eye = crate::coordinates::WorldPoint3D::new(1937.0, 1_604.001, 265.001);
+        let blip_eye = crate::coordinates::WorldPoint3D::new(2_494.211_7, 1_623.488_9, 483.001);
 
         assert!(sees_blip_in_range(
             pc_eye,
@@ -5818,8 +5816,8 @@ mod tests {
             BLIP_SUPER_DETECTION,
         ));
 
-        let pc_projected = MapPoint::from_world_xyz(pc_eye.x, pc_eye.y, 220.001_007);
-        let blip_projected = MapPoint::from_world_xyz(blip_eye.x, blip_eye.y, 438.001_007);
+        let pc_projected = MapPoint::from_world_xyz(pc_eye.x, pc_eye.y, 220.001);
+        let blip_projected = MapPoint::from_world_xyz(blip_eye.x, blip_eye.y, 438.001);
         let incorrectly_projected_eye =
             crate::coordinates::WorldPoint3D::new(blip_projected.x, blip_projected.y, blip_eye.z);
         let incorrectly_projected_pc =
@@ -5910,7 +5908,7 @@ mod tests {
         // within 50x30.
         let owner = MapPoint::new(635.0, 1414.0);
         let forecast_target = MapPoint::new(588.0, 1422.0);
-        let literal_target = MapPoint::new(569.884_03, 1423.860_4);
+        let literal_target = MapPoint::new(569.884_03, 1_423.860_4);
 
         assert!(enemy_is_in_react_immediately_zone(
             owner,

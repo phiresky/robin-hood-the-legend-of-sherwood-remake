@@ -195,8 +195,10 @@ mod tests {
         let (_server_out_tx, server_out_rx) = channel::<NetOutbound>();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut expected_config = robin_engine::engine::SimConfig::default();
-        expected_config.amount_of_speaking = 9;
+        let expected_config = robin_engine::engine::SimConfig {
+            amount_of_speaking: 9,
+            ..Default::default()
+        };
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
             "host".into(),

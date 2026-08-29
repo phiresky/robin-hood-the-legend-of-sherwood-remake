@@ -886,10 +886,10 @@ pub fn prepare_forecast_destination_for_ia(
             for (door_index, door) in doors.iter().enumerate().filter(|(_, door)| {
                 sector_identity_matches_door_side(sector, door.sector_in, door.sector_in_index)
             }) {
-                if let Some(current_door) = current_door_index {
-                    if door_index as u32 == u32::from(current_door) {
-                        entry_gate = Some(building_gates.len());
-                    }
+                if let Some(current_door) = current_door_index
+                    && door_index as u32 == u32::from(current_door)
+                {
+                    entry_gate = Some(building_gates.len());
                 }
                 building_gates.push(ForecastedDestination {
                     position: Position {
@@ -961,11 +961,11 @@ pub fn prepare_forecast_destination_for_ia(
 /// precisely because a lift's high endpoint often carries another type.
 /// Selecting by type therefore misses the endpoint entirely on such lifts
 /// and silently falls back to the target's raw position.
-fn find_lift_exit_door<'a>(
+fn find_lift_exit_door(
     lift_sector: SectorHandle,
     moving_upwards: bool,
-    doors: &'a [crate::gate::Door],
-) -> Option<&'a crate::gate::Door> {
+    doors: &[crate::gate::Door],
+) -> Option<&crate::gate::Door> {
     let lift_sector = crate::sector::SectorNumber::new(u16::from(lift_sector) as i16);
     let (low, high) = crate::gate::lift_endpoint_door_indices(doors, lift_sector)?;
     let endpoint = if moving_upwards { high } else { low };

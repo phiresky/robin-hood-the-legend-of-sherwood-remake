@@ -564,7 +564,6 @@ fn make_soldier(
                 ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                 ..Default::default()
             },
-            ..NpcData::default()
         },
         soldier: SoldierData {
             cached_camp: crate::element::Camp::Lacklandists,
@@ -8589,7 +8588,7 @@ fn melee_direction_uses_original_aspect_ratio_classifier() {
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
             x: 663.552_37,
-            y: 1755.932_5,
+            y: 1_755.932_5,
             z: 0.0,
         },
         None,
@@ -8597,7 +8596,7 @@ fn melee_direction_uses_original_aspect_ratio_classifier() {
     let target = engine.add_entity(make_soldier(
         WorldPoint3D {
             x: 726.867_3,
-            y: 1763.275_3,
+            y: 1_763.275_3,
             z: 0.0,
         },
         None,

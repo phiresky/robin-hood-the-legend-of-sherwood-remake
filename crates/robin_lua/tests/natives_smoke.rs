@@ -111,7 +111,6 @@ fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
         )
         .unwrap();
 
-    drop(capabilities);
     assert_eq!(
         entities
             .get_legacy_slot(0)
@@ -222,8 +221,10 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
         .enemy_ai_mut()
         .unwrap()
         .will_be_attentive = false;
-    let mut ai_global = robin_engine::ai::AiGlobalState::default();
-    ai_global.ezekiel_2517 = true;
+    let mut ai_global = robin_engine::ai::AiGlobalState {
+        ezekiel_2517: true,
+        ..Default::default()
+    };
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let mut sequences = robin_engine::sequence::SequenceManager::new();
     let mut selected = Vec::new();
@@ -296,7 +297,6 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
         )
         .unwrap();
 
-    drop(capabilities);
     let soldier = entities.get_legacy_slot(0).expect("soldier remains").1;
     assert_eq!(soldier.npc_data().unwrap().money, 33);
     assert!(!soldier.enemy_ai().unwrap().forced_attentive);
@@ -322,7 +322,6 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
             },
         )
         .expect("non-yielding conditional arms remain callable from Lua");
-    drop(capabilities);
     assert!(
         entities
             .get_legacy_slot(0)
@@ -468,7 +467,6 @@ fn add_and_complete_objective_mutate_live_model() {
             },
         )
         .unwrap();
-    drop(capabilities);
     assert_eq!(briefings.get_id(true, 0), Some(7));
     assert_eq!(briefings.is_entry_done(true, 0), Some(true));
     assert!(host.engine_commands().is_empty());
@@ -1107,7 +1105,6 @@ fn native_dispatch_preserves_script_effects_queue_order() {
             EngineCommand::DisplayMap { show: false },
         ] if *zoom == 2.0
     ));
-    drop(capabilities);
     assert_eq!(briefings.get_id(true, 0), Some(10));
     assert_eq!(briefings.is_entry_done(true, 0), Some(true));
     assert_eq!(briefings.get_id(false, 0), Some(11));

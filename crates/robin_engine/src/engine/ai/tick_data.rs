@@ -254,11 +254,10 @@ impl EngineInner {
         _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> SimScratch {
-        let scratch = SimScratch {
+        SimScratch {
             ai_entity_views: self.share_ai_entity_views(build_entity_views(self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
-        };
-        scratch
+        }
     }
 
     pub(in crate::engine) fn build_cached_detection_scratch(

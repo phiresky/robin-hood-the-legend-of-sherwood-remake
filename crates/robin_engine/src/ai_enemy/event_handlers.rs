@@ -4712,7 +4712,7 @@ mod tests {
         ai.base.when_does_timer_ring = 7_968;
 
         let target_position = Position {
-            x: 2_762.2429,
+            x: 2_762.243,
             y: 882.6701,
             sector: crate::position_interface::SectorHandle::new(53),
             level: 2,
@@ -4986,8 +4986,10 @@ mod tests {
             locked: false,
             id,
         };
-        let mut global = AiGlobalState::default();
-        global.seek_points = vec![point(0, actor_seek_point), point(1, stale_body_seek_point)];
+        let mut global = AiGlobalState {
+            seek_points: vec![point(0, actor_seek_point), point(1, stale_body_seek_point)],
+            ..Default::default()
+        };
         let ctx = AiContext {
             position: actor_position,
             self_is_soldier: true,
@@ -5104,23 +5106,25 @@ mod tests {
             y: 2_200.0,
             ..Position::default()
         };
-        let mut global = AiGlobalState::default();
-        global.seek_points = [(1_810.0, 2_200.0), (1_820.0, 2_200.0)]
-            .into_iter()
-            .enumerate()
-            .map(|(id, (x, y))| crate::ai::SeekPoint {
-                position: Position {
-                    x,
-                    y,
-                    ..Position::default()
-                },
-                frame_when_full_interest: 0,
-                directions: vec![0],
-                last_calculated_interest: 100,
-                locked: false,
-                id: id as u16,
-            })
-            .collect();
+        let mut global = AiGlobalState {
+            seek_points: [(1_810.0, 2_200.0), (1_820.0, 2_200.0)]
+                .into_iter()
+                .enumerate()
+                .map(|(id, (x, y))| crate::ai::SeekPoint {
+                    position: Position {
+                        x,
+                        y,
+                        ..Position::default()
+                    },
+                    frame_when_full_interest: 0,
+                    directions: vec![0],
+                    last_calculated_interest: 100,
+                    locked: false,
+                    id: id as u16,
+                })
+                .collect(),
+            ..Default::default()
+        };
 
         let ctx = AiContext {
             frame: 12_345,

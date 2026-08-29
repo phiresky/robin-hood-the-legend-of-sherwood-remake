@@ -273,7 +273,6 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
                 ai_brain: AiBrain::Enemy(Box::default()),
                 ..Default::default()
             },
-            ..NpcData::default()
         },
         soldier: SoldierData::default(),
     })
@@ -1436,7 +1435,6 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1488,7 +1486,6 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1552,7 +1549,6 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1629,7 +1625,6 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1682,7 +1677,6 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1779,7 +1773,6 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -1834,7 +1827,6 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
         &capabilities,
     ));
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.world.entities = entity_store;
     engine.ai.global = ai_global;
@@ -1900,7 +1892,6 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
         &mut script_domains,
         &capabilities,
     ));
-    drop(capabilities);
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
@@ -1961,7 +1952,6 @@ fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     ));
     // Note: don't bind anyone for handle 99.
 
-    drop(capabilities);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -5147,7 +5137,6 @@ fn make_scripted_civilian(script_class: &str) -> Entity {
                 ai_brain: AiBrain::Friendly(Box::default()),
                 ..Default::default()
             },
-            ..NpcData::default()
         },
         civilian: CivilianData::default(),
     })
@@ -7268,8 +7257,10 @@ fn unavailable_state_change_callbacks_are_consumed() {
     );
     bind_state_change_actor(&mut disabled, actor, "StateRecorder");
     queue_seeking(&mut disabled, actor);
-    let mut config = crate::engine::SimConfig::default();
-    config.script_enabled = false;
+    let config = crate::engine::SimConfig {
+        script_enabled: false,
+        ..Default::default()
+    };
     let disabled_sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
     disabled.drain_ai_state_change_notifications_for(&disabled_sim, &assets, actor);
     assert_consumed(&disabled, actor);

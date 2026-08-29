@@ -466,9 +466,11 @@ mod tests {
         };
         corpse_element.set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
         corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
-        let mut corpse_human = HumanData::default();
-        corpse_human.small_repulsive_radius = true;
-        corpse_human.last_is_lying_for_corpse_intersection = Some(true);
+        let corpse_human = HumanData {
+            small_repulsive_radius: true,
+            last_is_lying_for_corpse_intersection: Some(true),
+            ..Default::default()
+        };
         let corpse = engine.add_entity(Entity::Soldier(ActorSoldier {
             element: corpse_element,
             actor: ActorData::default(),
@@ -484,10 +486,12 @@ mod tests {
         };
         pc_element.set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
         pc_element.set_sector(crate::position_interface::SectorHandle::new(1));
-        let mut pc_human = HumanData::default();
-        pc_human.unconscious = true;
-        pc_human.small_repulsive_radius = true;
-        pc_human.last_is_lying_for_corpse_intersection = Some(true);
+        let pc_human = HumanData {
+            unconscious: true,
+            small_repulsive_radius: true,
+            last_is_lying_for_corpse_intersection: Some(true),
+            ..Default::default()
+        };
         let pc = engine.add_entity(Entity::Pc(ActorPc {
             element: pc_element,
             actor: ActorData::default(),

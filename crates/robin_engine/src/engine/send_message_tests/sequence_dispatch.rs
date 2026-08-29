@@ -112,13 +112,12 @@ fn detached_parent_tail_is_restored_when_child_dispatch_fails() {
     assert!(parent_send.is_some(), "successful ancestor is Terminated");
     assert!(child_send.is_some(), "only the actual child is Impossible");
     let parent_unblip = parent_unblip.expect("detached parent Unblip tail");
-    assert_eq!(
+    assert!(
         engine
             .get_entity(failure_id)
             .unwrap()
             .element_data()
             .blipped,
-        true,
         "parent tail was restored but not overtaken after the child error"
     );
     assert!(

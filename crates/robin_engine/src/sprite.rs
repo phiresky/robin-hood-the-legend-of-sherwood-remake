@@ -36,9 +36,11 @@ use crate::sprite_script::{
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    Default,
 )]
 pub enum MotionState {
     /// The action-done frame was reached.
+    #[default]
     Done,
     /// This is the first frame of a new action.
     Start,
@@ -50,12 +52,6 @@ pub enum MotionState {
     Aborted,
     /// An error occurred.
     Error,
-}
-
-impl Default for MotionState {
-    fn default() -> Self {
-        Self::Done
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -183,9 +179,7 @@ pub(crate) fn sprite_row_diagnostic_creation_order(
     frame: u32,
     resolve_creation_order: impl FnOnce() -> u32,
 ) -> Option<u32> {
-    if std::env::var_os("PARITY_DEBUG_SPRITE_ROW").is_none() {
-        return None;
-    }
+    std::env::var_os("PARITY_DEBUG_SPRITE_ROW")?;
     let required = |name: &str| {
         std::env::var(name)
             .unwrap_or_else(|_| panic!("{name} is required when PARITY_DEBUG_SPRITE_ROW is set"))

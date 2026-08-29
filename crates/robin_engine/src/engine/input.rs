@@ -594,10 +594,7 @@ impl EngineInner {
                         .pc_description_for_pc_data(pc_data)
                         .map(|desc| desc.status.in_coma)
                         .unwrap_or(false);
-                    if in_coma {
-                        return false;
-                    }
-                    true
+                    !in_coma
                 }
                 // Focus::Use on a PC target has three sub-branches:
                 //   (a) Target posture is HelpingToClimb and selected
@@ -638,10 +635,7 @@ impl EngineInner {
                         .human_data()
                         .is_some_and(|h| h.stuck_under_nets_counter > 0);
                     let is_carried = entity.human_data().is_some_and(|h| h.carrier.is_some());
-                    if out_of_order && !is_stuck && !is_carried && carry {
-                        return true;
-                    }
-                    false
+                    out_of_order && !is_stuck && !is_carried && carry
                 }
                 // Focus::Interact gates on the selected PC's
                 // contextual actions against target state. A PC target

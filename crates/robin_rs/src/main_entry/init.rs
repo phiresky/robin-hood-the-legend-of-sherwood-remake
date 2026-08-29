@@ -585,10 +585,10 @@ fn resolve_soldier_profile_template(
         .soldiers
         .iter()
         .filter(|profile| profile.filename == reference);
-    if let Some(profile) = exact.next() {
-        if exact.next().is_none() {
-            return Ok(profile.clone());
-        }
+    if let Some(profile) = exact.next()
+        && exact.next().is_none()
+    {
+        return Ok(profile.clone());
     }
 
     profiles.soldier_idx_by_identifier(reference).map(|index| {

@@ -400,14 +400,14 @@ impl ReplayData {
                 }
                 load_backs.insert(rec.f, lb);
             }
-            if let Some(recorded_frame) = rec.i {
-                if frames.insert(rec.f, recorded_frame).is_some() {
-                    return Err(format!(
-                        "bad line {}: duplicate simulation input for frame {}",
-                        i + 2,
-                        rec.f
-                    ));
-                }
+            if let Some(recorded_frame) = rec.i
+                && frames.insert(rec.f, recorded_frame).is_some()
+            {
+                return Err(format!(
+                    "bad line {}: duplicate simulation input for frame {}",
+                    i + 2,
+                    rec.f
+                ));
             }
         }
         // Every load-back must reference a save marker recorded earlier in

@@ -2348,11 +2348,11 @@ mod tests {
 
     #[test]
     fn left_click_ctrl_on_unselected_pc_toggles_selection() {
-        let (mut engine, mut assets, mut host) = fixture();
+        let (mut engine, assets, mut host) = fixture();
         let selected = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let other = add_pc(&mut engine, 200.0, 200.0, Posture::Upright);
         host.draw_order.ids.extend([selected, other]);
-        select(&mut engine, &mut assets, selected);
+        select(&mut engine, &assets, selected);
 
         let cmds = resolve_left_click(
             &mut host,

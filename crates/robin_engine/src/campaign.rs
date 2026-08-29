@@ -158,13 +158,8 @@ pub struct PcDescription {
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 #[serde(transparent)]
+#[derive(Default)]
 pub struct CampaignValues(EnumMap<CampaignValue, i32>);
-
-impl Default for CampaignValues {
-    fn default() -> Self {
-        Self(EnumMap::default())
-    }
-}
 
 impl From<EnumMap<CampaignValue, i32>> for CampaignValues {
     fn from(values: EnumMap<CampaignValue, i32>) -> Self {
@@ -2595,8 +2590,10 @@ mod tests {
     #[test]
     fn simulation_snapshot_records_explicit_preselection_mode() {
         let config = crate::engine::SimConfig::default();
-        let mut campaign = Campaign::default();
-        campaign.pre_mission_was_preselected = true;
+        let mut campaign = Campaign {
+            pre_mission_was_preselected: true,
+            ..Default::default()
+        };
 
         campaign.snapshot_with_simulation(11, config);
         assert!(!campaign.pre_mission_was_preselected);

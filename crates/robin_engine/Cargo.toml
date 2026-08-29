@@ -43,3 +43,6 @@ indexmap = { workspace = true, features = ["serde"] }
 tempfile.workspace = true
 tracing-subscriber.workspace = true
 syn = { workspace = true, features = ["full", "visit"] }
+
+[lints]
+workspace = true

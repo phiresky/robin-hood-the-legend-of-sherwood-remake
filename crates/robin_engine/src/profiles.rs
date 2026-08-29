@@ -1379,9 +1379,8 @@ impl CharacterProfile {
         }
         // 4 contextual actions
         let mut contextual_actions = [Action::default(); NUMBER_OF_PC_CONTEXTUAL_ACTIONS];
-        for i in 0..NUMBER_OF_PC_CONTEXTUAL_ACTIONS {
-            contextual_actions[i] =
-                normalized_action(reader.read_u32(format_args!("contextual_actions[{i}]"))?);
+        for (i, action) in contextual_actions.iter_mut().enumerate() {
+            *action = normalized_action(reader.read_u32(format_args!("contextual_actions[{i}]"))?);
         }
 
         let pathfinder_index = reader.read_u8("pathfinder_index")?;

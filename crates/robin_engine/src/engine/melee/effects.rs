@@ -1163,7 +1163,7 @@ impl EngineInner {
                     .compute_top_z_from_projection(goal.x, goal.y);
                 (obstacle, z)
             })
-            .map_or((None, 0.0), |(obstacle, z)| (obstacle, z));
+            .unwrap_or((None, 0.0));
 
         // RHSprite::ReadyForTakeOff calls RHPositionInterface::SetObstacle,
         // not SetObstacleAndMaterial: install the goal plane immediately but

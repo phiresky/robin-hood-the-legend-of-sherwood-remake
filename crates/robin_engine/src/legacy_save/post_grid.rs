@@ -398,15 +398,15 @@ fn validate_topology(
         }
     }
     for (index, patch) in topology.patches.iter().enumerate() {
-        if let Some(fx) = patch.fx {
-            if fx.class != LegacyElementClass::Fx {
-                return Err(reader.invalid_value(
-                    offset,
-                    format!("topology.patches[{index}].fx.class"),
-                    format_args!("{:?}", fx.class),
-                    "RHElementFX (the concrete type owned by RHPatch)",
-                ));
-            }
+        if let Some(fx) = patch.fx
+            && fx.class != LegacyElementClass::Fx
+        {
+            return Err(reader.invalid_value(
+                offset,
+                format!("topology.patches[{index}].fx.class"),
+                format_args!("{:?}", fx.class),
+                "RHElementFX (the concrete type owned by RHPatch)",
+            ));
         }
     }
     Ok(())

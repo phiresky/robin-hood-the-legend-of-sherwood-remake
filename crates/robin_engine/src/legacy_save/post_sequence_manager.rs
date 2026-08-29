@@ -329,18 +329,18 @@ fn collect_sequence_ids(
                 "a unique RHOrder ID",
             )?;
         }
-        if let LegacyInlineSequenceElement::Movement(movement) = element {
-            if let Some(post_seek) = movement.post_seek_sequence.as_deref() {
-                collect_sequence_ids(
-                    reader,
-                    post_seek,
-                    false,
-                    sequence_ids,
-                    element_ids,
-                    order_ids,
-                    manager_element_ids,
-                )?;
-            }
+        if let LegacyInlineSequenceElement::Movement(movement) = element
+            && let Some(post_seek) = movement.post_seek_sequence.as_deref()
+        {
+            collect_sequence_ids(
+                reader,
+                post_seek,
+                false,
+                sequence_ids,
+                element_ids,
+                order_ids,
+                manager_element_ids,
+            )?;
         }
     }
     Ok(())
@@ -426,10 +426,10 @@ fn validate_optional_ref(
     valid_ids: &HashSet<u32>,
     expected: &'static str,
 ) -> LegacyResult<()> {
-    if let Some(id) = id {
-        if !valid_ids.contains(&id) {
-            return Err(reader.invalid_value(offset, field, id, expected));
-        }
+    if let Some(id) = id
+        && !valid_ids.contains(&id)
+    {
+        return Err(reader.invalid_value(offset, field, id, expected));
     }
     Ok(())
 }

@@ -49,9 +49,7 @@ pub(super) fn with_goal_owner_anti_frame<T>(frame: u32, f: impl FnOnce() -> T) -
 }
 
 pub(super) fn goal_owner_anti_debug_frame(mover: EntityId) -> Option<u32> {
-    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
-        return None;
-    }
+    std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF")?;
     let frame = GOAL_OWNER_ANTI_FRAME.with(std::cell::Cell::get)?;
     let expected_frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME")
         .unwrap_or_else(|_| {

@@ -186,7 +186,7 @@ pub fn spawn_net(
     // counter at spawn.  Time-till-unfolding is `frames_left - 15`,
     // clamped at a minimum of 1.
     let total_trajectory_frames: u32 = trajectory.iter().map(|p| p.time as u32).sum();
-    let time_till_unfolding = total_trajectory_frames.saturating_sub(15).max(1) as u32;
+    let time_till_unfolding = total_trajectory_frames.saturating_sub(15).max(1);
 
     let projectile = ProjectileData {
         start: throw_pos,
@@ -1002,7 +1002,7 @@ pub(crate) fn make_arrow_falling_down(
             i16::try_from(direction).expect("arrow direction sector fits in i16"),
         );
         (
-            direction as u16,
+            direction,
             WorldVec3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 30.0,
@@ -1015,7 +1015,7 @@ pub(crate) fn make_arrow_falling_down(
             i16::try_from(direction).expect("arrow direction sector fits in i16"),
         );
         (
-            direction as u16,
+            direction,
             WorldVec3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 10.0,

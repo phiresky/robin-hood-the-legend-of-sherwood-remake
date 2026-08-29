@@ -208,8 +208,7 @@ impl EngineInner {
                 // Reset timeout — `DIRECTION_CHANGE_TIMEOUT` plus a
                 // 0..3 jitter.
                 let jitter =
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspDirectionTimer, 0..3)
-                        as u32;
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspDirectionTimer, 0..3);
                 if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.timeout = u32::from(DIRECTION_CHANGE_TIMEOUT) + jitter;
                 }

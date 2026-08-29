@@ -3718,12 +3718,12 @@ impl SequenceManager {
         if Self::is_actor_live_state(state) {
             self.remove_actor_live_ref(old_owner, element_ref);
         }
-        if state == SequenceState::InProgress {
-            if let Some(set) = self.actor_in_progress.get_mut(&old_owner) {
-                set.remove(&element_ref);
-                if set.is_empty() {
-                    self.actor_in_progress.remove(&old_owner);
-                }
+        if state == SequenceState::InProgress
+            && let Some(set) = self.actor_in_progress.get_mut(&old_owner)
+        {
+            set.remove(&element_ref);
+            if set.is_empty() {
+                self.actor_in_progress.remove(&old_owner);
             }
         }
 
@@ -4822,9 +4822,7 @@ impl SequenceManager {
                     }
                 };
             }
-            let Some(index) = parked else {
-                return None;
-            };
+            let index = parked?;
             self.perform_registration_at(index);
         }
     }

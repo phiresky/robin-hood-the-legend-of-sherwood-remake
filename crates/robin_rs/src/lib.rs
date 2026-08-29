@@ -3,6 +3,7 @@
 //!
 //! Each subsystem lives in its own module.
 
+#![recursion_limit = "256"]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(test), deny(clippy::print_stdout, clippy::print_stderr))]
 // Rollback multiplayer requires every gameplay RNG pull to use the explicit

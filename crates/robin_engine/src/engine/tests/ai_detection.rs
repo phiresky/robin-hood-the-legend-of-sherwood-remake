@@ -1219,7 +1219,7 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
         .unwrap()
         .current_substate = Substate::DefaultPatrolEnrouteWaiting;
 
-    crate::sim_rng::with_seed(0xA013_D1A, |sim| {
+    crate::sim_rng::with_seed(0x0A01_3D1A, |sim| {
         engine.drain_pending_for_npc(sim, chief, &assets)
     });
 
@@ -1303,7 +1303,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         chief_ai.needs_patrol_reinit = true;
         chief_ai.theoretical_patrol = vec![member];
 
-        crate::sim_rng::with_seed(0xA013_705, |sim| {
+        crate::sim_rng::with_seed(0x0A01_3705, |sim| {
             engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
         });
         engine
@@ -2590,7 +2590,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
     for (id, entity) in engine.world.entities.occupied() {
         positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
-    crate::sim_rng::with_seed(0xA013_5A6, |sim| {
+    crate::sim_rng::with_seed(0x0A01_35A6, |sim| {
         engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
     });
 
@@ -3390,7 +3390,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
         for (id, entity) in engine.world.entities.occupied() {
             positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
-        crate::sim_rng::with_seed(0xA013_F17, |sim| {
+        crate::sim_rng::with_seed(0x0A01_3F17, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });
 
@@ -3465,7 +3465,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     for (id, entity) in engine.world.entities.occupied() {
         positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
-    crate::sim_rng::with_seed(0xA013_F20, |sim| {
+    crate::sim_rng::with_seed(0x0A01_3F20, |sim| {
         engine.tick_actor_owner_envelopes(sim, &assets, &positions)
     });
 
@@ -3777,7 +3777,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
                 .orders
                 .pending_concussion_side_effects
                 .push((waker_id, ConcussionOutcome::WokeUp));
-            crate::sim_rng::with_seed(0xA013_B11, |sim| {
+            crate::sim_rng::with_seed(0x0A01_3B11, |sim| {
                 engine.drain_pending_concussion_side_effects(sim, &assets)
             });
         }
@@ -3803,7 +3803,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         for (id, entity) in engine.world.entities.occupied() {
             positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
-        crate::sim_rng::with_seed(0xA013_B12, |sim| {
+        crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });
 
@@ -3815,7 +3815,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         };
         let first_slot = snapshot(&engine);
 
-        crate::sim_rng::with_seed(0xA013_B13, |sim| {
+        crate::sim_rng::with_seed(0x0A01_3B13, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });
         let next_slot = snapshot(&engine);
@@ -5243,7 +5243,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0A7, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0x0A01_30A7, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let soldier = engine
         .get_entity(soldier_id)
@@ -6472,13 +6472,12 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
         let targets = ai
             .stimulus_queue
             .iter()
-            .filter_map(|stimulus| {
-                (stimulus.stimulus_type == StimulusType::EventView).then(|| {
-                    let StimulusInfo::Human(target) = stimulus.info else {
-                        panic!("cadence VIEW lost its human target")
-                    };
-                    target
-                })
+            .filter(|&stimulus| stimulus.stimulus_type == StimulusType::EventView)
+            .map(|stimulus| {
+                let StimulusInfo::Human(target) = stimulus.info else {
+                    panic!("cadence VIEW lost its human target")
+                };
+                target
             })
             .collect::<Vec<_>>();
         let expected = if frame == 3 {
@@ -6586,13 +6585,12 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         let out_of_view_targets = ai
             .stimulus_queue
             .iter()
-            .filter_map(|stimulus| {
-                (stimulus.stimulus_type == StimulusType::EventOutOfView).then(|| {
-                    let StimulusInfo::Human(target) = stimulus.info else {
-                        panic!("closed-cadence OUTOFVIEW lost its human target")
-                    };
-                    target
-                })
+            .filter(|&stimulus| stimulus.stimulus_type == StimulusType::EventOutOfView)
+            .map(|stimulus| {
+                let StimulusInfo::Human(target) = stimulus.info else {
+                    panic!("closed-cadence OUTOFVIEW lost its human target")
+                };
+                target
             })
             .collect::<Vec<_>>();
         let expected = if matches!(blocker, Blocker::GuardedPc) {
@@ -6836,13 +6834,12 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
         .expect("door-transit optical observer retains AI state")
         .stimulus_queue
         .iter()
-        .filter_map(|stimulus| {
-            (stimulus.stimulus_type == StimulusType::EventView).then(|| {
-                let StimulusInfo::Human(target) = stimulus.info else {
-                    panic!("door-transit VIEW lost its human target")
-                };
-                target
-            })
+        .filter(|&stimulus| stimulus.stimulus_type == StimulusType::EventView)
+        .map(|stimulus| {
+            let StimulusInfo::Human(target) = stimulus.info else {
+                panic!("door-transit VIEW lost its human target")
+            };
+            target
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -7335,7 +7332,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
             positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         let mut spawned = None;
-        crate::sim_rng::with_seed(0xB0A0_0CB, |sim| {
+        crate::sim_rng::with_seed(0x0B0A_00CB, |sim| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
                 sim,
                 &assets,

@@ -129,7 +129,7 @@ impl InteractiveMission {
                 crate::sim_timeline::run_engine_frame_core(
                     host,
                     &mut display,
-                    &assets,
+                    assets,
                     &mut manager.engine,
                     dev,
                     engine_api::SimulationFrameInput::from_player_inputs(vec![
@@ -183,8 +183,8 @@ impl InteractiveMission {
                     &manager.engine,
                     &display_snapshot,
                     host,
-                    &assets,
-                    &dev,
+                    assets,
+                    dev,
                     &mut render_ctx,
                     &screenshot,
                     output_path,
@@ -303,8 +303,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             update_mouse_and_cursor(
                 manager,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut frame.post_external_actions,
                 &mut presentation.renderer,
                 &mut resources.cursor,
@@ -343,8 +343,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 &manager.engine,
                 &display_snapshot,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut render_ctx,
             );
 
@@ -355,8 +355,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     &manager.engine,
                     &display_snapshot,
                     host,
-                    &assets,
-                    &dev,
+                    assets,
+                    dev,
                     &mut render_ctx,
                 ) {
                     host.pending_print_screen = Some(PrintScreenRequest::Plain);
@@ -368,8 +368,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 &manager.engine,
                 &display_snapshot,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut render_ctx,
             );
 

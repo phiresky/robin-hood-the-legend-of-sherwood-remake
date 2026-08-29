@@ -25,3 +25,6 @@ tracing-subscriber.workspace = true
 # zips. Examples reuse dev-dependencies, so this stays out of the
 # library's release-mode dep graph.
 zip.workspace = true
+
+[lints]
+workspace = true

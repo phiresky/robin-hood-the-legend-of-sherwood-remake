@@ -2247,13 +2247,15 @@ mod tests {
 
     #[test]
     fn click_polygon_includes_original_h02_door_boundary() {
-        let mut door = Door::default();
-        door.click_polygon = vec![
-            (1669.0, 1536.0),
-            (1645.0, 1536.0),
-            (1644.0, 1485.0),
-            (1669.0, 1485.0),
-        ];
+        let mut door = Door {
+            click_polygon: vec![
+                (1669.0, 1536.0),
+                (1645.0, 1536.0),
+                (1644.0, 1485.0),
+                (1669.0, 1485.0),
+            ],
+            ..Default::default()
+        };
         door.rebuild_click_bbox();
 
         assert!(door.click_polygon_contains(1669.0, 1505.44));

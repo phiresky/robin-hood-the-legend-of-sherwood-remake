@@ -571,7 +571,8 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get_mut(minion_id) else {
                     continue;
                 };
-                let ctx = build_ai_context_from_entity(
+
+                build_ai_context_from_entity(
                     entity,
                     patrol_frame,
                     None,
@@ -585,9 +586,7 @@ impl EngineInner {
                     &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
-                );
-
-                ctx
+                )
             };
 
             // Build tick data with patrol chief info.  Use the

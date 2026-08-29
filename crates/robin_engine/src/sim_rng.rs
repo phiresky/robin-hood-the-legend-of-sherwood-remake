@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn original_unit_fraction_includes_both_endpoints() {
         assert_eq!(0u16 as f32 / 32767.0, 0.0);
-        assert_eq!(32767u16 as f32 / 32767.0, 1.0);
+        assert_eq!(32767_f32 / 32767.0, 1.0);
     }
 
     #[test]

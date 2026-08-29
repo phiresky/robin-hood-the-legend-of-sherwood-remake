@@ -351,15 +351,17 @@ mod tests {
             CharacterProfile::default(),
             CharacterProfile::default(),
         ];
-        let mut campaign = Campaign::default();
-        campaign.characters = vec![
-            description(0, false),
-            description(1, false),
-            description(2, false),
-            description(3, true),
-        ];
-        campaign.mission_team_indices = vec![0];
-        campaign.gang_indices = vec![1, 2, 3];
+        let campaign = Campaign {
+            characters: vec![
+                description(0, false),
+                description(1, false),
+                description(2, false),
+                description(3, true),
+            ],
+            mission_team_indices: vec![0],
+            gang_indices: vec![1, 2, 3],
+            ..Default::default()
+        };
 
         let dependencies =
             required_dependencies(&datadir, "H01", &campaign, &profiles, false).unwrap();

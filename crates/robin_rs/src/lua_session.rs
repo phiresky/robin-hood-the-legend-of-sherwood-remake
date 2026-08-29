@@ -360,7 +360,7 @@ impl LuaSession {
                 i32::try_from(value).map_err(|_| LuaSessionError::EventIntegerOutOfRange {
                     mission: self.mission_basename.clone(),
                     event: event_name.to_owned(),
-                    value: value.into(),
+                    value,
                 })
             }
             Some(mlua::Value::Number(value))

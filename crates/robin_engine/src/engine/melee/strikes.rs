@@ -723,7 +723,7 @@ impl EngineInner {
             let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
             let attacker_direction = attacker.element_data().direction();
             let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
-            let angle_delta = (i16::from(attacker_direction) - victim_direction).rem_euclid(16);
+            let angle_delta = (attacker_direction - victim_direction).rem_euclid(16);
             let attacker_has_victim = attacker
                 .human_data()
                 .is_some_and(|human| human.opponents.contains(&victim_id));
@@ -1727,7 +1727,7 @@ impl EngineInner {
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
                 sweeps.push(ActiveSweep {
-                    attacker_id: entity_id.into(),
+                    attacker_id: entity_id,
                     attacker_pos: (pos.x, pos.y),
                     rotation_complete_on_entry: sweep_rotation_complete(sweep),
                     sweep: sweep.clone(),
@@ -3777,7 +3777,7 @@ mod tests {
 
     #[test]
     fn stopped_rolling_preserves_direction_through_shared_recompute() {
-        let here = MapPoint::new(1208.699_5, 1156.473_4);
+        let here = MapPoint::new(1_208.699_5, 1_156.473_4);
         let mut position = crate::position_interface::PositionInterface::new();
         position.set_map_position(here);
         position.set_direction_instantly(crate::position_interface::Direction::from_raw(10));
@@ -3814,18 +3814,20 @@ mod tests {
         element.set_layer(1);
         element.set_sector(SectorHandle::new(2));
 
-        let mut actor = ActorData::default();
-        actor.action_state = ActionState::WaitingSword;
-        actor.active_flight = Some(crate::element::ActiveFlight {
-            increment_x: 5.0,
-            goal_x: 15.0,
-            goal_y: 20.0,
-            frames_remaining: 1,
-            antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
-            goal_layer: 3,
-            goal_sector: SectorHandle::new(4),
+        let actor = ActorData {
+            action_state: ActionState::WaitingSword,
+            active_flight: Some(crate::element::ActiveFlight {
+                increment_x: 5.0,
+                goal_x: 15.0,
+                goal_y: 20.0,
+                frames_remaining: 1,
+                antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
+                goal_layer: 3,
+                goal_sector: SectorHandle::new(4),
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
 
         Entity::Soldier(ActorSoldier {
             element,
@@ -3876,18 +3878,20 @@ mod tests {
         element.set_layer(1);
         element.set_sector(SectorHandle::new(2));
 
-        let mut actor = ActorData::default();
-        actor.action_state = ActionState::Moving;
-        actor.active_flight = Some(crate::element::ActiveFlight {
-            increment_x: 5.0,
-            goal_x: 15.0,
-            goal_y: 20.0,
-            frames_remaining: 1,
-            ladder_fall: true,
-            goal_layer: 3,
-            goal_sector: SectorHandle::new(4),
+        let mut actor = ActorData {
+            action_state: ActionState::Moving,
+            active_flight: Some(crate::element::ActiveFlight {
+                increment_x: 5.0,
+                goal_x: 15.0,
+                goal_y: 20.0,
+                frames_remaining: 1,
+                ladder_fall: true,
+                goal_layer: 3,
+                goal_sector: SectorHandle::new(4),
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
 
         Entity::Pc(ActorPc {
@@ -4057,20 +4061,22 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(1);
         obstacle.top_plane_points = [
-            [0.0, 0.0, 1711.937_4],
-            [1.0, 0.0, 1712.386_2],
-            [0.0, 1.0, 1710.774_0],
+            [0.0, 0.0, 1_711.937_4],
+            [1.0, 0.0, 1_712.386_2],
+            [0.0, 1.0, 1_710.774],
         ];
         obstacle.material = 3;
         let plane =
             crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points);
-        let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+        let assets = LevelAssets {
+            static_sight_obstacles: std::sync::Arc::new(vec![obstacle]),
+            ..Default::default()
+        };
 
         // Adding world Z to map Y and subtracting it again rounds the map
         // coordinate. Reinstalling the already-current plane at landing would
         // consequently derive a different elevation from that rounded map Y.
-        let goal_map = MapPoint::new(1833.458_984_375, 1617.051_635_742_187_5);
+        let goal_map = MapPoint::new(1_833.459, 1_617.051_6);
         let goal_z = f32::from_bits(1_133_974_934);
         let rounded_map_y = (goal_map.y + goal_z) - goal_z;
         assert_ne!(rounded_map_y.to_bits(), goal_map.y.to_bits());
@@ -4134,8 +4140,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let near_x = 696.702_45_f32;
         let exact_x = f32::from_bits(near_x.to_bits() + 1);
-        let near_goal = MapPoint::new(near_x, 2077.693_8);
-        let exact_goal = MapPoint::new(exact_x, 2077.694_6);
+        let near_goal = MapPoint::new(near_x, 2_077.693_8);
+        let exact_goal = MapPoint::new(exact_x, 2_077.694_6);
         let mut entity = falling_pushed_soldier(false);
         entity.set_posture(Posture::Lying);
         entity.element_data_mut().set_position_map(near_goal);
@@ -4254,8 +4260,10 @@ mod tests {
         let Entity::Soldier(soldier) = &mut entity else {
             unreachable!()
         };
-        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
-        enemy_ai.hth_weapon_id = 1;
+        let enemy_ai = crate::ai_enemy::EnemyAi {
+            hth_weapon_id: 1,
+            ..Default::default()
+        };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
         entity
             .position_iface_mut()
@@ -4342,8 +4350,10 @@ mod tests {
         let Entity::Soldier(soldier) = &mut opponent_entity else {
             unreachable!()
         };
-        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
-        enemy_ai.hth_weapon_id = 1;
+        let enemy_ai = crate::ai_enemy::EnemyAi {
+            hth_weapon_id: 1,
+            ..Default::default()
+        };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
         let opponent = engine.add_entity(opponent_entity);
         {

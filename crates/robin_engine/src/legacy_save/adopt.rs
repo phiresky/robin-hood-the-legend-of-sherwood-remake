@@ -534,8 +534,7 @@ impl LegacyEntityFixups {
         }
 
         let mut by_creation_order = BTreeMap::new();
-        let mut by_saved_slot = Vec::new();
-        by_saved_slot.reserve(envelope.records.len());
+        let mut by_saved_slot = Vec::with_capacity(envelope.records.len());
         let mut creation_order_by_entity = BTreeMap::new();
 
         for record in &envelope.records {
@@ -726,7 +725,7 @@ pub fn derive_position_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
-    let retained = assets.legacy_grid_topology.as_ref().ok_or_else(|| {
+    let retained = assets.legacy_grid_topology.as_ref().ok_or({
         LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissingRetainedFact {
             fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
             original_owner: "RHFastFindGrid construction-time arrays",
@@ -1179,14 +1178,16 @@ mod tests {
 
     #[test]
     fn position_sector_identity_survives_overlapping_public_numbers() {
-        let mut retained = crate::engine::LegacyGridTopologyAssets::default();
-        retained.sectors = vec![
-            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
-            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
-            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
-        ];
-        retained.position_sector_numbers = vec![Some(18), None, Some(18)];
-        retained.position_sector_indices = vec![SectorIndex::new(0), None, SectorIndex::new(1)];
+        let retained = crate::engine::LegacyGridTopologyAssets {
+            sectors: vec![
+                crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+                crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+                crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(18), None, Some(18)],
+            position_sector_indices: vec![SectorIndex::new(0), None, SectorIndex::new(1)],
+            ..Default::default()
+        };
         let runtime = vec![test_grid_sector(18), test_grid_sector(18)];
 
         let identities = build_position_sector_identities(&retained, &runtime).unwrap();

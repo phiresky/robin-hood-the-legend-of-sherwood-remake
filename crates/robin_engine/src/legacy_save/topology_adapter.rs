@@ -188,15 +188,14 @@ pub fn derive_static_element_topology(
         if let StaticElementSource::MobileMaster(mobile_index) = *element {
             mobile_index_by_creation_order.insert(creation_order, mobile_index);
         }
-        if let Some(entity_id) = entity_id {
-            if creation_order_by_entity
+        if let Some(entity_id) = entity_id
+            && creation_order_by_entity
                 .insert(entity_id, creation_order)
                 .is_some()
-            {
-                return Err(element_mismatch(format!(
-                    "static entity {entity_id} occurs more than once in retained construction order"
-                )));
-            }
+        {
+            return Err(element_mismatch(format!(
+                "static entity {entity_id} occurs more than once in retained construction order"
+            )));
         }
         if payload_metadata
             .by_creation_order

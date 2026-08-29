@@ -99,7 +99,7 @@ impl EngineInner {
         self.tick_enemy_ai_refresh_detection(
             sim,
             assets,
-            &world,
+            world,
             Some(positions_before_movement),
             Some(npc_id),
             false,
@@ -1275,10 +1275,13 @@ impl EngineInner {
                 );
             }
             let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
-            let mutation_owner_creation_order = (mutation_debug_enabled
-                && detection::detectable_mutation_debug_owner_slot_matches(npc_id.index()))
-            .then(|| self.original_static_creation_order(npc_id))
-            .unwrap_or(0);
+            let mutation_owner_creation_order = if mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(npc_id.index())
+            {
+                self.original_static_creation_order(npc_id)
+            } else {
+                0
+            };
             let mutation_targets = if mutation_debug_enabled
                 && detection::detectable_mutation_debug_owner_matches(
                     npc_id.index(),

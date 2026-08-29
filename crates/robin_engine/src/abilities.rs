@@ -2849,8 +2849,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             .get_character(pc.profile_index)
             .map(|cp| {
                 cp.contextual_actions
-                    .iter()
-                    .any(|&a| a == crate::profiles::Action::LittleJohnCarry)
+                    .contains(&crate::profiles::Action::LittleJohnCarry)
             })
             .unwrap_or(false);
 
@@ -3027,7 +3026,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             // the climber's frame.
             let helper_anim = snap
                 .target_live_shoulder_ability
-                .then(|| match snap.target_last_action {
+                .then_some(match snap.target_last_action {
                     OrderType::ClimbingUpOnShoulders => {
                         Some(OrderType::TransitionHelpingClimbingUp)
                     }
@@ -3277,8 +3276,7 @@ pub(crate) fn sync_terminal_corpse_drop_animation(
         .map(|profile| {
             profile
                 .contextual_actions
-                .iter()
-                .any(|&action| action == crate::profiles::Action::LittleJohnCarry)
+                .contains(&crate::profiles::Action::LittleJohnCarry)
         })
         .unwrap_or(false);
     let animation = if little_john_style {

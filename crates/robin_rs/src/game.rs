@@ -663,8 +663,8 @@ impl Game {
                 .with_hourglass(false),
             )
             .expect("finalize-mission command admission");
-        let mut campaign = engine.into_campaign();
-        let result = self.process_operation(&mut campaign, &assets.profile_manager, callbacks);
+        let campaign = engine.into_campaign();
+        let result = self.process_operation(&campaign, &assets.profile_manager, callbacks);
         (result, campaign)
     }
 

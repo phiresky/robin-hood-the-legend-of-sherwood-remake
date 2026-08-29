@@ -1508,8 +1508,10 @@ mod application_context_tests {
             })
             .unwrap();
 
-        let mut options = engine_api::GlobalOptions::default();
-        options.highlander2 = true;
+        let options = engine_api::GlobalOptions {
+            highlander2: true,
+            ..Default::default()
+        };
         let replaced = context.with_options(options);
 
         assert_eq!(replaced.sim_config().amount_of_speaking, 9);

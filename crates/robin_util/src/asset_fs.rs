@@ -272,15 +272,11 @@ impl AssetVfs {
             }
         }
         drop(mounts);
-        if self
+        Ok(self
             .preloaded
             .read()
             .expect("preloaded asset bundle poisoned")
-            .contains_key(&key)
-        {
-            return Ok(true);
-        }
-        Ok(false)
+            .contains_key(&key))
     }
 
     /// Resolve a virtual asset to a contained native file path.

@@ -126,11 +126,7 @@ impl EnemyAi {
         self.refresh_arrow_protection(true, ctx, tick, grid);
 
         // Gate the rest on `frame_phase & 63`.
-        if (frame_phase & 63) != 0 {
-            return false;
-        }
-
-        true
+        (frame_phase & 63) == 0
     }
 
     /// Finish the every-64/every-256-frame suffix after the refresh's

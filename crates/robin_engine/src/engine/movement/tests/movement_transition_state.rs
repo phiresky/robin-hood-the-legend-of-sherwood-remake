@@ -108,8 +108,13 @@ mod suite {
                 ..ElementData::default()
             };
             element.set_position_map(MapPoint::new(90.0, 90.0));
-            let mut npc = NpcData::default();
-            npc.ai_brain = AiBrain::Enemy(Box::default());
+            let npc = NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
             engine.add_entity(Entity::Soldier(ActorSoldier {
                 element,
                 actor: ActorData::default(),
@@ -744,8 +749,13 @@ mod suite {
             ));
         element.sprite.position_iface.set_anti_collision_on(false);
         element.set_position_map(MapPoint::new(300.0, 794.0));
-        let mut npc = NpcData::default();
-        npc.ai_brain = AiBrain::Enemy(Box::default());
+        let npc = NpcData {
+            ai: crate::element::AiActorData {
+                ai_brain: AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData {

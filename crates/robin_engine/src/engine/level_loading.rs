@@ -570,13 +570,12 @@ fn canonicalize_building_position_sectors(
         .iter()
         .zip(&retained.position_sector_numbers)
         .zip(&retained.position_sector_indices)
-        .filter_map(|((kind, number), index)| {
-            matches!(kind, LegacyGridSectorAsset::Building).then(|| {
-                (
-                    number.expect("building has no public sector number"),
-                    index.expect("building has no arena identity"),
-                )
-            })
+        .filter(|&((kind, _number), _index)| matches!(kind, LegacyGridSectorAsset::Building))
+        .map(|((_kind, number), index)| {
+            (
+                number.expect("building has no public sector number"),
+                index.expect("building has no arena identity"),
+            )
         })
         .collect::<Vec<_>>();
     let building_count = loaded
