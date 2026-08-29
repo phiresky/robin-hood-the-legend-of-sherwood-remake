@@ -31,6 +31,7 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Rotating Autosaves",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -209,6 +210,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
+        3 => config.autosave_enabled = !config.autosave_enabled,
         _ => {}
     }
 }
@@ -218,6 +220,28 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
+        3 => config.autosave_enabled,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autosave_has_an_independent_gameplay_toggle() {
+        let mut config = GameplayConfig::default();
+        let before = config;
+        assert_eq!(OPTION_LABELS[3], "Rotating Autosaves");
+        assert!(is_option_selected(&config, 3));
+        apply_option_toggle(&mut config, 3);
+        assert!(!is_option_selected(&config, 3));
+        assert_eq!(
+            config.fix_hard_reaction_times,
+            before.fix_hard_reaction_times
+        );
+        assert_eq!(config.control_tactical_units, before.control_tactical_units);
+        assert_eq!(config.enable_unbinding, before.enable_unbinding);
     }
 }
