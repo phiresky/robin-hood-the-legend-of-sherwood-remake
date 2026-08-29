@@ -203,6 +203,12 @@ pub struct ShippingSpriteBank {
     /// index grids are decoded out of the blob by
     /// [`ShippingSpriteBank::materialize_vq_chunks`] at mission install time.
     pub vq_chunks: Vec<SpriteVqChunk>,
+    /// Schema v13 (web recipe only): lossy-JXL payloads for RLE patch /
+    /// ambient-animation sprites. Like VQ chunk sprites, the listed rows
+    /// carry empty `packed_data` until
+    /// [`ShippingSpriteBank::materialize_rle_jxl_chunks`] rebuilds their
+    /// exact-format RLE words at mission install time.
+    pub rle_jxl_chunks: Vec<SpriteRleJxlChunk>,
 }
 
 /// One RHS chunk's VQ sprite grids, coded with [`crate::sprite_codec`].
@@ -247,6 +253,47 @@ pub struct SpriteVqChunk {
     /// `sprite_codec::encode_grids_shipping` output for all grids of this
     /// chunk.
     pub blob: Vec<u8>,
+}
+
+/// One RHS chunk's lossy-JXL RLE sprite payload (schema v13, WEB recipe
+/// only — native shipping keeps exact RLE words because parity traces
+/// screenshot composited RGB565 framebuffers).
+///
+/// Each listed sprite is a `width x height` region of one JXL image in
+/// `jxl_blobs` (a per-animation-group atlas or a single-sprite image; the
+/// converter decides per sprite and keeps exact RLE when that is smaller).
+/// The JXL image carries only opaque RGB; `masks` holds the lossless 2-bit
+/// class map (see [`crate::rle_jxl`]) that reconstructs run extents,
+/// shadow-key literals, and transparent-key literals EXACTLY. Only opaque
+/// RGB values are lossy (requantized to RGB565 at materialization).
+///
+/// Unlike VQ chunks there are no cross-chunk dependencies: every sprite id
+/// listed here appears in exactly one chunk of the whole tree (sprites
+/// referenced by several RHS chunks keep exact RLE words instead, because
+/// two independent lossy encodes of one bank slot would conflict at merge).
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct SpriteRleJxlChunk {
+    /// Relative RHS path this chunk was built from (diagnostics only).
+    pub rhs: String,
+    /// Encoded JXL images (RGBA; alpha 0 marks don't-care pixels).
+    pub jxl_blobs: Vec<Vec<u8>>,
+    /// Bank ids of the coded sprites, strictly ascending.
+    pub sprite_ids: Vec<u32>,
+    /// Per sprite, aligned with `sprite_ids`: which blob and the top-left
+    /// pixel of its region inside that blob.
+    pub placements: Vec<RleJxlPlacement>,
+    /// Concatenated packed 2-bit class maps in `sprite_ids` order, each
+    /// `class_map_len(width, height)` bytes (dims come from the sprite
+    /// rows). Uncompressed here — the outer chunk zstd handles it.
+    pub masks: Vec<u8>,
+}
+
+/// Placement of one sprite inside its chunk's JXL blob list.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct RleJxlPlacement {
+    pub blob: u32,
+    pub x: u16,
+    pub y: u16,
 }
 
 /// Derive the deterministic within-chunk auxiliary references for a VQ
@@ -885,6 +932,253 @@ impl ShippingSpriteBank {
         }
         Ok(())
     }
+
+    /// Per-sprite `(width, height)` for one RLE-JXL chunk, validating that
+    /// every listed sprite row is present and RLE-coded. Rows always ship in
+    /// the same mission part as their chunk, so on a fully merged payload a
+    /// missing row is a broken manifest, never a timing question.
+    fn prepare_rle_jxl_chunk_dims(&self, chunk: &SpriteRleJxlChunk) -> Result<Vec<(u16, u16)>> {
+        if chunk.placements.len() != chunk.sprite_ids.len() {
+            return Err(anyhow!(
+                "RLE-JXL chunk for {} lists {} sprites but {} placements",
+                chunk.rhs,
+                chunk.sprite_ids.len(),
+                chunk.placements.len()
+            ));
+        }
+        let mut dims = Vec::with_capacity(chunk.sprite_ids.len());
+        for sprite_id in &chunk.sprite_ids {
+            let sprite = self.sprite_row(*sprite_id).ok_or_else(|| {
+                anyhow!(
+                    "RLE-JXL chunk for {} names sprite {sprite_id}, which is not part of this \
+                     mission payload",
+                    chunk.rhs
+                )
+            })?;
+            if sprite.dictionary_index != UNMAPPED_DICT {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} names sprite {sprite_id}, which is dictionary-coded",
+                    chunk.rhs
+                ));
+            }
+            if sprite.width == 0 || sprite.height == 0 {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} names empty sprite {sprite_id}",
+                    chunk.rhs
+                ));
+            }
+            dims.push((sprite.width, sprite.height));
+        }
+        Ok(dims)
+    }
+
+    /// Streaming-time readiness: `Ok(false)` while a listed sprite row has
+    /// not been merged yet (its part is still downloading).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    fn rle_jxl_chunk_ready_lenient(&self, chunk: &SpriteRleJxlChunk) -> bool {
+        chunk
+            .sprite_ids
+            .iter()
+            .all(|sprite_id| self.sprite_row(*sprite_id).is_some())
+    }
+
+    /// Decode one RLE-JXL chunk into `(sprite id, exact-format RLE words)`
+    /// pairs. Pure compute over the prepared dims — no `self` access, so a
+    /// wasm worker thread can run it.
+    fn run_rle_jxl_chunk_decode(
+        chunk: &SpriteRleJxlChunk,
+        dims: &[(u16, u16)],
+    ) -> Result<Vec<(u32, Vec<u16>)>> {
+        use crate::rle_jxl;
+        let decoded_blobs: Vec<(usize, usize, Vec<u8>)> = chunk
+            .jxl_blobs
+            .iter()
+            .enumerate()
+            .map(|(index, blob)| {
+                rle_jxl::decode_jxl_rgba8(blob)
+                    .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))
+            })
+            .collect::<Result<_>>()?;
+        let mut out = Vec::with_capacity(chunk.sprite_ids.len());
+        let mut mask_offset = 0usize;
+        for ((&sprite_id, placement), &(width, height)) in chunk
+            .sprite_ids
+            .iter()
+            .zip(&chunk.placements)
+            .zip(dims.iter())
+        {
+            let mask_len = rle_jxl::class_map_len(width, height);
+            let bits = chunk.masks.get(mask_offset..mask_offset + mask_len).ok_or_else(|| {
+                anyhow!(
+                    "RLE-JXL chunk for {} has a truncated class-map stream at sprite {sprite_id}",
+                    chunk.rhs
+                )
+            })?;
+            mask_offset += mask_len;
+            let classes = rle_jxl::unpack_class_map(bits, width as usize * height as usize)?;
+            let (blob_w, _blob_h, rgba) =
+                decoded_blobs.get(placement.blob as usize).ok_or_else(|| {
+                    anyhow!(
+                        "RLE-JXL chunk for {} places sprite {sprite_id} in missing blob {}",
+                        chunk.rhs,
+                        placement.blob
+                    )
+                })?;
+            let packed = rle_jxl::reconstruct_rle_packed(
+                width as usize,
+                height as usize,
+                &classes,
+                rgba,
+                *blob_w,
+                placement.x as usize,
+                placement.y as usize,
+            )
+            .with_context(|| format!("reconstruct RLE sprite {sprite_id} of {}", chunk.rhs))?;
+            out.push((sprite_id, packed));
+        }
+        if mask_offset != chunk.masks.len() {
+            return Err(anyhow!(
+                "RLE-JXL chunk for {} carries {} class-map bytes but its sprites consume {mask_offset}",
+                chunk.rhs,
+                chunk.masks.len()
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Write one chunk's reconstructed RLE words into the sprite rows.
+    /// The converter guarantees each bank sprite is JXL-coded by at most one
+    /// chunk, so an already-populated row must match exactly (it can only be
+    /// the same chunk applied twice).
+    pub fn apply_decoded_rle_jxl_chunk(
+        &mut self,
+        chunk: &SpriteRleJxlChunk,
+        packed: Vec<(u32, Vec<u16>)>,
+    ) -> Result<()> {
+        for (sprite_id, words) in packed {
+            let position = self
+                .sprites
+                .binary_search_by_key(&sprite_id, |(id, _)| *id)
+                .map_err(|_| {
+                    anyhow!("sprite {sprite_id} disappeared during RLE-JXL materialization")
+                })?;
+            let sprite = &mut self.sprites[position].1;
+            if !sprite.packed_data.is_empty() {
+                if *sprite.packed_data != words {
+                    return Err(anyhow!(
+                        "sprite {sprite_id} decodes differently in two RLE-JXL chunks \
+                         ({} vs an earlier one)",
+                        chunk.rhs
+                    ));
+                }
+                continue;
+            }
+            sprite.packed_data = Arc::new(words);
+        }
+        Ok(())
+    }
+
+    /// Decode every [`SpriteRleJxlChunk`] back into exact-format packed RLE
+    /// words, consuming the chunk list. Chunks are mutually independent, so
+    /// native builds decode them in parallel; wasm (without the worker pool)
+    /// stays serial.
+    pub fn materialize_rle_jxl_chunks(&mut self) -> Result<()> {
+        let pending = std::mem::take(&mut self.rle_jxl_chunks);
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let inputs = pending
+            .iter()
+            .map(|chunk| self.prepare_rle_jxl_chunk_dims(chunk))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded: Vec<Result<Vec<(u32, Vec<u16>)>>> = {
+            use rayon::prelude::*;
+            pending
+                .par_iter()
+                .zip(&inputs)
+                .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
+                .collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let decoded: Vec<Result<Vec<(u32, Vec<u16>)>>> = pending
+            .iter()
+            .zip(&inputs)
+            .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
+            .collect();
+        for (chunk, packed) in pending.iter().zip(decoded) {
+            let packed =
+                packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            self.apply_decoded_rle_jxl_chunk(chunk, packed)?;
+        }
+        Ok(())
+    }
+}
+
+/// Dispatcher state for worker-pool RLE-JXL chunk decode (wasm-threads
+/// builds), mirroring [`VqDecodeScheduler`]. RLE-JXL chunks have no
+/// cross-chunk dependencies — a chunk is ready as soon as its own sprite
+/// rows (which ship in the same mission part) have merged.
+///
+/// Transient scheduling state, never serialized — deliberately no serde.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+#[derive(Default)]
+pub struct RleJxlDecodeScheduler {
+    in_flight: futures_util::stream::FuturesUnordered<
+        futures_channel::oneshot::Receiver<(SpriteRleJxlChunk, Result<Vec<(u32, Vec<u16>)>>, f64)>,
+    >,
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+impl RleJxlDecodeScheduler {
+    /// Move every ready chunk of `pending` onto the worker pool.
+    pub fn dispatch_ready(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteRleJxlChunk>,
+    ) -> Result<()> {
+        let mut index = 0;
+        while index < pending.len() {
+            if !bank.rle_jxl_chunk_ready_lenient(&pending[index]) {
+                index += 1;
+                continue;
+            }
+            let chunk = pending.swap_remove(index);
+            let dims = bank
+                .prepare_rle_jxl_chunk_dims(&chunk)
+                .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            rayon::spawn(move || {
+                let started = js_sys::Date::now();
+                let packed = ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims);
+                let elapsed = js_sys::Date::now() - started;
+                let _ = sender.send((chunk, packed, elapsed));
+            });
+            self.in_flight.push(receiver);
+        }
+        Ok(())
+    }
+
+    /// Await the next completed decode. `Ok(None)` when none is in flight.
+    pub async fn next_decoded(
+        &mut self,
+    ) -> Result<Option<(SpriteRleJxlChunk, Vec<(u32, Vec<u16>)>)>> {
+        use futures_util::StreamExt as _;
+        let Some(result) = self.in_flight.next().await else {
+            return Ok(None);
+        };
+        let (chunk, packed, decode_ms) =
+            result.map_err(|_| anyhow!("RLE-JXL decode worker dropped its result"))?;
+        let packed =
+            packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+        tracing::debug!(chunk = %chunk.rhs, decode_ms, "RLE-JXL sprite chunk decoded on worker");
+        Ok(Some((chunk, packed)))
+    }
+
+    /// True while at least one decode is running on the pool.
+    pub fn has_in_flight(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -986,6 +1280,9 @@ impl ShippingDatadir {
         if let Some(bank) = payload.sprite_bank.as_mut() {
             bank.materialize_vq_chunks(&payload.rhs_files)
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
+            bank.materialize_rle_jxl_chunks().with_context(|| {
+                format!("materialize RLE-JXL sprite chunks for mission {mission}")
+            })?;
         }
         let raw = std::mem::take(&mut payload.raw)
             .into_iter()
@@ -1281,6 +1578,7 @@ impl ShippingMission {
             sprite_count: source_bank.sprite_count,
             sprites: Vec::new(),
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         });
         if bank.signature != source_bank.signature || bank.sprite_count != source_bank.sprite_count
         {
@@ -1294,6 +1592,7 @@ impl ShippingMission {
             return Err(anyhow!("shipping sprite-bank dictionaries conflict"));
         }
         bank.vq_chunks.append(&mut source_bank.vq_chunks);
+        bank.rle_jxl_chunks.append(&mut source_bank.rle_jxl_chunks);
         for (index, sprite) in source_bank.sprites {
             if index >= bank.sprite_count {
                 return Err(anyhow!(
@@ -1415,10 +1714,17 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // divisions from the escape path (another decode-speed/size trade; the
 // container layout is unchanged, but the entropy bitstream is incompatible,
 // so both magics advance).
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA12";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN07";
-pub const SHIPPING_DATADIR_VERSION: u32 = 12;
-pub const SHIPPING_MISSION_VERSION: u32 = 7;
+//
+// Schema v13 / mission v8: [`ShippingSpriteBank`] gains `rle_jxl_chunks` —
+// lossy-JXL atlases plus lossless 2-bit class maps for RLE patch/ambient
+// sprites, emitted only by the WEB recipe (`--rle-sprite-format jxl-q70`;
+// the default keeps exact RLE words and native shipping stays
+// byte-preserving). The mission chunk layout changed, so both magics
+// advance.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA13";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN08";
+pub const SHIPPING_DATADIR_VERSION: u32 = 13;
+pub const SHIPPING_MISSION_VERSION: u32 = 8;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -1677,7 +1983,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA12");
+        assert_eq!(&encoded[..8], b"RHDDNA13");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -1734,7 +2040,7 @@ mod tests {
             .audio_durations_ms
             .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
-        assert_eq!(&encoded[..8], b"RHMISN07");
+        assert_eq!(&encoded[..8], b"RHMISN08");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));
@@ -1758,6 +2064,7 @@ mod tests {
             sprite_count: 2,
             sprites,
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         };
         let mut merged = ShippingMission {
             sprite_bank: Some(bank(Vec::new())),
@@ -1801,6 +2108,7 @@ mod tests {
             sprite_count: 4,
             sprites,
             vq_chunks,
+            rle_jxl_chunks: Vec::new(),
         }
     }
 
