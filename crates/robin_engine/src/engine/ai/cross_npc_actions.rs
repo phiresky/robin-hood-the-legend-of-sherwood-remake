@@ -639,8 +639,8 @@ impl EngineInner {
                             .filter(|entity| entity.ai_controller().is_some())
                         else {
                             // Target missing → try fallback directly below.
-                            if let Some(sender) = fallback_to_sender {
-                                if let Some((sender_id, entity)) = self
+                            if let Some(sender) = fallback_to_sender
+                                && let Some((sender_id, entity)) = self
                                     .entity_id_for_index(sender)
                                     .and_then(|sender_id| {
                                         self.world
@@ -649,33 +649,32 @@ impl EngineInner {
                                             .map(|entity| (sender_id, entity))
                                     })
                                     .filter(|(_, entity)| entity.ai_controller().is_some())
-                                {
-                                    let ctx = build_ai_context_from_entity(
-                                        entity,
-                                        frame,
-                                        None,
-                                        self.world.weather.is_forest_level,
-                                        self.world.weather.ambiance,
-                                        self.ai.standard_view_polygon_radius,
-                                        &scratch.ai_entity_views,
-                                        &scratch.ai_sight_obstacles,
-                                        &self.world.fast_grid,
-                                        &assets.hiking_paths,
-                                        &assets.hiking_waypoint_sectors,
-                                        &self.ai.global.all_soldier_handles,
-                                        self.control.sim_config.difficulty,
-                                    );
-                                    let fallback_tick =
-                                        self.build_npc_tick_data(sim, sender_id, &scratch, assets);
-                                    self.dispatch_filtered_stimulus(
-                                        sim,
-                                        assets,
-                                        sender_id,
-                                        &stimulus,
-                                        &ctx,
-                                        &fallback_tick,
-                                    );
-                                }
+                            {
+                                let ctx = build_ai_context_from_entity(
+                                    entity,
+                                    frame,
+                                    None,
+                                    self.world.weather.is_forest_level,
+                                    self.world.weather.ambiance,
+                                    self.ai.standard_view_polygon_radius,
+                                    &scratch.ai_entity_views,
+                                    &scratch.ai_sight_obstacles,
+                                    &self.world.fast_grid,
+                                    &assets.hiking_paths,
+                                    &assets.hiking_waypoint_sectors,
+                                    &self.ai.global.all_soldier_handles,
+                                    self.control.sim_config.difficulty,
+                                );
+                                let fallback_tick =
+                                    self.build_npc_tick_data(sim, sender_id, &scratch, assets);
+                                self.dispatch_filtered_stimulus(
+                                    sim,
+                                    assets,
+                                    sender_id,
+                                    &stimulus,
+                                    &ctx,
+                                    &fallback_tick,
+                                );
                             }
                             continue;
                         };

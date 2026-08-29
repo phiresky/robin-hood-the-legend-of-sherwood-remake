@@ -20,7 +20,7 @@ mod suite {
 
     #[test]
     fn pc_retires_stale_deviation_at_aligned_movement_start_transition() {
-        let aligned = MapPoint::new(1297.909_3, 720.281_25);
+        let aligned = MapPoint::new(1_297.909_3, 720.281_25);
 
         assert!(should_clear_deviated_for_aligned_transition_start(
             true,

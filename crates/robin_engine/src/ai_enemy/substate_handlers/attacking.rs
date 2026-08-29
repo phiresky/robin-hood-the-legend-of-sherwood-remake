@@ -1107,25 +1107,22 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                self.base.set_emoticon(EmoticonType::None);
-                let safe_to_shoot = self.tower_guard
-                    || !self.archer_is_too_near_to_enemy(
-                        &ctx.position,
-                        self.base.primary_target,
-                        ctx,
-                        tick,
-                    );
-                if safe_to_shoot {
-                    self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
-                    self.shoot_arrow_at(self.base.primary_target, ctx, tick);
-                } else {
-                    self.enemy_seen_below = false;
-                    self.battle_decisions(sim, global, ctx, tick, grid);
-                }
+        if stimulus_type == StimulusType::EventTimer {
+            self.base.set_emoticon(EmoticonType::None);
+            let safe_to_shoot = self.tower_guard
+                || !self.archer_is_too_near_to_enemy(
+                    &ctx.position,
+                    self.base.primary_target,
+                    ctx,
+                    tick,
+                );
+            if safe_to_shoot {
+                self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
+                self.shoot_arrow_at(self.base.primary_target, ctx, tick);
+            } else {
+                self.enemy_seen_below = false;
+                self.battle_decisions(sim, global, ctx, tick, grid);
             }
-            _ => {}
         }
         false
     }
@@ -1134,18 +1131,15 @@ impl EnemyAi {
     // AIMING_TIME_FORMULA timer.
 
     fn attacking_bow_loading(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
-        match stimulus_type {
-            StimulusType::EventDone => {
-                self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
-                // `AIMING_TIME_FORMULA = (110 -
-                // shooting_ability) / 2`.  Same formula as
-                // the Decision::Shoot site below — uses the
-                // soldier's modified shooting ability (with
-                // alcohol penalty), not IQ.
-                let aim_time = ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
-                self.base.launch_timer(aim_time.max(5), ctx.frame);
-            }
-            _ => {}
+        if stimulus_type == StimulusType::EventDone {
+            self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
+            // `AIMING_TIME_FORMULA = (110 -
+            // shooting_ability) / 2`.  Same formula as
+            // the Decision::Shoot site below — uses the
+            // soldier's modified shooting ability (with
+            // alcohol penalty), not IQ.
+            let aim_time = ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
+            self.base.launch_timer(aim_time.max(5), ctx.frame);
         }
         false
     }
@@ -1158,12 +1152,9 @@ impl EnemyAi {
         stimulus_type: StimulusType,
         ctx: &AiContext,
     ) -> bool {
-        match stimulus_type {
-            StimulusType::EventDone => {
-                self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
-                self.base.launch_timer(50, ctx.frame);
-            }
-            _ => {}
+        if stimulus_type == StimulusType::EventDone {
+            self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
+            self.base.launch_timer(50, ctx.frame);
         }
         false
     }
@@ -1358,7 +1349,7 @@ impl EnemyAi {
                     // RHFIELD_SHIELD_DANGER_POINT. This is the raw element
                     // position, not the AI `Position()` helper that projects
                     // actors passing a door onto the gate endpoint.
-                    .map(|f| (f.raw_position, f.elevation as f32))
+                    .map(|f| (f.raw_position, f.elevation))
                     .unwrap_or_else(|| {
                         panic!(
                             "shield bearer {} requires primary target {} in the fighter registry",
@@ -1515,7 +1506,7 @@ impl EnemyAi {
                         // element's raw GetPosition().  The AI-facing
                         // Position() may instead project an actor traversing
                         // a door onto its gate endpoint.
-                        .map(|f| (f.raw_position, f.elevation as f32))
+                        .map(|f| (f.raw_position, f.elevation))
                         .unwrap_or_else(|| {
                             panic!(
                                 "phalanx runner {} requires target {} in the fighter registry",
@@ -1583,7 +1574,7 @@ impl EnemyAi {
                     // Reestablish shield state
                     let (target_pos, target_elevation) = self
                         .find_fighter(self.base.primary_target, tick)
-                        .map(|f| (f.raw_position, f.elevation as f32))
+                        .map(|f| (f.raw_position, f.elevation))
                         .unwrap_or_else(|| {
                             panic!(
                                 "phalanx soldier {} requires primary target {} in the fighter registry",

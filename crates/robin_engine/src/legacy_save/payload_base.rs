@@ -222,15 +222,15 @@ impl LegacyElementPayloadBase {
         read_fingerprint(reader, "fingerprint", FINGERPRINT_ELEMENT, "RHElement")?;
         let creation_offset = reader.offset();
         let creation_order = reader.read_u32("creation_order")?;
-        if let Some(expected) = expected_creation_order {
-            if creation_order != expected {
-                return Err(reader.invalid_value(
-                    creation_offset,
-                    "creation_order",
-                    creation_order,
-                    "creation order from the phase-one envelope",
-                ));
-            }
+        if let Some(expected) = expected_creation_order
+            && creation_order != expected
+        {
+            return Err(reader.invalid_value(
+                creation_offset,
+                "creation_order",
+                creation_order,
+                "creation order from the phase-one envelope",
+            ));
         }
         let mut outline_colors = [0; 5];
         for (index, color) in outline_colors.iter_mut().enumerate() {
@@ -252,15 +252,15 @@ impl LegacyElementPayloadBase {
                 "known RHCLASSID concrete element class",
             ));
         };
-        if let Some(expected) = expected_class {
-            if class != expected {
-                return Err(reader.invalid_value(
-                    class_offset,
-                    "class_id",
-                    format_args!("0x{raw_class:04x}"),
-                    "class id from the phase-one envelope",
-                ));
-            }
+        if let Some(expected) = expected_class
+            && class != expected
+        {
+            return Err(reader.invalid_value(
+                class_offset,
+                "class_id",
+                format_args!("0x{raw_class:04x}"),
+                "class id from the phase-one envelope",
+            ));
         }
         let delayed_map_position = read_point2(reader, "delayed_map_position")?;
         let delayed_position = read_point3(reader, "delayed_position")?;

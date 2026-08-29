@@ -108,9 +108,11 @@ impl MissionUiState {
     }
 
     pub(crate) fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
-        (frame_counter < self.blink_expire_frame)
-            .then_some(self.blinking_blazons)
-            .unwrap_or(0)
+        if frame_counter < self.blink_expire_frame {
+            self.blinking_blazons
+        } else {
+            0
+        }
     }
 }
 

@@ -934,9 +934,7 @@ pub fn tiredness_debug_matches(creation_order: u32) -> bool {
 fn tiredness_debug_filter() -> &'static Option<Option<u32>> {
     static FILTER: std::sync::OnceLock<Option<Option<u32>>> = std::sync::OnceLock::new();
     FILTER.get_or_init(|| {
-        if std::env::var_os("PARITY_DEBUG_TIREDNESS").is_none() {
-            return None;
-        }
+        std::env::var_os("PARITY_DEBUG_TIREDNESS")?;
         Some(
             std::env::var("PARITY_DEBUG_TIREDNESS_CREATION_ORDER")
                 .ok()

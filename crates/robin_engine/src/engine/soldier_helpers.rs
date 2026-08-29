@@ -677,6 +677,7 @@ impl EngineInner {
         resumed_cross_successors
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn close_owner_boundary_condolation(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

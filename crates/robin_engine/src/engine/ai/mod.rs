@@ -759,8 +759,10 @@ mod panic_boundary_tests {
     };
 
     fn enemy_soldier() -> Entity {
-        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
-        enemy_ai.hth_weapon_id = 1;
+        let enemy_ai = crate::ai_enemy::EnemyAi {
+            hth_weapon_id: 1,
+            ..Default::default()
+        };
         Entity::Soldier(ActorSoldier {
             element: ElementData {
                 kind: ElementKind::ActorSoldier,
@@ -782,8 +784,10 @@ mod panic_boundary_tests {
     }
 
     fn enemy_ai_hero() -> Entity {
-        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
-        enemy_ai.hth_weapon_id = 1;
+        let enemy_ai = crate::ai_enemy::EnemyAi {
+            hth_weapon_id: 1,
+            ..Default::default()
+        };
         Entity::Pc(ActorPc {
             element: ElementData {
                 kind: ElementKind::ActorPc,
@@ -1220,11 +1224,7 @@ fn subjective_hear_volume(modified_volume: f32, distance: f32, deafness: u16) ->
         return 0;
     }
     let truncated = remainder as u16;
-    if truncated <= deafness {
-        0
-    } else {
-        truncated - deafness
-    }
+    truncated.saturating_sub(deafness)
 }
 
 /// Project Original's live Enemy detectable list into the ordered handle list
@@ -2170,7 +2170,7 @@ mod parity_tests {
         ));
         let queries = crate::sight_obstacle::take_parity_visibility_capture();
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].destination, [1022.0, 2074.301, 52.101158]);
+        assert_eq!(queries[0].destination, [1022.0, 2074.301, 52.101_16]);
         assert_ne!(
             queries[0].destination[1], 2067.1012,
             "missed-member reacquisition must not use the door's gate-side AI position"
@@ -4639,7 +4639,7 @@ impl EngineInner {
                     if s.npc.life_points <= 0 || s.human.unconscious {
                         continue;
                     }
-                    if let Some(_) = s.soldier.cached_camp.allegiance_id() {
+                    if s.soldier.cached_camp.allegiance_id().is_some() {
                         fighter_ids
                             .entry(s.soldier.cached_camp)
                             .or_default()

@@ -70,14 +70,15 @@ impl Default for ViewParameters {
 
 /// Convert a 16-sector cardinal direction index to a unit (x, y) vector.
 /// Sector 0 = north = -Y; sectors increase clockwise.
+#[allow(clippy::approx_constant, clippy::excessive_precision)]
 pub fn sector_to_direction(sector: i16) -> [f32; 2] {
     // Keep the literal table from SBGeoVector2D.cpp. Re-evaluating sin/cos
     // produces values a few ULPs away from the Original constants; patrol
     // formation multiplies these offsets by 20, and the resulting error can
     // flip the exact dot-product test in IsGoalReached.
-    const SIN_PI_EIGHTH: f32 = 0.382_683_432_365_09;
-    const COS_PI_EIGHTH: f32 = 0.923_879_532_511_28;
-    const HALF_SQRT_TWO: f32 = 0.707_106_781_186_54;
+    const SIN_PI_EIGHTH: f32 = 0.382_683_43;
+    const COS_PI_EIGHTH: f32 = 0.923_879_5;
+    const HALF_SQRT_TWO: f32 = 0.707_106_77;
     const X: [f32; 16] = [
         0.0,
         SIN_PI_EIGHTH,

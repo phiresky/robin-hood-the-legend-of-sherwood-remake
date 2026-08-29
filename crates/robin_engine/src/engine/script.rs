@@ -518,10 +518,7 @@ impl EngineInner {
                 }
 
                 self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
-                if let Err(error) = self.dispatch_script_ai_native_moves(sim, assets, owner, active)
-                {
-                    return Err(error);
-                }
+                self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
                 if matches!(
                     effect,
                     crate::interp::ScriptAiStateNativeEffect::Seeking
@@ -529,11 +526,7 @@ impl EngineInner {
                 ) {
                     self.end_script_ai_native_think(sim, assets, owner);
                     self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
-                    if let Err(error) =
-                        self.dispatch_script_ai_native_moves(sim, assets, owner, active)
-                    {
-                        return Err(error);
-                    }
+                    self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
                 }
                 Ok(0)
             }
@@ -1363,8 +1356,8 @@ impl EngineInner {
             .with_short_briefings(&mut mission_domain.short_briefings)
             .with_standard_view_radius(&mut ai.standard_view_polygon_radius)
             .with_view_radius_cache(&mut ai.view_radius_cache);
-            let result = callback(script, script_domains, &capabilities);
-            result
+
+            callback(script, script_domains, &capabilities)
         };
         Some(result)
     }
@@ -2398,13 +2391,12 @@ impl EngineInner {
             .scripts
             .iter()
             .enumerate()
-            .filter_map(|(zone_idx, zone_data)| {
-                zone_data.script_associated.then(|| {
-                    let name = zone_data.script_class_name.as_ref().unwrap_or_else(|| {
-                        panic!("script-associated zone {zone_idx} has no class name")
-                    });
-                    (zone_idx, name.clone())
-                })
+            .filter(|&(_zone_idx, zone_data)| zone_data.script_associated)
+            .map(|(zone_idx, zone_data)| {
+                let name = zone_data.script_class_name.as_ref().unwrap_or_else(|| {
+                    panic!("script-associated zone {zone_idx} has no class name")
+                });
+                (zone_idx, name.clone())
             })
             .collect();
 
@@ -2416,7 +2408,7 @@ impl EngineInner {
             .with_script_session(sim, assets, |script, _, _| {
                 let mut bound = Vec::new();
                 for (zone_idx, class_name) in &classes {
-                let class_idx = match script.manager.find_class(&class_name) {
+                let class_idx = match script.manager.find_class(class_name) {
                     Some(idx) => idx,
                     None => panic!(
                         "Structural error in RHD: zone {zone_idx} references missing script class '{class_name}'"
@@ -5242,8 +5234,7 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
-        let campaign = Some(&self.mission_domain.campaign)
-            .expect("initialize_from_campaign: campaign not set on engine");
+        let campaign = &self.mission_domain.campaign;
         let idx = campaign
             .current_mission_idx
             .expect("initialize_from_campaign: no current mission set");

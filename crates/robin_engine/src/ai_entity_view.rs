@@ -739,7 +739,7 @@ pub fn entity_view_from_entity(
     // Original's `mpDescription` and can point at an unrelated campaign PC.
     let (in_coma, guard) = match entity {
         Entity::Pc(pc) => {
-            let coma = campaign.map_or(false, |c| {
+            let coma = campaign.is_some_and(|c| {
                 let description_index = pc.pc.campaign_description_index.unwrap_or_else(|| {
                     panic!("live PC is missing its required campaign-description identity")
                 });

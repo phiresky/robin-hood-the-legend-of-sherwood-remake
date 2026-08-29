@@ -1345,7 +1345,7 @@ fn face_position_with_context_resolves_original_sector_before_launch() {
         y: ctx.position.y,
         ..ctx.position
     };
-    let expected = crate::position_interface::vector_to_sector_0_to_15_iso(100.0, 0.0) as i16;
+    let expected = crate::position_interface::vector_to_sector_0_to_15_iso(100.0, 0.0);
     let mut ai = AiController::new(1);
 
     ai.face_position_with_ctx(target, &ctx);
@@ -1457,14 +1457,14 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
 fn face_null_sentinel_noise_origin_preserves_original_ground_projection() {
     let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
     ctx.position = Position {
-        x: 317.799_99,
+        x: 317.8,
         y: 716.0,
         sector: None,
         level: 8,
     };
     ctx.elevation = 480.001_04;
     ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
-        x: 317.799_99,
+        x: 317.8,
         y: 1196.001,
         z: 480.001_04,
     };
@@ -1502,16 +1502,16 @@ fn face_null_sentinel_noise_origin_ignores_separate_impact_elevation() {
         sector: None,
         level: 2,
     };
-    ctx.elevation = 150.001_01;
+    ctx.elevation = 150.001;
     ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
         x: 1079.0,
         y: 2300.001,
-        z: 150.001_01,
+        z: 150.001,
     };
     let noise = Noise {
         origin: Position {
-            x: 1092.945_9,
-            y: 2107.296_1,
+            x: 1_092.945_9,
+            y: 2_107.296_1,
             sector: None,
             level: u16::MAX,
         },

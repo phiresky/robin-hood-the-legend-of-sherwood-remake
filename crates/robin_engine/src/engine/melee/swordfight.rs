@@ -47,8 +47,8 @@ fn with_swordfight_preparation_scope<R>(
     body: impl FnOnce() -> R,
 ) -> Option<R> {
     let pair = (actor, opponent);
-    let already_preparing = SWORDFIGHT_PREPARATION_STACK
-        .with(|stack| stack.borrow().iter().any(|active| *active == pair));
+    let already_preparing =
+        SWORDFIGHT_PREPARATION_STACK.with(|stack| stack.borrow().contains(&pair));
     if already_preparing {
         tracing::trace!(
             target: "parity_swordfight_scope",
@@ -98,80 +98,6 @@ fn crowded_fight_purge_side(
         initiator
     } else {
         opponent
-    }
-}
-
-#[cfg(test)]
-mod preparation_scope_tests {
-    use super::{crowded_fight_purge_side, with_swordfight_preparation_scope};
-    use crate::element::Camp;
-    use crate::element::{EntityId, PcId, SoldierId};
-
-    #[test]
-    fn reciprocal_same_pair_reentry_allocates_once() {
-        let actor = EntityId::Soldier(SoldierId(82));
-        let opponent = EntityId::Pc(PcId(134));
-        let mut allocated_reciprocals = Vec::new();
-
-        let outer = with_swordfight_preparation_scope(actor, opponent, || {
-            allocated_reciprocals.push(1);
-            let nested = with_swordfight_preparation_scope(actor, opponent, || {
-                allocated_reciprocals.push(2);
-            });
-            assert!(nested.is_none());
-        });
-
-        assert!(outer.is_some());
-        assert_eq!(
-            allocated_reciprocals,
-            [1],
-            "same-pair callback reentry must not allocate another reciprocal sequence"
-        );
-    }
-
-    #[test]
-    fn crowded_custom_fight_purge_side_is_reciprocal_and_canonical() {
-        let left = EntityId::Pc(PcId(3));
-        let right = EntityId::Pc(PcId(7));
-
-        assert_eq!(
-            crowded_fight_purge_side(left, Camp::Custom(8), right, Camp::Custom(4)),
-            right
-        );
-        assert_eq!(
-            crowded_fight_purge_side(right, Camp::Custom(4), left, Camp::Custom(8)),
-            right
-        );
-    }
-
-    #[test]
-    fn crowded_legacy_fight_still_purges_royalist_side() {
-        let royalist = EntityId::Pc(PcId(3));
-        let lacklandist = EntityId::Soldier(SoldierId(7));
-
-        assert_eq!(
-            crowded_fight_purge_side(lacklandist, Camp::Lacklandists, royalist, Camp::Royalists,),
-            royalist
-        );
-    }
-
-    #[test]
-    fn different_pair_nesting_remains_admissible() {
-        let actor = EntityId::Soldier(SoldierId(82));
-        let first_opponent = EntityId::Pc(PcId(134));
-        let second_opponent = EntityId::Pc(PcId(135));
-        let mut preparations = Vec::new();
-
-        with_swordfight_preparation_scope(actor, first_opponent, || {
-            preparations.push(first_opponent);
-            let nested = with_swordfight_preparation_scope(actor, second_opponent, || {
-                preparations.push(second_opponent);
-            });
-            assert!(nested.is_some());
-        })
-        .expect("outer preparation should run");
-
-        assert_eq!(preparations, [first_opponent, second_opponent]);
     }
 }
 
@@ -1227,16 +1153,13 @@ impl EngineInner {
             // If any of their opponents have >1 opponents themselves,
             // break those fights to make room for the new 1-on-1.
             let mut ally_index = 0;
-            loop {
-                let Some(ally_id) = self
-                    .world
-                    .entities
-                    .get(opponent)
-                    .and_then(Entity::human_data)
-                    .and_then(|human| human.opponents.get(ally_index).copied())
-                else {
-                    break;
-                };
+            while let Some(ally_id) = self
+                .world
+                .entities
+                .get(opponent)
+                .and_then(Entity::human_data)
+                .and_then(|human| human.opponents.get(ally_index).copied())
+            {
                 let ally_opp_count = self
                     .world
                     .entities
@@ -1274,16 +1197,13 @@ impl EngineInner {
                     crowded_fight_purge_side(initiator, initiator_camp, opponent, opponent_camp);
 
                 let mut purge_index = 0;
-                loop {
-                    let Some(opp_id) = self
-                        .world
-                        .entities
-                        .get(human_to_purge)
-                        .and_then(Entity::human_data)
-                        .and_then(|human| human.opponents.get(purge_index).copied())
-                    else {
-                        break;
-                    };
+                while let Some(opp_id) = self
+                    .world
+                    .entities
+                    .get(human_to_purge)
+                    .and_then(Entity::human_data)
+                    .and_then(|human| human.opponents.get(purge_index).copied())
+                {
                     self.delete_opponent(sim, assets, opp_id, human_to_purge);
                     self.delete_opponent(sim, assets, human_to_purge, opp_id);
                     // Match the mutable C++ list walk rather than draining a
@@ -1864,5 +1784,79 @@ impl EngineInner {
         // Add unconscious star titbit (event-driven creation).
         self.add_unconscious_star(pc_id);
         true
+    }
+}
+
+#[cfg(test)]
+mod preparation_scope_tests {
+    use super::{crowded_fight_purge_side, with_swordfight_preparation_scope};
+    use crate::element::Camp;
+    use crate::element::{EntityId, PcId, SoldierId};
+
+    #[test]
+    fn reciprocal_same_pair_reentry_allocates_once() {
+        let actor = EntityId::Soldier(SoldierId(82));
+        let opponent = EntityId::Pc(PcId(134));
+        let mut allocated_reciprocals = Vec::new();
+
+        let outer = with_swordfight_preparation_scope(actor, opponent, || {
+            allocated_reciprocals.push(1);
+            let nested = with_swordfight_preparation_scope(actor, opponent, || {
+                allocated_reciprocals.push(2);
+            });
+            assert!(nested.is_none());
+        });
+
+        assert!(outer.is_some());
+        assert_eq!(
+            allocated_reciprocals,
+            [1],
+            "same-pair callback reentry must not allocate another reciprocal sequence"
+        );
+    }
+
+    #[test]
+    fn crowded_custom_fight_purge_side_is_reciprocal_and_canonical() {
+        let left = EntityId::Pc(PcId(3));
+        let right = EntityId::Pc(PcId(7));
+
+        assert_eq!(
+            crowded_fight_purge_side(left, Camp::Custom(8), right, Camp::Custom(4)),
+            right
+        );
+        assert_eq!(
+            crowded_fight_purge_side(right, Camp::Custom(4), left, Camp::Custom(8)),
+            right
+        );
+    }
+
+    #[test]
+    fn crowded_legacy_fight_still_purges_royalist_side() {
+        let royalist = EntityId::Pc(PcId(3));
+        let lacklandist = EntityId::Soldier(SoldierId(7));
+
+        assert_eq!(
+            crowded_fight_purge_side(lacklandist, Camp::Lacklandists, royalist, Camp::Royalists,),
+            royalist
+        );
+    }
+
+    #[test]
+    fn different_pair_nesting_remains_admissible() {
+        let actor = EntityId::Soldier(SoldierId(82));
+        let first_opponent = EntityId::Pc(PcId(134));
+        let second_opponent = EntityId::Pc(PcId(135));
+        let mut preparations = Vec::new();
+
+        with_swordfight_preparation_scope(actor, first_opponent, || {
+            preparations.push(first_opponent);
+            let nested = with_swordfight_preparation_scope(actor, second_opponent, || {
+                preparations.push(second_opponent);
+            });
+            assert!(nested.is_some());
+        })
+        .expect("outer preparation should run");
+
+        assert_eq!(preparations, [first_opponent, second_opponent]);
     }
 }

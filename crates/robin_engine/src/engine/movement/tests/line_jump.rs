@@ -280,7 +280,7 @@ mod suite {
         use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
         let mut engine = EngineInner::new();
-        let start = MapPoint::new(1760.418701171875, 1011.02197265625);
+        let start = MapPoint::new(1_760.418_7, 1_011.022);
         let goal = MapPoint::new(1762.0, 996.0);
         let physical = OrderType::ClimbingWallDown;
         let script = SpriteScript {
@@ -431,7 +431,7 @@ mod suite {
         use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
         let mut engine = EngineInner::new();
-        let start = MapPoint::new(697.1148681640625, 1420.9931640625);
+        let start = MapPoint::new(697.114_87, 1_420.993_2);
         let goal = MapPoint::new(696.0, 1423.0);
         let physical = OrderType::WalkingStairs;
         let script = SpriteScript {
@@ -578,7 +578,7 @@ mod suite {
         engine.world.fast_grid_mut().size_map(30, 30);
         engine.world.fast_grid_mut().allocate_layers(1);
 
-        let start = MapPoint::new(697.1148681640625, 1420.9931640625);
+        let start = MapPoint::new(697.114_87, 1_420.993_2);
         let goal = MapPoint::new(696.0, 1423.0);
         let physical = OrderType::WalkingStairs;
         let script = SpriteScript {

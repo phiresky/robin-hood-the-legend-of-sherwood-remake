@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -81,7 +81,7 @@ struct Cli {
 // another agent; keep these in sync manually if the probe changes).
 // ---------------------------------------------------------------------------
 
-fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
+fn rhs_path(data_dir: &Path, name: &str) -> Result<PathBuf> {
     for case in ["Data", "DATA"] {
         let p = data_dir.join(format!("{case}/Characters/{name}.rhs"));
         if p.is_file() {
@@ -96,7 +96,7 @@ fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
 
 /// All frame ids referenced by a character, in script order (with dups) and
 /// as a sorted-deduped bank-order list.
-fn char_frame_ids(data_dir: &PathBuf, name: &str) -> Result<(Vec<u32>, Vec<u32>)> {
+fn char_frame_ids(data_dir: &Path, name: &str) -> Result<(Vec<u32>, Vec<u32>)> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -149,7 +149,7 @@ fn decode_raw(holder: &FrameHolder, id: u32) -> Option<(u16, u16, Vec<u16>)> {
     Some((s.width, s.height, dst))
 }
 
-fn positional_pairs(data_dir: &PathBuf, a: &str, b: &str) -> Result<Vec<(u32, u32)>> {
+fn positional_pairs(data_dir: &Path, a: &str, b: &str) -> Result<Vec<(u32, u32)>> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
     let mut pairs: Vec<(u32, u32)> = sa.iter().copied().zip(sb.iter().copied()).collect();
@@ -241,7 +241,7 @@ fn codec_grids2<'h>(
 // ---------------------------------------------------------------------------
 
 /// Encode one member standalone with the real codec; returns coded bytes.
-fn code_standalone(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<u64> {
+fn code_standalone(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<u64> {
     let (_, ids) = char_frame_ids(data_dir, name)?;
     let (_gids, dims, slices, alphabet) = codec_grids(holder, &ids)?;
     let grids: Vec<SpriteGrid> = dims
@@ -265,7 +265,7 @@ fn code_standalone(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Resu
 
 /// Encode member `b` against base `a` (positional pairing, base slices);
 /// returns coded bytes.
-fn code_vs(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<u64> {
+fn code_vs(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<u64> {
     let pairs = positional_pairs(data_dir, a, b)?;
     let (dims, slices, bases, alphabet, unbased) = codec_grids2(holder, &pairs)?;
     if unbased > 0 {
@@ -296,7 +296,7 @@ fn code_vs(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result
 /// Detect variant families exactly like the probe's `--corpus`: family key =
 /// name with trailing two digits stripped, families need >1 member; members
 /// sorted lexicographically (member 0 = today's implicit star base).
-fn detect_families(data_dir: &PathBuf) -> Result<BTreeMap<String, Vec<String>>> {
+fn detect_families(data_dir: &Path) -> Result<BTreeMap<String, Vec<String>>> {
     let mut chars_dir = data_dir.join("Data/Characters");
     if !chars_dir.is_dir() {
         chars_dir = data_dir.join("DATA/Characters");
@@ -324,7 +324,7 @@ fn detect_families(data_dir: &PathBuf) -> Result<BTreeMap<String, Vec<String>>> 
     Ok(families)
 }
 
-fn topology(holder: &FrameHolder, data_dir: &PathBuf, filter: &[String]) -> Result<()> {
+fn topology(holder: &FrameHolder, data_dir: &Path, filter: &[String]) -> Result<()> {
     let mut families = detect_families(data_dir)?;
     if !filter.is_empty() {
         families.retain(|k, _| filter.iter().any(|f| k.contains(f.as_str())));
@@ -373,11 +373,11 @@ fn topology(holder: &FrameHolder, data_dir: &PathBuf, filter: &[String]) -> Resu
         println!();
         for b in 0..n {
             print!("  {:<16}", members[b]);
-            for m in 0..n {
+            for (m, coded) in vs[b].iter().enumerate() {
                 if b == m {
                     print!(" {:>10}", "-");
                 } else {
-                    print!(" {:>10}", vs[b][m]);
+                    print!(" {:>10}", coded);
                 }
             }
             println!();
@@ -392,10 +392,10 @@ fn topology(holder: &FrameHolder, data_dir: &PathBuf, filter: &[String]) -> Resu
             .min_by_key(|&(_, t)| t)
             .unwrap();
         let chain = standalone[0] + (0..n - 1).map(|i| vs[i][i + 1]).sum::<u64>();
-        for b in 0..n {
+        for (b, member) in members.iter().enumerate() {
             println!(
                 "  star@{:<14} total {:>10}{}",
-                members[b],
+                member,
                 star(b),
                 if b == 0 { "  (current)" } else { "" }
             );
@@ -461,7 +461,7 @@ fn topology(holder: &FrameHolder, data_dir: &PathBuf, filter: &[String]) -> Resu
 // Experiment 2: sprite coding order
 // ---------------------------------------------------------------------------
 
-fn order(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn order(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let (script_order, bank_order) = char_frame_ids(data_dir, name)?;
     // Script order = first occurrence of each frame id walking all
     // profiles/scripts/frame_ids in file order.
@@ -537,7 +537,7 @@ fn cond_entropy_flat(joint: &HashMap<(u64, u16), u64>, ctx_tot: &HashMap<u64, u6
     bits
 }
 
-fn mirror(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn mirror(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;

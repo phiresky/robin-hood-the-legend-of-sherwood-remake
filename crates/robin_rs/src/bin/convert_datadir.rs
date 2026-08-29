@@ -1565,7 +1565,8 @@ struct RhsChunkPrep {
 /// Expected packed word count of a VQ sprite's `(width/4) x height` index
 /// grid, or `None` when the dims cannot form one (zero-sized or ragged).
 fn vq_grid_words(width: u16, height: u16) -> Option<usize> {
-    (width > 0 && height > 0 && width % 4 == 0).then(|| (width as usize / 4) * height as usize)
+    (width > 0 && height > 0 && width.is_multiple_of(4))
+        .then(|| (width as usize / 4) * height as usize)
 }
 
 /// A sprite's packed words after the dictionary rank permutation (identity
@@ -1666,7 +1667,7 @@ fn build_rhs_chunk_payload(
                 }
                 match prep.base2_ids.get(&idx) {
                     Some(&base2_id) => {
-                        if prep.base_ids.get(&idx).is_none() {
+                        if !prep.base_ids.contains_key(&idx) {
                             bail!(
                                 "sprite {idx} of RHS {rel} plans a base2 predecessor without a base"
                             );
@@ -4082,10 +4083,7 @@ fn walk_and_bundle_small(
             // raw fallback would duplicate it and undermine that invariant.
             continue;
         }
-        if ext == "pak"
-            && rel.starts_with("levels/")
-            && !exts.iter().any(|candidate| *candidate == "rhm")
-        {
+        if ext == "pak" && rel.starts_with("levels/") && !exts.contains(&"rhm") {
             // Split shipping puts the selected level's loading screen in its
             // mission payload; fetching all level paks at boot defeats that.
             continue;

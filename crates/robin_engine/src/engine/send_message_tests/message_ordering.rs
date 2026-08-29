@@ -309,13 +309,12 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
         Some(&0),
         "ProcessMessage must observe state before the later Unblip sibling"
     );
-    assert_eq!(
-        engine
+    assert!(
+        !engine
             .get_entity(receiver)
             .expect("receiver")
             .element_data()
-            .blipped,
-        false
+            .blipped
     );
     assert_eq!(ScriptHandleCodec::actor_handle(receiver), handle);
 }

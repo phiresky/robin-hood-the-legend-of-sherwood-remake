@@ -133,12 +133,8 @@ fn take_enemy_detection_tick_data(
     pending: &mut Option<PendingEnemyDetectionTickData>,
 ) -> Option<crate::ai::AiPerTickData> {
     let override_data = pending.as_mut()?;
-    let Some(offset) = queue_index.checked_sub(override_data.queue_start) else {
-        return None;
-    };
-    let Some(expected) = override_data.stimuli.get(offset) else {
-        return None;
-    };
+    let offset = queue_index.checked_sub(override_data.queue_start)?;
+    let expected = override_data.stimuli.get(offset)?;
     assert_eq!(
         stimulus.stimulus_type, expected.stimulus_type,
         "Enemy detection tick-data block no longer points at its queued stimulus type"
@@ -324,10 +320,10 @@ impl EngineInner {
             let ai = entity.ai_controller().unwrap_or_else(|| {
                 panic!("normal-timer NPC {} has no AI controller", npc_id.index())
             });
-            let fires = ai.timer_is_running
+
+            ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
-                    || ai.when_does_timer_ring > current_frame.wrapping_add(1_000_000));
-            fires
+                    || ai.when_does_timer_ring > current_frame.wrapping_add(1_000_000))
         };
         if !timer_fires {
             return;

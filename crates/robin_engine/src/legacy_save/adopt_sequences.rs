@@ -708,8 +708,8 @@ fn convert_element(
                     };
                     (kind, FieldValue::LineId(line), None)
                 } else {
-                    convert_generic_field(field, entities, topology, sequence_id).map_err(
-                        |error| {
+                    convert_generic_field(field, entities, topology, sequence_id).inspect_err(
+                        |_error| {
                             tracing::error!(
                                 sequence_id,
                                 ?command,
@@ -719,7 +719,6 @@ fn convert_element(
                                 value = ?field.value,
                                 "failed to convert saved generic sequence field"
                             );
-                            error
                         },
                     )?
                 };

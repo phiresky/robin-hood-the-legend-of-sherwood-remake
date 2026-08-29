@@ -112,15 +112,15 @@ pub enum MatchmakingEvent {
 }
 
 enum Command {
-    CreateGame {
+    Create {
         mission_id: u32,
         mission_name: String,
     },
-    JoinGame {
+    Join {
         game_id: String,
     },
-    LeaveGame,
-    StartGame,
+    Leave,
+    Start,
 }
 
 /// Live matchmaking session: membership in the game-discovery gossip
@@ -140,22 +140,22 @@ impl MatchmakingSession {
     }
 
     pub fn create_game(&self, mission_id: u32, mission_name: String) -> Result<(), String> {
-        self.send(Command::CreateGame {
+        self.send(Command::Create {
             mission_id,
             mission_name,
         })
     }
 
     pub fn join_game(&self, game_id: String) -> Result<(), String> {
-        self.send(Command::JoinGame { game_id })
+        self.send(Command::Join { game_id })
     }
 
     pub fn leave_game(&self) -> Result<(), String> {
-        self.send(Command::LeaveGame)
+        self.send(Command::Leave)
     }
 
     pub fn start_game(&self) -> Result<(), String> {
-        self.send(Command::StartGame)
+        self.send(Command::Start)
     }
 
     pub fn try_recv(&self) -> Option<MatchmakingEvent> {
@@ -490,7 +490,7 @@ mod native {
         /// Returns `false` when the worker should shut down.
         async fn handle_command(&mut self, command: Command) -> bool {
             match command {
-                Command::CreateGame {
+                Command::Create {
                     mission_id,
                     mission_name,
                 } => {
@@ -521,7 +521,7 @@ mod native {
                     self.last_broadcast = Instant::now();
                     let _ = self.events.send(MatchmakingEvent::Created(game));
                 }
-                Command::JoinGame { game_id } => {
+                Command::Join { game_id } => {
                     let Some((listing, _)) = self.listings.get(&game_id) else {
                         let _ = self.events.send(MatchmakingEvent::Error(format!(
                             "game `{game_id}` is no longer advertised"
@@ -540,7 +540,7 @@ mod native {
                     self.last_broadcast = Instant::now();
                     let _ = self.events.send(MatchmakingEvent::Joined(joined));
                 }
-                Command::LeaveGame => {
+                Command::Leave => {
                     if let Role::Joined { game_id } = &self.role {
                         self.broadcast(&TopicMsg::Leave {
                             game_id: game_id.clone(),
@@ -552,7 +552,7 @@ mod native {
                     // listing expires from every browser via the TTL.
                     self.role = Role::Browsing;
                 }
-                Command::StartGame => {
+                Command::Start => {
                     let (joined, announce) = {
                         let Role::Hosting {
                             game,

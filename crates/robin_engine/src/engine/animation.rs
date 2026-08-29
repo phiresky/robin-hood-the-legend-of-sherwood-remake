@@ -4880,7 +4880,7 @@ impl EngineInner {
                 entity
                     .human_data()
                     .and_then(|human| human.opponents.first().copied())
-                    .map(|opponent| {
+                    .and_then(|opponent| {
                         let opponent_entity =
                             self.world.entities.get(opponent).unwrap_or_else(|| {
                                 panic!(
@@ -4892,7 +4892,6 @@ impl EngineInner {
                             &opponent_entity.element_data().sprite,
                         )
                     })
-                    .flatten()
             } else {
                 None
             };
@@ -4925,7 +4924,7 @@ impl EngineInner {
             } else {
                 None
             };
-            let antagonist_active = validated_antagonist.map(|antagonist| {
+            let antagonist_active = validated_antagonist.and_then(|antagonist| {
                 let antagonist_entity =
                     self.world.entities.get(antagonist).unwrap_or_else(|| {
                         panic!(
@@ -4938,7 +4937,7 @@ impl EngineInner {
                 } else {
                     None
                 }
-            }).flatten();
+            });
 
             let striking_down_sword_direction = if anim_type == OrderType::StrikingDownSword {
                 let antagonist_id = validated_antagonist
@@ -5494,7 +5493,7 @@ impl EngineInner {
                 // authored sprite row with the eventual custom animation.
                 let selected_order_is_custom_animation = is_custom_animation_order(anim_type);
                 let requested_custom_animation = selected_order_is_custom_animation
-                    .then(|| order_seq_elem)
+                    .then_some(order_seq_elem)
                     .flatten()
                     .and_then(|(s, e)| {
                         let element = self.orders.sequence_manager.get_element(s, e)?;
@@ -6637,7 +6636,6 @@ impl EngineInner {
                             })
                     })
                     .flatten();
-                    drop(arm_ctx);
                     if let Some(installed_order) = mutated_installed_order {
                         entity
                             .actor_data_mut()

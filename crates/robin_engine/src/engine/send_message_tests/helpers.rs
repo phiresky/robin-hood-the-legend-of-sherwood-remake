@@ -941,7 +941,7 @@ pub(super) fn message_script() -> MissionScript {
             address: if name == "EmitEffect" { 8 } else { 0 },
             num_parameters,
             size_of_return_value: 0,
-            size_of_parameters: i32::from(num_parameters) * 4,
+            size_of_parameters: num_parameters * 4,
             size_of_volatile: 0,
             size_of_temporary: 8,
         })
@@ -1012,7 +1012,6 @@ pub(super) fn scripted_soldier(script_class: &str) -> Entity {
                 ai_brain: AiBrain::Enemy(Box::default()),
                 ..Default::default()
             },
-            ..NpcData::default()
         },
         soldier: SoldierData::default(),
     })

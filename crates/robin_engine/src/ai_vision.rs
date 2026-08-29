@@ -386,6 +386,7 @@ pub const STARE_HALF_ANGLE_RANGE: f32 = 1.3;
 /// π/8.
 // RHparametersai.h's active definition is PI/8. The PI/16 value immediately
 // below it is inside the commented "old values" block.
+#[allow(clippy::approx_constant)]
 pub const NORMAL_ANGLE_STEP: f32 = 0.3927;
 
 /// π/80.
@@ -1121,7 +1122,7 @@ fn debug_night_fog_shadow_sector_candidates(
                 for cx in x_min..=x_max {
                     let block_idx = fast_grid.block_index_from_cell(cx, cy, layer);
                     if level.blocks.get(block_idx).is_some_and(|block| {
-                        block.sector_indices.iter().any(|&idx| idx == sector_idx)
+                        block.sector_indices.contains(&sector_idx)
                     }) {
                         registered_cells.push([cx, cy]);
                     }
@@ -2224,6 +2225,7 @@ mod tests {
     /// `ptReference` far off the map and drop three night-light
     /// `IsReachable` rays the Original does issue.
     #[test]
+    #[allow(clippy::approx_constant)]
     fn rotate_unit_uses_original_single_precision_trig() {
         let (vdx, vdy) = sector_to_forward(11);
         let theta = 0.403_074_44_f32 - 0.392_7_f32;
@@ -2257,6 +2259,7 @@ mod tests {
     /// determinant in `FLOAT`, divides in `FLOAT`, but casts the quotient to
     /// `double` for `atan` before rounding the result back to `FLOAT`.
     #[test]
+    #[allow(clippy::approx_constant)]
     fn vec_angle_matches_original_atan() {
         let cases: [(f32, f32, f32, f32, u32); 4] = [
             (0.3, -0.9, 0.0, -1.0, 0xbea4_bc7d),
@@ -2998,7 +3001,7 @@ mod tests {
 
         let mut c = ctx(None, Posture::Upright);
         c.body_direction = 13;
-        c.own_position = GroundPoint::new(716.0, 2300.448_974_609_375);
+        c.own_position = GroundPoint::new(716.0, 2_300.449);
         c.follow_target_position = Some(c.own_position);
         refresh_view(&mut npc, &c);
 

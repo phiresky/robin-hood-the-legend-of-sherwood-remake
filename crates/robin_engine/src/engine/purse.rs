@@ -620,39 +620,39 @@ impl EngineInner {
         // Projectile::Hourglass checks shields after movement and returns
         // before HitObstacle. Purse/Coin inherit the base no-op HitShield;
         // only the impact sound/parry side effect and early return apply.
-        if let Some((shooter, old, new, increment)) = segment {
-            if let Some(holder) = crate::bow_shot::projectile_shield_holder(
+        if let Some((shooter, old, new, increment)) = segment
+            && let Some(holder) = crate::bow_shot::projectile_shield_holder(
                 &self.world.entities,
                 shooter,
                 old,
                 new,
                 increment,
-            ) {
-                impact = None;
-                self.process_projectile_tick_results(
-                    sim,
-                    assets,
-                    vec![crate::bow_shot::ArrowTickResult {
-                        arrow: id,
-                        hit_target: None,
-                        shield_hit: Some(holder),
-                        fx_target_hit: None,
-                        despawn: false,
-                        damage: 0,
-                        impact_fx: (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
-                        impact_pos: self
-                            .get_entity(holder)
-                            .expect("projectile shield holder vanished during Hourglass")
-                            .element_data()
-                            .position_map(),
-                        human_hit_old_position: None,
-                    }],
-                );
-            }
-            // TODO(original parity): Purse FindHumanVictim is formal C++ UB
-            // because its switch initializes target points only for
-            // Arrow/Apple/Stone. Skip rather than inventing a belt anchor.
+            )
+        {
+            impact = None;
+            self.process_projectile_tick_results(
+                sim,
+                assets,
+                vec![crate::bow_shot::ArrowTickResult {
+                    arrow: id,
+                    hit_target: None,
+                    shield_hit: Some(holder),
+                    fx_target_hit: None,
+                    despawn: false,
+                    damage: 0,
+                    impact_fx: (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
+                    impact_pos: self
+                        .get_entity(holder)
+                        .expect("projectile shield holder vanished during Hourglass")
+                        .element_data()
+                        .position_map(),
+                    human_hit_old_position: None,
+                }],
+            );
         }
+        // TODO(original parity): Purse FindHumanVictim is formal C++ UB
+        // because its switch initializes target points only for
+        // Arrow/Apple/Stone. Skip rather than inventing a belt anchor.
 
         // ── Phase 2: handle impacts ────────────────────────────────
         //

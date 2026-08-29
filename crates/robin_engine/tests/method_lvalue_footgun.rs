@@ -93,10 +93,7 @@ fn is_assignment_op_at(line: &str, eq_idx: usize) -> bool {
     }
     // Skip `=>` and `=` followed by `=` (guards the `==` case where
     // we are at the first `=`).
-    if line.as_bytes().get(eq_idx + 1) == Some(&b'=') {
-        return false;
-    }
-    true
+    line.as_bytes().get(eq_idx + 1) != Some(&b'=')
 }
 
 /// True if the byte slice immediately preceding `at` matches

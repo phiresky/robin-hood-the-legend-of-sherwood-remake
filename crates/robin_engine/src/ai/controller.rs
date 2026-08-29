@@ -5066,10 +5066,7 @@ impl AiController {
         ctx: &AiContext,
         patrol_chief_position: Position,
     ) -> Option<PatrolCoordinateAction> {
-        if self.patrol_chief.is_none() {
-            // Can happen when stimulus was postponed on door
-            return None;
-        }
+        self.patrol_chief?;
 
         let target_pos = match info {
             StimulusInfo::Position(pos) => *pos,

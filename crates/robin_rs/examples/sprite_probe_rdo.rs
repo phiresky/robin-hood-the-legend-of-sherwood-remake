@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
@@ -76,7 +76,7 @@ struct Cli {
 // codec-research task; this experiment must not modify it).
 // ---------------------------------------------------------------------------
 
-fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
+fn rhs_path(data_dir: &Path, name: &str) -> Result<PathBuf> {
     for case in ["Data", "DATA"] {
         let p = data_dir.join(format!("{case}/Characters/{name}.rhs"));
         if p.is_file() {
@@ -91,7 +91,7 @@ fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
 
 /// All frame ids referenced by a character, as a sorted-deduped bank-order
 /// list.
-fn char_frame_ids(data_dir: &PathBuf, name: &str) -> Result<Vec<u32>> {
+fn char_frame_ids(data_dir: &Path, name: &str) -> Result<Vec<u32>> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -514,7 +514,7 @@ struct CharResult {
 
 fn run_character(
     holder: &FrameHolder,
-    data_dir: &PathBuf,
+    data_dir: &Path,
     name: &str,
     eps_list: &[u32],
     preview_dir: &PathBuf,

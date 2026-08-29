@@ -207,7 +207,7 @@ fn fenwick_add(tree: &mut [u32], mut i: usize, delta: u32) {
     i += 1;
     while i < tree.len() {
         tree[i] += delta;
-        i += i & i.wrapping_neg();
+        i += i.isolate_lowest_one();
     }
 }
 
@@ -352,10 +352,6 @@ impl Ctx {
             Ctx::Small { syms, .. } => syms.first().map(|&(_, c)| c as u32).unwrap_or(0),
             Ctx::Big { .. } => 0,
         }
-    }
-
-    fn total(&self) -> u32 {
-        self.sum() + escape_weight(self.distinct())
     }
 
     /// Locate `x` for encoding, ignoring symbols in `excl` (PPM exclusion:
@@ -522,6 +518,9 @@ impl Ctx {
         }
     }
 
+    // PROMOTE_AT is a tuning knob currently parked at usize::MAX (promotion
+    // disabled), which makes the threshold comparison trivially false.
+    #[allow(clippy::absurd_extreme_comparisons)]
     fn bump(&mut self, x: u16, alphabet: u32) {
         match self {
             Ctx::Small { syms, sum } => {
@@ -1170,14 +1169,14 @@ pub fn encode_grids_multi(
     base2: Option<&[Option<&[u16]>]>,
 ) -> Result<Vec<u8>> {
     for (label, list) in [("base", base), ("base2", base2)] {
-        if let Some(list) = list {
-            if list.len() != grids.len() {
-                return Err(anyhow!(
-                    "{label} list length {} != grid count {}",
-                    list.len(),
-                    grids.len()
-                ));
-            }
+        if let Some(list) = list
+            && list.len() != grids.len()
+        {
+            return Err(anyhow!(
+                "{label} list length {} != grid count {}",
+                list.len(),
+                grids.len()
+            ));
         }
     }
     let mut enc = RangeEncoder::new();
@@ -1198,10 +1197,10 @@ pub fn encode_grids_multi(
             return Err(anyhow!("grid {gi}: base2 without base"));
         }
         for (label, s) in [("base", b), ("base2", b2)] {
-            if let Some(s) = s {
-                if s.len() != g.indices.len() {
-                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
-                }
+            if let Some(s) = s
+                && s.len() != g.indices.len()
+            {
+                return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
         for (i, &x) in g.indices.iter().enumerate() {
@@ -1276,10 +1275,10 @@ pub fn encode_grids_auxref(
                 g.rows
             ));
         }
-        if let Some(r) = &aux[gi] {
-            if r.indices.len() != r.cols as usize * r.rows as usize {
-                return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
-            }
+        if let Some(r) = &aux[gi]
+            && r.indices.len() != r.cols as usize * r.rows as usize
+        {
+            return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
         for (i, &x) in g.indices.iter().enumerate() {
             if x as u32 >= alphabet as u32 {
@@ -1314,10 +1313,10 @@ pub fn decode_grids_auxref(
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
         let n = cols * rows as usize;
-        if let Some(r) = &aux[gi] {
-            if r.indices.len() != r.cols as usize * r.rows as usize {
-                return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
-            }
+        if let Some(r) = &aux[gi]
+            && r.indices.len() != r.cols as usize * r.rows as usize
+        {
+            return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
         let mut g: Vec<u16> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1361,14 +1360,14 @@ pub fn encode_grids_shipping(
         ));
     }
     for (label, list) in [("base", base), ("base2", base2)] {
-        if let Some(list) = list {
-            if list.len() != grids.len() {
-                return Err(anyhow!(
-                    "{label} list length {} != grid count {}",
-                    list.len(),
-                    grids.len()
-                ));
-            }
+        if let Some(list) = list
+            && list.len() != grids.len()
+        {
+            return Err(anyhow!(
+                "{label} list length {} != grid count {}",
+                list.len(),
+                grids.len()
+            ));
         }
     }
     let mut enc = RangeEncoder::new();
@@ -1389,10 +1388,10 @@ pub fn encode_grids_shipping(
             return Err(anyhow!("grid {gi}: base2 without base"));
         }
         for (label, s) in [("base", b), ("base2", b2)] {
-            if let Some(s) = s {
-                if s.len() != g.indices.len() {
-                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
-                }
+            if let Some(s) = s
+                && s.len() != g.indices.len()
+            {
+                return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
         let aux = match &selfref[gi] {
@@ -1457,14 +1456,14 @@ pub fn decode_grids_shipping(
         ));
     }
     for (label, list) in [("base", base), ("base2", base2)] {
-        if let Some(list) = list {
-            if list.len() != dims.len() {
-                return Err(anyhow!(
-                    "{label} list length {} != grid count {}",
-                    list.len(),
-                    dims.len()
-                ));
-            }
+        if let Some(list) = list
+            && list.len() != dims.len()
+        {
+            return Err(anyhow!(
+                "{label} list length {} != grid count {}",
+                list.len(),
+                dims.len()
+            ));
         }
     }
     let mut dec = RangeDecoder::new(blob);
@@ -1479,10 +1478,10 @@ pub fn decode_grids_shipping(
             return Err(anyhow!("grid {gi}: base2 without base"));
         }
         for (label, s) in [("base", b), ("base2", b2)] {
-            if let Some(s) = s {
-                if s.len() != n {
-                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
-                }
+            if let Some(s) = s
+                && s.len() != n
+            {
+                return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
         let aux = match &selfref[gi] {
@@ -1558,14 +1557,14 @@ pub fn decode_grids_multi(
     blob: &[u8],
 ) -> Result<Vec<Vec<u16>>> {
     for (label, list) in [("base", base), ("base2", base2)] {
-        if let Some(list) = list {
-            if list.len() != dims.len() {
-                return Err(anyhow!(
-                    "{label} list length {} != grid count {}",
-                    list.len(),
-                    dims.len()
-                ));
-            }
+        if let Some(list) = list
+            && list.len() != dims.len()
+        {
+            return Err(anyhow!(
+                "{label} list length {} != grid count {}",
+                list.len(),
+                dims.len()
+            ));
         }
     }
     let mut dec = RangeDecoder::new(blob);
@@ -1580,10 +1579,10 @@ pub fn decode_grids_multi(
             return Err(anyhow!("grid {gi}: base2 without base"));
         }
         for (label, s) in [("base", b), ("base2", b2)] {
-            if let Some(s) = s {
-                if s.len() != n {
-                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
-                }
+            if let Some(s) = s
+                && s.len() != n
+            {
+                return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
         let mut g: Vec<u16> = Vec::with_capacity(n);
@@ -1803,7 +1802,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, _)| {
-                if i >= 1 && i <= 5 {
+                if (1..=5).contains(&i) {
                     Some(AuxRef {
                         indices: &grids[0].2,
                         cols: 6,

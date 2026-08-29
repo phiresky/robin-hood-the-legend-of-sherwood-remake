@@ -2863,7 +2863,7 @@ mod tests {
         let plane = crate::position_interface::PlaneZCoeffs {
             az: -0.270_139,
             bz: -1.787_207,
-            dz: 3396.161_9,
+            dz: 3_396.161_9,
         };
         let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
@@ -3115,7 +3115,7 @@ mod tests {
         // threshold depending on whether Face(Position) retains sector 17's
         // projection elevation. Dropping the sector changes the authored turn.
         let dx = 572.0 - 785.243_35;
-        let dy = 2360.0 - 2192.851_6;
+        let dy = 2360.0 - 2_192.851_6;
         assert_eq!(
             crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
             10

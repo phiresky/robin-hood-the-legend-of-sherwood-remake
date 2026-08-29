@@ -2086,8 +2086,8 @@ fn set_action_recursive_walks_sequence() {
     mgr.set_action_recursive(seq_id, 0, OrderType::WalkingCrouched);
 
     let s = mgr.get_sequence(seq_id).unwrap();
-    for i in 0..2 {
-        let SequenceElementData::Movement { action, .. } = s.elements[i].data else {
+    for element in s.elements.iter().take(2) {
+        let SequenceElementData::Movement { action, .. } = element.data else {
             panic!("movement variant");
         };
         assert_eq!(action, OrderType::WalkingCrouched);

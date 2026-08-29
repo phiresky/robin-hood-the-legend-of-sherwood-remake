@@ -1488,19 +1488,19 @@ impl Renderer {
                 blend: BlendMode::None,
             });
         }
-        if let Some((depth_rect, threshold)) = depth {
-            if let Some((dst, uv)) = clip_dst_to_uv(depth_rect, clip_rect) {
-                stencil_draws.push(QueuedDraw {
-                    dst,
-                    corners: None,
-                    uv,
-                    // Green selects 16-bit high/low reconstruction in the
-                    // shared mask-stencil shader.
-                    tint: [threshold, 1.0, 1.0, 1.0],
-                    tex: TextureRef::MaskAlpha(OCCLUSION_DEPTH_TEXTURE_INDEX),
-                    blend: BlendMode::None,
-                });
-            }
+        if let Some((depth_rect, threshold)) = depth
+            && let Some((dst, uv)) = clip_dst_to_uv(depth_rect, clip_rect)
+        {
+            stencil_draws.push(QueuedDraw {
+                dst,
+                corners: None,
+                uv,
+                // Green selects 16-bit high/low reconstruction in the
+                // shared mask-stencil shader.
+                tint: [threshold, 1.0, 1.0, 1.0],
+                tex: TextureRef::MaskAlpha(OCCLUSION_DEPTH_TEXTURE_INDEX),
+                blend: BlendMode::None,
+            });
         }
         if stencil_draws.is_empty() {
             return;

@@ -951,8 +951,8 @@ impl Engine {
 					"ambush_point_array_reset": enemy.ambush_point_array_reset,
 					"ambush_point_status": enemy.ambush_point_status.iter().map(|status| *status as u32).collect::<Vec<_>>(),
 					"my_seek_points": &enemy.my_seek_points,
-					"personal_seek_point_1": enemy.personal_seek_point_1.as_ref().map(|point| seek_point(point)),
-					"personal_seek_point_2": enemy.personal_seek_point_2.as_ref().map(|point| seek_point(point)),
+					"personal_seek_point_1": enemy.personal_seek_point_1.as_ref().map(&seek_point),
+					"personal_seek_point_2": enemy.personal_seek_point_2.as_ref().map(seek_point),
 					"seek_center": ai_position(enemy.seek_center),
 					"actual_seek_point": enemy.actual_seek_point,
 					"seek_point_view_directions": &enemy.seek_point_view_directions,
@@ -1709,15 +1709,9 @@ impl Engine {
                     "owner": element_state.owner.map(&entity).unwrap_or(Value::Null),
                     "state": element_state.state as u32,
                     "priority": element_state.priority as u32,
-                    "posture_after_transition": transition_live
-                        .then(|| json!(element_state.posture_after_transition as u32))
-                        .unwrap_or(Value::Null),
-                    "action_state_after_transition": transition_live
-                        .then(|| json!(element_state.action_state_after_transition as u32))
-                        .unwrap_or(Value::Null),
-                    "transition_orders": transition_live
-                        .then(|| json!(element_state.num_transition_orders))
-                        .unwrap_or(Value::Null),
+                    "posture_after_transition": if transition_live { json!(element_state.posture_after_transition as u32) } else { Value::Null },
+                    "action_state_after_transition": if transition_live { json!(element_state.action_state_after_transition as u32) } else { Value::Null },
+                    "transition_orders": if transition_live { json!(element_state.num_transition_orders) } else { Value::Null },
                     "script_driven": element_state.script_driven,
                     "postponed": postponed,
                     "orders": orders,
@@ -2326,12 +2320,12 @@ impl Engine {
                     "occupants": zone.occupant_indices.iter().copied().map(&entity)
                         .collect::<Vec<_>>(),
                     "transformed_to_apex": zone.transformed_to_apex,
-                    "max_apex_height": zone.transformed_to_apex.then(|| {
+                    "max_apex_height": if zone.transformed_to_apex { {
                         json!({
                             "bits": zone.max_throwing_apex_height.to_bits(),
                             "value": zone.max_throwing_apex_height,
                         })
-                    }).unwrap_or(Value::Null),
+                    } } else { Value::Null },
                 })
             })
             .collect::<Vec<_>>();
@@ -2591,12 +2585,12 @@ impl Engine {
         };
 
         let mut static_words = Vec::new();
-        let chunks = script.manager.static_area.chunks_exact(4);
-        if !chunks.remainder().is_empty() {
+        let (chunks, remainder) = script.manager.static_area.as_chunks::<4>();
+        if !remainder.is_empty() {
             panic!("parity script static area is not word aligned");
         }
-        for (word, bytes) in chunks.enumerate() {
-            let bits = u32::from_le_bytes(bytes.try_into().expect("four-byte static word"));
+        for (word, bytes) in chunks.iter().enumerate() {
+            let bits = u32::from_le_bytes(*bytes);
             if bits != 0 {
                 static_words.push(json!({ "offset": word * 4, "bits": bits }));
             }
@@ -3231,9 +3225,10 @@ impl Engine {
             self.inner
                 .perform_frame_hourglass(assets, simulation_body_allowed)
         } else {
-            let mut effects = SideEffects::default();
-            effects.code = crate::game_operation::GameCode::LevelInProgress;
-            effects
+            SideEffects {
+                code: crate::game_operation::GameCode::LevelInProgress,
+                ..Default::default()
+            }
         };
 
         external_action_results.extend(
@@ -3885,9 +3880,11 @@ mod tests {
 
     fn frame_api_fixture() -> (Engine, LevelAssets) {
         let mut assets = LevelAssets::new();
-        let mut sim_config = SimConfig::default();
-        sim_config.script_enabled = false;
-        sim_config.ignore_default_loose = true;
+        let sim_config = SimConfig {
+            script_enabled: false,
+            ignore_default_loose: true,
+            ..Default::default()
+        };
         let engine = Engine::new_for_test_with_simulation(
             1024.0,
             768.0,
@@ -4859,23 +4856,27 @@ mod tests {
     #[test]
     fn parity_world_interactables_preserves_dynamic_patch_and_door_fields() {
         let mut inner = EngineInner::new();
-        let mut patch = crate::patch::Patch::default();
-        patch.active = true;
-        patch.locked = true;
-        patch.applied = true;
-        patch.in_transition = true;
+        let patch = crate::patch::Patch {
+            active: true,
+            locked: true,
+            applied: true,
+            in_transition: true,
+            ..Default::default()
+        };
         inner.script_domains.interactables.patches.push(patch);
-        let mut door = crate::gate::Door::default();
-        door.active = false;
-        door.locked_pc = true;
-        door.locked_npc_villain = true;
-        door.unlockable = true;
-        door.locked_pc_after_patch = true;
-        door.locked_npc_civilian_after_patch = true;
-        door.unlockable_after_patch = true;
-        door.special_authorisation_pc = true;
-        door.authorised_pc_direct = 0x12;
-        door.authorised_pc_indirect = 0x34;
+        let door = crate::gate::Door {
+            active: false,
+            locked_pc: true,
+            locked_npc_villain: true,
+            unlockable: true,
+            locked_pc_after_patch: true,
+            locked_npc_civilian_after_patch: true,
+            unlockable_after_patch: true,
+            special_authorisation_pc: true,
+            authorised_pc_direct: 0x12,
+            authorised_pc_indirect: 0x34,
+            ..Default::default()
+        };
         inner.script_domains.interactables.doors.push(door);
         let engine = Engine { inner };
 

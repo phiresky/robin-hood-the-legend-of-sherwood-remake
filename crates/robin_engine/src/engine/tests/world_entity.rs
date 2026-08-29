@@ -450,8 +450,10 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
     };
     soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
     let ai = soldier.npc.ai_brain.base_mut().expect("test soldier AI");
-    let mut prefix = AiActorOutbox::default();
-    prefix.unfocus = true;
+    let prefix = AiActorOutbox {
+        unfocus: true,
+        ..Default::default()
+    };
     ai.outbox
         .reentrant
         .owner_work
@@ -1774,7 +1776,7 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
     );
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: owner.index(),
-        identifier: u32::from(Remark::Wounded as u16) | (501 & 0xFFFF_0000),
+        identifier: u32::from(Remark::Wounded as u16),
         exclamation_id: Remark::Wounded as u16,
         duration_frames: 5,
     }]);

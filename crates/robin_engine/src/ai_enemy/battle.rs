@@ -6433,7 +6433,6 @@ mod tests {
                     ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                     ..Default::default()
                 },
-                ..Default::default()
             },
             soldier: Default::default(),
         });

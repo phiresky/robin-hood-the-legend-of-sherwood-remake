@@ -615,16 +615,15 @@ impl EngineInner {
                 _ => None,
             }
         };
-        if let Some(progression) = progression {
-            if !self.actors_frozen()
-                && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
-            {
-                #[cfg(test)]
-                observe_net_sprite_progression(net_id, progression);
-                net.element
-                    .sprite
-                    .perform_virgin_increment(sim, progression);
-            }
+        if let Some(progression) = progression
+            && !self.actors_frozen()
+            && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
+        {
+            #[cfg(test)]
+            observe_net_sprite_progression(net_id, progression);
+            net.element
+                .sprite
+                .perform_virgin_increment(sim, progression);
         }
     }
 
@@ -1252,7 +1251,6 @@ mod tests {
                     })),
                     ..Default::default()
                 },
-                ..NpcData::default()
             },
             soldier: SoldierData {
                 soldier_profile_index: crate::profiles::SoldierProfileIdx(profile_idx),

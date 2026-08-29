@@ -364,10 +364,7 @@ impl EngineInner {
             | Command::MoveWaiting
             | Command::CrouchDown
             | Command::CrouchUp => {
-                if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                true
+                !(actor.is_pc() && !self.can_pc_execute_commands(actor_id, true))
             }
 
             // ── Seek ────────────────────────────────────────────
@@ -394,10 +391,7 @@ impl EngineInner {
             // ── Whistle ─────────────────────────────────────────
             // CanExecuteCommands(true, false) — allow_in_buildings=true.
             Command::WhistleCmd => {
-                if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                true
+                !(actor.is_pc() && !self.can_pc_execute_commands(actor_id, true))
             }
 
             // ── EnterHelpingClimb ───────────────────────────────
@@ -455,13 +449,9 @@ impl EngineInner {
                     .and_then(|i| self.world.fast_grid.level.jump_lines.get(i as usize))
                     .map(|dst| dst.z_a - src_line.z_a)
                     .unwrap_or(0.0);
-                if actor.element_data().posture != Posture::OnShoulders
+                !(actor.element_data().posture != Posture::OnShoulders
                     && jump_height > 0.0
-                    && src_line.helper_needed
-                {
-                    return false;
-                }
-                true
+                    && src_line.helper_needed)
             }
 
             // ── TakeCorpse ──────────────────────────────────────
@@ -537,10 +527,7 @@ impl EngineInner {
                 }
                 let carrier_pos_3d = carrier.element_data().position();
                 let obstacles = self.sight_obstacles(assets);
-                if !crate::abilities::can_carry_on_shoulders(carrier_pos_3d, obstacles) {
-                    return false;
-                }
-                true
+                crate::abilities::can_carry_on_shoulders(carrier_pos_3d, obstacles)
             }
 
             // ── ClimbDownFromShoulders ──────────────────────────
@@ -1715,11 +1702,13 @@ mod tests {
         use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
         let mut campaign = crate::campaign::Campaign::default();
-        let mut description = crate::campaign::PcDescription::default();
         // Campaign status lookup validates the serialized description's
         // profile identity before exposing ammo to the PC. A bare default
         // description has no profile and therefore correctly looks corrupt.
-        description.character_profile_idx = Some(crate::profiles::CharacterProfileIdx(0));
+        let mut description = crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        };
         description.status.num_arrows = 10;
         campaign.characters.push(description);
         let mut engine = EngineInner::new_with_campaign(campaign);

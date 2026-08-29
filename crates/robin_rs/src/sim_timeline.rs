@@ -200,13 +200,13 @@ impl CommandJournal {
     /// Validate a record before either the journal or an associated
     /// checkpoint store publishes state.
     fn validate_record(&self, frame: u32) -> Result<u32, CommandRecordError> {
-        if let Some(expected) = self.next_frame {
-            if frame != expected {
-                return Err(CommandRecordError::Discontinuous {
-                    actual: frame,
-                    expected,
-                });
-            }
+        if let Some(expected) = self.next_frame
+            && frame != expected
+        {
+            return Err(CommandRecordError::Discontinuous {
+                actual: frame,
+                expected,
+            });
         }
         frame
             .checked_add(1)

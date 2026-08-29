@@ -100,7 +100,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // captured; otherwise replay starts from a post-command checkpoint and
     // applies the journaled commands twice. The recorder hash samples this
     // same boundary so recording and playback remain in lockstep.
-    runtime.open_frame(&mut frame, &manager.engine, &assets);
+    runtime.open_frame(&mut frame, &manager.engine, assets);
     frame.commands.commands.extend(net_inputs);
 
     // Re-derive the corner HUD layout every frame so resolution
@@ -543,7 +543,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             manager,
             host,
             &mut frame,
-            &assets,
+            assets,
             &mut *window,
             &mut presentation.renderer,
             &mut resources.cursor,
@@ -684,7 +684,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             callbacks,
             &manager.engine,
             profiles,
-            &host,
+            host,
             &mut *window,
             &mut presentation.renderer,
             &mut resources.cursor,
@@ -760,8 +760,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             update_mouse_and_cursor(
                 manager,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut frame.external_actions,
                 &mut presentation.renderer,
                 &mut resources.cursor,
@@ -792,8 +792,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 &manager.engine,
                 &display_snapshot,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut render_ctx,
             )
         } else {

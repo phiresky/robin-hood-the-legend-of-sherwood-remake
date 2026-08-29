@@ -12,7 +12,7 @@ mod suite {
     fn committed_seek_arrival_retains_both_actor_crossing_passes() {
         let mut deferred = MovementDeferred::default();
         let owner = EntityId::Pc(PcId(252));
-        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+        let old_pos = MapPoint::new(1_284.826_3, 2_277.009_3);
 
         assert!(queue_committed_arrival_crossing(
             &mut deferred,
@@ -33,7 +33,7 @@ mod suite {
     fn stationary_or_ineligible_seek_arrival_does_not_queue_crossing() {
         let mut deferred = MovementDeferred::default();
         let owner = EntityId::Pc(PcId(252));
-        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+        let old_pos = MapPoint::new(1_284.826_3, 2_277.009_3);
 
         assert!(!queue_committed_arrival_crossing(
             &mut deferred,

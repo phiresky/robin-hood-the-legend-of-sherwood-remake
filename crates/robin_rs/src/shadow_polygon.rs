@@ -387,11 +387,7 @@ fn is_box_inside_field(
         y_for_right(right_side, y_min, y_max),
     );
     let det_r = right_side[0] * (ry - viewer.y) - right_side[1] * (rx - viewer.x);
-    if det_r > 0.0 {
-        return false;
-    }
-
-    true
+    det_r <= 0.0
 }
 
 // Corner-picking logic: for the LEFT ray the inside-side corner is the

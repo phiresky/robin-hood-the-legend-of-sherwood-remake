@@ -419,7 +419,7 @@ fn append_phalanx_member_enemies(
 /// nearest-candidate distance of zero.
 fn combat_neighbour_distance_ulong(distance: f32) -> u32 {
     assert!(
-        distance.is_finite() && distance >= 0.0 && distance < 4_294_967_296.0_f32,
+        distance.is_finite() && (0.0..4_294_967_296.0_f32).contains(&distance),
         "combat-neighbour SquareDistance {distance:?} is outside the Original ULONG domain"
     );
     distance as u32
@@ -599,7 +599,7 @@ impl EnemyAi {
                 // bucket therefore tie and retain fighter-registry order.
                 let sq = combat_neighbour_distance_ulong(ai_square_distance(
                     &snap.raw_position,
-                    snap.elevation as f32,
+                    snap.elevation,
                     &me_pos,
                     ctx.elevation,
                 ));
@@ -1352,9 +1352,7 @@ impl EnemyAi {
         if self.phalanx_aborted {
             return None;
         }
-        let Some(nearest) = self.get_nearest_free_shield_bearer(ctx, tick) else {
-            return None;
-        };
+        let nearest = self.get_nearest_free_shield_bearer(ctx, tick)?;
 
         // Walk left/right to find the end-of-phalanx anchors.
         let left_guy = self.walk_phalanx_end(nearest, true, ctx, tick);
@@ -1590,7 +1588,7 @@ impl EnemyAi {
                     self.base.me
                 )
             });
-        let (me_position, me_elevation) = (me_raw.raw_position, me_raw.elevation as f32);
+        let (me_position, me_elevation) = (me_raw.raw_position, me_raw.elevation);
         // Original walks the complete camp soldier registry. In particular it
         // does not apply IsAbleToFight/Active before counting an orphan
         // archer: an inactive Seeking soldier still owns its AI state and
@@ -1609,12 +1607,7 @@ impl EnemyAi {
                 }
                 continue;
             }
-            let sq = ai_square_distance(
-                &f.raw_position,
-                f.elevation as f32,
-                &me_position,
-                me_elevation,
-            );
+            let sq = ai_square_distance(&f.raw_position, f.elevation, &me_position, me_elevation);
             if debug {
                 eprintln!(
                     "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} sq={} state={:?} sub={} archer={} tower={} sbb={} own_abm={} abm={} shield={} pos={:?} elev={}",
@@ -2026,12 +2019,8 @@ impl EnemyAi {
             && let Some(snap) = self.find_fighter(nearest, tick)
         {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            let sq = ai_square_distance(
-                &snap.position,
-                snap.elevation as f32,
-                &ctx.position,
-                ctx.elevation,
-            );
+            let sq =
+                ai_square_distance(&snap.position, snap.elevation, &ctx.position, ctx.elevation);
             tracing::trace!(
                 target: "robin_engine::ai_enemy::phalanx",
                 me = self.base.me,
@@ -3875,7 +3864,7 @@ impl EnemyAi {
             if let Some(primary) = self.find_fighter(new_primary, tick) {
                 let v = pos_diff(&primary.position, &me_pos);
                 let dir = vec_to_sector_ar(v.0, v.1, ASPECT_RATIO);
-                self.base.set_direction_goal(dir as u16);
+                self.base.set_direction_goal(dir);
             }
             self.base.outbox.actor.set_focus(new_primary);
             self.base.stop_all();
@@ -4129,7 +4118,7 @@ impl EnemyAi {
             // Stay in place, face primary target.
             let to_target = pos_diff(&primary.position, &ctx.position);
             let dir = vec_to_sector(to_target.0, to_target.1);
-            self.base.set_direction_goal(dir as u16);
+            self.base.set_direction_goal(dir);
             self.base.outbox.actor.set_focus(self.base.primary_target);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
@@ -4295,7 +4284,7 @@ impl EnemyAi {
         let mut best_index: usize = 0;
         let mut best_score: i32 = i32::MIN;
         for (idx, cp) in possible.iter_mut().enumerate() {
-            let input = debug_reposition.then(|| {
+            let input = debug_reposition.then_some({
                 (
                     cp.attacker,
                     cp.attacker_position,
@@ -4723,7 +4712,7 @@ mod tests {
             handle: 55,
             position: position(420.24728, 1758.1467),
             raw_position: position(420.24728, 1758.1467),
-            elevation: 4.1862102,
+            elevation: 4.186_21,
             direction: 12,
             is_soldier: true,
             rank: ProfileRank::Soldier,
@@ -4848,7 +4837,7 @@ mod tests {
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
             handle: 82,
-            position: position(1072.624755859375, 70.3487548828125),
+            position: position(1_072.624_8, 70.348_755),
             direction: 10,
             current_substate: Substate::AttackingProtectingWithShield as u32,
             ..FighterSnapshot::default()
@@ -4860,8 +4849,8 @@ mod tests {
 
         assert_eq!(cover.x.to_bits(), 0x4488_bad1);
         assert_eq!(cover.y.to_bits(), 0x4268_b9b6);
-        assert_eq!(cover.x, 1093.8380126953125);
-        assert_eq!(cover.y, 58.181358337402344);
+        assert_eq!(cover.x, 1_093.838);
+        assert_eq!(cover.y, 58.181_36);
     }
 
     #[test]
@@ -5408,7 +5397,7 @@ mod tests {
         // Position(PC252) forecasts the far side of door 95, but Original's
         // facing guard reads GetPositionGround() and still sees the live PC.
         let soldier = position(1355.0133, 2248.718);
-        let live_pc = position(1307.6046, 2248.1819);
+        let live_pc = position(1307.6046, 2_248.182);
         let forecast_pc = position(1304.0, 2276.0);
         let elevation = 45.0;
         let primary = FighterSnapshot {
@@ -5444,7 +5433,7 @@ mod tests {
         // SuN1Sh1nE Savegame_024 replay-037 frame 922: Position(45)
         // forecast movement north far enough to fail this guard, while the
         // literal GetPositionGround(45) remained due east and entered RNG.
-        let soldier = position(972.98877, 2075.3225);
+        let soldier = position(972.988_8, 2075.3225);
         let forecast = position(1019.0, 2089.0);
         let live = position(1022.0, 2069.0);
         let target_elevation = 6.0522804;

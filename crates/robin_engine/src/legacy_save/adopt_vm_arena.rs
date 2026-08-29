@@ -310,7 +310,7 @@ impl LegacyVmArenaPlan {
                 });
             }
             let address = saved_member.schema.address as usize;
-            let end = address.checked_add(4).unwrap_or(usize::MAX);
+            let end = address.saturating_add(4);
             if end > heap.len() {
                 return Err(LegacyVmArenaError::HeapRange {
                     owner,

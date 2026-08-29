@@ -3259,7 +3259,7 @@ mod tests {
         // At this magnitude, `(map_y + z) - z` is one ULP below map_y.
         // That is exactly why C++ direct PassDoor leaves the final rail
         // position alone instead of recomputing it.
-        let elevation = 244.55569458007812_f32;
+        let elevation = 244.555_7_f32;
         let ground = crate::coordinates::GroundPoint::from_map_and_z(endpoint, elevation);
         let world = crate::coordinates::WorldPoint3D::new(ground.x, ground.y, elevation);
         assert_ne!(world.to_map().y.to_bits(), endpoint.y.to_bits());

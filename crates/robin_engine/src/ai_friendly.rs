@@ -3629,9 +3629,8 @@ mod tests {
             make_soldier_view(planning_position, Camp::Lacklandists, AiState::Attacking);
         // Door transit has committed Position(target) to the gate endpoint,
         // while GetPosition() still exposes this interpolating sprite point.
-        target.detection_position_world =
-            WorldPoint3D::new(800.7526245117188, 1158.9752197265625, 177.90757751464844);
-        target.elevation = 177.90757751464844;
+        target.detection_position_world = WorldPoint3D::new(800.752_6, 1_158.975_2, 177.907_58);
+        target.elevation = 177.907_58;
         target.posture = Posture::Upright;
 
         let ctx = AiContext {
@@ -3640,22 +3639,15 @@ mod tests {
                 y: 900.0,
                 ..Position::default()
             },
-            self_body_position_world: WorldPoint3D::new(
-                859.0,
-                1138.7349853515625,
-                241.73492431640625,
-            ),
+            self_body_position_world: WorldPoint3D::new(859.0, 1_138.735, 241.734_92),
             ..AiContext::default()
         };
 
         let (viewer, detection, _) = alert_soldier_360_geometry(&ctx, &target);
-        assert_eq!(
-            viewer,
-            WorldPoint3D::new(859.0, 1138.7349853515625, 286.73492431640625)
-        );
+        assert_eq!(viewer, WorldPoint3D::new(859.0, 1_138.735, 286.734_92));
         assert_eq!(
             detection,
-            WorldPoint3D::new(800.7526245117188, 1158.9752197265625, 222.90757751464844)
+            WorldPoint3D::new(800.752_6, 1_158.975_2, 222.907_58)
         );
         assert_ne!(detection.x, planning_position.x);
         assert_ne!(detection.y, planning_position.y + target.elevation + 45.0);

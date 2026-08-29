@@ -16,6 +16,22 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[workspace.lints.clippy]
+# Ported C++ functions keep their original signatures; bundling arguments into
+# context structs is done case-by-case, not lint-driven.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Ported decision chains keep the original per-condition branch structure even
+# when several branches produce the same outcome.
+if_same_then_else = "allow"
+# Negated float comparisons (`!(a < b)`) preserve the original engine's exact
+# NaN semantics; rewriting to `>=`/`partial_cmp` changes behavior.
+neg_cmp_op_on_partial_ord = "allow"
+# Transient outcome/control-flow enums and error paths intentionally carry big
+# engine-state values by move; boxing them is churn with no measured benefit.
+large_enum_variant = "allow"
+result_large_err = "allow"
+
 [workspace.dependencies]
 # Workspace crates
 robin_assets = { path = "crates/robin_assets" }

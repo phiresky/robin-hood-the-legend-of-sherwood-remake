@@ -84,10 +84,10 @@ fn make_soldier_with_camp(x: f32, y: f32, camp: crate::element::Camp) -> Entity 
 /// bit and fails the strict range gate; NewMove's saved old position hits.
 #[test]
 fn existing_arrow_collision_uses_new_move_old_position() {
-    let mut victim = make_pc(1040.648_1, 1915.162_7);
+    let mut victim = make_pc(1_040.648_1, 1_915.162_7);
     victim
         .element_data_mut()
-        .set_position(WorldPoint3D::new(1040.648_1, 1915.162_7, 0.0));
+        .set_position(WorldPoint3D::new(1_040.648_1, 1_915.162_7, 0.0));
     let shooter = make_soldier_with_camp(772.0, 1796.0, crate::element::Camp::Lacklandists);
 
     let mut element = ElementData {
@@ -95,9 +95,9 @@ fn existing_arrow_collision_uses_new_move_old_position() {
         active: true,
         ..ElementData::default()
     };
-    let saved_old = WorldPoint3D::new(987.105_4, 1922.524_8, 68.750_26);
+    let saved_old = WorldPoint3D::new(987.105_4, 1_922.524_8, 68.750_26);
     element.set_position(saved_old);
-    element.set_position_map_preserving_3d(MapPoint::new(987.105_4, 1853.774_5));
+    element.set_position_map_preserving_3d(MapPoint::new(987.105_4, 1_853.774_5));
     let arrow = Entity::Projectile(ElementProjectile {
         element,
         object: ObjectData {
@@ -110,10 +110,10 @@ fn existing_arrow_collision_uses_new_move_old_position() {
             flying: true,
             trajectory_frame_count: 1,
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D::new(1070.693_6, 1911.031_5, 0.0),
+                position: WorldPoint3D::new(1_070.693_6, 1_911.031_5, 0.0),
                 time: 1,
             }],
-            velocity_increment: WorldVec3D::new(53.542_618, -7.362_060_5, -43.750_252),
+            velocity_increment: WorldVec3D::new(53.542_618, -7.362_060_5, -43.750_25),
             damage: 10,
             ..ProjectileData::default()
         },
@@ -146,7 +146,7 @@ fn existing_arrow_collision_uses_new_move_old_position() {
         let delta = to - from;
         delta.norm()
     };
-    let belt = WorldPoint3D::new(1040.648_1, 1915.162_7, 25.0);
+    let belt = WorldPoint3D::new(1_040.648_1, 1_915.162_7, 25.0);
     assert!(norm(reconstructed_old, belt) > norm(reconstructed_old, integrated));
     assert!(norm(saved_old, belt) <= norm(saved_old, integrated));
 

@@ -553,12 +553,10 @@ pub(super) fn drain_pending_console_display(host: &mut Host, console_overlay: &m
     // ── Drain pending console-display request ──
     // Script native `DisplayConsole` (and the forthcoming cheat key)
     // sets `pending_show_console`.
-    if host.effects.take_signal(HostSignal::ShowConsole) {
-        if !console_overlay.is_visible() {
-            let now_visible = console_overlay.toggle();
-            if now_visible {
-                start_text_input();
-            }
+    if host.effects.take_signal(HostSignal::ShowConsole) && !console_overlay.is_visible() {
+        let now_visible = console_overlay.toggle();
+        if now_visible {
+            start_text_input();
         }
     }
 }

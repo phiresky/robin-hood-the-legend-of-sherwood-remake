@@ -18,7 +18,7 @@ fn parse_rust(relative_path: &str) -> syn::File {
 }
 
 fn parse_rust_path(path: &Path) -> syn::File {
-    let source = fs::read_to_string(&path)
+    let source = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
     syn::parse_file(&source)
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))

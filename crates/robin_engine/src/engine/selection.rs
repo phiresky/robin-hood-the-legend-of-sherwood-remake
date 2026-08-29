@@ -72,13 +72,7 @@ impl EngineInner {
             .and(assets.profile_manager.get_character(pc.pc.profile_index))
             .map(|p| p.vip)
             .unwrap_or(false);
-        if is_vip {
-            if self.script_domains.mission_ui.men_to_blazon_conversion_mode {
-                return false;
-            }
-        }
-
-        true
+        !(is_vip && self.script_domains.mission_ui.men_to_blazon_conversion_mode)
     }
 
     /// Test whether a PC is either climbing (`OnWall`/`OnLadder`) or

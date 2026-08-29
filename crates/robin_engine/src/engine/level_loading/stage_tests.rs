@@ -2,8 +2,10 @@ use super::*;
 
 #[test]
 fn initializer_reports_each_ordered_stage_boundary_once() {
-    let mut config = SimConfig::default();
-    config.script_enabled = false;
+    let config = SimConfig {
+        script_enabled: false,
+        ..Default::default()
+    };
     let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();

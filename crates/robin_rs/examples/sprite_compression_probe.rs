@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
@@ -144,7 +144,7 @@ struct Cli {
     out: PathBuf,
 }
 
-fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
+fn rhs_path(data_dir: &Path, name: &str) -> Result<PathBuf> {
     for case in ["Data", "DATA"] {
         let p = data_dir.join(format!("{case}/Characters/{name}.rhs"));
         if p.is_file() {
@@ -159,7 +159,7 @@ fn rhs_path(data_dir: &PathBuf, name: &str) -> Result<PathBuf> {
 
 /// All frame ids referenced by a character, in script order (with dups) and
 /// as a sorted-deduped bank-order list.
-fn char_frame_ids(data_dir: &PathBuf, name: &str) -> Result<(Vec<u32>, Vec<u32>)> {
+fn char_frame_ids(data_dir: &Path, name: &str) -> Result<(Vec<u32>, Vec<u32>)> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -236,7 +236,7 @@ fn decode_raw(holder: &FrameHolder, id: u32) -> Option<(u16, u16, Vec<u16>)> {
     Some((s.width, s.height, dst))
 }
 
-fn stats(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn stats(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let (script_order, ids) = char_frame_ids(data_dir, name)?;
     let mut n_rle = 0u64;
     let mut n_vq = 0u64;
@@ -316,7 +316,7 @@ fn stats(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn recolor(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
+fn recolor(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<()> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
     println!("## recolor {a} -> {b}");
@@ -425,7 +425,7 @@ fn push_u16s(out: &mut Vec<u8>, words: impl IntoIterator<Item = u16>) {
     }
 }
 
-fn streams(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf) -> Result<()> {
+fn streams(holder: &FrameHolder, data_dir: &Path, name: &str, out_dir: &PathBuf) -> Result<()> {
     let (_, ids) = char_frame_ids(data_dir, name)?;
     fs::create_dir_all(out_dir)?;
 
@@ -710,7 +710,7 @@ fn cond_entropy_bits<K: std::hash::Hash + Eq>(joint: &HashMap<K, HashMap<u16, u6
 }
 
 /// Conditional-entropy analysis of the VQ index grid.
-fn entropy(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn entropy(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let (_, ids) = char_frame_ids(data_dir, name)?;
     let mut n_syms = 0u64;
     let mut h0: HashMap<u16, u64> = HashMap::new();
@@ -787,7 +787,7 @@ fn entropy(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
 /// family members aligned positionally with C. Prices coding a variant
 /// against multiple predecessors, which ships no extra bytes (the decoder
 /// holds every predecessor chunk via the dependency edges).
-fn entropy3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str) -> Result<()> {
+fn entropy3(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str, c: &str) -> Result<()> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
     let (sc, _) = char_frame_ids(data_dir, c)?;
@@ -878,18 +878,18 @@ fn entropy3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str)
 /// decode causal), else the first aligned adjacent-direction neighbor.
 fn aux_ref_map(
     holder: &FrameHolder,
-    data_dir: &PathBuf,
+    data_dir: &Path,
     name: &str,
 ) -> Result<HashMap<u32, (u32, i32, i32)>> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
     let mut map: HashMap<u32, (u32, i32, i32)> = HashMap::new();
-    let mut try_pair = |cur: u32,
-                        r: u32,
-                        oc: (i32, i32),
-                        or_: (i32, i32),
-                        map: &mut HashMap<u32, (u32, i32, i32)>| {
+    let try_pair = |cur: u32,
+                    r: u32,
+                    oc: (i32, i32),
+                    or_: (i32, i32),
+                    map: &mut HashMap<u32, (u32, i32, i32)>| {
         if r >= cur || map.contains_key(&cur) {
             return;
         }
@@ -962,7 +962,7 @@ fn aux_ref_map(
     Ok(map)
 }
 
-fn code_aux(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn code_aux(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     use robin_assets::sprite_codec::{
         AuxRef, SpriteGrid, decode_grids_auxref, encode_grids_auxref,
     };
@@ -1022,7 +1022,7 @@ fn code_aux(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> 
     Ok(())
 }
 
-fn entropy_temporal(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn entropy_temporal(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -1130,7 +1130,7 @@ fn entropy_temporal(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Res
 /// H(tile | same-frame tile in the adjacent direction), offset-aligned.
 /// Rows sharing an action id are the 16 camera directions in file order;
 /// direction d pairs with d+1 (22.5 degrees apart).
-fn entropy_crossdir(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn entropy_crossdir(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -1239,7 +1239,7 @@ fn entropy_crossdir(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Res
     Ok(())
 }
 
-fn entropy2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
+fn entropy2(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<()> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
     let mut pairs: Vec<(u32, u32)> = sa.iter().copied().zip(sb.iter().copied()).collect();
@@ -1356,7 +1356,7 @@ fn cm_bits(holder: &FrameHolder, ids: &[u32]) -> (u64, f64, usize) {
     (n_syms, bits, ctx2.len())
 }
 
-fn cm(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn cm(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     let (_, ids) = char_frame_ids(data_dir, name)?;
     let (n_syms, bits, nctx) = cm_bits(holder, &ids);
     println!(
@@ -1471,7 +1471,7 @@ fn write_png(path: &PathBuf, w: u32, h: u32, rgba: bool, data: &[u8]) -> Result<
 ///     frame, actions concatenated in order. For ffmpeg AV1/FFV1 lossless.
 ///   - `interleaved.rgb565`: the same tile sequence as raw RGB565 words, for
 ///     a layout-only zstd/xz comparison.
-fn atlas(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf) -> Result<()> {
+fn atlas(holder: &FrameHolder, data_dir: &Path, name: &str, out_dir: &Path) -> Result<()> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
@@ -1480,7 +1480,7 @@ fn atlas(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf
 
     // Decode each unique frame once.
     let mut decoded: HashMap<u32, (u16, u16, Vec<u16>)> = HashMap::new();
-    let mut decode = |id: u32, cache: &mut HashMap<u32, (u16, u16, Vec<u16>)>| -> bool {
+    let decode = |id: u32, cache: &mut HashMap<u32, (u16, u16, Vec<u16>)>| -> bool {
         if cache.contains_key(&id) {
             return true;
         }
@@ -1574,7 +1574,7 @@ fn atlas(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf
         let sw = tw * ndir;
         let sh = th * g.max_f;
         let mut rgb = vec![0u8; sw * sh * 3];
-        for p in rgb.chunks_exact_mut(3) {
+        for p in rgb.as_chunks_mut::<3>().0 {
             p.copy_from_slice(&key_rgb);
         }
         let mut rgba = vec![0u8; sw * sh * 4];
@@ -1622,7 +1622,7 @@ fn atlas(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf
         let vh = vt_h * 4;
         for f in 0..g.max_f {
             let mut frame = vec![0u8; vw * vh * 3];
-            for p in frame.chunks_exact_mut(3) {
+            for p in frame.as_chunks_mut::<3>().0 {
                 p.copy_from_slice(&key_rgb);
             }
             let mut tile565 = vec![TRANSPARENT_COLOR_16; vt_w * vt_h];
@@ -1682,7 +1682,7 @@ fn atlas(holder: &FrameHolder, data_dir: &PathBuf, name: &str, out_dir: &PathBuf
     Ok(())
 }
 
-fn positional_pairs(data_dir: &PathBuf, a: &str, b: &str) -> Result<Vec<(u32, u32)>> {
+fn positional_pairs(data_dir: &Path, a: &str, b: &str) -> Result<Vec<(u32, u32)>> {
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
     let mut pairs: Vec<(u32, u32)> = sa.iter().copied().zip(sb.iter().copied()).collect();
@@ -1691,7 +1691,7 @@ fn positional_pairs(data_dir: &PathBuf, a: &str, b: &str) -> Result<Vec<(u32, u3
     Ok(pairs)
 }
 
-fn cm2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
+fn cm2(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<()> {
     let pairs = positional_pairs(data_dir, a, b)?;
     let (n_syms, skipped, bits) = cm2_bits(holder, &pairs);
     println!(
@@ -1705,7 +1705,7 @@ fn cm2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()>
 /// Corpus projection: every Characters/*.rhs coded standalone (cm) or, for
 /// detected variant families, against the family base (cm2). Also reports
 /// zstd-19 of the shipping-analog packed blob as the "current" reference.
-fn corpus(holder: &FrameHolder, data_dir: &PathBuf) -> Result<()> {
+fn corpus(holder: &FrameHolder, data_dir: &Path) -> Result<()> {
     let mut chars_dir = data_dir.join("Data/Characters");
     if !chars_dir.is_dir() {
         chars_dir = data_dir.join("DATA/Characters");
@@ -1860,7 +1860,7 @@ fn codec_grids<'h>(
     Ok((grid_ids, dims, slices, alphabet))
 }
 
-fn code(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+fn code(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     use robin_assets::sprite_codec::{SpriteGrid, decode_grids, encode_grids};
     let (_, ids) = char_frame_ids(data_dir, name)?;
     let (_gids, dims, slices, alphabet) = codec_grids(holder, &ids)?;
@@ -1946,7 +1946,7 @@ fn codec_grids2<'h>(
 
 /// Real-codec size of C coded against two aligned siblings A and B, with
 /// per-sprite fallback to one base / standalone on structural mismatch.
-fn code3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str) -> Result<()> {
+fn code3(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str, c: &str) -> Result<()> {
     use robin_assets::sprite_codec::{SpriteGrid, decode_grids_multi, encode_grids_multi};
     let (sa, _) = char_frame_ids(data_dir, a)?;
     let (sb, _) = char_frame_ids(data_dir, b)?;
@@ -2037,7 +2037,7 @@ fn code3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str) ->
     Ok(())
 }
 
-fn code2(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str) -> Result<()> {
+fn code2(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<()> {
     use robin_assets::sprite_codec::{SpriteGrid, decode_grids, encode_grids};
     let pairs = positional_pairs(data_dir, a, b)?;
     let (dims, slices, bases, alphabet, unbased) = codec_grids2(holder, &pairs)?;
@@ -2108,7 +2108,7 @@ fn decode_shipping_sprite(
     Ok(dst)
 }
 
-fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
+fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
     use robin_assets::shipping_datadir::{
         ShippingDatadir, ShippingMission, decode_mission_compressed,
     };
@@ -2249,9 +2249,7 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
 /// logistic mixer (weights per bit-tree node class). Cost is accounted
 /// exactly (sum of -log2 p), which equals real arithmetic-coded size to
 /// within coder overhead (~0.01%).
-fn mix(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
-    const PROB_BITS: u32 = 12;
-    const PROB_ONE: u32 = 1 << PROB_BITS;
+fn mix(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
     const TABLE_BITS: u32 = 22;
     const TABLE_MASK: usize = (1 << TABLE_BITS) - 1;
 

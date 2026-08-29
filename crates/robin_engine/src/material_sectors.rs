@@ -154,11 +154,8 @@ impl MaterialSector {
             let v = self.points[n - 1];
             AspectPoint::from_map(v, inverse_aspect_ratio)
         };
-        for i in 0..n {
-            let pt_b = {
-                let v = self.points[i];
-                AspectPoint::from_map(v, inverse_aspect_ratio)
-            };
+        for &v in &self.points {
+            let pt_b = AspectPoint::from_map(v, inverse_aspect_ratio);
             let b_minus_a = AspectPoint {
                 x: pt_b.x - pt_a.x,
                 y: pt_b.y - pt_a.y,

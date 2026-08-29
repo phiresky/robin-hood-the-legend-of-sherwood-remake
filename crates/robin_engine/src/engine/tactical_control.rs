@@ -121,536 +121,6 @@ fn assign_formation_offsets(
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn march_column_is_two_soldiers_wide() {
-        let offsets = march_column_offsets(5);
-        assert_eq!(offsets[0].y, offsets[1].y);
-        assert_eq!(offsets[0].x, -offsets[1].x);
-        assert_eq!(offsets[2].y, offsets[3].y);
-        assert!(offsets[2].y < offsets[0].y);
-        assert_eq!(offsets[4].x, 0.0);
-    }
-
-    #[test]
-    fn line_is_wider_than_deep() {
-        let offsets = row_offsets(12, 5, FORMATION_SPACING, false);
-        let width = offsets.iter().map(|p| p.x).fold(f32::MIN, f32::max)
-            - offsets.iter().map(|p| p.x).fold(f32::MAX, f32::min);
-        let depth = offsets.iter().map(|p| p.y).fold(f32::MIN, f32::max)
-            - offsets.iter().map(|p| p.y).fold(f32::MAX, f32::min);
-        assert!(width > depth);
-    }
-
-    #[test]
-    fn staggered_rows_are_laterally_offset() {
-        let offsets = row_offsets(6, 3, STAGGERED_SPACING, true);
-        assert_eq!(offsets[3].x - offsets[0].x, STAGGERED_SPACING * 0.5);
-    }
-
-    #[test]
-    fn flank_leaves_a_center_gap() {
-        let offsets = flank_offsets(8, false);
-        assert!(
-            offsets
-                .iter()
-                .all(|point| point.x.abs() >= FORMATION_SPACING)
-        );
-        assert!(offsets.iter().any(|point| point.x < 0.0));
-        assert!(offsets.iter().any(|point| point.x > 0.0));
-    }
-
-    #[test]
-    fn officer_takes_the_center_front_slot() {
-        let roles = [
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Officer,
-        ];
-        let offsets = assign_formation_offsets(
-            &roles,
-            row_offsets(roles.len(), 4, FORMATION_SPACING, false),
-            TacticalFormation::Line,
-        );
-        let officer = offsets[5];
-        assert_eq!(officer.y, 0.0);
-        assert_eq!(officer.x.abs(), FORMATION_SPACING * 0.5);
-        assert!(offsets[..5].iter().any(|point| point.y < officer.y));
-    }
-
-    #[test]
-    fn ranged_troops_fill_the_rear_rank() {
-        let roles = [
-            FormationRole::Ranged,
-            FormationRole::Melee,
-            FormationRole::Shield,
-            FormationRole::Melee,
-        ];
-        let offsets = assign_formation_offsets(
-            &roles,
-            row_offsets(roles.len(), 3, FORMATION_SPACING, false),
-            TacticalFormation::Line,
-        );
-        assert!(offsets[0].y < offsets[1].y);
-        assert!(offsets[0].y < offsets[2].y);
-    }
-
-    #[test]
-    fn flank_reserves_its_center_for_an_officer() {
-        let roles = [
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Officer,
-            FormationRole::Melee,
-            FormationRole::Melee,
-        ];
-        let offsets = assign_formation_offsets(
-            &roles,
-            flank_offsets(roles.len(), true),
-            TacticalFormation::Flank,
-        );
-        assert_eq!(offsets[2], MapPoint::new(0.0, 0.0));
-        assert!(offsets[..2].iter().all(|point| point.x != 0.0));
-    }
-
-    #[test]
-    fn box_protects_crossbows_inside_melee_troops() {
-        let roles = [
-            FormationRole::Officer,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Melee,
-            FormationRole::Knight,
-            FormationRole::Ranged,
-            FormationRole::Ranged,
-            FormationRole::Ranged,
-        ];
-        let offsets = assign_formation_offsets(&roles, box_offsets(&roles), TacticalFormation::Box);
-        let minimum_melee_radius = offsets[1..5]
-            .iter()
-            .map(|point| point.x * point.x + point.y * point.y)
-            .fold(f32::MAX, f32::min);
-
-        for ranged in &offsets[6..9] {
-            let radius = ranged.x * ranged.x + ranged.y * ranged.y;
-            assert!(radius < minimum_melee_radius);
-        }
-    }
-
-    #[test]
-    fn selected_heroes_reserve_the_command_center() {
-        let anchor = formation_anchor_behind_leaders(
-            MapPoint::new(0.0, 100.0),
-            MapPoint::new(0.0, 0.0),
-            &[MapPoint::new(-20.0, 0.0), MapPoint::new(20.0, 0.0)],
-        );
-        assert_eq!(anchor.x, 0.0);
-        assert_eq!(anchor.y, FORMATION_SPACING * 1.5);
-
-        let deep_heroes = formation_anchor_behind_leaders(
-            MapPoint::new(0.0, 100.0),
-            MapPoint::new(0.0, 0.0),
-            &[MapPoint::new(0.0, -20.0), MapPoint::new(0.0, 20.0)],
-        );
-        assert_eq!(deep_heroes.y, 20.0 + FORMATION_SPACING * 1.5);
-    }
-
-    #[test]
-    fn aggressive_patrol_group_stays_directed_until_threatened() {
-        let patrol_order = |x| TacticalUnitOrder {
-            stance: CombatStance::Aggressive,
-            formation: TacticalFormation::Line,
-            duty: TacticalDuty::Patrol {
-                points: [MapPoint::new(x, 0.0), MapPoint::new(x, 100.0)],
-                next: 1,
-            },
-            last_destination: MapPoint::new(x, 100.0),
-            path_fallback: None,
-            deploy_destination: None,
-        };
-        let group = [patrol_order(-11.0), patrol_order(11.0)];
-
-        assert!(
-            group
-                .iter()
-                .all(|order| tactical_order_locks_ai(order, false, false))
-        );
-        assert!(
-            group
-                .iter()
-                .all(|order| !tactical_order_locks_ai(order, true, false))
-        );
-
-        let idle_aggressive = TacticalUnitOrder {
-            duty: TacticalDuty::Hold {
-                anchor: MapPoint::new(0.0, 0.0),
-            },
-            ..patrol_order(0.0)
-        };
-        assert!(!tactical_order_locks_ai(&idle_aggressive, false, true));
-        assert!(
-            tactical_order_locks_ai(&idle_aggressive, false, false),
-            "an explicit move must continue suppressing the mission patrol until arrival"
-        );
-    }
-
-    #[test]
-    fn stances_separate_striking_from_pursuit() {
-        assert!(!tactical_stance_allows_normal_strikes(CombatStance::Hold));
-        assert!(!tactical_stance_allows_combat_movement(CombatStance::Hold));
-
-        assert!(tactical_stance_allows_normal_strikes(
-            CombatStance::Defensive
-        ));
-        assert!(!tactical_stance_allows_combat_movement(
-            CombatStance::Defensive
-        ));
-
-        assert!(tactical_stance_allows_normal_strikes(
-            CombatStance::Aggressive
-        ));
-        assert!(tactical_stance_allows_combat_movement(
-            CombatStance::Aggressive
-        ));
-    }
-
-    #[test]
-    fn direct_control_lock_discards_a_pending_bored_order() {
-        let mut engine = EngineInner::new();
-        let mut npc = crate::element::NpcData {
-            life_points: 100,
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        npc.ai_brain
-            .base_mut()
-            .expect("test soldier has enemy AI")
-            .outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::WaitingUprightBored,
-                0.0,
-                0.0,
-            ));
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc,
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                command_interface: crate::human_control::CommandInterface::TacticalOrders,
-                ..Default::default()
-            },
-        }));
-
-        engine.set_tactical_ai_locked(soldier, true);
-
-        let ai = engine
-            .get_entity(soldier)
-            .and_then(Entity::ai_controller)
-            .expect("controlled test soldier retains AI");
-        assert!(ai.script_locked);
-        assert!(ai.remember_events);
-        assert!(ai.outbox.actor.orders.is_empty());
-        assert!(
-            !ai.outbox.actor.halt,
-            "direct-control lock must not queue a halt behind the new movement"
-        );
-    }
-
-    #[test]
-    fn completed_allied_move_replaces_the_ai_guard_post() {
-        let mut engine = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            active: true,
-            ..Default::default()
-        };
-        let position = MapPoint::new(321.0, 654.0);
-        let sector = crate::position_interface::SectorHandle::new(7);
-        element.sprite.apply_placement(
-            position,
-            3,
-            sector,
-            5,
-            crate::element::GameMaterial::Ground,
-            None,
-            None,
-        );
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element,
-            actor: Default::default(),
-            human: Default::default(),
-            npc: crate::element::NpcData {
-                life_points: 100,
-                ai: crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                ..Default::default()
-            },
-        }));
-
-        engine.store_tactical_current_position_as_post(soldier);
-
-        let entity = engine.get_entity(soldier).unwrap();
-        let Entity::Soldier(soldier) = entity else {
-            unreachable!();
-        };
-        assert_eq!(soldier.npc.initial_position_x, position.x);
-        assert_eq!(soldier.npc.initial_position_y, position.y);
-        assert_eq!(soldier.npc.initial_position_sector, sector);
-        assert_eq!(soldier.npc.initial_position_level, 3);
-        let ai = soldier.npc.ai_brain.base().unwrap();
-        assert_eq!(ai.initial_position.x, position.x);
-        assert_eq!(ai.initial_position.y, position.y);
-        assert_eq!(ai.initial_position.sector, sector);
-        assert_eq!(ai.initial_position.level, 3);
-    }
-
-    #[test]
-    fn selected_player_strike_discards_preexisting_ai_combat_work() {
-        let mut npc = crate::element::NpcData {
-            life_points: 100,
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
-        ai.pending_sword_strike_consideration = true;
-        ai.base
-            .outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::RunningUpright,
-                100.0,
-                100.0,
-            ));
-
-        let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc,
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                ..Default::default()
-            },
-        }));
-        engine.players.tactical.seats[0].selection.push(soldier);
-
-        engine.prepare_tactical_player_combat_command(soldier);
-
-        let ai = engine
-            .get_entity(soldier)
-            .and_then(Entity::enemy_ai)
-            .expect("test soldier retains enemy AI");
-        assert!(!ai.pending_sword_strike_consideration);
-        assert!(ai.base.outbox.actor.orders.is_empty());
-    }
-
-    #[test]
-    fn eligible_uncontrolled_ally_uses_the_original_path_failure_flow() {
-        let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: crate::element::NpcData {
-                life_points: 100,
-                ai: crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                    ..Default::default()
-                },
-            },
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                command_interface: crate::human_control::CommandInterface::TacticalOrders,
-                ..Default::default()
-            },
-        }));
-
-        assert!(engine.is_tactically_controllable(soldier));
-        assert_eq!(engine.tactical_path_failure_fallback(soldier), None);
-    }
-
-    #[test]
-    fn tactical_commandability_is_authored_independently_from_allegiance() {
-        let make_soldier = |camp, command_interface| {
-            Entity::Soldier(crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    active: true,
-                    ..Default::default()
-                },
-                actor: Default::default(),
-                human: Default::default(),
-                npc: crate::element::NpcData {
-                    life_points: 100,
-                    ai: crate::element::AiActorData {
-                        ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                        ..Default::default()
-                    },
-                },
-                soldier: crate::element::SoldierData {
-                    cached_camp: camp,
-                    command_interface,
-                    ..Default::default()
-                },
-            })
-        };
-        let mut engine = EngineInner::new();
-        let hostile_commandable = engine.add_entity(make_soldier(
-            Camp::Lacklandists,
-            crate::human_control::CommandInterface::TacticalOrders,
-        ));
-        let friendly_uncommandable = engine.add_entity(make_soldier(
-            Camp::Royalists,
-            crate::human_control::CommandInterface::None,
-        ));
-        let tactical_villain = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            pc: crate::element::PcData {
-                life_points: 100,
-                cached_camp: Camp::Lacklandists,
-                command_interface: crate::human_control::CommandInterface::TacticalOrders,
-                mission_role: crate::human_control::MissionRole::TacticalAlly,
-                ai: Some(Box::new(crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            },
-        }));
-
-        assert!(engine.is_tactically_controllable(hostile_commandable));
-        assert!(!engine.is_tactically_controllable(friendly_uncommandable));
-        assert!(engine.is_tactically_controllable(tactical_villain));
-    }
-
-    #[test]
-    fn authored_tactical_stance_is_effective_before_the_first_order() {
-        let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: crate::element::NpcData {
-                life_points: 100,
-                ai: crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                    ..Default::default()
-                },
-            },
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                command_interface: crate::human_control::CommandInterface::TacticalOrders,
-                combat_stance: CombatStance::Defensive,
-                ..Default::default()
-            },
-        }));
-
-        assert_eq!(engine.tactical_order(soldier), None);
-        assert!(engine.tactical_allows_normal_strikes(soldier));
-        assert!(!engine.tactical_allows_combat_movement(soldier));
-    }
-
-    #[test]
-    fn explicit_tactical_order_replaces_authored_patrol() {
-        let paths = vec![crate::level_data::RawHikingPath {
-            waypoints: vec![crate::level_data::RawWaypoint {
-                x: 10,
-                y: 20,
-                sector: 0,
-                level: 0,
-                command: crate::level_data::WaypointCommand::None,
-            }],
-        }];
-        let path_id = crate::ai::PathId::new(0).unwrap();
-        let mut npc = crate::element::NpcData {
-            life_points: 100,
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let ai = npc.ai_brain.base_mut().expect("test soldier has enemy AI");
-        ai.has_patrol_path = true;
-        ai.patrol_path = crate::ai::PatrolPath::new(path_id, &paths);
-
-        let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc,
-            soldier: crate::element::SoldierData {
-                cached_camp: Camp::Royalists,
-                ..Default::default()
-            },
-        }));
-
-        engine.replace_authored_tactical_patrol(soldier);
-
-        let ai = engine
-            .get_entity(soldier)
-            .and_then(Entity::ai_controller)
-            .expect("controlled test soldier retains AI");
-        assert!(!ai.has_patrol_path);
-        assert!(ai.patrol_path.is_none());
-        assert!(ai.detached_patrol_path_status.hiking_path_index.is_none());
-    }
-}
-
 fn march_column_offsets(count: usize) -> Vec<MapPoint> {
     (0..count)
         .map(|index| {
@@ -1816,5 +1286,531 @@ impl EngineInner {
                 seat.pinned_groups.retain(|group| !group.members.is_empty());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn march_column_is_two_soldiers_wide() {
+        let offsets = march_column_offsets(5);
+        assert_eq!(offsets[0].y, offsets[1].y);
+        assert_eq!(offsets[0].x, -offsets[1].x);
+        assert_eq!(offsets[2].y, offsets[3].y);
+        assert!(offsets[2].y < offsets[0].y);
+        assert_eq!(offsets[4].x, 0.0);
+    }
+
+    #[test]
+    fn line_is_wider_than_deep() {
+        let offsets = row_offsets(12, 5, FORMATION_SPACING, false);
+        let width = offsets.iter().map(|p| p.x).fold(f32::MIN, f32::max)
+            - offsets.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+        let depth = offsets.iter().map(|p| p.y).fold(f32::MIN, f32::max)
+            - offsets.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        assert!(width > depth);
+    }
+
+    #[test]
+    fn staggered_rows_are_laterally_offset() {
+        let offsets = row_offsets(6, 3, STAGGERED_SPACING, true);
+        assert_eq!(offsets[3].x - offsets[0].x, STAGGERED_SPACING * 0.5);
+    }
+
+    #[test]
+    fn flank_leaves_a_center_gap() {
+        let offsets = flank_offsets(8, false);
+        assert!(
+            offsets
+                .iter()
+                .all(|point| point.x.abs() >= FORMATION_SPACING)
+        );
+        assert!(offsets.iter().any(|point| point.x < 0.0));
+        assert!(offsets.iter().any(|point| point.x > 0.0));
+    }
+
+    #[test]
+    fn officer_takes_the_center_front_slot() {
+        let roles = [
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Officer,
+        ];
+        let offsets = assign_formation_offsets(
+            &roles,
+            row_offsets(roles.len(), 4, FORMATION_SPACING, false),
+            TacticalFormation::Line,
+        );
+        let officer = offsets[5];
+        assert_eq!(officer.y, 0.0);
+        assert_eq!(officer.x.abs(), FORMATION_SPACING * 0.5);
+        assert!(offsets[..5].iter().any(|point| point.y < officer.y));
+    }
+
+    #[test]
+    fn ranged_troops_fill_the_rear_rank() {
+        let roles = [
+            FormationRole::Ranged,
+            FormationRole::Melee,
+            FormationRole::Shield,
+            FormationRole::Melee,
+        ];
+        let offsets = assign_formation_offsets(
+            &roles,
+            row_offsets(roles.len(), 3, FORMATION_SPACING, false),
+            TacticalFormation::Line,
+        );
+        assert!(offsets[0].y < offsets[1].y);
+        assert!(offsets[0].y < offsets[2].y);
+    }
+
+    #[test]
+    fn flank_reserves_its_center_for_an_officer() {
+        let roles = [
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Officer,
+            FormationRole::Melee,
+            FormationRole::Melee,
+        ];
+        let offsets = assign_formation_offsets(
+            &roles,
+            flank_offsets(roles.len(), true),
+            TacticalFormation::Flank,
+        );
+        assert_eq!(offsets[2], MapPoint::new(0.0, 0.0));
+        assert!(offsets[..2].iter().all(|point| point.x != 0.0));
+    }
+
+    #[test]
+    fn box_protects_crossbows_inside_melee_troops() {
+        let roles = [
+            FormationRole::Officer,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Knight,
+            FormationRole::Ranged,
+            FormationRole::Ranged,
+            FormationRole::Ranged,
+        ];
+        let offsets = assign_formation_offsets(&roles, box_offsets(&roles), TacticalFormation::Box);
+        let minimum_melee_radius = offsets[1..5]
+            .iter()
+            .map(|point| point.x * point.x + point.y * point.y)
+            .fold(f32::MAX, f32::min);
+
+        for ranged in &offsets[6..9] {
+            let radius = ranged.x * ranged.x + ranged.y * ranged.y;
+            assert!(radius < minimum_melee_radius);
+        }
+    }
+
+    #[test]
+    fn selected_heroes_reserve_the_command_center() {
+        let anchor = formation_anchor_behind_leaders(
+            MapPoint::new(0.0, 100.0),
+            MapPoint::new(0.0, 0.0),
+            &[MapPoint::new(-20.0, 0.0), MapPoint::new(20.0, 0.0)],
+        );
+        assert_eq!(anchor.x, 0.0);
+        assert_eq!(anchor.y, FORMATION_SPACING * 1.5);
+
+        let deep_heroes = formation_anchor_behind_leaders(
+            MapPoint::new(0.0, 100.0),
+            MapPoint::new(0.0, 0.0),
+            &[MapPoint::new(0.0, -20.0), MapPoint::new(0.0, 20.0)],
+        );
+        assert_eq!(deep_heroes.y, 20.0 + FORMATION_SPACING * 1.5);
+    }
+
+    #[test]
+    fn aggressive_patrol_group_stays_directed_until_threatened() {
+        let patrol_order = |x| TacticalUnitOrder {
+            stance: CombatStance::Aggressive,
+            formation: TacticalFormation::Line,
+            duty: TacticalDuty::Patrol {
+                points: [MapPoint::new(x, 0.0), MapPoint::new(x, 100.0)],
+                next: 1,
+            },
+            last_destination: MapPoint::new(x, 100.0),
+            path_fallback: None,
+            deploy_destination: None,
+        };
+        let group = [patrol_order(-11.0), patrol_order(11.0)];
+
+        assert!(
+            group
+                .iter()
+                .all(|order| tactical_order_locks_ai(order, false, false))
+        );
+        assert!(
+            group
+                .iter()
+                .all(|order| !tactical_order_locks_ai(order, true, false))
+        );
+
+        let idle_aggressive = TacticalUnitOrder {
+            duty: TacticalDuty::Hold {
+                anchor: MapPoint::new(0.0, 0.0),
+            },
+            ..patrol_order(0.0)
+        };
+        assert!(!tactical_order_locks_ai(&idle_aggressive, false, true));
+        assert!(
+            tactical_order_locks_ai(&idle_aggressive, false, false),
+            "an explicit move must continue suppressing the mission patrol until arrival"
+        );
+    }
+
+    #[test]
+    fn stances_separate_striking_from_pursuit() {
+        assert!(!tactical_stance_allows_normal_strikes(CombatStance::Hold));
+        assert!(!tactical_stance_allows_combat_movement(CombatStance::Hold));
+
+        assert!(tactical_stance_allows_normal_strikes(
+            CombatStance::Defensive
+        ));
+        assert!(!tactical_stance_allows_combat_movement(
+            CombatStance::Defensive
+        ));
+
+        assert!(tactical_stance_allows_normal_strikes(
+            CombatStance::Aggressive
+        ));
+        assert!(tactical_stance_allows_combat_movement(
+            CombatStance::Aggressive
+        ));
+    }
+
+    #[test]
+    fn direct_control_lock_discards_a_pending_bored_order() {
+        let mut engine = EngineInner::new();
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+        };
+        npc.ai_brain
+            .base_mut()
+            .expect("test soldier has enemy AI")
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::WaitingUprightBored,
+                0.0,
+                0.0,
+            ));
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                ..Default::default()
+            },
+        }));
+
+        engine.set_tactical_ai_locked(soldier, true);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::ai_controller)
+            .expect("controlled test soldier retains AI");
+        assert!(ai.script_locked);
+        assert!(ai.remember_events);
+        assert!(ai.outbox.actor.orders.is_empty());
+        assert!(
+            !ai.outbox.actor.halt,
+            "direct-control lock must not queue a halt behind the new movement"
+        );
+    }
+
+    #[test]
+    fn completed_allied_move_replaces_the_ai_guard_post() {
+        let mut engine = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorSoldier,
+            active: true,
+            ..Default::default()
+        };
+        let position = MapPoint::new(321.0, 654.0);
+        let sector = crate::position_interface::SectorHandle::new(7);
+        element.sprite.apply_placement(
+            position,
+            3,
+            sector,
+            5,
+            crate::element::GameMaterial::Ground,
+            None,
+            None,
+        );
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        engine.store_tactical_current_position_as_post(soldier);
+
+        let entity = engine.get_entity(soldier).unwrap();
+        let Entity::Soldier(soldier) = entity else {
+            unreachable!();
+        };
+        assert_eq!(soldier.npc.initial_position_x, position.x);
+        assert_eq!(soldier.npc.initial_position_y, position.y);
+        assert_eq!(soldier.npc.initial_position_sector, sector);
+        assert_eq!(soldier.npc.initial_position_level, 3);
+        let ai = soldier.npc.ai_brain.base().unwrap();
+        assert_eq!(ai.initial_position.x, position.x);
+        assert_eq!(ai.initial_position.y, position.y);
+        assert_eq!(ai.initial_position.sector, sector);
+        assert_eq!(ai.initial_position.level, 3);
+    }
+
+    #[test]
+    fn selected_player_strike_discards_preexisting_ai_combat_work() {
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+        };
+        let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
+        ai.pending_sword_strike_consideration = true;
+        ai.base
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::RunningUpright,
+                100.0,
+                100.0,
+            ));
+
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+        engine.players.tactical.seats[0].selection.push(soldier);
+
+        engine.prepare_tactical_player_combat_command(soldier);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::enemy_ai)
+            .expect("test soldier retains enemy AI");
+        assert!(!ai.pending_sword_strike_consideration);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+    }
+
+    #[test]
+    fn eligible_uncontrolled_ally_uses_the_original_path_failure_flow() {
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                ..Default::default()
+            },
+        }));
+
+        assert!(engine.is_tactically_controllable(soldier));
+        assert_eq!(engine.tactical_path_failure_fallback(soldier), None);
+    }
+
+    #[test]
+    fn tactical_commandability_is_authored_independently_from_allegiance() {
+        let make_soldier = |camp, command_interface| {
+            Entity::Soldier(crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    active: true,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: crate::element::NpcData {
+                    life_points: 100,
+                    ai: crate::element::AiActorData {
+                        ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                        ..Default::default()
+                    },
+                },
+                soldier: crate::element::SoldierData {
+                    cached_camp: camp,
+                    command_interface,
+                    ..Default::default()
+                },
+            })
+        };
+        let mut engine = EngineInner::new();
+        let hostile_commandable = engine.add_entity(make_soldier(
+            Camp::Lacklandists,
+            crate::human_control::CommandInterface::TacticalOrders,
+        ));
+        let friendly_uncommandable = engine.add_entity(make_soldier(
+            Camp::Royalists,
+            crate::human_control::CommandInterface::None,
+        ));
+        let tactical_villain = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                life_points: 100,
+                cached_camp: Camp::Lacklandists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                mission_role: crate::human_control::MissionRole::TacticalAlly,
+                ai: Some(Box::new(crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        }));
+
+        assert!(engine.is_tactically_controllable(hostile_commandable));
+        assert!(!engine.is_tactically_controllable(friendly_uncommandable));
+        assert!(engine.is_tactically_controllable(tactical_villain));
+    }
+
+    #[test]
+    fn authored_tactical_stance_is_effective_before_the_first_order() {
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                command_interface: crate::human_control::CommandInterface::TacticalOrders,
+                combat_stance: CombatStance::Defensive,
+                ..Default::default()
+            },
+        }));
+
+        assert_eq!(engine.tactical_order(soldier), None);
+        assert!(engine.tactical_allows_normal_strikes(soldier));
+        assert!(!engine.tactical_allows_combat_movement(soldier));
+    }
+
+    #[test]
+    fn explicit_tactical_order_replaces_authored_patrol() {
+        let paths = vec![crate::level_data::RawHikingPath {
+            waypoints: vec![crate::level_data::RawWaypoint {
+                x: 10,
+                y: 20,
+                sector: 0,
+                level: 0,
+                command: crate::level_data::WaypointCommand::None,
+            }],
+        }];
+        let path_id = crate::ai::PathId::new(0).unwrap();
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+        };
+        let ai = npc.ai_brain.base_mut().expect("test soldier has enemy AI");
+        ai.has_patrol_path = true;
+        ai.patrol_path = crate::ai::PatrolPath::new(path_id, &paths);
+
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        engine.replace_authored_tactical_patrol(soldier);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::ai_controller)
+            .expect("controlled test soldier retains AI");
+        assert!(!ai.has_patrol_path);
+        assert!(ai.patrol_path.is_none());
+        assert!(ai.detached_patrol_path_status.hiking_path_index.is_none());
     }
 }

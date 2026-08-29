@@ -328,15 +328,16 @@ fn preflight_global_vm(
                         member: saved_member.schema.name.clone(),
                         index: usize::MAX,
                     })?;
-                let bits = if let Some(location) = location {
-                    if let Some(sector) = location.sector.0 {
-                        if usize::from(sector) >= sector_count {
-                            return Err(LegacyTailRuntimeAdoptError::MissingLocationSector {
-                                member: saved_member.schema.name.clone(),
-                                sector,
-                                count: sector_count,
-                            });
-                        }
+
+                if let Some(location) = location {
+                    if let Some(sector) = location.sector.0
+                        && usize::from(sector) >= sector_count
+                    {
+                        return Err(LegacyTailRuntimeAdoptError::MissingLocationSector {
+                            member: saved_member.schema.name.clone(),
+                            sector,
+                            count: sector_count,
+                        });
                     }
                     if usize::from(location.layer) >= layer_count {
                         return Err(LegacyTailRuntimeAdoptError::MissingLocationLayer {
@@ -375,8 +376,7 @@ fn preflight_global_vm(
                     // location-storage list, so preserve the allocation hole.
                     computed_locations.push(None);
                     0
-                };
-                bits
+                }
             }
             _ => {
                 return Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch {

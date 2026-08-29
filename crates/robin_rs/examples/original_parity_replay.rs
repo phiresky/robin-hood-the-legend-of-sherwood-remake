@@ -1195,7 +1195,7 @@ impl TraceCommand {
                                     (
                                         entity_map.translate(*actor),
                                         gates
-                                            .into_iter()
+                                            .iter()
                                             .map(|&(gate, direct)| {
                                                 (entity_map.translate_gate(gate), direct)
                                             })
@@ -4142,13 +4142,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .sectors,
                 );
                 advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
-                let converted = command.into_player_command(
+
+                command.into_player_command(
                     map,
                     &engine,
                     drop_ale_resolution,
                     group_move_resolution,
-                );
-                converted
+                )
             })
             .collect::<Vec<_>>();
         let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
@@ -6024,7 +6024,7 @@ fn move_verified_recording_to_quarantine(
             quarantine_path.display()
         ));
     }
-    std::fs::rename(trace_path, &quarantine_path).map_err(|error| {
+    std::fs::rename(trace_path, quarantine_path).map_err(|error| {
         format!(
             "atomically quarantine converted recording {} as {}: {error}",
             trace_path.display(),
@@ -6033,7 +6033,7 @@ fn move_verified_recording_to_quarantine(
     })?;
     sync_directory(parent, "converted recording quarantine");
 
-    let quarantined_fingerprint = trace_source_fingerprint(&quarantine_path);
+    let quarantined_fingerprint = trace_source_fingerprint(quarantine_path);
     if quarantined_fingerprint == verified.source_fingerprint {
         return Ok(());
     }
@@ -6129,13 +6129,13 @@ fn finish_verified_conversion(
                 }
             }
         }
-        if removed_derived > 0 {
-            if let Err(error) = File::open(parent).and_then(|directory| directory.sync_all()) {
-                eprintln!(
-                    "warning: could not sync {} after obsolete converted recording cleanup: {error}",
-                    parent.display()
-                );
-            }
+        if removed_derived > 0
+            && let Err(error) = File::open(parent).and_then(|directory| directory.sync_all())
+        {
+            eprintln!(
+                "warning: could not sync {} after obsolete converted recording cleanup: {error}",
+                parent.display()
+            );
         }
     }
     removed_derived
@@ -6194,6 +6194,7 @@ fn lock_native_trace_generation(native_path: &Path) -> File {
     let lock_path = native_trace_generation_lock_path(native_path);
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
@@ -6894,12 +6895,12 @@ fn ensure_native_binary_trace_locked(
     native_path: &Path,
     fingerprint: String,
 ) -> PathBuf {
-    match try_read_binary_trace_header(&native_path) {
+    match try_read_binary_trace_header(native_path) {
         Ok(header)
             if header.version == TRACE_NATIVE_VERSION
                 && header.source_fingerprint == fingerprint =>
         {
-            let footer = read_binary_trace_footer(&native_path).unwrap_or_else(|error| {
+            let footer = read_binary_trace_footer(native_path).unwrap_or_else(|error| {
                 panic!(
                     "native parity trace {} has a corrupt or missing fixed footer: {error}; remove the derived native file and retry (its JSONL source is still present)",
                     native_path.display()
@@ -7072,7 +7073,7 @@ fn ensure_native_binary_trace_locked(
         .as_file()
         .sync_all()
         .unwrap_or_else(|error| panic!("sync native parity trace: {error}"));
-    temporary.persist(&native_path).unwrap_or_else(|error| {
+    temporary.persist(native_path).unwrap_or_else(|error| {
         panic!(
             "persist native parity trace {}: {}",
             native_path.display(),
@@ -7080,7 +7081,7 @@ fn ensure_native_binary_trace_locked(
         )
     });
     sync_directory(parent, "native parity trace publication");
-    let compressed_bytes = std::fs::metadata(&native_path)
+    let compressed_bytes = std::fs::metadata(native_path)
         .expect("stat completed native parity trace")
         .len();
     eprintln!(
@@ -9469,7 +9470,7 @@ fn compare_frame(
                 .map(trace_pass_door_key);
             let actual_pass = engine
                 .actor_selected_pass_door(id)
-                .map(|(gate_id, direction)| (u32::from(gate_id.0), direction != 0));
+                .map(|(gate_id, direction)| (gate_id.0, direction != 0));
             if !active_pass_door_keys_match(expected_actor.active_pass_door.as_ref(), actual_pass) {
                 differences.push(format!(
                     "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"

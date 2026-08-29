@@ -46,7 +46,7 @@ pub(crate) fn battle_decision_debug_enabled() -> bool {
 /// master switch without both filters is an operator error: broad traces make
 /// same-frame re-entrant state ownership impossible to attribute reliably.
 pub(crate) fn decision_path_debug_matches(frame: u32, owner: HumanHandle) -> bool {
-    decision_path_debug_matches_raw(frame, u32::from(owner))
+    decision_path_debug_matches_raw(frame, owner)
 }
 
 pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
@@ -106,7 +106,7 @@ pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool
         })
     };
     frame == parse_required("PARITY_DEBUG_PRIMARY_SWAP_FRAME")
-        && u32::from(owner) == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
+        && owner == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
 }
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;
@@ -1115,11 +1115,7 @@ impl EnemyAi {
         }
 
         // In-dialogue-with-someone-else gate.
-        if cs.antagonist != 0 && cs.antagonist != my_handle {
-            return false;
-        }
-
-        true
+        !(cs.antagonist != 0 && cs.antagonist != my_handle)
     }
 
     /// Pops the next queued money-fight victim and approaches it;
@@ -5560,7 +5556,7 @@ mod tests {
         // Original passes ComputeDetectionPoint's stored 3D point verbatim
         // to FastFindGrid::IsReachable.
         let raw = crate::coordinates::WorldPoint3D::new(
-            1555.961_5,
+            1_555.961_5,
             f32::from_bits(1_143_810_793),
             46.786_65,
         );
@@ -8489,17 +8485,17 @@ mod tests {
     fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {
         AiContext {
             frame: 920,
-            position: test_position(1546.658_2, 318.299_56),
+            position: test_position(1_546.658_2, 318.299_56),
             // `enemy_is_behind_me` reads the raw `GetPositionGround()` body
             // point, which for this ground-level fixture coincides with the
             // AI position.
             self_body_position_world: crate::coordinates::WorldPoint3D {
-                x: 1546.658_2,
+                x: 1_546.658_2,
                 y: 318.299_56,
                 z: 0.0,
             },
             direction: 14,
-            self_stare_point: crate::coordinates::GroundPoint::new(1500.696_3, stare_y),
+            self_stare_point: crate::coordinates::GroundPoint::new(1_500.696_3, stare_y),
             ..AiContext::default()
         }
     }
@@ -8532,10 +8528,10 @@ mod tests {
         ai.base.primary_target = 84;
         ai.list_them = vec![84, 171];
 
-        let mut primary = soldier_view(test_position(1519.443_7, 309.084_5));
+        let mut primary = soldier_view(test_position(1_519.443_7, 309.084_5));
         primary.kind = EntityKind::Pc;
         primary.is_pc = true;
-        let mut lost = soldier_view(test_position(1226.175_4, 315.871_6));
+        let mut lost = soldier_view(test_position(1_226.175_4, 315.871_6));
         lost.kind = EntityKind::Pc;
         lost.is_pc = true;
         let mut views = AiEntityViewMap::new();
@@ -8548,7 +8544,7 @@ mod tests {
         let mut tick = AiPerTickData::stub();
         tick.enemy_detectable_forecasts.push((
             171,
-            crate::ai::PreparedForecastDestination::fixed(test_position(1226.175_4, 315.871_6), 4),
+            crate::ai::PreparedForecastDestination::fixed(test_position(1_226.175_4, 315.871_6), 4),
         ));
 
         ai.think_unexpected_event(
@@ -8575,7 +8571,7 @@ mod tests {
         ai.base.primary_target = 84;
         ai.list_them = vec![171];
 
-        let forecast_position = test_position(1226.175_4, 315.871_6);
+        let forecast_position = test_position(1_226.175_4, 315.871_6);
         let mut lost = soldier_view(forecast_position);
         lost.kind = EntityKind::Pc;
         lost.is_pc = true;

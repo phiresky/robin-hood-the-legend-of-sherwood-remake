@@ -1048,50 +1048,6 @@ fn portrait_action_right_click(
     }
 }
 
-#[cfg(test)]
-mod shift_planning_tests {
-    use super::*;
-
-    #[test]
-    fn hypothetical_action_can_be_selected_when_live_ammo_disables_it() {
-        assert!(portrait_action_dispatchable(true, Action::Bow, false));
-        assert!(!portrait_action_dispatchable(false, Action::Bow, false));
-        assert!(!portrait_action_dispatchable(true, Action::NoAction, false));
-    }
-
-    #[test]
-    fn right_click_on_selected_action_only_cancels_it() {
-        assert_eq!(
-            portrait_action_right_click(Action::Bow, Action::Bow, 15, false),
-            PortraitActionRightClick::Cancel
-        );
-    }
-
-    #[test]
-    fn right_click_on_unselected_ammo_action_drops_one_without_shift() {
-        assert_eq!(
-            portrait_action_right_click(Action::Bow, Action::NoAction, 15, false),
-            PortraitActionRightClick::DropAmmo(1)
-        );
-    }
-
-    #[test]
-    fn repeated_right_click_on_unselected_ammo_action_drops_several() {
-        assert_eq!(
-            portrait_action_right_click(Action::Bow, Action::NoAction, 15, true),
-            PortraitActionRightClick::DropAmmo(5)
-        );
-    }
-
-    #[test]
-    fn right_click_on_unselected_unlimited_action_still_cancels() {
-        assert_eq!(
-            portrait_action_right_click(Action::Hit, Action::NoAction, 0, true),
-            PortraitActionRightClick::Cancel
-        );
-    }
-}
-
 /// Left-mouse-up on the world (no portrait hit): swordfight-gesture
 /// commit or the regular left-click resolver.
 fn on_world_click(
@@ -2429,4 +2385,48 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     }
 
     Ok(HandlerAction::Proceed)
+}
+
+#[cfg(test)]
+mod shift_planning_tests {
+    use super::*;
+
+    #[test]
+    fn hypothetical_action_can_be_selected_when_live_ammo_disables_it() {
+        assert!(portrait_action_dispatchable(true, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(false, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(true, Action::NoAction, false));
+    }
+
+    #[test]
+    fn right_click_on_selected_action_only_cancels_it() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::Bow, 15, false),
+            PortraitActionRightClick::Cancel
+        );
+    }
+
+    #[test]
+    fn right_click_on_unselected_ammo_action_drops_one_without_shift() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::NoAction, 15, false),
+            PortraitActionRightClick::DropAmmo(1)
+        );
+    }
+
+    #[test]
+    fn repeated_right_click_on_unselected_ammo_action_drops_several() {
+        assert_eq!(
+            portrait_action_right_click(Action::Bow, Action::NoAction, 15, true),
+            PortraitActionRightClick::DropAmmo(5)
+        );
+    }
+
+    #[test]
+    fn right_click_on_unselected_unlimited_action_still_cancels() {
+        assert_eq!(
+            portrait_action_right_click(Action::Hit, Action::NoAction, 0, true),
+            PortraitActionRightClick::Cancel
+        );
+    }
 }

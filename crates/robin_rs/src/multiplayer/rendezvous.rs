@@ -108,8 +108,7 @@ impl TopicRendezvous {
             };
         let mut ids = Vec::new();
         for item in items {
-            for chunk in item.value().chunks_exact(32) {
-                let id: [u8; 32] = chunk.try_into().expect("chunks_exact yields 32 bytes");
+            for &id in item.value().as_chunks::<32>().0 {
                 if id != self.me && !ids.contains(&id) {
                     ids.push(id);
                 }

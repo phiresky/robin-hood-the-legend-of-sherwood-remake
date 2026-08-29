@@ -230,8 +230,7 @@ impl SoundSource {
 
                 // Check segment projection distances
                 let mut prev = self.shape[0];
-                for i in 1..num_points {
-                    let curr = self.shape[i];
+                for &curr in &self.shape[1..] {
                     if let Some(d) = Self::distance_to_segment(prev, curr, position)
                         && d < min_dist
                     {

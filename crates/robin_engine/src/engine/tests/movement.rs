@@ -1231,8 +1231,10 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequenceState};
 
-    let mut config = crate::engine::SimConfig::default();
-    config.synchronous_pathfinding = true;
+    let config = crate::engine::SimConfig {
+        synchronous_pathfinding: true,
+        ..Default::default()
+    };
     let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
 
     let mut engine = EngineInner::new();

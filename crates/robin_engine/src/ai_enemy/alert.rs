@@ -1193,17 +1193,16 @@ impl EnemyAi {
                             nearest_officer = Some(cs);
                         }
                     }
-                    ProfileRank::Soldier => {
+                    ProfileRank::Soldier
                         // Check if another soldier is already reporting to
                         // an officer — if so, don't duplicate the report.
                         if is_alerting_an_officer(cs.ai_substate)
                             && self.is_detecting_360_degrees(cs.handle, ctx)
-                        {
+                        => {
                             // Another soldier is already alerting an
                             // officer — abort.
                             return false;
                         }
-                    }
                     _ => {}
                 }
             }

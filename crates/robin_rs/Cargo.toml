@@ -201,3 +201,6 @@ test = false
 name = "dump_level"
 path = "src/bin/dump_level.rs"
 test = false
+
+[lints]
+workspace = true

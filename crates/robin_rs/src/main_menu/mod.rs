@@ -787,7 +787,7 @@ fn update_status_line() -> String {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     {
         use crate::auto_update::UpdateStatus;
-        return match crate::auto_update::update_status() {
+        match crate::auto_update::update_status() {
             Some(UpdateStatus::Downloading {
                 version: update_version,
             }) => {
@@ -799,7 +799,7 @@ fn update_status_line() -> String {
                 format!("{version} - Update v{update_version} will install on exit")
             }
             None => format!("{version} - Up to date"),
-        };
+        }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {

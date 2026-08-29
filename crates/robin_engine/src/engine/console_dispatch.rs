@@ -1356,7 +1356,6 @@ mod tests {
                     ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                     ..Default::default()
                 },
-                ..NpcData::default()
             },
             soldier: SoldierData {
                 // Real enemy soldiers always have a defined camp, so
@@ -1456,16 +1455,18 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
-        let before = Some(&engine.mission_domain.campaign)
-            .unwrap()
+        let before = engine
+            .mission_domain
+            .campaign
             .get_value(CampaignValue::Ransom);
         let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "EZB 500");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Money !\n500 gold added.".to_string())
         );
-        let after = Some(&engine.mission_domain.campaign)
-            .unwrap()
+        let after = engine
+            .mission_domain
+            .campaign
             .get_value(CampaignValue::Ransom);
         assert_eq!(after, before + 500);
     }

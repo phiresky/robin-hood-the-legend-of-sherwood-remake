@@ -948,7 +948,7 @@ mod enemy_below_tests {
         // Savegame_021 seed replay: the projected map coordinates differ by
         // only (5, 8), but elevation projection puts the target more than
         // seven world-Y units away while it is less than one unit lower.
-        let target = crate::coordinates::WorldPoint3D::new(577.0, 2472.219_0, 104.218_95);
+        let target = crate::coordinates::WorldPoint3D::new(577.0, 2_472.219, 104.218_95);
         assert!(!enemy_is_below_me(
             &context(),
             Some(Position {
@@ -983,17 +983,13 @@ mod enemy_below_tests {
         // EquipBowDown at frame 8320.
         let ctx = AiContext {
             posture: crate::element::Posture::Upright,
-            elevation: 150.001_007_080_078_12,
+            elevation: 150.001,
             ..AiContext::default()
         };
-        let target = crate::coordinates::WorldPoint3D::new(
-            1031.413_818_359_375,
-            2002.760_009_765_625,
-            107.499_275_207_519_53,
-        );
+        let target = crate::coordinates::WorldPoint3D::new(1_031.413_8, 2_002.76, 107.499_275);
         let owner_after_execute = Position {
-            x: 1061.203_857_421_875,
-            y: 1865.277_832_031_25,
+            x: 1_061.203_9,
+            y: 1_865.277_8,
             ..Position::default()
         };
         assert!(enemy_is_below_me(
@@ -1358,8 +1354,8 @@ fn estimate_damage(
                 target.direction as i16,
                 target_to_attacker_sector,
                 strike_dir,
-                attacker.elevation as f32,
-                target.elevation as f32,
+                attacker.elevation,
+                target.elevation,
             );
             let cutting_eff = (cutting as f32 * 0.01 * (100.0 - protection as f32).max(0.0)) as i32;
 

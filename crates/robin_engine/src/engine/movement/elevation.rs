@@ -100,7 +100,7 @@ impl EngineInner {
                     panic!("projection-area obstacle index {index} does not fit in u16")
                 })
             })
-            .last()
+            .next_back()
     }
 
     pub(in crate::engine) fn crossed_elevation_obstacle(
@@ -252,31 +252,35 @@ impl EngineInner {
         let original_box = move_box_map;
         let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
         let expanded_box = box_element;
-        let expanded_motion_lines = capture_extraction
-            .then(|| {
+        let expanded_motion_lines = if capture_extraction {
+            {
                 self.world
                     .fast_grid
                     .get_active_motion_line_indices(entity_layer, &expanded_box)
                     .into_iter()
                     .map(|index| usize::from(index) as u32)
                     .collect()
-            })
-            .unwrap_or_default();
+            }
+        } else {
+            Default::default()
+        };
         let authorized = self
             .world
             .fast_grid
             .find_authorized_position(&mut box_element, entity_layer);
         let authorized_box = box_element;
-        let authorized_motion_lines = capture_extraction
-            .then(|| {
+        let authorized_motion_lines = if capture_extraction {
+            {
                 self.world
                     .fast_grid
                     .get_active_motion_line_indices(entity_layer, &authorized_box)
                     .into_iter()
                     .map(|index| usize::from(index) as u32)
                     .collect()
-            })
-            .unwrap_or_default();
+            }
+        } else {
+            Default::default()
+        };
         let center = authorized.then(|| authorized_box.center());
         if let Some(center) = center {
             let source = MapPoint::new(center.x, center.y);

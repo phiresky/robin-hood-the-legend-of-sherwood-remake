@@ -327,14 +327,11 @@ impl crate::engine::EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> Option<MotionState> {
-        let Some((seq_id, elem_idx)) = self
+        let (seq_id, elem_idx) = self
             .orders
             .sequence_manager
-            .current_element_for_actor(owner)
-        else {
-            return None;
-        };
-        let Some((action, flags, tolerance)) = self
+            .current_element_for_actor(owner)?;
+        let (action, flags, tolerance) = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
@@ -355,10 +352,7 @@ impl crate::engine::EngineInner {
                     )
                 };
                 Some((*action, *flags, *tolerance))
-            })
-        else {
-            return None;
-        };
+            })?;
 
         let actor = self
             .get_entity(owner)
@@ -668,9 +662,7 @@ impl crate::engine::EngineInner {
         {
             return None;
         }
-        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            return None;
-        };
+        let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
         if !matches!(
             elem.command,
             crate::element::Command::Move
@@ -699,18 +691,12 @@ impl crate::engine::EngineInner {
         // route-construction RNG draws. Sampling solely from the element
         // flags made a climbing PC rebuild a cross-building chase while
         // Original kept climbing.
-        let Some(order) = elem.orders.front() else {
-            return None;
-        };
+        let order = elem.orders.front()?;
         if super::movement::perform_seek_calls_per_execute(order.order_type) == 0 {
             return None;
         }
-        let Some(target_id) = *target else {
-            return None;
-        };
-        let Some(target_entity) = self.get_entity(target_id) else {
-            return None;
-        };
+        let target_id = (*target)?;
+        let target_entity = self.get_entity(target_id)?;
         let target_pos = target_entity.element_data().position_map();
 
         // PerformSeek's same-sector distance gate precedes its expired
@@ -893,8 +879,7 @@ impl crate::engine::EngineInner {
             return true;
         }
 
-        let target_passing_door = self
-            .get_entity(target)
+        self.get_entity(target)
             .and_then(|e| e.actor_data())
             .and_then(|a| {
                 a.active_movement
@@ -904,12 +889,7 @@ impl crate::engine::EngineInner {
             .and_then(|(seq_id, elem_idx)| {
                 self.orders.sequence_manager.get_element(seq_id, elem_idx)
             })
-            .is_some_and(|elem| elem.command == crate::element::Command::PassDoor);
-        if target_passing_door {
-            return true;
-        }
-
-        false
+            .is_some_and(|elem| elem.command == crate::element::Command::PassDoor)
     }
 
     /// Central entity-target Seek lowering, matching original

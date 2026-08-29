@@ -664,18 +664,20 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let mut campaign = Campaign::default();
-        campaign.missions = vec![
-            Mission {
-                profile_idx: Some(0),
-                ..Default::default()
-            },
-            Mission {
-                profile_idx: Some(1),
-                ..Default::default()
-            },
-        ];
-        campaign.current_mission_idx = Some(0);
+        let campaign = Campaign {
+            missions: vec![
+                Mission {
+                    profile_idx: Some(0),
+                    ..Default::default()
+                },
+                Mission {
+                    profile_idx: Some(1),
+                    ..Default::default()
+                },
+            ],
+            current_mission_idx: Some(0),
+            ..Default::default()
+        };
         let mut assets = LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles.clone());
         let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
@@ -704,18 +706,20 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let mut campaign = Campaign::default();
-        campaign.missions = vec![
-            Mission {
-                profile_idx: Some(0),
-                ..Default::default()
-            },
-            Mission {
-                profile_idx: Some(1),
-                ..Default::default()
-            },
-        ];
-        campaign.current_mission_idx = Some(1);
+        let mut campaign = Campaign {
+            missions: vec![
+                Mission {
+                    profile_idx: Some(0),
+                    ..Default::default()
+                },
+                Mission {
+                    profile_idx: Some(1),
+                    ..Default::default()
+                },
+            ],
+            current_mission_idx: Some(1),
+            ..Default::default()
+        };
         campaign
             .snapshot_preselected_with_simulation(7, robin_engine::engine::SimConfig::default());
         let mut assets = LevelAssets::new();
