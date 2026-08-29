@@ -71,10 +71,50 @@
         }
         #toolbar button:hover:not(:disabled) { background: #444; }
         #toolbar button:disabled { opacity: .5; cursor: default; }
+        #boot-progress {
+            position: absolute;
+            top: 284px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(420px, 80vw);
+            text-align: center;
+            pointer-events: none;
+        }
+        #boot-progress .bp-label {
+            font-size: 14px;
+            letter-spacing: .08em;
+            margin-bottom: 10px;
+            color: #d9c48a;
+        }
+        #boot-progress .bp-bar {
+            height: 14px;
+            border: 1px solid #6d5a2e;
+            background: #000;
+            padding: 2px;
+        }
+        #boot-progress .bp-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(180deg, #e3c878, #a8842f);
+            transition: width .15s ease-out;
+        }
+        #boot-progress .bp-detail {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #888;
+            min-height: 1.2em;
+        }
+        #boot-progress.bp-error .bp-label { color: #f77; }
+        #boot-progress.bp-error .bp-fill { background: #a33; }
     </style>
 </head>
 <body>
     <canvas id="canvas" width="1024" height="768"></canvas>
+    <div id="boot-progress" role="status">
+        <div class="bp-label" id="bp-label">loading&hellip;</div>
+        <div class="bp-bar"><div class="bp-fill" id="bp-fill"></div></div>
+        <div class="bp-detail" id="bp-detail"></div>
+    </div>
     <div id="replay-timeline"></div>
     <div id="toolbar">
         <button id="share-replay" type="button" title="Copy a shareable URL of the current replay">
