@@ -63,13 +63,22 @@ codegen-backend = true
 rustflags = [
     "--cfg=getrandom_backend=\"wasm_js\"",
     # Wasm SIMD, baseline in all major browsers since Safari 16.4 (2023).
-    # Lets LLVM auto-vectorize (only in crates built at opt-level 2/3 — the
-    # size levels never run the loop vectorizer, see the wasm-release profile
-    # notes in Cargo.toml). The other post-MVP features this toolchain
+    # Lets LLVM auto-vectorize. The other post-MVP features this toolchain
     # supports (bulk-memory, nontrapping-fptoint, sign-ext, multivalue,
     # reference-types, mutable-globals) are already default-on for this
     # target. relaxed-simd is deliberately absent: not yet browser-baseline.
     "-C", "target-feature=+simd128",
+    # Append the vectorizers (plus their standard cleanup passes) to every
+    # LLVM pipeline. The wasm-release profile optimizes at "z", whose
+    # pipeline contains no vectorizer passes at all — this injection is what
+    # lets the O3 robin_assets override actually vectorize under fat LTO
+    # (see the wasm-release notes in the workspace Cargo.toml). Safe for
+    # everything else: the passes respect per-function optsize/minsize
+    # attributes ("z" code stays size-guarded) and skip optnone (wasm-dev)
+    # functions entirely. The standalone instcombine needs
+    # no-verify-fixpoint — pipeline-scheduled instcombine relaxes that
+    # check, a bare injected one asserts on some wasm-bindgen shims.
+    "-C", "passes=loop-vectorize,slp-vectorizer,instcombine<no-verify-fixpoint>,simplifycfg",
     # Rust async poll functions can retain large game/session values across
     # await points. Keep a practical guard margin above the 1 MiB wasm-ld
     # default even though the largest child futures are heap-boxed.

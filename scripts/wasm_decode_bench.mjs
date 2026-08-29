@@ -34,7 +34,8 @@ for (const [mission, files] of Object.entries(missions)) {
     for (const k of Object.keys(totals)) totals[k] += r[k];
     console.log(
         `${mission.padEnd(28)}${mb(r.part_bytes).padStart(8)}${r.decode_ms.toFixed(0).padStart(11)}` +
-        `${r.materialize_ms.toFixed(0).padStart(16)}${String(r.vq_chunks).padStart(8)}${String(r.vq_sprites).padStart(9)}`,
+        `${r.materialize_ms.toFixed(0).padStart(16)}${String(r.vq_chunks).padStart(8)}${String(r.vq_sprites).padStart(9)}` +
+        `  fnv:${r.grids_fnv}`,
     );
 }
 console.log(

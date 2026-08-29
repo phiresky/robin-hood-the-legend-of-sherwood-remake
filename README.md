@@ -87,14 +87,16 @@ OS-data-dir support stay disabled.
         -p robin_rs --bin robin
 
 Swap `--profile wasm-dev` for `--profile wasm-release` for the smallest
-optimized build.  The release wasm profile uses `opt-level = "z"`, one
-codegen unit, no debuginfo, and aborting panics — but no LTO, and
-`robin_assets` (the asset-decode hot path) is overridden to `opt-level =
-3`: rustc runs the LTO-stage pipeline at the root crate's `-Oz`, which
-never vectorizes, so LTO would discard that override (see the profile
-comments in the workspace `Cargo.toml`).  Wasm builds enable the
-`simd128` target feature (`.cargo/config.toml`).  The two custom profiles
-force the LLVM codegen backend — cranelift doesn't target wasm.
+optimized build.  The release wasm profile uses `opt-level = "z"`, fat
+LTO, one codegen unit, no debuginfo, and aborting panics, with
+`robin_assets` (the asset-decode hot path) overridden to `opt-level = 3`.
+The `-Oz` LTO pipeline contains no vectorizer passes, so the wasm
+rustflags inject them via `-C passes=…` — per-function size attributes
+keep the injected passes conservative everywhere except the O3 codec
+crate (see the profile comments in the workspace `Cargo.toml`).  Wasm
+builds enable the `simd128` target feature (`.cargo/config.toml`).  The
+two custom profiles force the LLVM codegen backend — cranelift doesn't
+target wasm.
 
 Run `wasm-bindgen --target web` on the produced `.wasm` into
 `wasm-www/pkg/`, then build the web package from `wasm-www/`:

@@ -25,9 +25,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use robin_assets::shipping_datadir::{
-    ShippingDatadir, ShippingMission, decode_mission_compressed,
-};
+use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mission_compressed};
 use wasm_bindgen::prelude::*;
 
 thread_local! {
@@ -44,8 +42,11 @@ fn js_err(e: anyhow::Error) -> JsError {
 #[wasm_bindgen]
 pub fn bench_init(datadir: &[u8]) -> Result<String, JsError> {
     let dd = ShippingDatadir::from_compressed_bytes(datadir).map_err(js_err)?;
-    let missions: BTreeMap<&String, &Vec<String>> =
-        dd.missions.iter().map(|(name, m)| (name, &m.files)).collect();
+    let missions: BTreeMap<&String, &Vec<String>> = dd
+        .missions
+        .iter()
+        .map(|(name, m)| (name, &m.files))
+        .collect();
     let json = serde_json::to_string(&missions).map_err(|e| JsError::new(&e.to_string()))?;
     DATADIR.with(|d| *d.borrow_mut() = Some(dd));
     Ok(json)
@@ -75,9 +76,26 @@ pub fn bench_mission(parts: js_sys::Array) -> Result<String, JsError> {
         chunks = bank.vq_chunks.len();
         blob_bytes = bank.vq_chunks.iter().map(|c| c.blob.len()).sum();
         vq_sprites = bank.vq_chunks.iter().map(|c| c.sprite_ids.len()).sum();
-        bank.materialize_vq_chunks(&merged.rhs_files).map_err(js_err)?;
+        bank.materialize_vq_chunks(&merged.rhs_files)
+            .map_err(js_err)?;
     }
     let materialize_ms = now() - t1;
+
+    // FNV-1a over every sprite's materialized packed data, in bank-id order:
+    // two builds of this bench must report identical hashes regardless of
+    // compiler flags, or one of them miscompiled the codec.
+    let mut grids_fnv: u64 = 0xcbf2_9ce4_8422_2325;
+    if let Some(bank) = merged.sprite_bank.as_ref() {
+        for (id, sprite) in &bank.sprites {
+            for byte in id
+                .to_le_bytes()
+                .iter()
+                .chain(bytemuck::cast_slice::<u16, u8>(&sprite.packed_data))
+            {
+                grids_fnv = (grids_fnv ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+    }
 
     Ok(serde_json::json!({
         "part_bytes": part_bytes,
@@ -86,6 +104,7 @@ pub fn bench_mission(parts: js_sys::Array) -> Result<String, JsError> {
         "vq_chunks": chunks,
         "vq_blob_bytes": blob_bytes,
         "vq_sprites": vq_sprites,
+        "grids_fnv": format!("{grids_fnv:016x}"),
     })
     .to_string())
 }

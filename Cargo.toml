@@ -186,19 +186,21 @@ codegen-backend = "llvm"
 inherits = "release"
 codegen-backend = "llvm"
 opt-level = "z"
-# No LTO, deliberately: rustc runs the LTO-stage LLVM pipeline at the *root
-# crate's* opt-level, and at "z"/"s" LLVM never runs the loop vectorizer, so
-# both fat and thin LTO silently discard the O3+simd128 codegen of the
-# robin_assets override below (verified empirically on nightly-2026-08-25).
-# There is no cargo knob that gives z-sized code plus an LTO-stage
-# vectorizer: raising the profile to 3 with per-package "z" overrides keeps
-# the vectorizer but the O3 LTO inliner balloons the module instead
-# (measured post-wasm-opt gzipped: 4.92 MB fat-LTO/all-z with zero SIMD,
-# 5.73 MB with this config and the codec vectorized, 7.10 MB for the
-# LTO-at-O3 variant — and no-LTO also halves the build time).  Cross-crate
-# inlining/DCE for size is partly recovered by the `wasm-opt -Oz` post-build
-# step.
-lto = false
+# Fat LTO *and* a vectorized codec crate — normally contradictory: rustc
+# runs the LTO-stage LLVM pipeline at the root crate's opt-level, and the
+# "z"/"s" pipelines contain no vectorizer passes at all, so under LTO the
+# robin_assets O3 override below produced exactly zero SIMD (verified on
+# nightly-2026-08-25; raising the profile to 3 with per-package "z"
+# overrides instead lets the O3 LTO inliner balloon the module: 7.10 MB gz
+# vs 4.92 baseline). The escape hatch is in .cargo/config.toml: the wasm
+# target rustflags append `-C passes=loop-vectorize,slp-vectorizer,...` to
+# every pipeline, and the per-function optsize/minsize attributes that "z"
+# stamps on all other crates keep those passes size-conservative outside
+# the attribute-free O3 crate. Demo-corpus decode bench (wasm_decode_bench,
+# node, single-thread, identical output hashes): 59.1 s old all-z fat LTO;
+# 28.2 s lto=false + O3+simd codec; 22.8 s this config. Adding loop-unroll
+# to the chain made it slower (32.9 s) — deliberately absent.
+lto = true
 codegen-units = 1
 debug = 0
 strip = "debuginfo"
@@ -206,10 +208,9 @@ panic = "abort"
 # The deployed module is further shrunk with `wasm-opt -Oz` and
 # `wasm-strip` (wabt) — both as explicit post-build steps.
 
-# The sprite/asset codec is the wasm hot path (decode runs on every load) and
-# the size levels never auto-vectorize; build just this crate for speed while
-# the rest of the module stays size-optimized. Measured on the demo corpus
-# (wasm_decode_bench, node, single-thread): 59.1 s -> 33.3 s materialize.
+# The sprite/asset codec is the wasm hot path (decode runs on every load);
+# O3 here both strips the size attributes (so the injected vectorizers act
+# on this crate) and raises its pre-link pipeline to O3.
 [profile.wasm-release.package.robin_assets]
 opt-level = 3
 
