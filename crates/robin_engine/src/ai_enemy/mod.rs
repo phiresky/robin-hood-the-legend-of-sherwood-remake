@@ -2152,6 +2152,13 @@ impl EnemyAi {
             target_posture: view.posture,
             target_action_state: view.action_state,
             target_is_pc: view.is_pc,
+            cloak_deception_applies: view.posture == crate::element::Posture::Cloaked
+                && ctx.camp.is_hostile_to(view.camp),
+            cloak_remembers_target: self.list_them.contains(&target)
+                || self.base.primary_target == target,
+            // TODO(cloak-authoring): connect this seam only when an explicit
+            // modded profile schema supplies detector data.
+            cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
             sight_obstacles: ctx.obstacle_list(),
             fast_grid: &ctx.fast_grid,
             layer: ctx.position.level,

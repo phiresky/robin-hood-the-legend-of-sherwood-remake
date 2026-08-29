@@ -257,6 +257,9 @@ impl TraceSimConfig {
             fix_hard_reaction_times: false,
             // Untying is a post-port extension and stays off in Original traces.
             enable_unbinding: false,
+            // Reusable cloaks are an opt-in extension and must never alter
+            // original-parity traces.
+            reusable_cloaks: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,

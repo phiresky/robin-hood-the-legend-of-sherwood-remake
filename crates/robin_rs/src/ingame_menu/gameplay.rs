@@ -32,6 +32,7 @@ const OPTION_LABELS: &[&str] = &[
     "Control Tactical Units",
     "Allow Untying NPCs",
     "Sherwood Production Forecast",
+    "Reusable Cloaks",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -211,6 +212,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
         3 => config.show_production_forecast = !config.show_production_forecast,
+        4 => config.reusable_cloaks = !config.reusable_cloaks,
         _ => {}
     }
 }
@@ -221,6 +223,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
         3 => config.show_production_forecast,
+        4 => config.reusable_cloaks,
         _ => false,
     }
 }
@@ -238,6 +241,7 @@ mod tests {
                 "Control Tactical Units",
                 "Allow Untying NPCs",
                 "Sherwood Production Forecast",
+                "Reusable Cloaks",
             ]
         );
 
@@ -245,15 +249,24 @@ mod tests {
         assert!(!is_option_selected(&config, 1));
         assert!(is_option_selected(&config, 2));
         assert!(is_option_selected(&config, 3));
+        assert!(is_option_selected(&config, 4));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.show_production_forecast);
+        assert!(config.reusable_cloaks);
 
         apply_option_toggle(&mut config, 3);
         assert!(config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(!config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 4);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
     }
 }

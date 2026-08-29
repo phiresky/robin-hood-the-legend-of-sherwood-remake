@@ -48,6 +48,14 @@ pub struct GameplayConfig {
     /// underlying production simulation.
     #[serde(default = "default_show_production_forecast")]
     pub show_production_forecast: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
 }
 
 const fn default_show_production_forecast() -> bool {
@@ -61,6 +69,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             show_production_forecast: default_show_production_forecast(),
+            reusable_cloaks: true,
         }
     }
 }
@@ -82,6 +91,7 @@ mod tests {
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
     }
 
     #[test]
@@ -101,5 +111,10 @@ mod tests {
         let decoded: GameplayConfig =
             serde_json::from_str(&json).expect("deserialize gameplay config");
         assert!(!decoded.show_production_forecast);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }

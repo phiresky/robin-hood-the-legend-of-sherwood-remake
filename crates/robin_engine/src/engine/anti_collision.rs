@@ -360,6 +360,7 @@ pub fn entity_repulsive_point(
         | Posture::Siesta
         | Posture::CarryingCorpse
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::AnonymousArcher => Some(RepulsivePoint::new(pos, RADIUS_GUY, ACTIONRADIUS_GUY)),
 
         Posture::Lying

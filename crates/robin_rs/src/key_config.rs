@@ -67,6 +67,7 @@ const KEY_NAMES: &[&str] = &[
     "ShowViewCone",
     "QuickSave1",
     "QuickLoad1",
+    "ToggleCloak",
     "Dummy",
 ];
 
@@ -76,6 +77,18 @@ pub const REAL_KEY_COUNT: u16 = (KEY_NAMES.len() - 1) as u16;
 pub const KEY_NAME_COUNT: u16 = KEY_NAMES.len() as u16;
 
 impl KeyConfig {
+    /// Add the reusable-cloak action to a key profile written before the
+    /// action existed. Preserve all user bindings; V is used only when it is
+    /// still free, otherwise the new action starts unbound.
+    pub fn ensure_reusable_cloak_binding(&mut self) {
+        if self.get_binding("ToggleCloak").is_some() {
+            return;
+        }
+        let default_key =
+            (self.get_action_for_key(KeyCode::KeyV).is_none()).then_some(KeyCode::KeyV);
+        self.set_binding("ToggleCloak", default_key, None);
+    }
+
     /// Insert or update a binding for `action`.
     pub fn set_binding(
         &mut self,
@@ -199,6 +212,7 @@ impl KeyConfig {
             Some(AltLeft),        // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(KeyV),           // ToggleCloak
         ];
 
         let mut cfg = Self::default();
@@ -239,6 +253,7 @@ impl KeyConfig {
             Some(AltRight),       // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(KeyV),           // ToggleCloak
         ];
 
         let mut cfg = Self::default();
@@ -356,6 +371,29 @@ mod tests {
     }
 
     #[test]
+    fn legacy_key_profile_gains_non_destructive_cloak_binding() {
+        let mut free_v = KeyConfig::default();
+        free_v.set_binding("Crouch", Some(KeyCode::KeyC), None);
+        free_v.ensure_reusable_cloak_binding();
+        assert_eq!(
+            free_v.get_binding("ToggleCloak").unwrap().primary_key,
+            Some(KeyCode::KeyV)
+        );
+
+        let mut occupied_v = KeyConfig::default();
+        occupied_v.set_binding("Crouch", Some(KeyCode::KeyV), None);
+        occupied_v.ensure_reusable_cloak_binding();
+        assert_eq!(
+            occupied_v.get_binding("ToggleCloak").unwrap().primary_key,
+            None
+        );
+        assert_eq!(
+            occupied_v.get_binding("Crouch").unwrap().primary_key,
+            Some(KeyCode::KeyV)
+        );
+    }
+
+    #[test]
     fn preset_bindings_remain_exact() {
         use KeyCode::*;
 
@@ -392,6 +430,7 @@ mod tests {
                 Some(AltLeft),
                 Some(F1),
                 Some(F5),
+                Some(KeyV),
             ]
         );
 
@@ -428,6 +467,7 @@ mod tests {
                 Some(AltRight),
                 Some(F1),
                 Some(F5),
+                Some(KeyV),
             ]
         );
     }
