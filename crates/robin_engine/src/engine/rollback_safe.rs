@@ -317,6 +317,19 @@ impl Engine {
         HostConsoleDispatch { engine: self }
     }
 
+    /// Snapshot item stock and worker allocation from the live Sherwood map.
+    ///
+    /// This is presentation-only and does not mutate authoritative campaign
+    /// state. It intentionally uses the same capture routine as the mission
+    /// exit command so a production report opened after moving a worker is
+    /// never based on the previous visit's allocation.
+    pub fn live_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
+        self.inner.live_production_sectors(profiles)
+    }
+
     fn has_pending_recorded_drop_ale_route(
         &self,
         actor: EntityId,
