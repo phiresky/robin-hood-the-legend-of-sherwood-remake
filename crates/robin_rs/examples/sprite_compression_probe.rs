@@ -107,6 +107,20 @@ struct Cli {
     #[arg(long)]
     code3: Vec<String>,
 
+    /// Temporal conditional entropy: how much does the previous animation
+    /// frame's tile at the offset-aligned position predict the current
+    /// tile? Frame order and offsets come from the script metadata, which
+    /// ships with the chunk, so this context would cost no format bytes.
+    #[arg(long)]
+    entropy_temporal: Vec<String>,
+
+    /// Adjacent-direction conditional entropy: within each action group,
+    /// pair direction d with d+1 (22.5 degrees apart) at the same frame
+    /// index, offset-aligned, and measure how much the neighbor direction's
+    /// tile predicts.
+    #[arg(long)]
+    entropy_crossdir: Vec<String>,
+
     /// Two-sibling conditional entropy "A:B:C": how much do TWO previously
     /// decoded family members (A and B, aligned positionally) predict C?
     /// Prices multi-predecessor variant coding, which ships no extra bytes.
@@ -831,6 +845,228 @@ fn entropy3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str)
             "| A+B+above",
             cond_entropy_bits(&by_ab_above),
             by_ab_above.len(),
+        ),
+    ] {
+        println!(
+            "  {label:<12} {bits:>6.3} bits/tile  -> {:>9.0} bytes  ({nctx} contexts)",
+            bits * n_syms as f64 / 8.0
+        );
+    }
+    Ok(())
+}
+
+/// H(tile | previous-frame aligned tile [, above]) across every animation
+/// row of a character. Frames pair (k-1, k) within each script row; frame
+/// k's tile grid position maps into frame k-1 through the two frames' draw
+/// offsets. Tiles are 4x1, so a pair only tile-aligns when the x offset
+/// delta is a multiple of 4; coverage is reported.
+fn entropy_temporal(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+    let path = rhs_path(data_dir, name)?;
+    let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
+        .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
+    let mut n_syms = 0u64;
+    let mut n_tiles_total = 0u64;
+    let mut n_pairs = 0u64;
+    let mut n_pairs_misaligned = 0u64;
+    let mut n_exact = 0u64;
+    let mut by_prev: HashMap<u16, HashMap<u16, u64>> = HashMap::new();
+    let mut by_above: HashMap<u16, HashMap<u16, u64>> = HashMap::new();
+    let mut by_prev_above: HashMap<u32, HashMap<u16, u64>> = HashMap::new();
+    let mut seen_pairs: HashSet<(u32, u32)> = HashSet::new();
+    for (_pname, info) in &profiles {
+        for script in info.scripts.iter() {
+            for k in 1..script.frame_ids.len() {
+                let (id_prev, id_cur) = (script.frame_ids[k - 1], script.frame_ids[k]);
+                if id_prev == id_cur || !seen_pairs.insert((id_prev, id_cur)) {
+                    continue;
+                }
+                let (sp, sc) = (
+                    &holder.sprites()[id_prev as usize],
+                    &holder.sprites()[id_cur as usize],
+                );
+                if sp.dictionary_index == UNMAPPED_DICT || sc.dictionary_index == UNMAPPED_DICT {
+                    continue;
+                }
+                let (Some(pp), Some(pc)) =
+                    (holder.packed_data(id_prev), holder.packed_data(id_cur))
+                else {
+                    continue;
+                };
+                n_pairs += 1;
+                let (op, oc) = (
+                    script
+                        .offsets
+                        .get(k - 1)
+                        .map(|o| (o.x.round() as i32, o.y.round() as i32))
+                        .unwrap_or((0, 0)),
+                    script
+                        .offsets
+                        .get(k)
+                        .map(|o| (o.x.round() as i32, o.y.round() as i32))
+                        .unwrap_or((0, 0)),
+                );
+                let (dx, dy) = (oc.0 - op.0, oc.1 - op.1);
+                if dx % 4 != 0 {
+                    n_pairs_misaligned += 1;
+                    continue;
+                }
+                let dtx = dx / 4;
+                let (cols_c, cols_p) = ((sc.width / 4) as i32, (sp.width / 4) as i32);
+                n_tiles_total += pc.len() as u64;
+                for (i, &x) in pc.iter().enumerate() {
+                    let (col, row) = ((i as i32) % cols_c, (i as i32) / cols_c);
+                    let above = if row > 0 {
+                        pc[i - cols_c as usize]
+                    } else {
+                        0xFFFF
+                    };
+                    // Position in the previous frame's grid.
+                    let (pcol, prow) = (col + dtx, row + dy);
+                    let prev =
+                        if pcol >= 0 && prow >= 0 && pcol < cols_p && prow < (sp.height as i32) {
+                            pp[(prow * cols_p + pcol) as usize]
+                        } else {
+                            0xFFFF
+                        };
+                    n_syms += 1;
+                    if prev == x {
+                        n_exact += 1;
+                    }
+                    *by_prev.entry(prev).or_default().entry(x).or_default() += 1;
+                    *by_above.entry(above).or_default().entry(x).or_default() += 1;
+                    *by_prev_above
+                        .entry(((prev as u32) << 16) | above as u32)
+                        .or_default()
+                        .entry(x)
+                        .or_default() += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "## entropy-temporal {name}: {n_pairs} distinct frame pairs ({n_pairs_misaligned} x-misaligned skipped), {n_syms} tiles ({:.1}% exact prev match)",
+        100.0 * n_exact as f64 / n_syms.max(1) as f64
+    );
+    for (label, bits, nctx) in [
+        ("| prev", cond_entropy_bits(&by_prev), by_prev.len()),
+        ("| above", cond_entropy_bits(&by_above), by_above.len()),
+        (
+            "| prev+above",
+            cond_entropy_bits(&by_prev_above),
+            by_prev_above.len(),
+        ),
+    ] {
+        println!(
+            "  {label:<12} {bits:>6.3} bits/tile  -> {:>9.0} bytes  ({nctx} contexts)",
+            bits * n_syms as f64 / 8.0
+        );
+    }
+    let _ = n_tiles_total;
+    Ok(())
+}
+
+/// H(tile | same-frame tile in the adjacent direction), offset-aligned.
+/// Rows sharing an action id are the 16 camera directions in file order;
+/// direction d pairs with d+1 (22.5 degrees apart).
+fn entropy_crossdir(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+    let path = rhs_path(data_dir, name)?;
+    let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
+        .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
+    let mut n_syms = 0u64;
+    let mut n_pairs = 0u64;
+    let mut n_misaligned = 0u64;
+    let mut n_exact = 0u64;
+    let mut by_adj: HashMap<u16, HashMap<u16, u64>> = HashMap::new();
+    let mut by_above: HashMap<u16, HashMap<u16, u64>> = HashMap::new();
+    let mut by_adj_above: HashMap<u32, HashMap<u16, u64>> = HashMap::new();
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    for (_pname, info) in &profiles {
+        let mut by_action: BTreeMap<u16, Vec<&robin_engine::sprite_script::SpriteScript>> =
+            BTreeMap::new();
+        for s in info.scripts.iter() {
+            by_action.entry(s.action_id).or_default().push(s);
+        }
+        for rows in by_action.values() {
+            for d in 1..rows.len() {
+                let (ra, rb) = (rows[d - 1], rows[d]);
+                let frames = ra.frame_ids.len().min(rb.frame_ids.len());
+                for k in 0..frames {
+                    let (id_a, id_b) = (ra.frame_ids[k], rb.frame_ids[k]);
+                    if id_a == id_b || !seen.insert((id_a, id_b)) {
+                        continue;
+                    }
+                    let (sa, sb) = (
+                        &holder.sprites()[id_a as usize],
+                        &holder.sprites()[id_b as usize],
+                    );
+                    if sa.dictionary_index == UNMAPPED_DICT || sb.dictionary_index == UNMAPPED_DICT
+                    {
+                        continue;
+                    }
+                    let (Some(pa), Some(pb)) = (holder.packed_data(id_a), holder.packed_data(id_b))
+                    else {
+                        continue;
+                    };
+                    n_pairs += 1;
+                    let (oa, ob) = (
+                        ra.offsets
+                            .get(k)
+                            .map(|o| (o.x.round() as i32, o.y.round() as i32))
+                            .unwrap_or((0, 0)),
+                        rb.offsets
+                            .get(k)
+                            .map(|o| (o.x.round() as i32, o.y.round() as i32))
+                            .unwrap_or((0, 0)),
+                    );
+                    let (dx, dy) = (ob.0 - oa.0, ob.1 - oa.1);
+                    if dx % 4 != 0 {
+                        n_misaligned += 1;
+                        continue;
+                    }
+                    let dtx = dx / 4;
+                    let (cols_a, cols_b) = ((sa.width / 4) as i32, (sb.width / 4) as i32);
+                    for (i, &x) in pb.iter().enumerate() {
+                        let (col, row) = ((i as i32) % cols_b, (i as i32) / cols_b);
+                        let above = if row > 0 {
+                            pb[i - cols_b as usize]
+                        } else {
+                            0xFFFF
+                        };
+                        let (acol, arow) = (col + dtx, row + dy);
+                        let adj =
+                            if acol >= 0 && arow >= 0 && acol < cols_a && arow < (sa.height as i32)
+                            {
+                                pa[(arow * cols_a + acol) as usize]
+                            } else {
+                                0xFFFF
+                            };
+                        n_syms += 1;
+                        if adj == x {
+                            n_exact += 1;
+                        }
+                        *by_adj.entry(adj).or_default().entry(x).or_default() += 1;
+                        *by_above.entry(above).or_default().entry(x).or_default() += 1;
+                        *by_adj_above
+                            .entry(((adj as u32) << 16) | above as u32)
+                            .or_default()
+                            .entry(x)
+                            .or_default() += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "## entropy-crossdir {name}: {n_pairs} adjacent-direction pairs ({n_misaligned} x-misaligned skipped), {n_syms} tiles ({:.1}% exact adjacent match)",
+        100.0 * n_exact as f64 / n_syms.max(1) as f64
+    );
+    for (label, bits, nctx) in [
+        ("| adj-dir", cond_entropy_bits(&by_adj), by_adj.len()),
+        ("| above", cond_entropy_bits(&by_above), by_above.len()),
+        (
+            "| adj+above",
+            cond_entropy_bits(&by_adj_above),
+            by_adj_above.len(),
         ),
     ] {
         println!(
@@ -1934,6 +2170,12 @@ fn main() -> Result<()> {
     }
     for name in &cli.cm {
         cm(&holder, &cli.data_dir, name)?;
+    }
+    for name in &cli.entropy_temporal {
+        entropy_temporal(&holder, &cli.data_dir, name)?;
+    }
+    for name in &cli.entropy_crossdir {
+        entropy_crossdir(&holder, &cli.data_dir, name)?;
     }
     for pair in &cli.entropy2 {
         let (a, b) = pair
