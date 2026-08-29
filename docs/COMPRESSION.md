@@ -1526,3 +1526,59 @@ gating cost of the codec**, worth roughly its own workstream: wasm
 threads, further codec hot-path work, decode-cost-aware chunk format
 choice (keep first-mission closures on plain zstd), or lazy/streamed
 chunk install behind the loading screen.
+
+## Decode-speed campaign: 5x, and schema v11 (2026-08-29)
+
+Same-day follow-up to the measurement above. Native single-thread H01
+blocking-set materialize (the wasm proxy; `--decode-bench`, quiet box,
+interleaved mins):
+
+```
+v10 codec, v10 tree (start)                        36.0 s
++ no scratch materialization on the excl path      30.1 s
++ partition_point/rotate bubbling                  28.6 s
++ &mut chains, no re-lookup at bump                ~27 s
++ dense count mirrors (excl subtracts, O(|excl|))  18.3 s
++ schema v11: exclusion OFF (EXCL_SOURCE_CAP 0)    13.8 s   (+1.85% bytes)
++ known-outcome learning (bump_at / push_new),
+  hot first-level exits, no EDGE aux entries       11.3 s
++ pre-sized context maps                           ~10.9 s
+```
+
+Everything except the v11 cap change is bitstream-exact; all steps
+verified against the source bank (402,303 sprites, closure-check green;
+fullgame parallel materialize 43.5 -> 7.2 s). The key structural facts:
+the exclusion-path scratch copy was >half the profile; and every decoder
+chain level's outcome is provable (a hit knows its list index from the
+find; ANY miss proves absence, because the exclusion set can never
+contain the coded symbol), so learning never rescans a symbol list.
+
+The v11 fresh conversion also shrank the boot manifest 9,324,395 ->
+7,893,113 B (41.4 -> 16.9 MB raw): the v10 tree's resume chain predated
+`--interface-image-format jxl-q80`, so its manifest still embedded raw
+interface images.
+
+**H01 browser measurement, v11** (same setup as the v10 run):
+
+```
+                                   v10 (morning)      v11 (evening)
+wasm gzip + bindgen JS gzip         5,921,549 B        4,862,157 B
+boot datadir                        9,324,395 B        7,893,113 B
+blocking mission files             24,857,987 B (73)  25,272,333 B (73)
+total through first-mission        41,699,607 B       39,623,279 B
+navigation -> in-game                    71.6 s             23.5 s
+  of which wasm VQ decode                61.7 s             12.3 s
+```
+
+Smaller than the v8 baseline (41.66 MB) AND 3x faster to in-game than
+the morning's v10. Wasm decode now runs at roughly native single-thread
+speed (12.3 vs ~11 s; simd128 + O3 robin_assets, no LTO).
+
+Remaining levers, in rough value order: wasm threads for the
+materialize (12.3 -> ~2-4 s; needs an atomics build plus COOP/COEP via
+a service worker on GitHub Pages); overlap chunk decode with the fetch
+phase (~4 s hidden); a schema-v12 binary escape coder (the SEE
+`esc_freq` 64-bit division plus the escape-side `decode_target`
+division are ~2 divisions per visited level, an estimated 15-20% of
+decode); SIMD/block-skip symbol scans (`find_by_target` ~10%); and the
+~6 s session-setup phase, which is engine work, not codec.
