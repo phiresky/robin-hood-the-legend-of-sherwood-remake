@@ -40,9 +40,19 @@ fn with_audio<R>(f: impl FnOnce(&mut BrowserAudio) -> R) -> Result<R, String> {
     })
 }
 
-async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
-    let context = with_audio(|audio| audio.context.clone())?;
-    let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_owned())?;
+thread_local! {
+    /// Encoded bytes of already-downloaded logical audio bundles, keyed by
+    /// bundle URL. Bundles are content-addressed and mission-independent,
+    /// and total only a few MB encoded, so they are kept for the page's
+    /// lifetime; every member sound decodes from a slice without another
+    /// network round trip.
+    static BUNDLE_CACHE: RefCell<HashMap<String, js_sys::ArrayBuffer>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Fetch a URL to a raw ArrayBuffer.
+async fn fetch_array_buffer(url: &str) -> Result<js_sys::ArrayBuffer, String> {
+    let window = web_sys::window().ok_or("no window")?;
     let response = JsFuture::from(window.fetch_with_str(url))
         .await
         .map_err(|error| format!("fetch {url}: {error:?}"))?
@@ -51,7 +61,7 @@ async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
     if !response.ok() {
         return Err(format!("fetch {url}: HTTP {}", response.status()));
     }
-    let encoded = JsFuture::from(
+    JsFuture::from(
         response
             .array_buffer()
             .map_err(|error| format!("fetch {url}: arrayBuffer: {error:?}"))?,
@@ -59,7 +69,57 @@ async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
     .await
     .map_err(|error| format!("fetch {url}: read body: {error:?}"))?
     .dyn_into::<js_sys::ArrayBuffer>()
-    .map_err(|_| format!("fetch {url}: body is not an ArrayBuffer"))?;
+    .map_err(|_| format!("fetch {url}: body is not an ArrayBuffer"))
+}
+
+/// Bytes of the bundle at `url`, downloading and caching on first use.
+async fn bundle_bytes(url: &str) -> Result<js_sys::ArrayBuffer, String> {
+    if let Some(bytes) = BUNDLE_CACHE.with(|cache| cache.borrow().get(url).cloned()) {
+        return Ok(bytes);
+    }
+    let bytes = fetch_array_buffer(url).await?;
+    // A concurrent fetch of the same bundle may have raced us; either
+    // ArrayBuffer holds identical content-addressed bytes.
+    BUNDLE_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(url.to_owned())
+            .or_insert_with(|| bytes.clone())
+            .clone()
+    });
+    Ok(bytes)
+}
+
+/// Resolve one catalog asset to its own encoded ArrayBuffer: a plain fetch
+/// for standalone files, a cached-bundle slice for bundled ones.
+async fn asset_encoded_bytes(
+    asset: &robin_assets::shipping_datadir::RemoteAudioAsset,
+) -> Result<js_sys::ArrayBuffer, String> {
+    match asset.bundle_offset {
+        None => fetch_array_buffer(&asset.url).await,
+        Some(offset) => {
+            let bundle = bundle_bytes(&asset.url).await?;
+            let end = offset
+                .checked_add(asset.encoded_size)
+                .ok_or_else(|| format!("bundle slice overflow in {}", asset.url))?;
+            if end > bundle.byte_length() {
+                return Err(format!(
+                    "bundle {} is {} bytes; asset wants {offset}..{end}",
+                    asset.url,
+                    bundle.byte_length()
+                ));
+            }
+            Ok(bundle.slice_with_end(offset, end))
+        }
+    }
+}
+
+async fn fetch_and_decode(
+    asset: &robin_assets::shipping_datadir::RemoteAudioAsset,
+) -> Result<AudioBuffer, String> {
+    let url = &asset.url;
+    let context = with_audio(|audio| audio.context.clone())?;
+    let encoded = asset_encoded_bytes(asset).await?;
     let promise = context
         .decode_audio_data(&encoded)
         .map_err(|e| format!("decode {url}: {e:?}"))?;
@@ -70,9 +130,110 @@ async fn fetch_and_decode(url: &str) -> Result<AudioBuffer, String> {
         .map_err(|_| format!("decode {url}: result is not AudioBuffer"))
 }
 
+/// Cache key for a decoded buffer: bundled assets share a URL, so the slice
+/// offset keeps them distinct while aliases of the same slice still share.
+fn buffer_key(asset: &robin_assets::shipping_datadir::RemoteAudioAsset) -> String {
+    match asset.bundle_offset {
+        None => asset.url.clone(),
+        Some(offset) => format!("{}#{offset}", asset.url),
+    }
+}
+
+/// How many background prefetch requests run at once. Low on purpose: the
+/// point is warming the HTTP cache during play, not competing with gameplay
+/// traffic or the audio the player triggers right now.
+const PREFETCH_CONCURRENCY: usize = 3;
+
+thread_local! {
+    static PREFETCH_STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PREFETCH_QUEUE: RefCell<std::collections::VecDeque<PrefetchItem>> =
+        const { RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// One prefetch work item.
+enum PrefetchItem {
+    /// A logical-group bundle: downloaded into [`BUNDLE_CACHE`], so every
+    /// member sound later decodes without a network round trip.
+    Bundle(String),
+    /// A standalone asset (music/ambience): fetched and dropped, which
+    /// commits it to the browser HTTP cache without paying for decoded PCM.
+    Standalone(String),
+}
+
+/// One-shot background prefetch of the audio catalog.
+///
+/// Audio is otherwise fetched lazily at first playback; this starts from
+/// the first time any audio is requested — in practice the mission music
+/// right after the blocking load finishes — and pulls, in order: the
+/// ACTIVE mission's bundles and standalone tracks first, then every
+/// remaining catalog group (for later missions and the menu). Nothing is
+/// eagerly decoded: PCM for the whole catalog would cost hundreds of MB.
+/// The existing `loading`/`buffers` dedup keeps real loads authoritative.
+fn maybe_start_catalog_prefetch() {
+    if PREFETCH_STARTED.with(|started| started.replace(true)) {
+        return;
+    }
+    let Some(dd) = robin_assets::shipping_datadir::global() else {
+        return;
+    };
+    let mission_first: Vec<String> = dd.active_audio_keys();
+    let mut ordered = Vec::<PrefetchItem>::new();
+    let mut seen = HashSet::<String>::new();
+    let mut total_bytes: u64 = 0;
+    let mut push_key = |key: &str, ordered: &mut Vec<PrefetchItem>, seen: &mut HashSet<String>| {
+        let Some(asset) = dd.remote_audio_asset(Path::new(key)) else {
+            return;
+        };
+        if !seen.insert(asset.url.clone()) {
+            return;
+        }
+        total_bytes += u64::from(asset.encoded_size);
+        ordered.push(match asset.bundle_offset {
+            Some(_) => PrefetchItem::Bundle(asset.url),
+            None => PrefetchItem::Standalone(asset.url),
+        });
+    };
+    for key in &mission_first {
+        push_key(key, &mut ordered, &mut seen);
+    }
+    let catalog_keys: Vec<String> = dd.audio_catalog_keys().map(str::to_owned).collect();
+    for key in &catalog_keys {
+        push_key(key, &mut ordered, &mut seen);
+    }
+    drop(push_key);
+    if ordered.is_empty() {
+        return;
+    }
+    tracing::info!(
+        files = ordered.len(),
+        total_bytes,
+        mission_first = mission_first.len(),
+        workers = PREFETCH_CONCURRENCY,
+        "background audio prefetch started"
+    );
+    PREFETCH_QUEUE.with(|queue| queue.borrow_mut().extend(ordered));
+    for _ in 0..PREFETCH_CONCURRENCY {
+        wasm_bindgen_futures::spawn_local(async {
+            loop {
+                let Some(item) = PREFETCH_QUEUE.with(|queue| queue.borrow_mut().pop_front()) else {
+                    break;
+                };
+                let result = match &item {
+                    PrefetchItem::Bundle(url) => bundle_bytes(url).await.map(|_| ()),
+                    PrefetchItem::Standalone(url) => fetch_array_buffer(url).await.map(|_| ()),
+                };
+                if let Err(error) = result {
+                    tracing::debug!(error, "audio prefetch miss (will retry lazily)");
+                }
+            }
+        });
+    }
+}
+
 fn request_buffer(path: &str) -> Option<AudioBuffer> {
+    maybe_start_catalog_prefetch();
     let asset = robin_assets::shipping_datadir::global()?.remote_audio_asset(Path::new(path))?;
-    let url = asset.url;
+    let url = buffer_key(&asset);
     let (buffer, generation, should_load) = with_audio(|audio| {
         if let Some(buffer) = audio.buffers.get(&url) {
             return (Some(buffer.clone()), audio.generation, false);
@@ -93,7 +254,7 @@ fn request_buffer(path: &str) -> Option<AudioBuffer> {
 
     let requested_path = path.to_owned();
     wasm_bindgen_futures::spawn_local(async move {
-        let result = fetch_and_decode(&url).await;
+        let result = fetch_and_decode(&asset).await;
         let _ = with_audio(|audio| {
             // A mission transition invalidates in-flight work. In particular,
             // an old decode must not overwrite the same logical alias in the

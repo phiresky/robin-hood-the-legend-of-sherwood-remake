@@ -202,6 +202,12 @@ pub struct PopupScrollModalState {
     drop_cap_h: i32,
     page_body: String,
     text_remaining: String,
+    /// State-gates widget noises: menu buttons re-emit `WidgetFocused`
+    /// every hovered frame, and the untracked noise path replayed the
+    /// hover sound each frame (audible as an endless repeat over the
+    /// briefing OK button on the web backend, where per-frame voice
+    /// starts don't phase-stack).
+    noise_tracker: widget_bridge::NoisyTracker,
 }
 
 impl PopupScrollModalState {
@@ -273,6 +279,7 @@ impl PopupScrollModalState {
             drop_cap_h: 0,
             page_body: body,
             text_remaining: String::new(),
+            noise_tracker: widget_bridge::NoisyTracker::new(),
         };
         state.rebuild_page_widgets();
         state
@@ -320,13 +327,26 @@ impl PopupScrollModalState {
         let events = self.frame.process_input(&widget_input);
         self.input_state.end_frame();
         if let Some(backend) = audio_backend {
-            widget_bridge::play_widget_noise(
-                &events,
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                sound,
-                Some(backend),
-                sample_loader,
-            );
+            // Tracked variant: buttons re-emit WidgetFocused every hovered
+            // frame, so the state-gate is what keeps the hover sound to one
+            // play per hover instead of one per frame.
+            for event in &events {
+                let state = self
+                    .frame
+                    .widget(event.origin_widget_id)
+                    .map(|w| w.base().state)
+                    .unwrap_or(crate::ui::UiState::Default);
+                widget_bridge::play_widget_noise_tracked(
+                    std::slice::from_ref(event),
+                    widget_bridge::WIDGET_NOISY_BUTTON,
+                    sound,
+                    Some(&mut *backend),
+                    sample_loader,
+                    Some(&mut self.noise_tracker),
+                    state,
+                    false,
+                );
+            }
         }
         if widget_bridge::find_activated(&events).is_some() {
             dismissed = true;
