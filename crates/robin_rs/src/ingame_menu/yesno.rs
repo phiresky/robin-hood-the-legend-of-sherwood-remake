@@ -192,7 +192,9 @@ impl YesNoModalState {
             return Some(choice == YesNoChoice::Yes);
         }
 
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        self.transform = transform;
+        for event in events {
             self.input_state.update_from_event(&event, self.transform);
             if matches!(event, GameEvent::Quit) {
                 self.resolve(YesNoChoice::No);

@@ -914,6 +914,27 @@ impl Renderer {
         self.frame.configure_surface_size(&self.gpu, width, height);
     }
 
+    /// Synchronize both presentation and logical render-target dimensions
+    /// with a [`GameWindow`](crate::window::GameWindow).
+    ///
+    /// `GameWindow` owns the profile-backed aspect policy and transforms raw
+    /// pointer input. Keeping this operation here ensures the renderer's
+    /// swapchain bookkeeping and offscreen target change as one unit.
+    /// Returns `true` when the logical canvas was resized.
+    pub fn sync_window_size(&mut self, window: &crate::window::GameWindow) -> bool {
+        let (surface_width, surface_height) = window.surface_size();
+        self.configure_surface_size(surface_width, surface_height);
+        let (logical_width, logical_height) = window.logical_size();
+        let logical_width = logical_width.min(u32::from(u16::MAX)) as u16;
+        let logical_height = logical_height.min(u32::from(u16::MAX)) as u16;
+        let changed =
+            self.screen_width() != logical_width || self.screen_height() != logical_height;
+        if changed {
+            self.resize(logical_width, logical_height);
+        }
+        changed
+    }
+
     /// Cross the flush boundary and present in one shot. Loading/menu screens
     /// queue their own GPU draws before calling this.
     pub fn flip(&mut self) {
@@ -921,11 +942,10 @@ impl Renderer {
         self.present();
     }
 
-    /// Resize the renderer's logical resolution. Window-size changes
-    /// don't call this — the swapchain owns its own size and the
-    /// letterbox in `present()` adapts. Only call this when the game
-    /// genuinely wants to render at a new logical resolution (the
-    /// graphics-options menu, for example).
+    /// Resize the renderer's logical canvas. Pure presentation-size changes
+    /// only reconfigure the swapchain, while an aspect-policy change reaches
+    /// this through [`Self::sync_window_size`]. Graphics preset changes may
+    /// also call it indirectly through that synchronization path.
     pub fn resize(&mut self, width: u16, height: u16) {
         self.frame.resize(&self.gpu, &self.resources, width, height);
     }

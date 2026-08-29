@@ -221,16 +221,14 @@ pub(crate) async fn show_campaign_map(
             return Ok(CampaignMapChoice::Redisplay);
         }
 
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let (events, transform) = layout::poll_events_with_transform(window, renderer);
         let mut final_choice = None;
 
         let input_enabled = pseudo_debrief_at
             .map(|at| std::time::Instant::now() >= at)
             .unwrap_or(true);
 
-        for event in window.poll_events() {
+        for event in events {
             if !input_enabled {
                 input.update_from_event(&event, transform);
                 continue;

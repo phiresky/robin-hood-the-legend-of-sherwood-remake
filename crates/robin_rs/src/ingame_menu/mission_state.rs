@@ -252,8 +252,10 @@ impl MissionStateTransition {
             }
         }
 
-        // Drain pending input so the OS doesn't think the window is hung.
-        for _ in event_pump.poll_events() {}
+        // Drain pending input so the OS doesn't think the window is hung, and
+        // keep the transition centred if the presentation aspect changes.
+        let (_events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        self.transform = transform;
 
         // Interpolate bounds: destination = source + (final - source) * (1 - counter)
         let t = (1.0_f32 - self.counter.min(1.0)).clamp(0.0, 1.0);

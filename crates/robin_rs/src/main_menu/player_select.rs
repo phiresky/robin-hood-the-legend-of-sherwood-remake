@@ -142,7 +142,9 @@ pub(crate) async fn show_select_player(
 
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
-        for event in event_pump.poll_events() {
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit
@@ -244,9 +246,16 @@ pub(crate) async fn show_select_player(
                         } else {
                             name
                         };
+                        // Persist the selected 4:3 scale reference, not the
+                        // transient aspect-adapted canvas dimensions.
+                        let active = application_context
+                            .active_profile_snapshot()
+                            .unwrap_or_else(|error| {
+                                panic!("new-player flow lost the active profile: {error}")
+                            });
                         let screen_dims = (
-                            renderer.screen_width() as u32,
-                            renderer.screen_height() as u32,
+                            active.graphic_config.resolution_x.round() as u32,
+                            active.graphic_config.resolution_y.round() as u32,
                         );
                         let idx = create_new_profile(
                             application_context,
@@ -786,7 +795,9 @@ async fn run_name_prompt(
         let mut activated: Option<u32> = None;
         let mut confirmed = false;
         let mut cancelled = false;
-        for event in event_pump.poll_events() {
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit
