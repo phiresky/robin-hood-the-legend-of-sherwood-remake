@@ -1928,3 +1928,16 @@ also gained a boot progress bar (streamed byte progress through engine
 download/compile, assets, datadir, boot) and, for static hosts, the
 coi-serviceworker so threads work on GitHub Pages after one automatic
 first-visit reload.
+
+## Shipping integration: schema v14 — runtime locale overlays (2026-08-29)
+
+Datadir schema v14 (`RHDDNA14`) adds the canonical per-locale resources and
+raw byte maps used by runtime language switching. The serialized form keeps
+owned `Vec<u8>` values; loading converts those bytes to the VFS's shared
+`AssetBytes` representation only at the atomic locale-mount boundary. This
+keeps the on-disk manifest portable while avoiding repeated runtime copies.
+
+Mission payloads are unchanged at `RHMISN07`/v7. Because bitcode is not
+self-describing and the top-level datadir shape changed, older datadir
+manifests are rejected with a regeneration error instead of being decoded as
+the new shape or assigned an invented locale identity.

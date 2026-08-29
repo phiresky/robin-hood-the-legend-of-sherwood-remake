@@ -280,7 +280,15 @@ impl LocalizationService {
     ) -> Result<Self, LocalizationError> {
         let preferences = load_preferences(&store)?;
         let installed = discover_installed_languages(shipping);
-        let active = resolve_selection(&preferences.selection, &installed);
+        let active = match &preferences.selection {
+            LanguageSelection::Auto => resolve_selection(&preferences.selection, &installed),
+            LanguageSelection::Locale(locale) => Some(
+                installed
+                    .iter()
+                    .find(|pack| locale_eq(&pack.locale, locale))
+                    .ok_or_else(|| LocalizationError::Unavailable(locale.clone()))?,
+            ),
+        };
         let active_data_root = active.as_ref().map(|pack| pack.data_root.clone());
         install_file_lookup(active, &installed, shipping)?;
         let active_locale = active.map(|pack| pack.locale.clone());
@@ -973,5 +981,23 @@ mod tests {
         let path = dir.path().join("missing.json");
         let preferences = load_preferences(&PreferenceStore::Native(path)).unwrap();
         assert_eq!(preferences, LocalizationPreferences::default());
+    }
+
+    #[test]
+    fn explicit_unavailable_saved_locale_fails_initialization() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PREFERENCES_FILE);
+        persist_preferences(
+            &PreferenceStore::Native(path.clone()),
+            &LocalizationPreferences {
+                selection: LanguageSelection::Locale("zz-ZZ".to_owned()),
+                show_in_options: true,
+            },
+        )
+        .unwrap();
+
+        let error = LocalizationService::initialize_with_store(None, PreferenceStore::Native(path))
+            .unwrap_err();
+        assert!(matches!(error, LocalizationError::Unavailable(locale) if locale == "zz-ZZ"));
     }
 }

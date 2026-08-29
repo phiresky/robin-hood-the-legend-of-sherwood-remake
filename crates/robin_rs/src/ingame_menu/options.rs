@@ -62,6 +62,10 @@ const BUTTON_LANGUAGE: u32 = 6;
 const BUTTON_GAME_DATA: u32 = 4;
 const BUTTON_BACK: u32 = 5;
 
+fn language_option_visible(allow_language_switching: bool, selector_visible: bool) -> bool {
+    allow_language_switching && selector_visible
+}
+
 /// Display the in-game options hub.
 ///
 /// `sound` / `audio_backend` / `sample_loader` are threaded into the
@@ -115,11 +119,11 @@ pub async fn show_options(
         let language_label = application_context
             .port_text(crate::localization::PortTextKey::Language)
             .unwrap_or_else(|error| panic!("Options lost localized text: {error}"));
-        if allow_language_switching
+        let selector_visible = allow_language_switching
             && application_context
                 .language_selector_visible()
-                .unwrap_or_else(|error| panic!("Options lost language preferences: {error}"))
-        {
+                .unwrap_or_else(|error| panic!("Options lost language preferences: {error}"));
+        if language_option_visible(allow_language_switching, selector_visible) {
             entries.push((BUTTON_LANGUAGE, language_label));
         }
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -336,6 +340,19 @@ pub async fn show_options(
     }
 
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_option_visible;
+
+    #[test]
+    fn language_option_respects_main_menu_only_scope() {
+        assert!(language_option_visible(true, true));
+        assert!(!language_option_visible(true, false));
+        assert!(!language_option_visible(false, true));
+        assert!(!language_option_visible(false, false));
+    }
 }
 
 /// Build the hardware description line shown on the options hub.

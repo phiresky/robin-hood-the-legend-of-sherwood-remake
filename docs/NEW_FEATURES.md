@@ -126,20 +126,22 @@ A list of which additional features we have added, which ones we might still wan
   Windows system font in the original build too. See
   `assets/core-datadir/README.md`.
 
-- **Runtime language switching.** Options discovers and validates every
-  installed retail locale and offers an application-global `Automatic` or
-  explicit language choice without restarting the game. Applying a language
+- **Runtime language switching.** Main-menu Options discovers and validates
+  every installed retail locale and offers an application-global `Automatic`
+  or explicit language choice without restarting the game. Active-mission and
+  pause-menu Options deliberately do not expose the selector; the selected
+  language applies when the next session is built. Applying a language
   atomically replaces loose-datadir or shipping-bundle lookup, rebuilds eager
-  menu, mission-text, font, portrait-name, speech, and cinematic presentation
-  caches, and returns to the Options menu. Text never silently falls through
-  to a different language; only missing recorded speech and cinematics may use
-  an installed English pack. Shipping format v5 preserves complete per-locale
-  overlays for native, Android, and browser packages while still reading v4
-  manifests. Generated character names and persisted save labels remain
-  frozen, multiplayer mission text and playback are client-local, and logical
-  speech timing comes from either a stable canonical voice pack or the host's
-  explicit base `Data/Sounds` selection rather than the client's active
-  presentation language.
+  menu presentation caches, and returns to Options. Text never silently falls
+  through to a different language; only missing recorded speech and
+  cinematics may use an installed English pack. Shipping datadir format v14
+  preserves complete per-locale overlays for native, Android, and browser
+  packages; older manifests fail loudly and must be regenerated. Generated
+  character names and persisted save labels remain frozen, multiplayer mission
+  text and playback are client-local, and logical speech timing comes from
+  either a stable canonical voice pack or the host's explicit base
+  `Data/Sounds` selection rather than the client's active presentation
+  language.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
