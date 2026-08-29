@@ -13,8 +13,8 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_H, MENU_W, MenuTransform, align_bottom_right, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    MENU_H, MENU_W, align_bottom_right, draw_screen_background, enter_modal_gpu_phase,
+    render_text_virt_font,
 };
 use crate::ingame_menu::resources::{MT_BTN_BACK, MT_BTN_SHOW_MOVIES};
 use crate::ingame_menu::widget_bridge::{self, ModalInputState};

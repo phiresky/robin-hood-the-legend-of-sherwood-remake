@@ -1393,7 +1393,6 @@ pub(super) async fn handle_pause_menu_events(
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_renderer: &mut CursorRenderer,
-    portrait_cache: &mut PortraitCache,
     mission_resources: &mut MissionResources,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
@@ -1483,8 +1482,13 @@ pub(super) async fn handle_pause_menu_events(
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                        let resources =
+                            required_menu_resources(&mission_resources.menu, "pause-menu options");
+                        let cursor = Some(default_modal_cursor(
+                            cursor_renderer,
+                            &mut mission_resources.cursor,
+                            renderer,
+                        ));
                         let options_outcome = ingame_menu::show_options(
                             &host.application_context,
                             false,

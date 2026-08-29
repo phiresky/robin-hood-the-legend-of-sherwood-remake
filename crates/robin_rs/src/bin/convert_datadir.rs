@@ -2073,8 +2073,10 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let filename = res_descr::red_filename(mp.id);
         let red_rel = format!("Text/{filename}");
         if let Some(red_path) = in_path(&red_rel) {
-            dd.red_files
-                .insert(filename, res_descr::load(&red_path.to_string_lossy())?);
+            dd.red_files.insert(
+                filename.clone(),
+                res_descr::load(&red_path.to_string_lossy())?,
+            );
         } else {
             // Some stock profiles have no descriptor in the source install.
             // Preserve that absence; never synthesize authoritative UI data.
@@ -2082,6 +2084,17 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 profile_id = mp.id,
                 "source mission descriptor is absent: {red_rel}"
             );
+        }
+        for source in &locale_dirs {
+            let Some(path) = resolve_data_file(&source.data_dir, &red_rel) else {
+                continue;
+            };
+            let descriptors = res_descr::load(&path.to_string_lossy())?;
+            dd.locales
+                .get_mut(source.iso)
+                .expect("detected shipping locale was initialized")
+                .red_files
+                .insert(canonical_shipping_asset_key(&filename), descriptors);
         }
     }
 
@@ -2330,24 +2343,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .insert(mp.mission_filename.clone(), parsed);
         } else {
             tracing::warn!("missing: {}", scb_rel);
-        }
-        if let Some(p) = in_path(&red_rel) {
-            let desc = res_descr::load(&p.to_string_lossy())?;
-            dd.red_files.insert(res_descr::red_filename(mp.id), desc);
-        }
-        for source in &locale_dirs {
-            let Some(path) = resolve_data_file(&source.data_dir, &red_rel) else {
-                continue;
-            };
-            let descriptors = res_descr::load(&path.to_string_lossy())?;
-            dd.locales
-                .get_mut(source.iso)
-                .expect("detected shipping locale was initialized")
-                .red_files
-                .insert(
-                    canonical_shipping_asset_key(&res_descr::red_filename(mp.id)),
-                    descriptors,
-                );
         }
         mission_builds.insert(mp.mission_filename.clone(), build);
     }

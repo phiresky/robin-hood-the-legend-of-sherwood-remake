@@ -39,6 +39,7 @@ use robin_engine::sbfile as engine_sbfile;
 use robin_engine::scb as engine_scb;
 use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sound::ExclamationGroup;
+use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::titbit::SpriteRow;
 
@@ -764,7 +765,6 @@ pub(super) fn setup_mission_audio(
         host,
         assets,
         profiles,
-        &loader,
         sound_dir,
         &canonical_loader,
         &canonical_base,

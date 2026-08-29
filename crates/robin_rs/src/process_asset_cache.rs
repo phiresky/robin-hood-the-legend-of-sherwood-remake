@@ -223,6 +223,7 @@ fn build_exclamations(
 
     build_exclamations_from(
         profiles,
+        shipping,
         &mut excl_res,
         |dat_filename| {
             let path = format!("Data/Sounds/Exclamations/{dat_filename}");
@@ -275,6 +276,7 @@ pub fn build_exclamations_for_language(
     let locale = pack.locale.clone();
     build_exclamations_from(
         profiles,
+        shipping,
         &mut resources,
         |dat_filename| {
             if data_root.is_empty() {
@@ -297,6 +299,7 @@ pub fn build_exclamations_for_language(
 
 fn build_exclamations_from(
     profiles: &ProfileManager,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     excl_res: &mut ResourceManager,
     mut read_definition: impl FnMut(&str) -> Result<Vec<u8>, String>,
     source: &str,

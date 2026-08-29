@@ -373,7 +373,6 @@ pub(super) async fn drive_live_gameplay_input(
         context.window,
         &mut context.presentation.renderer,
         &mut context.presentation.sprites.cursor_renderer,
-        &mut context.presentation.sprites.portrait_cache,
         context.resources,
         &mut context.audio.backend,
         &context.audio.sample_loader,
