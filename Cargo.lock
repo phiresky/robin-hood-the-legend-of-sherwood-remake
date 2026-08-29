@@ -5491,6 +5491,7 @@ dependencies = [
  "mainline",
  "mint",
  "mlua",
+ "naga",
  "ogg",
  "parking_lot",
  "png",

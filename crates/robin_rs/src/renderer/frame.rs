@@ -3,6 +3,7 @@
 use crate::gfx_types::Rect;
 use crate::gpu_upscale::GpuUpscale;
 use crate::window::{GpuContext, PresentationRect, SharedSurface};
+use robin_engine::graphic_config::{TextureEffect, TextureScaleMode};
 
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
@@ -11,17 +12,44 @@ use super::{
     present_time_record, upload_counter,
 };
 
+fn presentation_profile(
+    ui_only_frame: bool,
+    configured_mode: TextureScaleMode,
+    configured_effect: TextureEffect,
+) -> (TextureScaleMode, TextureEffect) {
+    if ui_only_frame {
+        // Match the sharp-bilinear UI composite. This is still valid at
+        // fractional window scales, unlike forcing raw nearest-neighbour.
+        (TextureScaleMode::PixelArt, TextureEffect::None)
+    } else {
+        (configured_mode, configured_effect)
+    }
+}
+
 pub(super) struct FrameState {
     pub(super) width: u16,
     pub(super) height: u16,
     gpu_phase_active: bool,
-    shader_frame_count: Option<usize>,
+    /// Counts frames that actually reach the presentation queue. Temporal
+    /// display effects deliberately advance here rather than on simulation
+    /// ticks, so 90/120/144 Hz presentation remains smooth while paused.
+    presentation_frame_count: usize,
+    /// Top-level screens such as the main menu have no separate world
+    /// layer, but still need to remain outside the configured gameplay
+    /// upscaler/effect chain. They render into the ordinary logical target
+    /// (so modal freezing keeps working) and request the same sharp
+    /// presentation profile used by the split UI layer.
+    ui_only_frame: bool,
     surface: SharedSurface,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     pub(super) render_target_texture: wgpu::Texture,
     render_target_view: wgpu::TextureView,
+    ui_target_texture: wgpu::Texture,
+    ui_target_view: wgpu::TextureView,
     _sprite_stencil_texture: wgpu::Texture,
     sprite_stencil_view: wgpu::TextureView,
+    _ui_stencil_texture: wgpu::Texture,
+    ui_stencil_view: wgpu::TextureView,
     render_target_bg: wgpu::BindGroup,
     alpha_source_texture: wgpu::Texture,
     alpha_source_view: wgpu::TextureView,
@@ -33,6 +61,7 @@ pub(super) struct FrameState {
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: u64,
     pub(super) queued: Vec<QueuedDraw>,
+    ui_layer_start: Option<usize>,
     pub(super) frame_texture_bgs: Vec<wgpu::BindGroup>,
     blit_vbo: Option<wgpu::Buffer>,
     pub(super) frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
@@ -46,7 +75,7 @@ impl FrameState {
         resources: &GpuResources,
     ) {
         let present_start = web_time::Instant::now();
-        let shader_frame_count = self.shader_frame_count.take();
+        let presentation_frame_count = self.presentation_frame_count;
         self.push_implicit_base_quad();
         self.upload_queue_geometry(gpu);
 
@@ -83,7 +112,21 @@ impl FrameState {
                 label: Some("present"),
             });
 
-        self.encode_pass1_to_rt(&mut encoder, pipelines, resources);
+        self.encode_scene_to_rt(&mut encoder, pipelines, resources);
+        if let Some(ui_start) = self.ui_layer_start
+            && ui_start < self.queued.len()
+        {
+            self.encode_pass_range_to_target(
+                &mut encoder,
+                pipelines,
+                resources,
+                ui_start,
+                self.queued.len(),
+                &self.ui_target_view,
+                &self.ui_stencil_view,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            );
+        }
 
         // ── Pass 2: blit RT into swapchain with letterbox ──
         // Compute the largest aspect-correct dst rect that fits in the
@@ -164,63 +207,77 @@ impl FrameState {
             bytemuck::bytes_of(&screen_swap),
         );
 
-        let multipass_upscale = GpuUpscale::is_multipass_mode(pipelines.scale_mode);
-        let multipass_rendered = multipass_upscale
-            && pipelines
+        let (scale_mode, texture_effect) = presentation_profile(
+            self.ui_only_frame,
+            pipelines.scale_mode,
+            pipelines.texture_effect,
+        );
+        let multipass_upscale = GpuUpscale::is_multipass_mode(scale_mode, texture_effect);
+        let multipass_rendered = if multipass_upscale {
+            pipelines
                 .gpu_upscale
                 .render_multipass(
-                    pipelines.scale_mode,
+                    scale_mode,
                     &mut encoder,
                     &self.render_target_texture,
                     &swap_view,
                     [swap_w, swap_h],
                     [dx, dy, dst_w, dst_h],
-                    shader_frame_count,
+                    Some(presentation_frame_count),
                     Some(pipelines.shader_preset.as_str()),
+                    texture_effect,
+                    pipelines.upscale_parameters,
+                    pipelines.texture_effect_parameters,
                 )
-                .is_some();
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "selected upscaler/effect failed instead of silently falling back: {error}"
+                    )
+                })
+        } else {
+            false
+        };
         if !multipass_rendered {
             // Shader-based upscalers (sharp-bilinear, bicubic, lanczos,
             // CUT3, scale2x/3x, xBR) want their own pipeline + uniforms.
             // Build the per-frame source bind group + uniform write here
             // so the borrow on `gpu_upscale` doesn't outlive the pass.
-            let upscale_state = if pipelines.scale_mode.needs_shader() && !multipass_upscale {
-                pipelines
+            let upscale_state = if scale_mode.needs_shader() && !multipass_upscale {
+                let selected_mode = scale_mode;
+                let up = pipelines
                     .gpu_upscale
-                    .pipeline_for(pipelines.scale_mode)
-                    .map(|up| {
-                        let uniforms = crate::gpu_upscale::FrameUniforms {
-                            src: [
-                                self.width as f32,
-                                self.height as f32,
-                                1.0 / self.width as f32,
-                                1.0 / self.height as f32,
-                            ],
-                            dst: [dst_w, dst_h, 1.0 / dst_w, 1.0 / dst_h],
-                        };
-                        gpu.queue.write_buffer(
-                            &up.uniform_buffer,
-                            0,
-                            bytemuck::bytes_of(&uniforms),
-                        );
-                        let tex_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("upscale src bg"),
-                            layout: &up.bind_group_layout_tex,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(
-                                        &self.render_target_view,
-                                    ),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&up.sampler),
-                                },
-                            ],
-                        });
-                        (up, tex_bg)
-                    })
+                    .pipeline_for(selected_mode)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "selected shader mode {selected_mode:?} has no pipeline; refusing fallback"
+                        )
+                    });
+                let uniforms = crate::gpu_upscale::FrameUniforms {
+                    src: [
+                        self.width as f32,
+                        self.height as f32,
+                        1.0 / self.width as f32,
+                        1.0 / self.height as f32,
+                    ],
+                    dst: [dst_w, dst_h, 1.0 / dst_w, 1.0 / dst_h],
+                };
+                gpu.queue
+                    .write_buffer(&up.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                let tex_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("upscale src bg"),
+                    layout: &up.bind_group_layout_tex,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&self.render_target_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&up.sampler),
+                        },
+                    ],
+                });
+                Some((up, tex_bg))
             } else {
                 None
             };
@@ -263,8 +320,21 @@ impl FrameState {
             }
         }
 
+        if self
+            .ui_layer_start
+            .is_some_and(|start| start < self.queued.len())
+        {
+            pipelines.gpu_upscale.render_ui_overlay(
+                &mut encoder,
+                &self.ui_target_texture,
+                &swap_view,
+                [dx as f32, dy as f32, dst_w, dst_h],
+            );
+        }
+
         gpu.queue.submit(Some(encoder.finish()));
         gpu.queue.present(frame);
+        self.presentation_frame_count = self.presentation_frame_count.wrapping_add(1);
         if reconfigure_after_present {
             self.reconfigure_surface(gpu);
         }
@@ -291,6 +361,16 @@ impl FrameState {
 
     pub(super) fn enter_gpu_phase(&mut self) {
         self.gpu_phase_active = true;
+    }
+
+    pub(super) fn begin_ui_layer(&mut self) {
+        if self.ui_layer_start.is_none() {
+            self.ui_layer_start = Some(self.queued.len());
+        }
+    }
+
+    pub(super) fn begin_ui_only_frame(&mut self) {
+        self.ui_only_frame = true;
     }
 
     pub(super) fn freeze_scene(&mut self, gpu: &GpuContext, resources: &GpuResources) {
@@ -352,10 +432,6 @@ impl FrameState {
         self.frozen_scene = None;
     }
 
-    pub(super) fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
-        self.shader_frame_count = frame_count;
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         gpu: &GpuContext,
@@ -372,7 +448,11 @@ impl FrameState {
         let render_target_texture = create_render_target(&gpu.device, width, height);
         let render_target_view =
             render_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_target_texture = create_render_target(&gpu.device, width, height);
+        let ui_target_view = ui_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (sprite_stencil_texture, sprite_stencil_view) =
+            make_sprite_stencil_texture(&gpu.device, width, height);
+        let (ui_stencil_texture, ui_stencil_view) =
             make_sprite_stencil_texture(&gpu.device, width, height);
         let render_target_bg = make_tex_bg(
             &gpu.device,
@@ -393,13 +473,18 @@ impl FrameState {
             width,
             height,
             gpu_phase_active: false,
-            shader_frame_count: None,
+            presentation_frame_count: 0,
+            ui_only_frame: false,
             surface,
             surface_config,
             render_target_texture,
             render_target_view,
+            ui_target_texture,
+            ui_target_view,
             _sprite_stencil_texture: sprite_stencil_texture,
             sprite_stencil_view,
+            _ui_stencil_texture: ui_stencil_texture,
+            ui_stencil_view,
             render_target_bg,
             alpha_source_texture,
             alpha_source_view,
@@ -411,6 +496,7 @@ impl FrameState {
             vertex_buffer: None,
             vertex_capacity: 0,
             queued: Vec::new(),
+            ui_layer_start: None,
             frame_texture_bgs: Vec::new(),
             blit_vbo: None,
             frozen_scene: None,
@@ -435,6 +521,9 @@ impl FrameState {
                     blend: crate::gfx_types::BlendMode::None,
                 },
             );
+            if let Some(start) = &mut self.ui_layer_start {
+                *start += 1;
+            }
         }
     }
 
@@ -522,6 +611,8 @@ impl FrameState {
         self.queued.clear();
         self.frame_texture_bgs.clear();
         self.gpu_phase_active = false;
+        self.ui_layer_start = None;
+        self.ui_only_frame = false;
     }
 
     fn reconfigure_surface(&self, gpu: &GpuContext) {
@@ -559,10 +650,18 @@ impl FrameState {
         self.render_target_view = self
             .render_target_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.ui_target_texture = create_render_target(&gpu.device, width, height);
+        self.ui_target_view = self
+            .ui_target_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let (stencil_texture, stencil_view) =
             make_sprite_stencil_texture(&gpu.device, width, height);
         self._sprite_stencil_texture = stencil_texture;
         self.sprite_stencil_view = stencil_view;
+        let (ui_stencil_texture, ui_stencil_view) =
+            make_sprite_stencil_texture(&gpu.device, width, height);
+        self._ui_stencil_texture = ui_stencil_texture;
+        self.ui_stencil_view = ui_stencil_view;
         self.render_target_bg = make_tex_bg(
             &gpu.device,
             &resources.bgl_tex,
@@ -585,6 +684,27 @@ impl FrameState {
         // logical target, avoiding a black backdrop until gameplay resumes
         // and redraws at the new dimensions. The gameplay path explicitly
         // clears the snapshot on its next frame.
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn ui_only_frames_bypass_gameplay_scaling_and_effects() {
+        assert_eq!(
+            presentation_profile(true, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::PixelArt, TextureEffect::None)
+        );
+    }
+
+    #[test]
+    fn gameplay_frames_keep_the_configured_profile() {
+        assert_eq!(
+            presentation_profile(false, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale)
+        );
     }
 }
 
@@ -668,43 +788,101 @@ impl FrameState {
             .iter()
             .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
         let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
-            self.encode_pass1_range_to_rt(
+            self.encode_pass_range_to_target(
                 encoder,
                 pipelines,
                 resources,
                 0,
                 self.queued.len(),
+                &self.render_target_view,
+                &self.sprite_stencil_view,
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK),
             );
             return;
         };
 
-        self.encode_pass1_range_to_rt(
+        self.encode_pass_range_to_target(
             encoder,
             pipelines,
             resources,
             0,
             first_framebuffer_alpha,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
             wgpu::LoadOp::Clear(wgpu::Color::BLACK),
         );
         self.copy_rt_to_alpha_source(encoder);
-        self.encode_pass1_range_to_rt(
+        self.encode_pass_range_to_target(
             encoder,
             pipelines,
             resources,
             first_framebuffer_alpha,
             self.queued.len(),
+            &self.render_target_view,
+            &self.sprite_stencil_view,
             wgpu::LoadOp::Load,
         );
     }
 
-    fn encode_pass1_range_to_rt(
+    /// Encode only the world/video layer for presentation effects. Readback
+    /// continues to use `encode_pass1_to_rt` so screenshots retain HUD/UI.
+    fn encode_scene_to_rt(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipelines: &PipelineStore,
+        resources: &GpuResources,
+    ) {
+        let end = self.ui_layer_start.unwrap_or(self.queued.len());
+        let first_framebuffer_alpha = self
+            .queued
+            .iter()
+            .take(end)
+            .position(|draw| matches!(draw.tex, TextureRef::FramebufferAlpha));
+        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
+            self.encode_pass_range_to_target(
+                encoder,
+                pipelines,
+                resources,
+                0,
+                end,
+                &self.render_target_view,
+                &self.sprite_stencil_view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            );
+            return;
+        };
+        self.encode_pass_range_to_target(
+            encoder,
+            pipelines,
+            resources,
+            0,
+            first_framebuffer_alpha,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+        self.copy_rt_to_alpha_source(encoder);
+        self.encode_pass_range_to_target(
+            encoder,
+            pipelines,
+            resources,
+            first_framebuffer_alpha,
+            end,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
+            wgpu::LoadOp::Load,
+        );
+    }
+
+    fn encode_pass_range_to_target(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pipelines: &PipelineStore,
         resources: &GpuResources,
         start: usize,
         end: usize,
+        target_view: &wgpu::TextureView,
+        stencil_view: &wgpu::TextureView,
         load: wgpu::LoadOp<wgpu::Color>,
     ) {
         if start >= end && !matches!(load, wgpu::LoadOp::Clear(_)) {
@@ -713,7 +891,7 @@ impl FrameState {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("present quads → RT"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.render_target_view,
+                view: target_view,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
@@ -722,7 +900,7 @@ impl FrameState {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.sprite_stencil_view,
+                view: stencil_view,
                 depth_ops: None,
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
