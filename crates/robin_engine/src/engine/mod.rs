@@ -5980,6 +5980,15 @@ mod campaign_lifecycle_tests {
         assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 11);
         assert_eq!(campaign.values[CampaignValue::Score], 1013);
         assert_eq!(engine.mission_domain.mission_stat.added_score, 1000);
+        assert_eq!(
+            campaign.missions[0]
+                .attempt_history()
+                .latest()
+                .expect("successful quit records an immutable attempt")
+                .stats()
+                .added_score,
+            Some(1000)
+        );
         assert_eq!(engine.mission_domain.mission_stat.new_peasant_count, 0);
         assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 2);
         assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 5);

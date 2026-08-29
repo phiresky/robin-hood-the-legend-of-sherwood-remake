@@ -2146,8 +2146,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             cursor,
             pseudo_debrief_pending,
             campaign_view_config.campaign_presentation,
-            campaign_view_config.campaign_history_details,
-            campaign_view_config.campaign_history_replays,
             &campaign_profile.campaign_history,
         )
         .await?;

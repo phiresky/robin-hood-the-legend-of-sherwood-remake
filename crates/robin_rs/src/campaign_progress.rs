@@ -1,4 +1,4 @@
-//! Pure campaign graph and Sherwood museum presentation models.
+//! Pure campaign graph and modal Hall-of-Deeds presentation models.
 
 use std::collections::HashMap;
 
@@ -76,10 +76,7 @@ pub struct CampaignProgressNode {
 }
 
 impl CampaignProgressNode {
-    pub fn summary(&self, include_history: bool) -> String {
-        if !include_history {
-            return self.name.clone();
-        }
+    pub fn summary(&self) -> String {
         let mut summary = format!(
             "{}  |  {:?}  |  {} attempt{} / {} win{}",
             self.name,
@@ -122,7 +119,6 @@ impl CampaignProgressGraph {
     pub fn build(
         campaign: &Campaign,
         profiles: &ProfileManager,
-        allow_replays: bool,
         lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
     ) -> Self {
         let sherwood = campaign.get_sherwood_mission_idx();
@@ -204,8 +200,8 @@ impl CampaignProgressGraph {
                 badge_count: mission.achievement_badges().len(),
                 lifetime_attempt_count,
                 lifetime_win_count,
-                selectable: accessible || (allow_replays && has_win),
-                history_replay: !accessible && allow_replays && has_win,
+                selectable: accessible || has_win,
+                history_replay: !accessible && has_win,
             });
         }
 
@@ -297,15 +293,15 @@ impl CampaignProgressGraph {
     }
 }
 
-/// Deterministic grid navigation used by the walkable museum presentation.
+/// Deterministic keyboard navigation used by the modal exhibit grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MuseumNavigator {
+pub struct ExhibitGridNavigator {
     pub selected: usize,
     columns: usize,
     len: usize,
 }
 
-impl MuseumNavigator {
+impl ExhibitGridNavigator {
     pub fn new(len: usize, initial: usize) -> Self {
         let columns = 4;
         Self {
@@ -315,7 +311,7 @@ impl MuseumNavigator {
         }
     }
 
-    pub fn walk(&mut self, dx: isize, dy: isize) {
+    pub fn navigate(&mut self, dx: isize, dy: isize) {
         if self.len == 0 {
             return;
         }
@@ -362,7 +358,7 @@ mod tests {
             });
         }
         campaign.accessible_mission_indices.push(1);
-        let graph = CampaignProgressGraph::build(&campaign, &profiles, true, None);
+        let graph = CampaignProgressGraph::build(&campaign, &profiles, None);
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.nodes[0].depth, 0);
         assert_eq!(graph.nodes[1].depth, 1);
@@ -372,10 +368,10 @@ mod tests {
 
     #[test]
     fn museum_navigation_clamps_to_real_exhibits() {
-        let mut nav = MuseumNavigator::new(6, 0);
-        nav.walk(3, 1);
+        let mut nav = ExhibitGridNavigator::new(6, 0);
+        nav.navigate(3, 1);
         assert_eq!(nav.selected, 5);
-        nav.walk(-1, -1);
+        nav.navigate(-1, -1);
         assert_eq!(nav.selected, 0);
     }
 
@@ -431,8 +427,7 @@ mod tests {
             1
         );
 
-        let graph =
-            CampaignProgressGraph::build(&current_campaign, &profiles, true, Some(&lifetime));
+        let graph = CampaignProgressGraph::build(&current_campaign, &profiles, Some(&lifetime));
         assert_eq!(graph.nodes[0].attempt_count, 1);
         assert_eq!(graph.nodes[0].lifetime_attempt_count, 2);
         assert_eq!(graph.nodes[0].lifetime_win_count, 2);

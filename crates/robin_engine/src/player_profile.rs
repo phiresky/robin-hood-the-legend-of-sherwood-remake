@@ -153,13 +153,8 @@ pub struct PlayerProfile {
     pub preserved_lives: u32,
     pub play_time: u32,
     pub progression: u32,
-    /// Legacy compatibility union from profiles predating canonical lifetime
-    /// attempt attestations. New awards are derived from `campaign_history`.
-    #[serde(default)]
-    pub earned_achievements: crate::achievement::AchievementSet,
     /// Lossless all-time history, independent from replaceable campaign save
     /// slots. Campaign attempts are promoted idempotently at synchronization.
-    #[serde(default)]
     pub campaign_history: crate::campaign_history::ProfileCampaignHistory,
     pub minimap_x: f32,
     pub minimap_y: f32,
@@ -187,7 +182,6 @@ impl PlayerProfile {
             preserved_lives: 0,
             play_time: 0,
             progression: 0,
-            earned_achievements: crate::achievement::AchievementSet::empty(),
             campaign_history: crate::campaign_history::ProfileCampaignHistory::default(),
             minimap_x: 65536.0,
             minimap_y: 65536.0,
@@ -199,9 +193,7 @@ impl PlayerProfile {
     }
 
     pub fn earned_achievements(&self) -> crate::achievement::AchievementSet {
-        let mut earned = self.earned_achievements;
-        earned.union_with(self.campaign_history.eligible_badges());
-        earned
+        self.campaign_history.eligible_badges()
     }
 
     pub fn promote_campaign_history(
@@ -214,18 +206,6 @@ impl PlayerProfile {
 
     pub fn lifetime_campaign_totals(&self) -> crate::campaign_history::CampaignHistoryTotals {
         self.campaign_history.totals()
-    }
-
-    fn migrate_legacy_campaign_aggregate(&mut self) -> bool {
-        self.campaign_history.migrate_legacy_profile_aggregate(
-            crate::campaign_history::LegacyProfileAggregate {
-                score: self.score,
-                ransom: self.ransom,
-                preserved_lives_percent: self.preserved_lives,
-                play_time_seconds: self.play_time,
-                progression_percent: self.progression,
-            },
-        )
     }
 }
 
@@ -277,31 +257,17 @@ impl PlayerProfileManager {
 
         if path.exists() {
             let data = fs::read_to_string(&path)?;
-            let document: serde_json::Value = serde_json::from_str(&data)
+            let mut mgr: PlayerProfileManager = serde_json::from_str(&data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let legacy_history = document
-                .get("profiles")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| {
+            for (index, profile) in mgr.profiles.iter().enumerate() {
+                profile.campaign_history.validate_schema().map_err(|version| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "player profile document is missing its profiles array",
+                        format!(
+                            "player profile {index} has invalid or unsupported campaign-history schema {version}"
+                        ),
                     )
-                })?
-                .iter()
-                .map(|profile| profile.get("campaign_history").is_none())
-                .collect::<Vec<_>>();
-            let mut mgr: PlayerProfileManager = serde_json::from_value(document)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            assert_eq!(
-                mgr.profiles.len(),
-                legacy_history.len(),
-                "typed profile count changed while deserializing the inspected JSON document"
-            );
-            for (profile, legacy) in mgr.profiles.iter_mut().zip(legacy_history) {
-                if legacy {
-                    profile.migrate_legacy_campaign_aggregate();
-                }
+                })?;
             }
             mgr.save_directory = directory.to_owned();
             Ok(mgr)
@@ -662,17 +628,16 @@ mod tests {
     }
 
     #[test]
-    fn profile_json_without_achievement_field_starts_empty() {
+    fn profile_json_without_campaign_history_is_rejected() {
         let mut mgr = PlayerProfileManager::new("/tmp/test_profiles".into());
         mgr.create_profile("Robin".into(), DifficultyLevel::Medium);
         let mut json = serde_json::to_value(&mgr).unwrap();
         json["profiles"][0]
             .as_object_mut()
             .unwrap()
-            .remove("earned_achievements");
+            .remove("campaign_history");
 
-        let restored: PlayerProfileManager = serde_json::from_value(json).unwrap();
-        assert!(restored.profiles[0].earned_achievements().is_empty());
+        assert!(serde_json::from_value::<PlayerProfileManager>(json).is_err());
     }
 
     #[test]
@@ -734,10 +699,6 @@ mod tests {
                 .earned_achievements()
                 .contains(crate::achievement::AchievementId::Ghost)
         );
-        assert!(
-            profile.earned_achievements.is_empty(),
-            "legacy compatibility cache must not receive modern unlocks"
-        );
     }
 
     #[test]
@@ -773,17 +734,11 @@ mod tests {
         assert_eq!(mgr.profiles[0].name, "Alice");
         assert_eq!(mgr.profiles[0].difficulty, DifficultyLevel::Hard);
         assert_eq!(mgr.active_index, Some(0));
-        assert!(
-            mgr.profiles[0]
-                .campaign_history
-                .legacy_profile_aggregate()
-                .is_none(),
-            "a modern empty history must not be mislabeled as a legacy import"
-        );
+        assert!(mgr.profiles[0].campaign_history.attempts().is_empty());
     }
 
     #[test]
-    fn load_migrates_aggregate_only_profile_once() {
+    fn load_rejects_aggregate_only_rust_profile() {
         let dir = tempfile::tempdir().unwrap();
         let dir_str = dir.path().to_str().unwrap();
         let mut mgr = PlayerProfileManager::new(dir_str.into());
@@ -802,14 +757,8 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = PlayerProfileManager::load(dir_str).unwrap();
-        let aggregate = loaded.profiles[idx]
-            .campaign_history
-            .legacy_profile_aggregate()
-            .expect("aggregate-only profile should receive typed migration metadata");
-        assert_eq!(aggregate.score, 42);
-        assert_eq!(aggregate.play_time_seconds, 99);
-        assert!(loaded.profiles[idx].campaign_history.attempts().is_empty());
+        let error = PlayerProfileManager::load(dir_str).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

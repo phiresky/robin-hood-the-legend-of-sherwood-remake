@@ -5,8 +5,9 @@
 //! questions such as "what happened on my second attempt?".  This module is
 //! the append-only record used by the campaign tree and Sherwood museum.
 //!
-//! Unknown legacy values are represented as `None`; migration never invents
-//! zeroes for information an old save did not retain.
+//! Unknown values reconstructed while adopting an Original C++ save are
+//! represented as `None`; import never invents evidence that save did not
+//! retain. Native Rust campaigns always record complete terminal evidence.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +21,8 @@ use crate::player_profile::DifficultyLevel;
 use crate::profiles::ProfileManager;
 
 /// Schema of the per-mission history embedded in a native campaign.
-pub const CAMPAIGN_HISTORY_SCHEMA_VERSION: u16 = 1;
-pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 1;
+pub const CAMPAIGN_HISTORY_SCHEMA_VERSION: u16 = 2;
+pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 2;
 
 #[repr(u8)]
 #[derive(
@@ -40,6 +41,9 @@ pub enum MissionAttemptOutcome {
     Won = 0,
     Lost = 1,
     Interrupted = 2,
+    /// The Original save retained that a mission was recently launched but
+    /// did not retain the terminal result of that particular launch.
+    Unknown = 3,
 }
 
 #[repr(u8)]
@@ -58,8 +62,8 @@ pub enum MissionAttemptOutcome {
 pub enum MissionAttemptSource {
     /// Recorded at a native Rust engine terminal boundary.
     Native = 0,
-    /// Synthesized from the status/totals in a save which predates history.
-    LegacyAggregateMigration = 1,
+    /// Reconstructed from fields serialized by the Original C++ game.
+    OriginalSaveImport = 1,
 }
 
 #[repr(u8)]
@@ -176,8 +180,8 @@ impl From<SimConfig> for MissionAttemptRules {
 
 /// Debriefing statistics frozen at the terminal boundary.
 ///
-/// Fields are optional specifically so legacy migration can remain honest
-/// about evidence that was discarded by the old aggregate-only format.
+/// Fields are optional specifically so Original-save adoption can remain
+/// honest about evidence that the C++ format discarded.
 #[derive(
     Debug,
     Clone,
@@ -231,6 +235,19 @@ impl MissionAttemptStats {
             && self.added_score.is_some()
             && self.recruited_characters.is_some()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.collected_money.is_none()
+            && self.bonus_money.is_none()
+            && self.soldier_money.is_none()
+            && self.living_soldiers.is_none()
+            && self.total_soldiers.is_none()
+            && self.recruited_peasants.is_none()
+            && self.killed_peasants.is_none()
+            && self.killed_allies.is_none()
+            && self.added_score.is_none()
+            && self.recruited_characters.is_none()
+    }
 }
 
 /// An immutable completed mission attempt.
@@ -255,7 +272,6 @@ pub struct MissionAttempt {
     rules: Option<MissionAttemptRules>,
     stats: MissionAttemptStats,
     achievements: Option<MissionAchievementResults>,
-    #[serde(default)]
     achievement_attestation: Option<MissionAchievementAttestation>,
 }
 
@@ -271,6 +287,11 @@ impl MissionAttempt {
         stat: &MissionStat,
         achievements: Option<MissionAchievementResults>,
     ) -> Self {
+        assert_ne!(
+            outcome,
+            MissionAttemptOutcome::Unknown,
+            "native mission attempts require a terminal outcome"
+        );
         Self {
             sequence,
             outcome,
@@ -285,11 +306,11 @@ impl MissionAttempt {
         }
     }
 
-    pub(crate) fn legacy_aggregate(sequence: u64, outcome: MissionAttemptOutcome) -> Self {
+    pub(crate) fn original_save_import(sequence: u64, outcome: MissionAttemptOutcome) -> Self {
         Self {
             sequence,
             outcome,
-            source: MissionAttemptSource::LegacyAggregateMigration,
+            source: MissionAttemptSource::OriginalSaveImport,
             kind: MissionAttemptKind::Campaign,
             completed_at_unix_seconds: None,
             duration_seconds: None,
@@ -390,6 +411,37 @@ impl MissionAttempt {
             (Some(existing), Some(source)) if existing != source => Err(()),
             _ => Ok(false),
         }
+    }
+
+    pub fn validate_evidence(&self) -> Result<(), &'static str> {
+        match self.source {
+            MissionAttemptSource::Native => {
+                if self.outcome == MissionAttemptOutcome::Unknown {
+                    return Err("native mission attempt has an unknown outcome");
+                }
+                if self.duration_seconds.is_none()
+                    || self.rules.is_none()
+                    || !self.stats.is_complete()
+                {
+                    return Err("native mission attempt is missing replay-grade evidence");
+                }
+                if self.achievement_attestation.is_some() && self.achievements.is_none() {
+                    return Err("mission attempt attestation has no calculated results");
+                }
+            }
+            MissionAttemptSource::OriginalSaveImport => {
+                if self.completed_at_unix_seconds.is_some()
+                    || self.duration_seconds.is_some()
+                    || self.rules.is_some()
+                    || !self.stats.is_empty()
+                    || self.achievements.is_some()
+                    || self.achievement_attestation.is_some()
+                {
+                    return Err("Original save import fabricated unavailable attempt evidence");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -535,6 +587,23 @@ impl MissionAttemptHistory {
         }
         self.attempts.push(attempt);
     }
+
+    pub fn validate_schema(&self) -> Result<(), u16> {
+        if self.schema_version != CAMPAIGN_HISTORY_SCHEMA_VERSION {
+            return Err(self.schema_version);
+        }
+        let mut previous = None;
+        for attempt in &self.attempts {
+            if previous.is_some_and(|sequence| attempt.sequence() <= sequence) {
+                return Err(self.schema_version);
+            }
+            if attempt.validate_evidence().is_err() {
+                return Err(self.schema_version);
+            }
+            previous = Some(attempt.sequence());
+        }
+        Ok(())
+    }
 }
 
 /// Totals derived from immutable attempt records.  No redundant aggregate is
@@ -545,33 +614,11 @@ pub struct CampaignHistoryTotals {
     pub wins: u64,
     pub losses: u64,
     pub interrupted: u64,
+    pub unknown_outcomes: u64,
     pub known_duration_seconds: u64,
     pub known_score: u64,
     pub known_money: u64,
     pub incomplete_attempts: u64,
-}
-
-/// Honest snapshot of the profile totals that existed before lifetime
-/// per-attempt storage. It is not assigned to any mission or counted as an
-/// attempt because that information was never retained.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct LegacyProfileAggregate {
-    pub score: u32,
-    pub ransom: u32,
-    pub preserved_lives_percent: u32,
-    pub play_time_seconds: u32,
-    pub progression_percent: u32,
 }
 
 #[derive(
@@ -626,7 +673,6 @@ impl LifetimeMissionAttempt {
 pub struct ProfileCampaignHistory {
     schema_version: u16,
     attempts: Vec<LifetimeMissionAttempt>,
-    legacy_profile_aggregate: Option<LegacyProfileAggregate>,
 }
 
 impl Default for ProfileCampaignHistory {
@@ -634,7 +680,6 @@ impl Default for ProfileCampaignHistory {
         Self {
             schema_version: PROFILE_HISTORY_SCHEMA_VERSION,
             attempts: Vec::new(),
-            legacy_profile_aggregate: None,
         }
     }
 }
@@ -642,7 +687,7 @@ impl Default for ProfileCampaignHistory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileHistoryPromotionError {
     UnsupportedSchema(u16),
-    MissingCampaignRunId { native_attempts: usize },
+    MissingCampaignRunId { stored_attempts: usize },
     MissingMissionProfile { mission_index: usize },
     ConflictingAttempt(MissionAttemptKey),
 }
@@ -656,9 +701,9 @@ impl std::fmt::Display for ProfileHistoryPromotionError {
                     "unsupported profile campaign-history schema {version}"
                 )
             }
-            Self::MissingCampaignRunId { native_attempts } => write!(
+            Self::MissingCampaignRunId { stored_attempts } => write!(
                 formatter,
-                "campaign has {native_attempts} native attempt(s) but no run identity"
+                "campaign has {stored_attempts} stored attempt(s) but no run identity"
             ),
             Self::MissingMissionProfile { mission_index } => {
                 write!(formatter, "campaign mission {mission_index} has no profile")
@@ -681,10 +726,6 @@ impl ProfileCampaignHistory {
 
     pub fn attempts(&self) -> &[LifetimeMissionAttempt] {
         &self.attempts
-    }
-
-    pub const fn legacy_profile_aggregate(&self) -> Option<LegacyProfileAggregate> {
-        self.legacy_profile_aggregate
     }
 
     pub fn totals(&self) -> CampaignHistoryTotals {
@@ -718,15 +759,7 @@ impl ProfileCampaignHistory {
             })
     }
 
-    pub fn migrate_legacy_profile_aggregate(&mut self, aggregate: LegacyProfileAggregate) -> bool {
-        if self.legacy_profile_aggregate.is_some() || !self.attempts.is_empty() {
-            return false;
-        }
-        self.legacy_profile_aggregate = Some(aggregate);
-        true
-    }
-
-    /// Idempotently promote every native campaign attempt into lifetime
+    /// Idempotently promote every campaign attempt into lifetime
     /// storage. `(campaign_run_id, attempt.sequence)` is the durable key.
     /// The returned count includes an existing raw entry refreshed with its
     /// later exactly-once eligibility attestation.
@@ -740,27 +773,34 @@ impl ProfileCampaignHistory {
                 self.schema_version,
             ));
         }
-        let native_attempts = campaign
+        let stored_attempts = campaign
             .missions
             .iter()
             .flat_map(|mission| mission.attempt_history().attempts())
-            .filter(|attempt| attempt.source() == MissionAttemptSource::Native)
             .count();
-        if native_attempts == 0 {
+        if stored_attempts == 0 {
             return Ok(0);
         }
-        let campaign_run_id = campaign
-            .history_run_id()
-            .ok_or(ProfileHistoryPromotionError::MissingCampaignRunId { native_attempts })?;
+        let Some(campaign_run_id) = campaign.history_run_id() else {
+            let native_attempts = campaign
+                .missions
+                .iter()
+                .flat_map(|mission| mission.attempt_history().attempts())
+                .filter(|attempt| attempt.source() == MissionAttemptSource::Native)
+                .count();
+            if native_attempts != 0 {
+                return Err(ProfileHistoryPromotionError::MissingCampaignRunId { stored_attempts });
+            }
+            // An Original save has no durable Rust run identity. Keep its
+            // incomplete records in the live campaign until the first native
+            // terminal command assigns one; never invent an identity merely
+            // to satisfy profile storage.
+            return Ok(0);
+        };
         let mut added = 0;
         for (mission_index, mission) in campaign.missions.iter().enumerate() {
-            let native_attempts: Vec<&MissionAttempt> = mission
-                .attempt_history()
-                .attempts()
-                .iter()
-                .filter(|attempt| attempt.source() == MissionAttemptSource::Native)
-                .collect();
-            if native_attempts.is_empty() {
+            let attempts = mission.attempt_history().attempts();
+            if attempts.is_empty() {
                 continue;
             }
             let profile_index = mission
@@ -771,7 +811,7 @@ impl ProfileCampaignHistory {
                 .missions
                 .get(profile_index)
                 .ok_or(ProfileHistoryPromotionError::MissingMissionProfile { mission_index })?;
-            for attempt in native_attempts {
+            for attempt in attempts {
                 let existing = self.attempts.iter_mut().find(|entry| {
                     entry.campaign_run_id == campaign_run_id
                         && entry.attempt.sequence() == attempt.sequence()
@@ -809,6 +849,25 @@ impl ProfileCampaignHistory {
             .sort_by_key(|entry| (entry.campaign_run_id, entry.attempt.sequence()));
         Ok(added)
     }
+
+    pub fn validate_schema(&self) -> Result<(), u16> {
+        if self.schema_version != PROFILE_HISTORY_SCHEMA_VERSION {
+            return Err(self.schema_version);
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        let mut previous_key = None;
+        for entry in &self.attempts {
+            let key = (entry.campaign_run_id, entry.attempt.sequence());
+            if previous_key.is_some_and(|previous| key <= previous)
+                || !keys.insert(key)
+                || entry.attempt.validate_evidence().is_err()
+            {
+                return Err(self.schema_version);
+            }
+            previous_key = Some(key);
+        }
+        Ok(())
+    }
 }
 
 impl CampaignHistoryTotals {
@@ -818,6 +877,7 @@ impl CampaignHistoryTotals {
             MissionAttemptOutcome::Won => self.wins += 1,
             MissionAttemptOutcome::Lost => self.losses += 1,
             MissionAttemptOutcome::Interrupted => self.interrupted += 1,
+            MissionAttemptOutcome::Unknown => self.unknown_outcomes += 1,
         }
         if let Some(duration) = attempt.duration_seconds() {
             self.known_duration_seconds += u64::from(duration);
@@ -842,8 +902,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_attempts_preserve_unknowns_instead_of_faking_zeroes() {
-        let attempt = MissionAttempt::legacy_aggregate(1, MissionAttemptOutcome::Won);
+    fn original_save_attempts_preserve_unknowns_instead_of_faking_zeroes() {
+        let attempt = MissionAttempt::original_save_import(1, MissionAttemptOutcome::Unknown);
         assert_eq!(attempt.duration_seconds(), None);
         assert_eq!(attempt.rules(), None);
         assert_eq!(attempt.stats().added_score, None);
@@ -851,15 +911,64 @@ mod tests {
     }
 
     #[test]
-    fn derived_totals_report_incomplete_migrations() {
+    fn derived_totals_report_incomplete_original_imports() {
         let mut totals = CampaignHistoryTotals::default();
-        totals.include(&MissionAttempt::legacy_aggregate(
+        totals.include(&MissionAttempt::original_save_import(
             1,
-            MissionAttemptOutcome::Lost,
+            MissionAttemptOutcome::Unknown,
         ));
         assert_eq!(totals.attempts, 1);
-        assert_eq!(totals.losses, 1);
+        assert_eq!(totals.unknown_outcomes, 1);
         assert_eq!(totals.incomplete_attempts, 1);
+    }
+
+    #[test]
+    fn original_import_waits_for_a_real_run_identity_before_profile_promotion() {
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..crate::mission::Mission::new()
+        });
+        campaign.reconstruct_original_save_history(&[0]);
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 42,
+            mission_name: "Imported mission".into(),
+            ..Default::default()
+        });
+        let mut lifetime = ProfileCampaignHistory::default();
+
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 0);
+        assert!(lifetime.attempts().is_empty());
+    }
+
+    #[test]
+    fn obsolete_rust_campaign_and_profile_history_schemas_fail_closed() {
+        let mut campaign_json = serde_json::to_value(MissionAttemptHistory::default()).unwrap();
+        campaign_json["schema_version"] = serde_json::json!(1);
+        let campaign_history: MissionAttemptHistory =
+            serde_json::from_value(campaign_json).unwrap();
+        assert_eq!(campaign_history.validate_schema(), Err(1));
+
+        let mut profile_json = serde_json::to_value(ProfileCampaignHistory::default()).unwrap();
+        profile_json["schema_version"] = serde_json::json!(1);
+        let profile_history: ProfileCampaignHistory = serde_json::from_value(profile_json).unwrap();
+        assert_eq!(profile_history.validate_schema(), Err(1));
+    }
+
+    #[test]
+    fn original_import_with_fabricated_evidence_is_rejected() {
+        let mut json = serde_json::to_value(MissionAttempt::original_save_import(
+            1,
+            MissionAttemptOutcome::Unknown,
+        ))
+        .unwrap();
+        json["duration_seconds"] = serde_json::json!(0);
+        let attempt: MissionAttempt = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            attempt.validate_evidence(),
+            Err("Original save import fabricated unavailable attempt evidence")
+        );
     }
 
     #[test]
@@ -920,30 +1029,6 @@ mod tests {
         assert_eq!(restored, history);
         assert_eq!(restored.schema_version(), CAMPAIGN_HISTORY_SCHEMA_VERSION);
         assert!(restored.attempts()[0].stats().is_complete());
-    }
-
-    #[test]
-    fn legacy_profile_aggregate_is_not_misreported_as_an_attempt() {
-        let mut history = ProfileCampaignHistory::default();
-        assert!(
-            history.migrate_legacy_profile_aggregate(LegacyProfileAggregate {
-                score: 50,
-                ransom: 100,
-                preserved_lives_percent: 90,
-                play_time_seconds: 300,
-                progression_percent: 10,
-            })
-        );
-        assert!(
-            !history.migrate_legacy_profile_aggregate(LegacyProfileAggregate {
-                score: 0,
-                ransom: 0,
-                preserved_lives_percent: 0,
-                play_time_seconds: 0,
-                progression_percent: 0,
-            })
-        );
-        assert_eq!(history.totals().attempts, 0);
     }
 
     #[test]

@@ -1920,7 +1920,7 @@ impl EngineInner {
                                                 .is_hostile_to(crate::element::Camp::Royalists)
                                     }) {
                                         const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
-                                        self.mission_domain.campaign.add_value(
+                                        self.add_campaign_value(
                                             crate::campaign::CampaignValue::Score,
                                             SCORE_SOLDIER_KILLED_DURING_FIGHT,
                                         );

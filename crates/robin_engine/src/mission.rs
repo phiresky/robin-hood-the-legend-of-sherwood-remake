@@ -6,9 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::achievement::{
-    AchievementEvaluation, AchievementId, AchievementSet, MissionAchievementHistory,
-};
+use crate::achievement::{AchievementEvaluation, AchievementId, AchievementSet};
 use crate::campaign_history::MissionAttemptHistory;
 
 /// Mission completion status.
@@ -52,13 +50,8 @@ pub struct Mission {
     /// `WINCAMPAIGN` cheat (sets `ares_state_succeeded = 9`) stores its
     /// override here and readers must prefer this value when set.
     pub ares_state_override: Option<i8>,
-    /// Lossless achievement results from every eligible successful replay of
-    /// this mission. The original game has no corresponding field.
-    #[serde(default)]
-    pub achievement_history: MissionAchievementHistory,
     /// Lossless terminal records for every played attempt, including losses,
     /// interruptions, and successful history replays.
-    #[serde(default)]
     pub attempt_history: MissionAttemptHistory,
 }
 
@@ -76,7 +69,6 @@ impl Mission {
             status: MissionStatus::Available,
             profile_idx: None,
             ares_state_override: None,
-            achievement_history: MissionAchievementHistory::default(),
             attempt_history: MissionAttemptHistory::default(),
         }
     }
@@ -85,31 +77,12 @@ impl Mission {
         self.status != MissionStatus::Available
     }
 
-    /// Read-only history used by campaign-map badges and mission history UI.
-    pub const fn achievement_history(&self) -> &MissionAchievementHistory {
-        &self.achievement_history
-    }
-
     pub fn achievement_badges(&self) -> AchievementSet {
-        let mut badges = self.attempt_history.eligible_badges();
-        // Compatibility union for saves written by the short-lived
-        // achievement-only schema before general attempt history existed.
-        badges.union_with(self.achievement_history.badges());
-        badges
+        self.attempt_history.eligible_badges()
     }
 
     pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
-        [
-            self.attempt_history.best_eligible_achievement(id),
-            self.achievement_history.best(id),
-        ]
-        .into_iter()
-        .flatten()
-        .max_by_key(|evaluation| match evaluation {
-            AchievementEvaluation::Unverifiable => 0,
-            AchievementEvaluation::Failed => 1,
-            AchievementEvaluation::Earned => 2,
-        })
+        self.attempt_history.best_eligible_achievement(id)
     }
 
     pub const fn attempt_history(&self) -> &MissionAttemptHistory {

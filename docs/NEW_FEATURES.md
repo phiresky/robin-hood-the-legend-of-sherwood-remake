@@ -378,13 +378,13 @@ A list of which additional features we have added, which ones we might still wan
 - **Level selection tree**
   - Show campaign progress: completed missions, stats, and other information
     currently lost after the level-end screen.
-  - Could be implemented as a custom map where you can walk around and inspect
-    missions.
-  - Implemented as a configurable prerequisite/progress tree plus the
-    walkable Sherwood Hall of Deeds. Campaign saves retain immutable records
-    for every attempt (including losses and replays), derive totals/bests from
-    those records, and migrate old status-only campaigns without fabricating
-    missing statistics. See `docs/CAMPAIGN_HISTORY.md`.
+  - Implemented as selectable Classic Map, prerequisite/progress tree, and a
+    modal Sherwood Hall of Deeds exhibit grid. Every Rust campaign always
+    retains immutable full-fidelity records for every attempt (including
+    losses and practice replays) and derives totals/bests from those records.
+    Only Original C++ saves are imported; their limited status/recent-mission
+    data remains explicitly incomplete. A freely walkable world-space Hall is
+    deferred. See `docs/CAMPAIGN_HISTORY.md`.
 
 - Track how many are dead at the start of a mission so we can tell if the
   player is actually responsible for killing anyone (Clean Hands achievement).

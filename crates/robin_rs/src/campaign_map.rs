@@ -3,7 +3,7 @@
 //! A blocking modal that draws the DEFAULT.RES campaign map and waits
 //! for a location selection.
 
-use crate::campaign_progress::{CampaignProgressGraph, MissionProgressState, MuseumNavigator};
+use crate::campaign_progress::{CampaignProgressGraph, ExhibitGridNavigator, MissionProgressState};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::blazon_set;
 use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
@@ -197,8 +197,6 @@ pub(crate) async fn show_campaign_map(
     cursor: Option<ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
     presentation: CampaignPresentationMode,
-    include_history: bool,
-    allow_history_replays: bool,
     lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
     let mut menu_resources = menu_resources;
@@ -211,11 +209,9 @@ pub(crate) async fn show_campaign_map(
             campaign,
             profiles,
             &assets,
-            cursor,
+            cursor.as_ref(),
             pseudo_debrief_pending,
             presentation,
-            include_history,
-            allow_history_replays,
             lifetime_history,
         )
         .await;
@@ -265,6 +261,24 @@ pub(crate) async fn show_campaign_map(
                 } => {
                     final_choice = Some(CampaignMapChoice::Quit);
                     break;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => {
+                    return show_campaign_progress(
+                        window,
+                        renderer,
+                        game,
+                        campaign,
+                        profiles,
+                        &assets,
+                        cursor.as_ref(),
+                        pseudo_debrief_pending,
+                        CampaignPresentationMode::ProgressTree,
+                        lifetime_history,
+                    )
+                    .await;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
@@ -375,26 +389,19 @@ async fn show_campaign_progress(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     assets: &CampaignMapAssets,
-    cursor: Option<ModalCursor<'_>>,
+    cursor: Option<&ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
     initial_presentation: CampaignPresentationMode,
-    include_history: bool,
-    allow_history_replays: bool,
     lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
-    let graph = CampaignProgressGraph::build(
-        campaign,
-        profiles,
-        allow_history_replays,
-        Some(lifetime_history),
-    );
+    let graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
     if graph.nodes.is_empty() {
         tracing::warn!("Campaign history presentation has no non-Sherwood missions");
         return Ok(CampaignMapChoice::Quit);
     }
     let mut presentation = initial_presentation;
     let mut selected = graph.first_selectable().unwrap_or(0);
-    let mut museum = MuseumNavigator::new(graph.nodes.len(), selected);
+    let mut exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
     let mut input = ModalInputState::new();
     let pseudo_debrief_at = pseudo_debrief_pending
         .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
@@ -428,7 +435,7 @@ async fn show_campaign_progress(
                 } => {
                     presentation = match presentation {
                         CampaignPresentationMode::ProgressTree => {
-                            museum = MuseumNavigator::new(graph.nodes.len(), selected);
+                            exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
                             CampaignPresentationMode::SherwoodMuseum
                         }
                         CampaignPresentationMode::SherwoodMuseum => {
@@ -443,8 +450,8 @@ async fn show_campaign_progress(
                 } => match presentation {
                     CampaignPresentationMode::ProgressTree => selected = selected.saturating_sub(1),
                     CampaignPresentationMode::SherwoodMuseum => {
-                        museum.walk(0, -1);
-                        selected = museum.selected;
+                        exhibit_grid.navigate(0, -1);
+                        selected = exhibit_grid.selected;
                     }
                     CampaignPresentationMode::ClassicMap => unreachable!(),
                 },
@@ -456,8 +463,8 @@ async fn show_campaign_progress(
                         selected = (selected + 1).min(graph.nodes.len() - 1)
                     }
                     CampaignPresentationMode::SherwoodMuseum => {
-                        museum.walk(0, 1);
-                        selected = museum.selected;
+                        exhibit_grid.navigate(0, 1);
+                        selected = exhibit_grid.selected;
                     }
                     CampaignPresentationMode::ClassicMap => unreachable!(),
                 },
@@ -465,15 +472,15 @@ async fn show_campaign_progress(
                     keycode: Keycode::Left,
                     ..
                 } if presentation == CampaignPresentationMode::SherwoodMuseum => {
-                    museum.walk(-1, 0);
-                    selected = museum.selected;
+                    exhibit_grid.navigate(-1, 0);
+                    selected = exhibit_grid.selected;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Right,
                     ..
                 } if presentation == CampaignPresentationMode::SherwoodMuseum => {
-                    museum.walk(1, 0);
-                    selected = museum.selected;
+                    exhibit_grid.navigate(1, 0);
+                    selected = exhibit_grid.selected;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
@@ -494,7 +501,7 @@ async fn show_campaign_progress(
                     input.virt_y = vy as f32;
                     if let Some(index) = progress_hit_test(&graph, presentation, selected, vx, vy) {
                         selected = index;
-                        museum = MuseumNavigator::new(graph.nodes.len(), selected);
+                        exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
                         if graph.nodes[index].selectable {
                             final_choice = Some(CampaignMapChoice::SelectMission(
                                 graph.nodes[index].mission_idx,
@@ -517,11 +524,10 @@ async fn show_campaign_progress(
             &graph,
             selected,
             presentation,
-            include_history,
             assets,
             lifetime_history.totals(),
         );
-        if let Some(cursor) = &cursor {
+        if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
@@ -598,7 +604,6 @@ fn render_campaign_progress(
     graph: &CampaignProgressGraph,
     selected: usize,
     presentation: CampaignPresentationMode,
-    include_history: bool,
     assets: &CampaignMapAssets,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
 ) {
@@ -695,7 +700,7 @@ fn render_campaign_progress(
             };
             let name: String = node.name.chars().take(max_chars).collect();
             layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
-            if include_history && node.attempt_count != 0 {
+            if node.attempt_count != 0 {
                 layout::render_text_virt(
                     renderer,
                     font,
@@ -708,8 +713,7 @@ fn render_campaign_progress(
         }
     }
 
-    // Existing flag art acts as the controllable museum visitor marker. It
-    // walks exhibit-to-exhibit with the arrow keys; Enter inspects/launches.
+    // Existing flag art marks the selected exhibit in the modal grid.
     if presentation == CampaignPresentationMode::SherwoodMuseum
         && let Some(flag) = assets.flag.as_ref()
     {
@@ -739,22 +743,20 @@ fn render_campaign_progress(
             25,
             43,
         );
-        if include_history {
-            layout::render_text_virt(
-                renderer,
-                font,
-                transform,
-                &format!(
-                    "Lifetime: {} attempts / {} wins / {}h {:02}m",
-                    lifetime_totals.attempts,
-                    lifetime_totals.wins,
-                    lifetime_totals.known_duration_seconds / 3600,
-                    (lifetime_totals.known_duration_seconds / 60) % 60,
-                ),
-                315,
-                43,
-            );
-        }
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "Lifetime: {} attempts / {} wins / {}h {:02}m",
+                lifetime_totals.attempts,
+                lifetime_totals.wins,
+                lifetime_totals.known_duration_seconds / 3600,
+                (lifetime_totals.known_duration_seconds / 60) % 60,
+            ),
+            315,
+            43,
+        );
         let node = &graph.nodes[selected];
         let action = if node.history_replay {
             "Enter: replay (campaign changes discarded)"
@@ -764,14 +766,7 @@ fn render_campaign_progress(
             "Locked: inspect only"
         };
         layout::render_text_virt(renderer, font, transform, action, 25, 414);
-        layout::render_text_virt(
-            renderer,
-            font,
-            transform,
-            &node.summary(include_history),
-            25,
-            437,
-        );
+        layout::render_text_virt(renderer, font, transform, &node.summary(), 25, 437);
         if graph.cyclic_prerequisites {
             layout::render_text_virt(
                 renderer,
@@ -1047,6 +1042,7 @@ fn render_campaign_map(
 
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
+        layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
     }
 }
 

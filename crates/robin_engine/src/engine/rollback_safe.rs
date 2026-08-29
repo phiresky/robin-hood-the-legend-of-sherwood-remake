@@ -96,6 +96,8 @@ pub enum SnapshotRestoreError {
     WorldInvariantViolation { detail: String },
     #[error("snapshot order invariant failed: {detail}")]
     OrderInvariantViolation { detail: String },
+    #[error("snapshot campaign-history invariant failed: {detail}")]
+    CampaignHistoryInvariantViolation { detail: String },
     #[error("snapshot level attachment failed: {detail}")]
     AttachmentFailure { detail: String },
 }
@@ -3438,15 +3440,6 @@ impl Engine {
         self.inner.control.sim_config
     }
 
-    /// Upgrade aggregate-only campaign mission statuses into explicit,
-    /// incomplete history records after serde loading. Idempotent.
-    pub fn migrate_legacy_campaign_history(&mut self) -> usize {
-        self.inner
-            .mission_domain
-            .required_campaign_mut("migrating campaign history")
-            .migrate_legacy_aggregate_history()
-    }
-
     /// Seed and configuration captured before this mission's frame-0 setup.
     pub fn mission_start_simulation(&self) -> (u64, SimConfig) {
         (
@@ -3761,6 +3754,12 @@ impl Engine {
             .orders
             .validate_invariants()
             .map_err(|detail| SnapshotRestoreError::OrderInvariantViolation { detail })?;
+        saved
+            .inner
+            .mission_domain
+            .campaign
+            .validate_history_schema()
+            .map_err(|detail| SnapshotRestoreError::CampaignHistoryInvariantViolation { detail })?;
         Ok(())
     }
 }

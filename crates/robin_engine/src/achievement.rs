@@ -514,63 +514,6 @@ impl MissionAchievementState {
     }
 }
 
-/// Achievement results retained for every eligible successful attempt of one
-/// campaign mission.
-///
-/// `attempts` is the lossless source of truth used by mission-history UI. Best
-/// results are derived from it, avoiding a redundant serialized cache that
-/// could disagree with the attempt list after corrupt or hand-edited input.
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct MissionAchievementHistory {
-    attempts: Vec<MissionAchievementResults>,
-}
-
-impl MissionAchievementHistory {
-    pub fn successful_attempts(&self) -> usize {
-        self.attempts.len()
-    }
-
-    /// Frozen results in chronological completion order.
-    pub fn attempts(&self) -> &[MissionAchievementResults] {
-        &self.attempts
-    }
-
-    pub fn latest(&self) -> Option<MissionAchievementResults> {
-        self.attempts.last().copied()
-    }
-
-    pub fn best(&self, id: AchievementId) -> Option<AchievementEvaluation> {
-        self.attempts
-            .iter()
-            .map(|attempt| attempt.evaluation(id))
-            .max_by_key(|evaluation| evaluation.history_rank())
-    }
-
-    pub fn badges(&self) -> AchievementSet {
-        AchievementId::ALL
-            .into_iter()
-            .filter(|&id| self.best(id) == Some(AchievementEvaluation::Earned))
-            .collect()
-    }
-
-    /// Compatibility writer for tests/import migration. Runtime achievement
-    /// promotion records eligibility on the canonical general attempt.
-    pub(crate) fn record_success(&mut self, results: MissionAchievementResults) {
-        self.attempts.push(results);
-    }
-}
-
 /// Broad mission source used by host-side unlock policy.
 #[repr(u8)]
 #[derive(
@@ -927,56 +870,6 @@ mod tests {
             state.record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned),
             Err(AchievementStateError::ResultsAlreadyFinalized)
         );
-    }
-
-    #[test]
-    fn history_keeps_best_result_across_replays() {
-        let mut failed_state = MissionAchievementState::from_mission_start();
-        failed_state
-            .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Failed)
-            .unwrap();
-        let failed = *failed_state.finalize_success();
-
-        let mut earned_state = MissionAchievementState::from_mission_start();
-        earned_state
-            .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned)
-            .unwrap();
-        let earned = *earned_state.finalize_success();
-
-        let mut history = MissionAchievementHistory::default();
-        history.record_success(failed);
-        history.record_success(earned);
-        assert_eq!(history.successful_attempts(), 2);
-        assert_eq!(
-            history.best(AchievementId::Ghost),
-            Some(AchievementEvaluation::Earned)
-        );
-        assert!(history.badges().contains(AchievementId::Ghost));
-        assert_eq!(history.attempts(), &[failed, earned]);
-        assert_eq!(history.latest(), Some(earned));
-    }
-
-    #[test]
-    fn history_preserves_unverifiable_attempts_without_awarding_a_badge() {
-        let mut incomplete = MissionAchievementState::from_incomplete_legacy_import();
-        let unverifiable = *incomplete.finalize_success();
-
-        let mut failed_state = MissionAchievementState::from_mission_start();
-        failed_state
-            .record_evaluation(AchievementId::CleanHands, AchievementEvaluation::Failed)
-            .unwrap();
-        let failed = *failed_state.finalize_success();
-
-        let mut history = MissionAchievementHistory::default();
-        history.record_success(unverifiable);
-        history.record_success(failed);
-
-        assert_eq!(history.attempts(), &[unverifiable, failed]);
-        assert_eq!(
-            history.best(AchievementId::CleanHands),
-            Some(AchievementEvaluation::Failed)
-        );
-        assert!(!history.badges().contains(AchievementId::CleanHands));
     }
 
     #[test]
