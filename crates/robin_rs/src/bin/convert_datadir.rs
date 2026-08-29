@@ -1738,11 +1738,25 @@ fn build_rhs_chunk_payload(
         let bases: Vec<Option<&[u16]>> = blob_bases.iter().map(|base| base.as_deref()).collect();
         let base2s: Vec<Option<&[u16]>> = blob_base2s.iter().map(|base| base.as_deref()).collect();
         let has_base2 = blob_base2_ids.iter().any(Option::is_some);
-        let blob = robin_assets::sprite_codec::encode_grids_multi(
+        // Standalone chunks gain within-chunk self-references (temporal /
+        // adjacent-direction), derived from the SHIPPED profile set — the
+        // decoder re-derives the identical map from the chunk's RhsData, so
+        // the rule must run over exactly what ships.
+        let selfrefs: Vec<Option<robin_assets::sprite_codec::SelfRef>> =
+            match (&prep.rhs_data, &prep.base_rel) {
+                (Some(rhs_data), None) => robin_assets::shipping_datadir::derive_chunk_self_refs(
+                    &rhs_data.profiles,
+                    &blob_ids,
+                ),
+                _ => vec![None; blob_ids.len()],
+            };
+        let has_self_refs = selfrefs.iter().any(Option::is_some);
+        let blob = robin_assets::sprite_codec::encode_grids_shipping(
             alphabet,
             &grids,
             Some(&bases),
             Some(&base2s),
+            &selfrefs,
         )
         .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
         blob_bytes = blob.len();
@@ -1765,6 +1779,7 @@ fn build_rhs_chunk_payload(
             } else {
                 Vec::new()
             },
+            self_refs: has_self_refs,
             blob,
         });
     }

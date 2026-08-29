@@ -2167,7 +2167,7 @@ fn verify_shipping(holder: &FrameHolder, data_out: &PathBuf) -> Result<()> {
         .sum();
     let t0 = std::time::Instant::now();
     merged_bank
-        .materialize_vq_chunks()
+        .materialize_vq_chunks(&merged.rhs_files)
         .context("materialize VQ sprite chunks")?;
     let t_dec = t0.elapsed();
     let (mut n_sprites, mut n_vq, mut n_px) = (0u64, 0u64, 0u64);

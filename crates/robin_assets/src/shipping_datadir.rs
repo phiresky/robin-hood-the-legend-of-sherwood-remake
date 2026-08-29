@@ -238,8 +238,112 @@ pub struct SpriteVqChunk {
     /// `sprite_ids`. Must be empty (or all `None`) when `base2_rhs` is empty;
     /// a `Some` entry requires the matching `base_ids` entry to be `Some`.
     pub base2_ids: Vec<Option<u32>>,
-    /// `sprite_codec::encode_grids_multi` output for all grids of this chunk.
+    /// When set, standalone sprites in this blob use within-chunk
+    /// self-references (temporal predecessor / adjacent camera direction),
+    /// derived at decode time from this chunk's shipped RHS script metadata
+    /// via [`derive_chunk_self_refs`] — the derivation is part of the
+    /// bitstream contract and ships no bytes of its own.
+    pub self_refs: bool,
+    /// `sprite_codec::encode_grids_shipping` output for all grids of this
+    /// chunk.
     pub blob: Vec<u8>,
+}
+
+/// Derive the deterministic within-chunk auxiliary references for a VQ
+/// chunk from its RHS script metadata. Converter and materialization run
+/// this same rule, so the reference map itself never ships.
+///
+/// Rule (validated in `sprite_compression_probe --code-aux`): for each
+/// sprite, the first offset-aligned temporal predecessor in any script row
+/// (`ref < cur` keeps blob order causal; the x offset delta must be a
+/// multiple of the 4-pixel tile width), else the first aligned
+/// adjacent-camera-direction neighbor within the same action group.
+pub fn derive_chunk_self_refs(
+    profiles: &[(String, SpriteInfo)],
+    sprite_ids: &[u32],
+) -> Vec<Option<crate::sprite_codec::SelfRef>> {
+    let batch_index: std::collections::HashMap<u32, u32> = sprite_ids
+        .iter()
+        .enumerate()
+        .map(|(index, &id)| (id, index as u32))
+        .collect();
+    let mut refs: Vec<Option<crate::sprite_codec::SelfRef>> = vec![None; sprite_ids.len()];
+    let mut try_pair =
+        |cur: u32,
+         r: u32,
+         oc: (i32, i32),
+         or_: (i32, i32),
+         refs: &mut Vec<Option<crate::sprite_codec::SelfRef>>| {
+            if r >= cur {
+                return;
+            }
+            let (Some(&cur_pos), Some(&ref_pos)) = (batch_index.get(&cur), batch_index.get(&r))
+            else {
+                return;
+            };
+            if refs[cur_pos as usize].is_some() {
+                return;
+            }
+            let (dx, dy) = (oc.0 - or_.0, oc.1 - or_.1);
+            if dx % 4 != 0 {
+                return;
+            }
+            refs[cur_pos as usize] = Some(crate::sprite_codec::SelfRef {
+                grid: ref_pos,
+                dtx: dx / 4,
+                dy,
+            });
+        };
+    let off = |s: &robin_engine::sprite_script::SpriteScript, k: usize| {
+        s.offsets
+            .get(k)
+            .map(|o| (o.x.round() as i32, o.y.round() as i32))
+            .unwrap_or((0, 0))
+    };
+    // Pass 1: temporal predecessors.
+    for (_name, info) in profiles {
+        for s in info.scripts.iter() {
+            for k in 1..s.frame_ids.len() {
+                try_pair(
+                    s.frame_ids[k],
+                    s.frame_ids[k - 1],
+                    off(s, k),
+                    off(s, k - 1),
+                    &mut refs,
+                );
+            }
+        }
+    }
+    // Pass 2: adjacent camera directions for whatever is still uncovered.
+    for (_name, info) in profiles {
+        let mut by_action: BTreeMap<u16, Vec<&robin_engine::sprite_script::SpriteScript>> =
+            BTreeMap::new();
+        for s in info.scripts.iter() {
+            by_action.entry(s.action_id).or_default().push(s);
+        }
+        for rows in by_action.values() {
+            for d in 1..rows.len() {
+                let (ra, rb) = (rows[d - 1], rows[d]);
+                for k in 0..ra.frame_ids.len().min(rb.frame_ids.len()) {
+                    try_pair(
+                        rb.frame_ids[k],
+                        ra.frame_ids[k],
+                        off(rb, k),
+                        off(ra, k),
+                        &mut refs,
+                    );
+                    try_pair(
+                        ra.frame_ids[k],
+                        rb.frame_ids[k],
+                        off(ra, k),
+                        off(rb, k),
+                        &mut refs,
+                    );
+                }
+            }
+        }
+    }
+    refs
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -263,14 +367,14 @@ impl ShippingSpriteBank {
     /// are missing from the payload altogether is a hard error — the
     /// conversion lists the base RHS chunk as an explicit dependency, so its
     /// absence means a broken manifest, never something to paper over.
-    pub fn materialize_vq_chunks(&mut self) -> Result<()> {
+    pub fn materialize_vq_chunks(&mut self, rhs_files: &BTreeMap<String, RhsData>) -> Result<()> {
         let mut pending = std::mem::take(&mut self.vq_chunks);
         while !pending.is_empty() {
             let mut made_progress = false;
             let mut still_pending = Vec::new();
             for chunk in pending {
                 if self.vq_chunk_bases_ready(&chunk)? {
-                    self.materialize_one_vq_chunk(&chunk)
+                    self.materialize_one_vq_chunk(&chunk, rhs_files)
                         .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
                     made_progress = true;
                 } else {
@@ -367,7 +471,23 @@ impl ShippingSpriteBank {
         Ok(true)
     }
 
-    fn materialize_one_vq_chunk(&mut self, chunk: &SpriteVqChunk) -> Result<()> {
+    fn materialize_one_vq_chunk(
+        &mut self,
+        chunk: &SpriteVqChunk,
+        rhs_files: &BTreeMap<String, RhsData>,
+    ) -> Result<()> {
+        let selfref: Vec<Option<crate::sprite_codec::SelfRef>> = if chunk.self_refs {
+            let rhs_data = rhs_files.get(&chunk.rhs).ok_or_else(|| {
+                anyhow!(
+                    "VQ sprite chunk for {} declares self-references but its RHS metadata is \
+                     not part of this mission payload",
+                    chunk.rhs
+                )
+            })?;
+            derive_chunk_self_refs(&rhs_data.profiles, &chunk.sprite_ids)
+        } else {
+            vec![None; chunk.sprite_ids.len()]
+        };
         if chunk.base_ids.len() != chunk.sprite_ids.len() {
             return Err(anyhow!(
                 "chunk lists {} sprites but {} base entries",
@@ -421,11 +541,12 @@ impl ShippingSpriteBank {
         }
         let base_slices = as_slices(&base_grids);
         let base2_slices = as_slices(&base2_grids);
-        let decoded = crate::sprite_codec::decode_grids_multi(
+        let decoded = crate::sprite_codec::decode_grids_shipping(
             chunk.alphabet,
             &dims,
             Some(&base_slices),
             Some(&base2_slices),
+            &selfref,
             &chunk.blob,
         )?;
         for (sprite_id, grid) in chunk.sprite_ids.iter().zip(decoded) {
@@ -547,7 +668,7 @@ impl ShippingDatadir {
             ));
         }
         if let Some(bank) = payload.sprite_bank.as_mut() {
-            bank.materialize_vq_chunks()
+            bank.materialize_vq_chunks(&payload.rhs_files)
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
         }
         let raw = std::mem::take(&mut payload.raw)
@@ -1364,6 +1485,7 @@ mod tests {
                     sprite_ids: vec![0],
                     base_ids: vec![None],
                     base2_ids: Vec::new(),
+                    self_refs: false,
                     blob,
                 }],
             )),
@@ -1407,6 +1529,7 @@ mod tests {
                     sprite_ids: vec![1],
                     base_ids: vec![Some(0)],
                     base2_ids: Vec::new(),
+                    self_refs: false,
                     blob,
                 }],
             )),
@@ -1440,6 +1563,7 @@ mod tests {
                     sprite_ids: vec![3],
                     base_ids: vec![Some(0)],
                     base2_ids: vec![Some(1)],
+                    self_refs: false,
                     blob,
                 }],
             )),
@@ -1465,7 +1589,7 @@ mod tests {
         merged.merge_part(reload(&variant_chunk_mission())).unwrap();
         merged.merge_part(reload(&base_chunk_mission())).unwrap();
         let bank = merged.sprite_bank.as_mut().unwrap();
-        bank.materialize_vq_chunks().unwrap();
+        bank.materialize_vq_chunks(&BTreeMap::new()).unwrap();
 
         assert!(bank.vq_chunks.is_empty());
         assert_eq!(
@@ -1494,7 +1618,7 @@ mod tests {
             .sprite_bank
             .as_mut()
             .unwrap()
-            .materialize_vq_chunks()
+            .materialize_vq_chunks(&BTreeMap::new())
             .unwrap_err();
         assert!(
             error.to_string().contains("base sprite 0"),
@@ -1513,7 +1637,7 @@ mod tests {
             .sprite_bank
             .as_mut()
             .unwrap()
-            .materialize_vq_chunks()
+            .materialize_vq_chunks(&BTreeMap::new())
             .unwrap_err();
         let message = format!("{error:#}");
         assert!(
