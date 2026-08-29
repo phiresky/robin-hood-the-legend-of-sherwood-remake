@@ -196,7 +196,7 @@ pub struct ShippingLocale {
     pub pak_files: BTreeMap<String, Vec<EncodedPicture>>,
     pub red_files: BTreeMap<String, LevelDescriptors>,
     /// VFS bundle keys relative to `Data/`, normalized to lowercase `/` paths.
-    pub raw: robin_util::asset_fs::Bundle,
+    pub raw: BTreeMap<String, Vec<u8>>,
 }
 
 /// Map a legacy Windows LCID to its canonical shipping locale key.
@@ -1135,11 +1135,16 @@ impl ShippingDatadir {
                     .raw
                     .iter()
                     .filter(|(key, _)| is_optional_english_fallback_key(key))
-                    .map(|(key, bytes)| (key.clone(), bytes.clone()))
+                    .map(|(key, bytes)| (key.clone(), bytes.clone().into()))
                     .collect::<robin_util::asset_fs::Bundle>()
             })
             .unwrap_or_default();
-        raw.extend(assets.raw.clone());
+        raw.extend(
+            assets
+                .raw
+                .iter()
+                .map(|(key, bytes)| (key.clone(), bytes.clone().into())),
+        );
         let bundle = Arc::new(raw);
         let bundle = self
             .locale_bundle_cache
@@ -2180,7 +2185,10 @@ mod tests {
         let first = datadir.locale_bundle("de_de").unwrap().unwrap();
         let second = datadir.locale_bundle("1031").unwrap().unwrap();
         assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(first.get("text/dialogue.wav"), Some(&vec![4, 2]));
+        assert_eq!(
+            first.get("text/dialogue.wav").map(|bytes| bytes.as_ref()),
+            Some([4, 2].as_slice())
+        );
     }
 
     #[test]
@@ -2201,10 +2209,23 @@ mod tests {
         datadir.locales.insert("de-DE".into(), german);
 
         let bundle = datadir.locale_bundle("de-DE").unwrap().unwrap();
-        assert_eq!(bundle.get("text/level.res"), Some(&vec![5]));
+        assert_eq!(
+            bundle.get("text/level.res").map(|bytes| bytes.as_ref()),
+            Some([5].as_slice())
+        );
         assert!(!bundle.contains_key("interface/start.sxt"));
-        assert_eq!(bundle.get("sounds/exclamations/robin.wav"), Some(&vec![3]));
-        assert_eq!(bundle.get("cinematics/intro.ogg"), Some(&vec![4]));
+        assert_eq!(
+            bundle
+                .get("sounds/exclamations/robin.wav")
+                .map(|bytes| bytes.as_ref()),
+            Some([3].as_slice())
+        );
+        assert_eq!(
+            bundle
+                .get("cinematics/intro.ogg")
+                .map(|bytes| bytes.as_ref()),
+            Some([4].as_slice())
+        );
     }
 
     #[test]
