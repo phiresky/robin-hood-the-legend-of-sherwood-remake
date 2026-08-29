@@ -123,11 +123,13 @@ A list of which additional features we have added, which ones we might still wan
   the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
   fixing the Steam release — whose depot ships only the international
   TrueType (SimSun) font set and therefore renders every menu in a
-  Windows system font in the original build too. It also carries the 13
-  allied-control UI PNGs. Packaged targets validate the strictly sorted
-  26-file size/SHA-256 inventory in `core-overlay-manifest.json`; Android
-  packages it as a retail-content-free asset root, validates every entry, and
-  mounts it ahead of schema-v9 shipping/mission bundles before UI startup. See
+  Windows system font in the original build too. It also carries 19 engine UI
+  PNGs, including the allied controls and villain portraits. Packaged native
+  targets validate the strictly sorted 32-file size/SHA-256 inventory in
+  `core-overlay-manifest.json`; desktop startup validates the exact physical
+  tree before mounting it, while Android packages it as a retail-content-free
+  asset root and validates every entry before UI startup. Browser builds
+  explicitly preload only their build-reachable font/UI subset. See
   `assets/core-datadir/README.md`.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an

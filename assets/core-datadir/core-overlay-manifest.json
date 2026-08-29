@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "shippingDatadirSchema": 9,
+  "shippingDatadirSchema": 13,
   "files": [
     {
       "path": "Data/Interface/Fonts/Debrief.bfn",
@@ -116,6 +116,36 @@
       "path": "Data/Interface/UI/allied_portrait_foreground.png",
       "size": 5279,
       "sha256": "65fb0cc941b5f67444d8c58a0ae4181ac03765d8596d7ed850763508d95cecd9"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_generic.png",
+      "size": 9537,
+      "sha256": "cb6e7bb6988d02a77bd5e3dfb024d17f32abdc6b0a953134f87b4cee4bcf073a"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_guisbourne.png",
+      "size": 10578,
+      "sha256": "e5e694580e5bc147bb05544e76b1a61377a3857b80e0ee270dbe91d961e9a0bd"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_longchamp.png",
+      "size": 10984,
+      "sha256": "983ecbaa7e9e201dea82831f1ae0e9eb56a2d6020192a78cdbf94cfc389b2461"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_prince_john.png",
+      "size": 11112,
+      "sha256": "2d6bfb01264d150053ded95932fd2dc168936b52e3459d37b01ddcfefbd20580"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_scathlock.png",
+      "size": 10220,
+      "sha256": "e2c159c363503581f6e5300eda0d97fe98652000a6cb453105313f8ca9c2e6ab"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_sheriff.png",
+      "size": 10609,
+      "sha256": "d53ec09ee1a3c4b3567c39f68ffaf9617d1b1d161a57f3ee1e09364a15c4eace"
     },
     {
       "path": "Data/Interface/UI/allied_stance_aggressive.png",

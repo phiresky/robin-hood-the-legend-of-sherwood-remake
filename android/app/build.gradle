@@ -36,7 +36,7 @@ android {
     sourceSets {
         main {
             manifest.srcFile "../AndroidManifest.xml"
-            // `../assets` is operator-supplied schema-v9 demo content and is
+            // `../assets` is operator-supplied generated demo content and is
             // intentionally absent from the repository. The engine-owned core
             // overlay is a separate, retail-content-free APK asset root.
             assets.srcDirs = ["../assets", coreOverlayDir.asFile]

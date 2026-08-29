@@ -33,9 +33,8 @@ pub async fn run_rust_game(
     run_args.global_options = application_context.clone();
     let args = &run_args;
 
-    // Bring up the script-RPC transport. Desktop native binds a loopback HTTP
-    // listener; Android passes port zero; wasm installs the in-process JS
-    // bridge queue. The
+    // Bring up the script-RPC transport. Native binds a loopback HTTP
+    // listener; wasm installs the in-process JS bridge queue. The
     // handle lives in a process-global so the per-tick drain in
     // `game_session` can reach it without threading the queue through
     // every signature.
