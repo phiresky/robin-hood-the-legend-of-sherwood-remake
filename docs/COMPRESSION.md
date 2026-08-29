@@ -1334,3 +1334,25 @@ hubs) is the follow-up, worth an estimated ~3-4 MB on the fullgame corpus.
 This supersedes the "synthetic centroid base" idea: a computed base would
 have to be shipped (~a member's own coded size), canceling its gains, while
 sibling contexts are free.
+
+## Fullgame schema-v9 validation (2026-08-29)
+
+First fullgame conversion with the complete pipeline (SEE codec, family
+cross-variant coding with proxy-selected bases, rank permutation):
+
+```
+Data/rhs bucket        193,7xx,xxx (v8-era zstd chunks) -> 97,829,439 B  (1.98x)
+VQ blob bytes          78,244,997 across 133 blobs (characters AND the
+                       animation RHS files' VQ half, which v9 covers
+                       generically)
+verify-shipping        223 chunks, 402,303 sprites, 1,101,554,622 pixels —
+                       all identical to the source bank (decode 232 s
+                       single-threaded)
+```
+
+Proxy base selection picked the measured-best star hub in 7 of 9 families
+(Archer01, Crossbowman02, Guard B01, Knight01, Officier B01, Soldier A01,
+Soldier B01; Guard A05 / Officer05 diverge from the pairwise matrix's
+A01/O03 but sit near-best in it). Open follow-ups: star-2 wiring
+(two-predecessor coding, measured -22..25% on third-and-later members),
+parallel chunk decode at install, xz stage for the RLE animation bucket.
