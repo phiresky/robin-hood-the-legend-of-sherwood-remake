@@ -107,6 +107,12 @@ struct Cli {
     #[arg(long)]
     code3: Vec<String>,
 
+    /// Real-codec encode+decode of one character with auxiliary aligned
+    /// references (temporal predecessor, adjacent-direction fallback),
+    /// bit-exact roundtrip verified.
+    #[arg(long)]
+    code_aux: Vec<String>,
+
     /// Temporal conditional entropy: how much does the previous animation
     /// frame's tile at the offset-aligned position predict the current
     /// tile? Frame order and offsets come from the script metadata, which
@@ -860,6 +866,156 @@ fn entropy3(holder: &FrameHolder, data_dir: &PathBuf, a: &str, b: &str, c: &str)
 /// k's tile grid position maps into frame k-1 through the two frames' draw
 /// offsets. Tiles are 4x1, so a pair only tile-aligns when the x offset
 /// delta is a multiple of 4; coverage is reported.
+/// Deterministic auxiliary-reference selection for one character, derived
+/// purely from shipped script metadata: for each VQ sprite, the first
+/// offset-aligned temporal predecessor (`prev_id < cur_id` keeps bank-order
+/// decode causal), else the first aligned adjacent-direction neighbor.
+fn aux_ref_map(
+    holder: &FrameHolder,
+    data_dir: &PathBuf,
+    name: &str,
+) -> Result<HashMap<u32, (u32, i32, i32)>> {
+    let path = rhs_path(data_dir, name)?;
+    let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
+        .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
+    let mut map: HashMap<u32, (u32, i32, i32)> = HashMap::new();
+    let mut try_pair = |cur: u32,
+                        r: u32,
+                        oc: (i32, i32),
+                        or_: (i32, i32),
+                        map: &mut HashMap<u32, (u32, i32, i32)>| {
+        if r >= cur || map.contains_key(&cur) {
+            return;
+        }
+        let (sc, sr) = (
+            &holder.sprites()[cur as usize],
+            &holder.sprites()[r as usize],
+        );
+        if sc.dictionary_index == UNMAPPED_DICT
+            || sr.dictionary_index == UNMAPPED_DICT
+            || holder.packed_data(cur).is_none()
+            || holder.packed_data(r).is_none()
+        {
+            return;
+        }
+        let (dx, dy) = (oc.0 - or_.0, oc.1 - or_.1);
+        if dx % 4 != 0 {
+            return;
+        }
+        map.insert(cur, (r, dx / 4, dy));
+    };
+    let off = |s: &robin_engine::sprite_script::SpriteScript, k: usize| {
+        s.offsets
+            .get(k)
+            .map(|o| (o.x.round() as i32, o.y.round() as i32))
+            .unwrap_or((0, 0))
+    };
+    // Pass 1: temporal predecessors.
+    for (_p, info) in &profiles {
+        for s in info.scripts.iter() {
+            for k in 1..s.frame_ids.len() {
+                try_pair(
+                    s.frame_ids[k],
+                    s.frame_ids[k - 1],
+                    off(s, k),
+                    off(s, k - 1),
+                    &mut map,
+                );
+            }
+        }
+    }
+    // Pass 2: adjacent camera directions for whatever is still uncovered.
+    for (_p, info) in &profiles {
+        let mut by_action: BTreeMap<u16, Vec<&robin_engine::sprite_script::SpriteScript>> =
+            BTreeMap::new();
+        for s in info.scripts.iter() {
+            by_action.entry(s.action_id).or_default().push(s);
+        }
+        for rows in by_action.values() {
+            for d in 1..rows.len() {
+                let (ra, rb) = (rows[d - 1], rows[d]);
+                for k in 0..ra.frame_ids.len().min(rb.frame_ids.len()) {
+                    try_pair(
+                        rb.frame_ids[k],
+                        ra.frame_ids[k],
+                        off(rb, k),
+                        off(ra, k),
+                        &mut map,
+                    );
+                    try_pair(
+                        ra.frame_ids[k],
+                        rb.frame_ids[k],
+                        off(ra, k),
+                        off(rb, k),
+                        &mut map,
+                    );
+                }
+            }
+        }
+    }
+    Ok(map)
+}
+
+fn code_aux(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
+    use robin_assets::sprite_codec::{
+        AuxRef, SpriteGrid, decode_grids_auxref, encode_grids_auxref,
+    };
+    let (_, ids) = char_frame_ids(data_dir, name)?;
+    let (_gids, dims, slices, alphabet) = codec_grids(holder, &ids)?;
+    let aux_map = aux_ref_map(holder, data_dir, name)?;
+    let grid_ids: Vec<u32> = ids
+        .iter()
+        .copied()
+        .filter(|&id| {
+            holder.sprites()[id as usize].dictionary_index != UNMAPPED_DICT
+                && holder.packed_data(id).is_some()
+        })
+        .collect();
+    let aux: Vec<Option<AuxRef>> = grid_ids
+        .iter()
+        .map(|id| {
+            aux_map.get(id).map(|&(rid, dtx, dy)| {
+                let rs = &holder.sprites()[rid as usize];
+                AuxRef {
+                    indices: holder.packed_data(rid).unwrap(),
+                    cols: rs.width / 4,
+                    rows: rs.height,
+                    dtx,
+                    dy,
+                }
+            })
+        })
+        .collect();
+    let n_aux = aux.iter().filter(|a| a.is_some()).count();
+    let grids: Vec<SpriteGrid> = dims
+        .iter()
+        .zip(slices.iter())
+        .map(|(&(c, r), &s)| SpriteGrid {
+            cols: c,
+            rows: r,
+            indices: s,
+        })
+        .collect();
+    let n_tiles: usize = slices.iter().map(|s| s.len()).sum();
+    let t0 = std::time::Instant::now();
+    let blob = encode_grids_auxref(alphabet, &grids, &aux)?;
+    let t_enc = t0.elapsed();
+    let decoded = decode_grids_auxref(alphabet, &dims, &aux, &blob)?;
+    for (i, (d, s)) in decoded.iter().zip(slices.iter()).enumerate() {
+        if d.as_slice() != *s {
+            return Err(anyhow!("{name}: aux roundtrip mismatch at grid {i}"));
+        }
+    }
+    println!(
+        "## code-aux {name}: {} sprites ({n_aux} with aux ref), {n_tiles} tiles -> {} bytes ({:.3} bits/tile), enc {:.1}s, roundtrip OK",
+        grids.len(),
+        blob.len(),
+        blob.len() as f64 * 8.0 / n_tiles as f64,
+        t_enc.as_secs_f64(),
+    );
+    Ok(())
+}
+
 fn entropy_temporal(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
     let path = rhs_path(data_dir, name)?;
     let (_sig, profiles) = SpriteScriptor::load_all_profiles(path.to_str().unwrap())
@@ -2170,6 +2326,9 @@ fn main() -> Result<()> {
     }
     for name in &cli.cm {
         cm(&holder, &cli.data_dir, name)?;
+    }
+    for name in &cli.code_aux {
+        code_aux(&holder, &cli.data_dir, name)?;
     }
     for name in &cli.entropy_temporal {
         entropy_temporal(&holder, &cli.data_dir, name)?;

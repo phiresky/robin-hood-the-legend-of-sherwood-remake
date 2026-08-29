@@ -270,7 +270,7 @@ fn escape_weight(distinct: u32) -> u32 {
 struct See {
     /// [level][log2 distinct][log2 sum][top-symbol skew quartile]
     /// -> (symbol hits, escapes).
-    stats: [[[[(u32, u32); 4]; 15]; 13]; 5],
+    stats: [[[[(u32, u32); 4]; 15]; 13]; 6],
 }
 
 /// A flattened See bucket index.
@@ -280,7 +280,7 @@ struct SeeKey(usize, usize, usize, usize);
 impl See {
     fn new() -> Self {
         Self {
-            stats: [[[[(1, 1); 4]; 15]; 13]; 5],
+            stats: [[[[(1, 1); 4]; 15]; 13]; 6],
         }
     }
 
@@ -583,6 +583,9 @@ const EDGE: u16 = 0xFFFF;
 /// bitstreams stay byte-identical.
 const SEE_LEVEL_PAIR2: usize = 4;
 
+/// See-statistics slot for the auxiliary-reference (aux, above) level.
+const SEE_LEVEL_AUX: usize = 5;
+
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
 /// membership, O(1) reset per coded symbol (bump the generation).
 struct Excl {
@@ -638,6 +641,10 @@ struct Model {
     /// 4 so the established levels keep their indices (and single-base
     /// bitstreams stay byte-identical).
     c2pair: HashMap<u32, Ctx>,
+    /// Auxiliary-reference level for standalone sprites with an aligned
+    /// previously-decoded reference (temporal predecessor or adjacent
+    /// direction): (aux-tile, above). See slot [`SEE_LEVEL_AUX`].
+    c2aux: HashMap<u32, Ctx>,
     /// primary alone (the stronger single predictor).
     c1: Vec<Ctx>,
     /// second alone.
@@ -657,6 +664,7 @@ impl Model {
         Self {
             c2: HashMap::default(),
             c2pair: HashMap::default(),
+            c2aux: HashMap::default(),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -747,6 +755,167 @@ impl Model {
         if !coded {
             enc.encode(x as u32, 1, self.alphabet);
         }
+    }
+
+    /// Standalone chain extended with an auxiliary aligned reference:
+    /// (aux, above) -> (above, left) -> above -> left -> order-0 -> uniform.
+    /// With `aux == EDGE` the first level is skipped and the stream is the
+    /// plain standalone chain.
+    fn encode_sym_aux(&mut self, enc: &mut RangeEncoder, aux: u16, above: u16, left: u16, x: u16) {
+        let key_aux = ((aux as u32) << 16) | above as u32;
+        let key2 = ((above as u32) << 16) | left as u32;
+        let alphabet = self.alphabet;
+        self.excl.begin();
+        let excl = &mut self.excl;
+        let see = &mut self.see;
+        let mut coded = false;
+        let skip_aux = aux == EDGE;
+        // Aux level first: unlike the cluster experiment, the aligned
+        // reference is strong exactly where it exists (43-68% identity), and
+        // ordering it after (above,left) measured worse (Knight01 +2.3%).
+        for (skip, level, ctx) in [
+            (
+                skip_aux,
+                SEE_LEVEL_AUX,
+                self.c2aux.entry(key_aux).or_default(),
+            ),
+            (false, 0, self.c2.entry(key2).or_default()),
+            (
+                false,
+                1,
+                &mut self.c1[(above as usize).min(alphabet as usize)],
+            ),
+            (
+                false,
+                2,
+                &mut self.c1b[(left as usize).min(alphabet as usize)],
+            ),
+            (false, 3, &mut self.c0),
+        ] {
+            if skip {
+                continue;
+            }
+            if !coded {
+                match ctx.code_for(x, excl, see, level) {
+                    CtxCode::Sym(cum, f, t, key) => {
+                        enc.encode(cum, f, t);
+                        see.update(key, false);
+                        coded = true;
+                    }
+                    CtxCode::Escape(cum, f, t, key) => {
+                        enc.encode(cum, f, t);
+                        see.update(key, true);
+                        ctx.exclude_into(excl);
+                    }
+                    CtxCode::Empty => {}
+                }
+            }
+            ctx.bump(x, alphabet);
+        }
+        if !coded {
+            enc.encode(x as u32, 1, self.alphabet);
+        }
+    }
+
+    /// Decoder mirror of [`Self::encode_sym_aux`].
+    fn decode_sym_aux(&mut self, dec: &mut RangeDecoder, aux: u16, above: u16, left: u16) -> u16 {
+        let key_aux = ((aux as u32) << 16) | above as u32;
+        let key2 = ((above as u32) << 16) | left as u32;
+        self.excl.begin();
+        let excl = &mut self.excl;
+        let scratch = &mut self.scratch;
+        let see = &mut self.see;
+        let mut decoded: Option<u16> = None;
+        let skip_aux = aux == EDGE;
+        {
+            let chain: [(bool, usize, &Ctx); 5] = [
+                (
+                    skip_aux,
+                    SEE_LEVEL_AUX,
+                    self.c2aux.entry(key_aux).or_default(),
+                ),
+                (false, 0, self.c2.entry(key2).or_default()),
+                (
+                    false,
+                    1,
+                    &self.c1[(above as usize).min(self.alphabet as usize)],
+                ),
+                (
+                    false,
+                    2,
+                    &self.c1b[(left as usize).min(self.alphabet as usize)],
+                ),
+                (false, 3, &self.c0),
+            ];
+            for (skip, level, ctx) in chain {
+                if skip {
+                    continue;
+                }
+                if excl.is_empty() {
+                    if ctx.is_empty() {
+                        continue;
+                    }
+                    let sum = ctx.sum();
+                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
+                    let esc = see.esc_freq(key, sum);
+                    let total = sum + esc;
+                    let target = dec.decode_target(total);
+                    if target >= sum {
+                        dec.commit(sum, esc, total);
+                        see.update(key, true);
+                        ctx.exclude_into(excl);
+                        continue;
+                    }
+                    let (s, cum, c) = ctx.find_by_target(target);
+                    dec.commit(cum, c, total);
+                    see.update(key, false);
+                    decoded = Some(s);
+                    break;
+                }
+                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
+                if total == 0 {
+                    continue;
+                }
+                let target = dec.decode_target(total);
+                if target >= sum {
+                    dec.commit(sum, total - sum, total);
+                    see.update(key, true);
+                    for &(s, _) in scratch.iter() {
+                        excl.insert(s);
+                    }
+                    continue;
+                }
+                let mut cum = 0u32;
+                for &(s, c) in scratch.iter() {
+                    if target < cum + c {
+                        dec.commit(cum, c, total);
+                        see.update(key, false);
+                        decoded = Some(s);
+                        break;
+                    }
+                    cum += c;
+                }
+                debug_assert!(decoded.is_some());
+                break;
+            }
+        }
+        let x = match decoded {
+            Some(s) => s,
+            None => {
+                let target = dec.decode_target(self.alphabet);
+                dec.commit(target, 1, self.alphabet);
+                target as u16
+            }
+        };
+        let alphabet = self.alphabet;
+        if !skip_aux {
+            self.c2aux.entry(key_aux).or_default().bump(x, alphabet);
+        }
+        self.c2.entry(key2).or_default().bump(x, alphabet);
+        self.c1[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c1b[(left as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        self.c0.bump(x, alphabet);
+        x
     }
 
     /// Decoder mirror of [`Self::encode_sym3`].
@@ -1022,6 +1191,117 @@ pub fn decode_grids(
     decode_grids_multi(alphabet, dims, base, None, blob)
 }
 
+/// An auxiliary aligned reference for one sprite: a previously decoded grid
+/// (same dictionary space) plus the tile-space shift mapping this sprite's
+/// grid positions into it. Positions falling outside the reference behave
+/// as "no reference" for that tile.
+pub struct AuxRef<'a> {
+    pub indices: &'a [u16],
+    pub cols: u16,
+    pub rows: u16,
+    /// This sprite's tile (col, row) reads the reference at
+    /// (col + dtx, row + dy).
+    pub dtx: i32,
+    pub dy: i32,
+}
+
+/// Encode standalone grids with optional per-sprite auxiliary references
+/// (temporal predecessor or adjacent camera direction, derived
+/// deterministically from shipped script metadata). Chain per tile:
+/// (aux, above) -> (above, left) -> above -> left -> order-0 -> uniform.
+pub fn encode_grids_auxref(
+    alphabet: u16,
+    grids: &[SpriteGrid],
+    aux: &[Option<AuxRef>],
+) -> Result<Vec<u8>> {
+    if aux.len() != grids.len() {
+        return Err(anyhow!(
+            "aux list length {} != grid count {}",
+            aux.len(),
+            grids.len()
+        ));
+    }
+    let mut enc = RangeEncoder::new();
+    let mut model = Model::new(alphabet);
+    for (gi, g) in grids.iter().enumerate() {
+        let cols = g.cols as usize;
+        if g.indices.len() != cols * g.rows as usize {
+            return Err(anyhow!(
+                "grid {gi}: {} indices for {}x{}",
+                g.indices.len(),
+                g.cols,
+                g.rows
+            ));
+        }
+        if let Some(r) = &aux[gi] {
+            if r.indices.len() != r.cols as usize * r.rows as usize {
+                return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
+            }
+        }
+        for (i, &x) in g.indices.iter().enumerate() {
+            if x as u32 >= alphabet as u32 {
+                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
+            }
+            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
+            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
+            let a = aux_tile(&aux[gi], i, cols);
+            model.encode_sym_aux(&mut enc, a, above, left, x);
+        }
+    }
+    Ok(enc.finish())
+}
+
+/// Decoder for [`encode_grids_auxref`]; `aux` must match the encoding call.
+pub fn decode_grids_auxref(
+    alphabet: u16,
+    dims: &[(u16, u16)],
+    aux: &[Option<AuxRef>],
+    blob: &[u8],
+) -> Result<Vec<Vec<u16>>> {
+    if aux.len() != dims.len() {
+        return Err(anyhow!(
+            "aux list length {} != grid count {}",
+            aux.len(),
+            dims.len()
+        ));
+    }
+    let mut dec = RangeDecoder::new(blob);
+    let mut model = Model::new(alphabet);
+    let mut out = Vec::with_capacity(dims.len());
+    for (gi, &(cols16, rows)) in dims.iter().enumerate() {
+        let cols = cols16 as usize;
+        let n = cols * rows as usize;
+        if let Some(r) = &aux[gi] {
+            if r.indices.len() != r.cols as usize * r.rows as usize {
+                return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
+            }
+        }
+        let mut g: Vec<u16> = Vec::with_capacity(n);
+        for i in 0..n {
+            let above = if i >= cols { g[i - cols] } else { EDGE };
+            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
+            let a = aux_tile(&aux[gi], i, cols);
+            g.push(model.decode_sym_aux(&mut dec, a, above, left));
+        }
+        out.push(g);
+    }
+    Ok(out)
+}
+
+/// The reference tile for grid position `i`, or EDGE when absent.
+fn aux_tile(aux: &Option<AuxRef>, i: usize, cols: usize) -> u16 {
+    let Some(r) = aux else {
+        return EDGE;
+    };
+    let (col, row) = ((i % cols) as i32, (i / cols) as i32);
+    let (pc, pr) = (col + r.dtx, row + r.dy);
+    if pc >= 0 && pr >= 0 && pc < r.cols as i32 && pr < r.rows as i32 {
+        r.indices[(pr * r.cols as i32 + pc) as usize]
+    } else {
+        EDGE
+    }
+}
+
 /// Decoder for [`encode_grids_multi`]; `base`/`base2` must match the
 /// encoding call exactly.
 pub fn decode_grids_multi(
@@ -1249,6 +1529,53 @@ mod tests {
             indices: &four,
         }];
         assert!(encode_grids_multi(4096, &one, Some(&bad_b1), Some(&bad_b2)).is_err());
+    }
+
+    #[test]
+    fn roundtrip_with_aux_refs() {
+        let mut grids = Vec::new();
+        // Reference-like first grid, then grids predicted from it at
+        // various shifts, then one without any reference.
+        let base: Vec<u16> = (0..48u16).map(|i| (i * 37) % 4096).collect();
+        grids.push((6u16, 8u16, base.clone()));
+        for s in 0..5u16 {
+            let v: Vec<u16> = (0..30)
+                .map(|i| base[(i + s as usize) % base.len()])
+                .collect();
+            grids.push((5, 6, v));
+        }
+        grids.push((3, 3, (0..9).map(|i| (i * 11) as u16).collect()));
+        let grid_refs: Vec<SpriteGrid> = grids
+            .iter()
+            .map(|(c, r, v)| SpriteGrid {
+                cols: *c,
+                rows: *r,
+                indices: v,
+            })
+            .collect();
+        let aux: Vec<Option<AuxRef>> = grids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if i >= 1 && i <= 5 {
+                    Some(AuxRef {
+                        indices: &grids[0].2,
+                        cols: 6,
+                        rows: 8,
+                        dtx: (i as i32) - 3,
+                        dy: 1,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let blob = encode_grids_auxref(4096, &grid_refs, &aux).unwrap();
+        let dims: Vec<(u16, u16)> = grids.iter().map(|(c, r, _)| (*c, *r)).collect();
+        let decoded = decode_grids_auxref(4096, &dims, &aux, &blob).unwrap();
+        for ((_, _, v), d) in grids.iter().zip(decoded.iter()) {
+            assert_eq!(v, d);
+        }
     }
 
     #[test]
