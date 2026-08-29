@@ -26,20 +26,21 @@ env:
 jobs:
   format:
     name: Format
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install pinned Rust toolchain and rustfmt
-        run: rustup component add rustfmt
+      - name: Install pinned Rust toolchain
+        # rustfmt is pinned in rust-toolchain.toml.
+        run: rustup show active-toolchain
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
   test:
     name: Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5

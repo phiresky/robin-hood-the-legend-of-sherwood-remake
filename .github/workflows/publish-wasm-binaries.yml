@@ -25,15 +25,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust wasm target
-        run: |
-          rustup target add wasm32-unknown-unknown
-          rustup component add rust-src
+      - name: Install pinned Rust toolchain
+        # rust-toolchain.toml pins the wasm target and rust-src (for
+        # -Zbuild-std) alongside the compiler.
+        run: rustup show active-toolchain
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-binaries
 
       - name: Install wasm tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y binaryen clang wabt
+          # Prebuilt wasm-bindgen CLI matching the Cargo.lock version (the
+          # JS glue must stay in lockstep with the wasm-bindgen crate);
+          # downloading the musl release binary avoids compiling the CLI
+          # from source on every dispatch.
           WASM_BINDGEN_VERSION="$(
             awk '
               $0 == "name = \"wasm-bindgen\"" { found = 1; next }
@@ -44,7 +53,13 @@ jobs:
               }
             ' Cargo.lock
           )"
-          cargo install wasm-bindgen-cli --locked --version "${WASM_BINDGEN_VERSION}"
+          curl -fsSL --retry 3 \
+            "https://github.com/rustwasm/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C "${RUNNER_TEMP}"
+          sudo install -m 0755 \
+            "${RUNNER_TEMP}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl/wasm-bindgen" \
+            /usr/local/bin/wasm-bindgen
+          wasm-bindgen --version
 
       - name: Build release wasm
         run: |

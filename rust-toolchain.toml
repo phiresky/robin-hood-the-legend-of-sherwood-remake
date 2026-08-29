@@ -1,3 +1,10 @@
 [toolchain]
 channel = "nightly-2026-08-25"
-components = ["rustc-codegen-cranelift-preview"]
+# rust-src backs the `-Zbuild-std` wasm-release publishes (see the README
+# wasm section); rustfmt and cranelift serve formatting and the dev/test
+# codegen backend. The wasm target is pinned so neither local builds nor CI
+# need a manual `rustup target add`. x86_64-pc-windows-gnu is deliberately
+# NOT pinned: only the release workflow cross-builds Windows, and pinning it
+# would pull the Windows std into every toolchain install.
+components = ["rustc-codegen-cranelift-preview", "rust-src", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

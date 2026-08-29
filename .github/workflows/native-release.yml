@@ -94,6 +94,9 @@ jobs:
             executable: robin
             pack_executable: robin
             artifact: robin-linux-x86_64
+    # Deliberately the oldest supported LTS image, not ubuntu-latest: the
+    # Linux binary links the runner's glibc, so building on the older image
+    # keeps the shipped tarball/AppImage running on older distros.
     runs-on: ubuntu-22.04
 
     steps:
@@ -114,10 +117,13 @@ jobs:
           # The posix-threads MinGW variant provides the C++ std threading
           # primitives the vendored C++ deps (Luau) may use.
           #
-          # These flags merge with the cfg-based `target-cpu=x86-64-v3`
-          # baseline from .cargo/config.toml (CARGO_TARGET_*_RUSTFLAGS joins
-          # the target.* config sources rather than replacing them, unlike a
-          # real RUSTFLAGS env var, which must stay unset). Ubuntu keeps
+          # These flags merge with the checked-in .cargo/config.toml
+          # sources rather than replacing them (CARGO_TARGET_*_RUSTFLAGS
+          # joins the target.* config entries, unlike a real RUSTFLAGS env
+          # var, which must stay unset): the cfg-based `target-cpu=
+          # x86-64-v3` baseline and the windows-gnu section's
+          # -static-libstdc++/-static-libgcc driver args all still apply,
+          # so only the runner-specific bits live here. Ubuntu keeps
           # mingw's libstdc++.a in a gcc-versioned dir that rustc does not
           # search by default, so `-L native=` points at it (mlua-sys links
           # `static=stdc++` for Luau); winpthread (pulled in by the posix
@@ -137,7 +143,7 @@ jobs:
             echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix"
             echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix"
             echo "CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix"
-            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-C link-arg=-static-libstdc++ -C link-arg=-static-libgcc -L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
           } >> "${GITHUB_ENV}"
 
       - name: Cache cargo registry and build artifacts
