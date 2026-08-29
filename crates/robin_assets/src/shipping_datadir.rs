@@ -129,19 +129,31 @@ impl Default for ShippingDatadir {
 /// Serializable reference to one content-addressed standalone audio file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingAudioAsset {
-    /// Path relative to the directory containing `datadir.bin`.
+    /// Path relative to the directory containing `datadir.bin`. For a
+    /// bundled asset this names the logical-group bundle file shared with
+    /// its neighbors (see `bundle_offset`).
     pub file: String,
     pub encoded_size: u32,
     /// Duration derived from the source asset, not from the transcoded stream.
     pub duration_ms: u32,
+    /// When set, this asset's encoded bytes are the
+    /// `bundle_offset..bundle_offset + encoded_size` slice of `file`.
+    /// Small assets are concatenated into one bundle per logical group
+    /// (per-actor voice, per-mission dialogue, common sfx, menu) so the
+    /// browser fetches one file per group instead of thousands of tiny
+    /// requests; large assets (music, ambience) stay standalone.
+    pub bundle_offset: Option<u32>,
 }
 
 /// Browser-ready standalone audio reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteAudioAsset {
+    /// URL of the asset — of its group bundle when `bundle_offset` is set.
     pub url: String,
     pub encoded_size: u32,
     pub duration_ms: u32,
+    /// Slice start within the bundle at `url` (see [`ShippingAudioAsset`]).
+    pub bundle_offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -1223,7 +1235,31 @@ impl ShippingDatadir {
             url: format!("{}/{}", base.trim_end_matches('/'), asset.file),
             encoded_size: asset.encoded_size,
             duration_ms: asset.duration_ms,
+            bundle_offset: asset.bundle_offset,
         })
+    }
+
+    /// Iterate every catalog key (normalized logical Opus path). Used by the
+    /// browser's background audio prefetch to enumerate what exists.
+    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
+        self.audio_assets.keys().map(String::as_str)
+    }
+
+    /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
+    /// required actor voices, music, ambience): the prefetch-first set.
+    pub fn active_audio_keys(&self) -> Vec<String> {
+        let Some(mission) = self.active_mission_name() else {
+            return Vec::new();
+        };
+        let Some(payload) = self.loaded_mission(&mission) else {
+            return Vec::new();
+        };
+        payload
+            .audio_durations_ms
+            .keys()
+            .filter(|key| self.audio_assets.contains_key(*key))
+            .cloned()
+            .collect()
     }
 
     fn find_audio_asset(&self, path: &Path) -> Option<&ShippingAudioAsset> {
@@ -1415,9 +1451,15 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // divisions from the escape path (another decode-speed/size trade; the
 // container layout is unchanged, but the entropy bitstream is incompatible,
 // so both magics advance).
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA12";
+//
+// Datadir v13: `ShippingAudioAsset` gains `bundle_offset` — small audio
+// assets ship concatenated into one bundle per logical group instead of
+// thousands of tiny standalone files. Mission chunk layout is unchanged
+// (the audio catalog lives only in `datadir.bin`), so only the datadir
+// magic advances.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA13";
 const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN07";
-pub const SHIPPING_DATADIR_VERSION: u32 = 12;
+pub const SHIPPING_DATADIR_VERSION: u32 = 13;
 pub const SHIPPING_MISSION_VERSION: u32 = 7;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
@@ -1655,6 +1697,7 @@ mod tests {
                 file: "audio/assets/0123.opus".into(),
                 encoded_size: 456,
                 duration_ms: 789,
+                bundle_offset: None,
             },
         );
         datadir.missions.insert(
@@ -1677,7 +1720,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA12");
+        assert_eq!(&encoded[..8], b"RHDDNA13");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -1691,6 +1734,7 @@ mod tests {
                 file: "audio/assets/0123.opus".into(),
                 encoded_size: 456,
                 duration_ms: 789,
+                bundle_offset: None,
             })
         );
         assert_eq!(
@@ -2042,6 +2086,7 @@ mod tests {
                 file: "audio/assets/abc.opus".into(),
                 encoded_size: 321,
                 duration_ms: 654,
+                bundle_offset: None,
             },
         );
         datadir.audio_assets.insert(
@@ -2050,6 +2095,7 @@ mod tests {
                 file: "audio/assets/voice.opus".into(),
                 encoded_size: 111,
                 duration_ms: 222,
+                bundle_offset: None,
             },
         );
 
@@ -2057,6 +2103,7 @@ mod tests {
             url: "https://example.test/build/Data/audio/assets/abc.opus".into(),
             encoded_size: 321,
             duration_ms: 654,
+            bundle_offset: None,
         };
         assert_eq!(
             datadir.remote_audio_asset(Path::new("Data/Sounds/Arrow.wav")),

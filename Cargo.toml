@@ -115,6 +115,23 @@ codegen-backend = "llvm"
 [profile.test.package.crc32fast]
 codegen-backend = "llvm"
 
+# Same story for jxl-rs: its SIMD feature (on by default, and wanted — map
+# decode is a mission-load hot path) carries AVX512 intrinsics cranelift
+# can't compile, so the jxl crates build with LLVM in the cranelift-backed
+# profiles.
+[profile.dev.package.jxl]
+codegen-backend = "llvm"
+[profile.dev.package.jxl_simd]
+codegen-backend = "llvm"
+[profile.dev.package.jxl_transforms]
+codegen-backend = "llvm"
+[profile.test.package.jxl]
+codegen-backend = "llvm"
+[profile.test.package.jxl_simd]
+codegen-backend = "llvm"
+[profile.test.package.jxl_transforms]
+codegen-backend = "llvm"
+
 # Workspace crates stay unoptimized so incremental rebuilds are fast.
 [profile.dev.package.robin_rs]
 opt-level = 0
@@ -212,6 +229,20 @@ panic = "abort"
 # O3 here both strips the size attributes (so the injected vectorizers act
 # on this crate) and raises its pre-link pipeline to O3.
 [profile.wasm-release.package.robin_assets]
+opt-level = 3
+# JXL map decode (~3 s of mission setup) and zstd chunk inflate are the
+# other measured load hot paths — same O3 treatment.
+[profile.wasm-release.package.jxl]
+opt-level = 3
+[profile.wasm-release.package.jxl_simd]
+opt-level = 3
+[profile.wasm-release.package.jxl_transforms]
+opt-level = 3
+[profile.wasm-release.package.zstd]
+opt-level = 3
+[profile.wasm-release.package.zstd-safe]
+opt-level = 3
+[profile.wasm-release.package.zstd-sys]
 opt-level = 3
 
 # Android cross builds need LLVM.  The workspace dev profile uses

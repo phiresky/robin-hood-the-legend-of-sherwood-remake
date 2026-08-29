@@ -1166,6 +1166,13 @@ impl PositionInterface {
         self.position = pt;
         self.position_sprite_valid = false;
         self.recompute_from_3d();
+        // Original `RHPositionInterface::SetPosition(SBGeoPoint3D)` makes
+        // the supplied world point the sole authoritative projection.  In
+        // particular, `PerformFlight` can install a 3-D point while no
+        // ground obstacle/plane is attached; a same-slot ComputeEyesPoint
+        // must then read that flight point instead of resolving map space
+        // back onto z=0.
+        self.computed_position = PositionComputed::THREE_D;
     }
 
     /// Restore the cached 3D coordinate while declaring every position
@@ -2472,10 +2479,13 @@ mod tests {
     #[test]
     fn test_set_position_3d_eagerly_syncs_map() {
         let mut pi = PositionInterface::new();
+        pi.set_obstacle(None, None);
         pi.set_position(p3(100.0, 200.0, 50.0));
         let map = pi.map_position();
         assert!((map.x - 100.0).abs() < 1e-4);
         assert!((map.y - 150.0).abs() < 1e-4); // y - z
+        assert_eq!(pi.get_position(), p3(100.0, 200.0, 50.0));
+        assert_eq!(pi.computed_position, PositionComputed::THREE_D);
     }
 
     #[test]

@@ -1172,6 +1172,7 @@ mod tests {
         insert_standalone_audio(
             &mut catalog,
             &assets_dir,
+            "common",
             "Data/Sounds/Arrow.wav",
             opus,
             1_234,
@@ -1919,6 +1920,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 &mut boot_audio,
                 &mut dd.audio_assets,
                 &audio_assets_dir,
+                "menu",
                 &relative.to_string_lossy(),
                 &path,
                 AudioKind::Effect,
@@ -1934,6 +1936,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             &mut boot_audio,
             &mut dd.audio_assets,
             &audio_assets_dir,
+            "menu",
             &relative,
             &path,
             AudioKind::Music,
@@ -3075,6 +3078,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 &mut common_audio,
                 &mut dd.audio_assets,
                 &audio_assets_dir,
+                "common",
                 &format!("Sounds/{relative}"),
                 &path,
                 AudioKind::Effect,
@@ -3220,6 +3224,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 &mut exclamation_metadata,
                 &mut dd.audio_assets,
                 &audio_assets_dir,
+                "voice-shared",
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -3247,6 +3252,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     &mut actor_audio,
                     &mut dd.audio_assets,
                     &audio_assets_dir,
+                    &format!("voice-{exclamation_id:08x}"),
                     &sample_rel,
                     &sample_path,
                     AudioKind::Voice,
@@ -3365,6 +3371,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 &mut dialogue_audio,
                 &mut dd.audio_assets,
                 &audio_assets_dir,
+                &format!("dialogue-{}", shipping_file_stem(&mission_name)),
                 sample_rel,
                 &sample_path,
                 AudioKind::Voice,
@@ -3400,6 +3407,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 &mut music_audio,
                 &mut dd.audio_assets,
                 &audio_assets_dir,
+                "music",
                 &relative,
                 &path,
                 AudioKind::Music,
@@ -3436,6 +3444,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             },
         );
     }
+
+    bundle_grouped_audio(&mut dd, &data_out)?;
 
     // Serialize + compress with the configured window log.
     let out_file = data_out.join("datadir.bin");
@@ -3606,10 +3616,18 @@ impl AudioKind {
     }
 }
 
+/// Logical bundle groups recorded during catalog construction, keyed by the
+/// content-addressed asset file. A file referenced from several groups lands
+/// in the "shared" bundle (see `bundle_grouped_audio`).
+static AUDIO_ASSET_GROUPS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
 fn insert_shipping_audio(
     payload: &mut ShippingMission,
     catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
     assets_dir: &Path,
+    group: &str,
     relative: &str,
     path: &Path,
     kind: AudioKind,
@@ -3665,7 +3683,7 @@ fn insert_shipping_audio(
                 None
             };
             let bytes = transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
-            insert_standalone_audio(catalog, assets_dir, relative, &bytes, duration_ms)
+            insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)
         }
     }
 }
@@ -3736,6 +3754,7 @@ fn music_lossless_source(game_path: &Path) -> Option<PathBuf> {
 fn insert_standalone_audio(
     catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
     assets_dir: &Path,
+    group: &str,
     relative: &str,
     bytes: &[u8],
     duration_ms: u32,
@@ -3755,10 +3774,18 @@ fn insert_standalone_audio(
         fs::write(&output, bytes)
             .with_context(|| format!("write audio asset {}", output.display()))?;
     }
+    let file = format!("audio/assets/{filename}");
+    AUDIO_ASSET_GROUPS
+        .lock()
+        .expect("audio group recorder poisoned")
+        .entry(file.clone())
+        .or_default()
+        .insert(group.to_owned());
     let asset = ShippingAudioAsset {
-        file: format!("audio/assets/{filename}"),
+        file,
         encoded_size,
         duration_ms,
+        bundle_offset: None,
     };
     match catalog.entry(logical) {
         std::collections::btree_map::Entry::Vacant(entry) => {
@@ -3801,6 +3828,119 @@ fn insert_audio_duration(
             );
         }
     }
+    Ok(())
+}
+
+/// Assets larger than this stay standalone files (music, long ambience):
+/// they are few, individually worth an HTTP request, and bundling them
+/// would force multi-MB downloads for one sound.
+const AUDIO_BUNDLE_MAX_MEMBER: u32 = 262_144;
+
+/// Concatenate small catalog assets into one file per logical group
+/// (recorded in [`AUDIO_ASSET_GROUPS`] during catalog construction; a file
+/// referenced by several groups moves to the "shared" bundle). Rewrites the
+/// catalog entries to (bundle file, offset) and deletes the standalone
+/// files, so the browser fetches one request per group instead of ~2,000
+/// tiny ones. Deterministic: members concatenate in content-hash order and
+/// the bundle name is content-addressed.
+fn bundle_grouped_audio(
+    dd: &mut robin_assets::shipping_datadir::ShippingDatadir,
+    data_out: &Path,
+) -> Result<()> {
+    use sha2::{Digest as _, Sha256};
+    use std::collections::{BTreeMap, BTreeSet};
+    let groups_by_file = std::mem::take(
+        &mut *AUDIO_ASSET_GROUPS
+            .lock()
+            .expect("audio group recorder poisoned"),
+    );
+    if groups_by_file.is_empty() {
+        return Ok(());
+    }
+    // file -> (logical keys referencing it, encoded size)
+    let mut file_refs = BTreeMap::<String, (Vec<String>, u32)>::new();
+    for (logical, asset) in &dd.audio_assets {
+        if asset.bundle_offset.is_some() {
+            bail!("audio asset {logical} is already bundled; bundling must run once");
+        }
+        let entry = file_refs
+            .entry(asset.file.clone())
+            .or_insert_with(|| (Vec::new(), asset.encoded_size));
+        if entry.1 != asset.encoded_size {
+            bail!("conflicting encoded sizes recorded for {}", asset.file);
+        }
+        entry.0.push(logical.clone());
+    }
+    let mut members_by_group = BTreeMap::<String, Vec<String>>::new();
+    for (file, (_, size)) in &file_refs {
+        if *size >= AUDIO_BUNDLE_MAX_MEMBER {
+            continue;
+        }
+        let groups = groups_by_file
+            .get(file)
+            .cloned()
+            .unwrap_or_else(BTreeSet::new);
+        let group = match groups.len() {
+            0 => bail!("catalog file {file} was never recorded in a bundle group"),
+            1 => groups.into_iter().next().expect("len checked"),
+            _ => "shared".to_owned(),
+        };
+        members_by_group
+            .entry(group)
+            .or_default()
+            .push(file.clone());
+    }
+    let bundles_dir = data_out.join("audio/bundles");
+    fs::create_dir_all(&bundles_dir)?;
+    let (mut bundled_files, mut bundle_count, mut bundled_bytes) = (0usize, 0usize, 0u64);
+    for (group, members) in members_by_group {
+        // BTreeMap iteration already sorted members by content-hash name.
+        let mut bytes = Vec::new();
+        let mut offsets = Vec::with_capacity(members.len());
+        for file in &members {
+            let member_bytes = fs::read(data_out.join(file))
+                .with_context(|| format!("read bundle member {file}"))?;
+            let expected = file_refs[file].1 as usize;
+            if member_bytes.len() != expected {
+                bail!(
+                    "bundle member {file} is {} bytes on disk but cataloged as {expected}",
+                    member_bytes.len()
+                );
+            }
+            offsets.push(u32::try_from(bytes.len()).context("audio bundle exceeds u32")?);
+            bytes.extend_from_slice(&member_bytes);
+        }
+        let digest = Sha256::digest(&bytes);
+        let hash: String = digest[..6]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let bundle_rel = format!("audio/bundles/{}-{hash}.bin", shipping_file_stem(&group));
+        fs::write(data_out.join(&bundle_rel), &bytes)
+            .with_context(|| format!("write {bundle_rel}"))?;
+        bundle_count += 1;
+        bundled_bytes += bytes.len() as u64;
+        for (file, offset) in members.iter().zip(offsets) {
+            for logical in &file_refs[file].0 {
+                let asset = dd
+                    .audio_assets
+                    .get_mut(logical)
+                    .expect("logical key came from the catalog");
+                asset.file = bundle_rel.clone();
+                asset.bundle_offset = Some(offset);
+            }
+            fs::remove_file(data_out.join(file))
+                .with_context(|| format!("remove bundled standalone {file}"))?;
+            bundled_files += 1;
+        }
+    }
+    tracing::info!(
+        bundles = bundle_count,
+        bundled_files,
+        bundled_bytes,
+        standalone_left = file_refs.len() - bundled_files,
+        "grouped small audio assets into logical bundles"
+    );
     Ok(())
 }
 
