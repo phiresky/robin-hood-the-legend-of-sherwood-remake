@@ -370,16 +370,42 @@ impl ShippingSpriteBank {
     pub fn materialize_vq_chunks(&mut self, rhs_files: &BTreeMap<String, RhsData>) -> Result<()> {
         let mut pending = std::mem::take(&mut self.vq_chunks);
         while !pending.is_empty() {
-            let mut made_progress = false;
+            let mut ready = Vec::new();
             let mut still_pending = Vec::new();
             for chunk in pending {
                 if self.vq_chunk_bases_ready(&chunk)? {
-                    self.materialize_one_vq_chunk(&chunk, rhs_files)
-                        .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
-                    made_progress = true;
+                    ready.push(chunk);
                 } else {
                     still_pending.push(chunk);
                 }
+            }
+            let made_progress = !ready.is_empty();
+            // Chunks within one fixpoint round are independent (their bases
+            // are already materialized), so decode them in parallel on
+            // native; wasm has no thread pool and stays serial.
+            #[cfg(not(target_arch = "wasm32"))]
+            let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = {
+                use rayon::prelude::*;
+                ready
+                    .into_par_iter()
+                    .map(|chunk| {
+                        let grids = self.decode_vq_chunk(&chunk, rhs_files);
+                        (chunk, grids)
+                    })
+                    .collect()
+            };
+            #[cfg(target_arch = "wasm32")]
+            let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = ready
+                .into_iter()
+                .map(|chunk| {
+                    let grids = self.decode_vq_chunk(&chunk, rhs_files);
+                    (chunk, grids)
+                })
+                .collect();
+            for (chunk, grids) in decoded {
+                let grids =
+                    grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
+                self.apply_decoded_vq_chunk(&chunk, grids)?;
             }
             if !made_progress {
                 let stuck: Vec<String> = still_pending
@@ -471,11 +497,13 @@ impl ShippingSpriteBank {
         Ok(true)
     }
 
-    fn materialize_one_vq_chunk(
-        &mut self,
+    /// Decode one chunk's blob into `(sprite id, grid)` pairs. Immutable so
+    /// independent chunks of a fixpoint round can decode in parallel.
+    fn decode_vq_chunk(
+        &self,
         chunk: &SpriteVqChunk,
         rhs_files: &BTreeMap<String, RhsData>,
-    ) -> Result<()> {
+    ) -> Result<Vec<(u32, Vec<u16>)>> {
         let selfref: Vec<Option<crate::sprite_codec::SelfRef>> = if chunk.self_refs {
             let rhs_data = rhs_files.get(&chunk.rhs).ok_or_else(|| {
                 anyhow!(
@@ -549,7 +577,17 @@ impl ShippingSpriteBank {
             &selfref,
             &chunk.blob,
         )?;
-        for (sprite_id, grid) in chunk.sprite_ids.iter().zip(decoded) {
+        Ok(chunk.sprite_ids.iter().copied().zip(decoded).collect())
+    }
+
+    /// Write one chunk's decoded grids into the sprite rows.
+    fn apply_decoded_vq_chunk(
+        &mut self,
+        _chunk: &SpriteVqChunk,
+        grids: Vec<(u32, Vec<u16>)>,
+    ) -> Result<()> {
+        for (sprite_id, grid) in grids {
+            let sprite_id = &sprite_id;
             let position = self
                 .sprites
                 .binary_search_by_key(sprite_id, |(id, _)| *id)
