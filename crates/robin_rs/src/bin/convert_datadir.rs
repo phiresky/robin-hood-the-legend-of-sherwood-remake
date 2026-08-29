@@ -1689,6 +1689,14 @@ const RLE_JXL_MIN_ATLAS_FRAMES: usize = 4;
 /// Cap on a single atlas image, splitting big groups into sub-atlases so
 /// one worker's transient RGBA decode buffer stays bounded on wasm.
 const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
+/// Conversion-time per-sprite quality floor. A sprite whose opaque-pixel
+/// PSNR (scored over the exact requantized RGB565 values materialization
+/// ships) falls below this keeps its exact RLE words instead — the worst
+/// q70 outliers are tiny dithered pickup/effect sprites that contribute
+/// almost no bytes (docs/COMPRESSION.md). Keeping every sprite at or above
+/// this floor also guarantees the per-chunk aggregate floor that
+/// `sprite_compression_probe --verify-shipping` enforces.
+const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct RleJxlChunkStats {
@@ -1698,6 +1706,7 @@ struct RleJxlChunkStats {
     kept_small_dim: usize,
     kept_shared: usize,
     kept_irregular: usize,
+    kept_low_psnr: usize,
     jxl_bytes: u64,
     mask_bytes: u64,
     raw_words_replaced: u64,
@@ -1711,6 +1720,7 @@ impl RleJxlChunkStats {
         self.kept_small_dim += other.kept_small_dim;
         self.kept_shared += other.kept_shared;
         self.kept_irregular += other.kept_irregular;
+        self.kept_low_psnr += other.kept_low_psnr;
         self.jxl_bytes += other.jxl_bytes;
         self.mask_bytes += other.mask_bytes;
         self.raw_words_replaced += other.raw_words_replaced;
@@ -1718,6 +1728,43 @@ impl RleJxlChunkStats {
     fn lossy(&self) -> usize {
         self.atlased + self.individual
     }
+}
+
+/// Opaque-pixel PSNR of one encoded member region, scored over the exact
+/// RGB565 values materialization will ship (requantized + key-dodged) —
+/// the same statistic `--verify-shipping` computes afterwards.
+fn member_psnr(
+    candidate: &RleJxlCandidate,
+    rgba: &[u8],
+    rgba_width: usize,
+    x0: usize,
+    y0: usize,
+) -> f64 {
+    use robin_assets::rle_jxl::{self, CL_OPAQUE};
+    let (mut sse, mut opaque) = (0.0f64, 0u64);
+    for y in 0..candidate.height as usize {
+        for x in 0..candidate.width as usize {
+            let i = y * candidate.width as usize + x;
+            if candidate.classes[i] != CL_OPAQUE {
+                continue;
+            }
+            let off = ((y0 + y) * rgba_width + x0 + x) * 4;
+            let shipped =
+                rle_jxl::dodge_keys(rle_jxl::quant565(rgba[off], rgba[off + 1], rgba[off + 2]));
+            let a = rle_jxl::expand565(candidate.pixels[i]);
+            let b = rle_jxl::expand565(shipped);
+            for channel in 0..3 {
+                let d = a[channel] as f64 - b[channel] as f64;
+                sse += d * d;
+            }
+            opaque += 1;
+        }
+    }
+    if opaque == 0 || sse == 0.0 {
+        return f64::INFINITY;
+    }
+    let mse = sse / (opaque as f64 * 3.0);
+    10.0 * (255.0f64 * 255.0 / mse).log10()
 }
 
 /// One eligible RLE sprite expanded for the JXL path.
@@ -1884,95 +1931,126 @@ fn build_rle_jxl_chunk(
             ungrouped.extend_from_slice(group);
             continue;
         }
-        // Split into sub-atlases under the pixel cap. Cell dims are the
-        // sub-atlas max, so splitting also tightens cells when a group
-        // mixes frame sizes.
-        let mut sub_atlases: Vec<&[u32]> = Vec::new();
-        let mut start = 0usize;
-        while start < group.len() {
-            let mut end = start;
-            let (mut cell_w, mut cell_h) = (0usize, 0usize);
-            while end < group.len() {
-                let candidate = &candidates[by_id[&group[end]]];
-                let w = cell_w.max(candidate.width as usize);
-                let h = cell_h.max(candidate.height as usize);
-                let count = end - start + 1;
-                let cols = (count as f64).sqrt().ceil() as usize;
-                let rows = count.div_ceil(cols);
-                if end > start && cols * w * rows * h > RLE_JXL_MAX_ATLAS_PIXELS {
-                    break;
+        // Quality-gated atlas encode: members scoring below the PSNR floor
+        // are ejected and the remainder re-packed, so one bad dithered
+        // frame cannot drag a whole chunk under the verification floor.
+        // Ejected members retry individually below (a dedicated encode may
+        // still clear the floor); each round removes at least one member.
+        let mut members: Vec<u32> = group.clone();
+        let accepted_group = loop {
+            if members.len() < RLE_JXL_MIN_ATLAS_FRAMES {
+                break None;
+            }
+            // Split into sub-atlases under the pixel cap. Cell dims are
+            // the sub-atlas max, so splitting also tightens cells when a
+            // group mixes frame sizes.
+            let mut sub_atlases: Vec<&[u32]> = Vec::new();
+            let mut start = 0usize;
+            while start < members.len() {
+                let mut end = start;
+                let (mut cell_w, mut cell_h) = (0usize, 0usize);
+                while end < members.len() {
+                    let candidate = &candidates[by_id[&members[end]]];
+                    let w = cell_w.max(candidate.width as usize);
+                    let h = cell_h.max(candidate.height as usize);
+                    let count = end - start + 1;
+                    let cols = (count as f64).sqrt().ceil() as usize;
+                    let rows = count.div_ceil(cols);
+                    if end > start && cols * w * rows * h > RLE_JXL_MAX_ATLAS_PIXELS {
+                        break;
+                    }
+                    (cell_w, cell_h) = (w, h);
+                    end += 1;
                 }
-                (cell_w, cell_h) = (w, h);
-                end += 1;
+                sub_atlases.push(&members[start..end]);
+                start = end;
             }
-            sub_atlases.push(&group[start..end]);
-            start = end;
-        }
-        // Encode the group's sub-atlases, then decide atlas-vs-exact at
-        // group level against the outer-zstd cost of the raw words.
-        let mut group_jxl: Vec<(Vec<u8>, Vec<(u32, u16, u16)>)> = Vec::new();
-        let mut group_jxl_bytes = 0usize;
-        for sub in &sub_atlases {
-            let frames: Vec<&RleJxlCandidate> =
-                sub.iter().map(|id| &candidates[by_id[id]]).collect();
-            let cell_w = frames.iter().map(|f| f.width as usize).max().unwrap();
-            let cell_h = frames.iter().map(|f| f.height as usize).max().unwrap();
-            let cols = (frames.len() as f64).sqrt().ceil() as usize;
-            let rows = frames.len().div_ceil(cols);
-            let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
-            let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
-            let mut placements = Vec::with_capacity(frames.len());
-            for (k, frame) in frames.iter().enumerate() {
-                let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
-                let src = frame.rgba();
-                for y in 0..frame.height as usize {
-                    let dst = ((y0 + y) * atlas_w + x0) * 4;
-                    let n = frame.width as usize * 4;
-                    rgba[dst..dst + n].copy_from_slice(&src[y * n..(y + 1) * n]);
+            let mut group_jxl: Vec<(Vec<u8>, Vec<(u32, u16, u16)>)> = Vec::new();
+            let mut group_jxl_bytes = 0usize;
+            let mut low_psnr: Vec<u32> = Vec::new();
+            for sub in &sub_atlases {
+                let frames: Vec<&RleJxlCandidate> =
+                    sub.iter().map(|id| &candidates[by_id[id]]).collect();
+                let cell_w = frames.iter().map(|f| f.width as usize).max().unwrap();
+                let cell_h = frames.iter().map(|f| f.height as usize).max().unwrap();
+                let cols = (frames.len() as f64).sqrt().ceil() as usize;
+                let rows = frames.len().div_ceil(cols);
+                let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
+                let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
+                let mut placements = Vec::with_capacity(frames.len());
+                for (k, frame) in frames.iter().enumerate() {
+                    let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
+                    let src = frame.rgba();
+                    for y in 0..frame.height as usize {
+                        let dst = ((y0 + y) * atlas_w + x0) * 4;
+                        let n = frame.width as usize * 4;
+                        rgba[dst..dst + n].copy_from_slice(&src[y * n..(y + 1) * n]);
+                    }
+                    placements.push((frame.id, x0 as u16, y0 as u16));
                 }
-                placements.push((frame.id, x0 as u16, y0 as u16));
+                let jxl = encode_pixels_to_jxl(
+                    atlas_w as u32,
+                    atlas_h as u32,
+                    &rgba,
+                    png::ColorType::Rgba,
+                    Some(quality),
+                    7,
+                )
+                .with_context(|| format!("cjxl atlas for {rel}"))?;
+                let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+                    .with_context(|| format!("decode encoded atlas for {rel}"))?;
+                for &(id, x0, y0) in &placements {
+                    let candidate = &candidates[by_id[&id]];
+                    if member_psnr(candidate, &decoded, dec_w, x0 as usize, y0 as usize)
+                        < RLE_JXL_MIN_SPRITE_PSNR_DB
+                    {
+                        low_psnr.push(id);
+                    }
+                }
+                group_jxl_bytes += jxl.len();
+                group_jxl.push((jxl, placements));
             }
-            let jxl = encode_pixels_to_jxl(
-                atlas_w as u32,
-                atlas_h as u32,
-                &rgba,
-                png::ColorType::Rgba,
-                Some(quality),
-                7,
-            )
-            .with_context(|| format!("cjxl atlas for {rel}"))?;
-            group_jxl_bytes += jxl.len();
-            group_jxl.push((jxl, placements));
-        }
-        let mut raw_le = Vec::new();
-        for id in group.iter() {
-            raw_le.extend(candidates[by_id[id]].raw_le_bytes(sprites));
-        }
-        if group_jxl_bytes >= zstd19_len(&raw_le)? {
-            // The atlas lost to plain entropy coding (tiny/flat groups);
-            // fall through to the per-sprite decision for its members.
-            ungrouped.extend_from_slice(group);
-            continue;
-        }
-        for (jxl, placements) in group_jxl {
-            let blob = blobs.len() as u32;
-            blobs.push(jxl);
-            for (id, x, y) in placements {
-                let candidate = &candidates[by_id[&id]];
-                accepted.push(RleJxlAccepted {
-                    id,
-                    blob,
-                    x,
-                    y,
-                    classes: candidate.classes.clone(),
-                    atlased: true,
-                    raw_words: candidate.raw_words,
-                });
+            if !low_psnr.is_empty() {
+                members.retain(|id| !low_psnr.contains(id));
+                ungrouped.extend(low_psnr);
+                continue;
             }
+            // Size gate: the atlas must beat the outer-zstd cost of the
+            // exact words (tiny/flat groups lose; per-sprite decides then).
+            let mut raw_le = Vec::new();
+            for id in &members {
+                raw_le.extend(candidates[by_id[id]].raw_le_bytes(sprites));
+            }
+            if group_jxl_bytes >= zstd19_len(&raw_le)? {
+                break None;
+            }
+            break Some(group_jxl);
+        };
+        match accepted_group {
+            Some(group_jxl) => {
+                for (jxl, placements) in group_jxl {
+                    let blob = blobs.len() as u32;
+                    blobs.push(jxl);
+                    for (id, x, y) in placements {
+                        let candidate = &candidates[by_id[&id]];
+                        accepted.push(RleJxlAccepted {
+                            id,
+                            blob,
+                            x,
+                            y,
+                            classes: candidate.classes.clone(),
+                            atlased: true,
+                            raw_words: candidate.raw_words,
+                        });
+                    }
+                }
+            }
+            None => ungrouped.extend(members),
         }
     }
-    // Ungrouped / demoted sprites: individual JXL, kept only when it beats
-    // the outer-zstd cost of the exact words (mask included).
+    // Ungrouped / demoted sprites: individual JXL, kept only when it clears
+    // the PSNR floor and beats the outer-zstd cost of the exact words
+    // (mask included).
     for id in ungrouped {
         let candidate = &candidates[by_id[&id]];
         let jxl = encode_pixels_to_jxl(
@@ -1984,6 +2062,12 @@ fn build_rle_jxl_chunk(
             7,
         )
         .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
+        let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+            .with_context(|| format!("decode encoded sprite {id} of {rel}"))?;
+        if member_psnr(candidate, &decoded, dec_w, 0, 0) < RLE_JXL_MIN_SPRITE_PSNR_DB {
+            stats.kept_low_psnr += 1;
+            continue;
+        }
         let mask = rle_jxl::pack_class_map(&candidate.classes);
         let raw_z = zstd19_len(&candidate.raw_le_bytes(sprites))?;
         if jxl.len() + zstd19_len(&mask)? >= raw_z {
@@ -3313,6 +3397,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             kept_small_dim = rle_totals.kept_small_dim,
             kept_shared = rle_totals.kept_shared,
             kept_irregular = rle_totals.kept_irregular,
+            kept_low_psnr = rle_totals.kept_low_psnr,
             jxl_bytes = rle_totals.jxl_bytes,
             mask_bytes = rle_totals.mask_bytes,
             raw_bytes_replaced = 2 * rle_totals.raw_words_replaced,

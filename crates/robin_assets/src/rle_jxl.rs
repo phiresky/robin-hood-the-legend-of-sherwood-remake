@@ -47,6 +47,14 @@ pub fn decode_rle_canvas(
             .ok_or_else(|| anyhow!("rle: truncated ctl"))?;
         p += 2;
         if last == 0xFFFF {
+            if first != 0xFFFF && first != 0 {
+                // `decompress_rle_arno_law` emits `first` leading pixels
+                // even for an empty row, so this shape would draw shifted;
+                // it does not occur in real banks. Refuse rather than
+                // normalize it away silently (the converter keeps such a
+                // sprite's exact words).
+                bail!("rle: empty row with nonzero first={first}");
+            }
             continue;
         }
         let (first, last) = (first as usize, last as usize);

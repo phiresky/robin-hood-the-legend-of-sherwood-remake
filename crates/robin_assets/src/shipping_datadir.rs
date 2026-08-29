@@ -2338,8 +2338,16 @@ mod tests {
                     jxl_blobs: vec![RLE_JXL_FIXTURE.to_vec()],
                     sprite_ids: vec![5, 9],
                     placements: vec![
-                        RleJxlPlacement { blob: 0, x: 0, y: 0 },
-                        RleJxlPlacement { blob: 0, x: 4, y: 0 },
+                        RleJxlPlacement {
+                            blob: 0,
+                            x: 0,
+                            y: 0,
+                        },
+                        RleJxlPlacement {
+                            blob: 0,
+                            x: 4,
+                            y: 0,
+                        },
                     ],
                     masks,
                 }],
