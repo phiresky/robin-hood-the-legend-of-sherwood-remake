@@ -1980,6 +1980,48 @@ the deferred tail reports honest blob-byte progress as a small
 "Streaming sprites N% (done/total)" HUD line (`hud_text.rs`,
 `late_sprites::tail_status`) until it completes.
 
-No shipping formats changed: same magics (`RHDDNA12`/`RHMISN07`), no
-converter changes, `shipping_datadir.rs` untouched — the partition and
-driver reuse the existing `VqDecodeScheduler` entry points.
+No shipping formats changed: same magics, no converter changes,
+`shipping_datadir.rs` untouched — the partition and driver reuse the
+existing `VqDecodeScheduler` entry points.
+
+### What actually defers, measured
+
+The deferrable set is exactly the payload `required_dependencies` pulls
+in *beyond* the mission itself: the reinforcement candidate pool. In the
+fullgame CPF only three of the ten character profiles are non-VIP —
+`MerryManA/B/C` (`datadirs/fullgame_linux/Data/Configuration/profile.json`)
+— and reinforcement selection can only instantiate uninstanced non-VIP
+gang members, so those three (plus the object/projectile RHS their
+actions enable) are the entire candidate set. Everything else is
+critical.
+
+Consequently the size of the win scales with how many Merry Men are
+recruited-but-not-taken on the mission, and it is exactly zero for a
+context-free launch: `Campaign::reset` seeds only Robin into the gang,
+so a `?mission=`/`--mission` launch (what the headless-Chrome harness
+drives) has an empty reinforcement pool, fetches no reinforcement RHS,
+and therefore has nothing to defer. Browser measurements on that path
+are a no-regression check, not a speed-up demo:
+
+```
+                        pkg-base (main)   pkg-after (this change)
+H01_Lin_VL                     11.6 s            11.7 s
+Tac01_FoA_MP                    9.1 s             9.0 s
+Sherwood                        4.8 s             4.8 s
+```
+
+(headless Chrome, SwiftShader, loopback COOP/COEP server, `ship_web_v13`
+datadir; time from `wasm_boot` to "activated shipping mission", which on
+these launches equals time to "Recording replay"). No deferred-tail line,
+no `skipped draw` line, and no missing-sprite artifacts on any of the
+three; run-to-run spread on this machine is a few hundred ms, so the
+columns are indistinguishable — as expected when the partition is a
+no-op.
+
+The partition rules themselves are unit-tested in `shipping_mission.rs`
+(`SpriteDeferral` compiles on every target; only the streaming driver is
+browser-only): only uninstanced non-VIP gang members outside the mission
+team are deferrable, coding bases named by critical chunks are promoted
+transitively (including `base2` star-2 hubs), level-start characters are
+pulled back into the critical set along with their hub chains, and
+Sherwood/saved-world launches defer nothing at all.

@@ -279,7 +279,14 @@ impl InstallWorkModel {
 /// hubs must decode before their variants). Everything not in the candidate
 /// set is critical by default, so a misjudged chunk can only err toward
 /// blocking activation — never toward a missing start-visible sprite.
-#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+///
+/// Compiled on every target (only the streaming driver is browser-only) so
+/// the partition rules stay unit-testable — the safety of the whole feature
+/// rests on them.
+#[cfg_attr(
+    not(all(target_arch = "wasm32", feature = "wasm-threads")),
+    allow(dead_code)
+)]
 struct SpriteDeferral {
     candidates: BTreeSet<String>,
     parked: Vec<robin_assets::shipping_datadir::SpriteVqChunk>,
@@ -287,7 +294,10 @@ struct SpriteDeferral {
     forest_level: bool,
 }
 
-#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", feature = "wasm-threads")),
+    allow(dead_code)
+)]
 impl SpriteDeferral {
     fn new(
         datadir: &ShippingDatadir,
@@ -450,6 +460,19 @@ impl SpriteDeferral {
         decode_total: &mut u64,
     ) {
         self.level_filtered = true;
+        let names = self.level_start_rhs_names(level, profiles);
+        self.exclude_names(&names, pending, decode_total);
+    }
+
+    /// RHS names of every character the level itself places at mission
+    /// start. Unresolvable profile references only cost prioritization
+    /// accuracy (worst case: a brief safe-skip), so they warn rather than
+    /// fail.
+    fn level_start_rhs_names(
+        &self,
+        level: &robin_engine::level_data::LoadedLevel,
+        profiles: &robin_engine::profiles::ProfileManager,
+    ) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         for soldier in &level.mission.soldiers {
             if let Some(profile) = profiles.soldiers.get(soldier.profile_number as usize) {
@@ -474,8 +497,18 @@ impl SpriteDeferral {
                 ),
             }
         }
+        names
+    }
+
+    /// Make every named RHS critical, then re-run base promotion.
+    fn exclude_names(
+        &mut self,
+        names: &BTreeSet<String>,
+        pending: &mut Vec<robin_assets::shipping_datadir::SpriteVqChunk>,
+        decode_total: &mut u64,
+    ) {
         for name in names {
-            self.remove_candidate(&name, pending, decode_total);
+            self.remove_candidate(name, pending, decode_total);
         }
         self.promote_bases(pending, decode_total);
     }
@@ -1144,8 +1177,8 @@ async fn fetch_counted(
 
 #[cfg(test)]
 mod tests {
-    use super::required_dependencies;
-    use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMissionRef};
+    use super::{SpriteDeferral, required_dependencies};
+    use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMissionRef, SpriteVqChunk};
     use robin_engine::campaign::{Campaign, PcDescription};
     use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
 
@@ -1155,6 +1188,232 @@ mod tests {
             instanced,
             ..PcDescription::default()
         }
+    }
+
+    // ── Critical-set partition (`SpriteDeferral`) ────────────────────
+
+    fn chunk(rhs: &str, base: Option<&str>, base2: &str, blob_len: usize) -> SpriteVqChunk {
+        SpriteVqChunk {
+            rhs: rhs.to_owned(),
+            base_rhs: base.map(str::to_owned),
+            base2_rhs: base2.to_owned(),
+            alphabet: 16,
+            sprite_ids: Vec::new(),
+            base_ids: Vec::new(),
+            base2_ids: Vec::new(),
+            self_refs: false,
+            blob: vec![0; blob_len],
+        }
+    }
+
+    fn named(filename: &str, vip: bool) -> CharacterProfile {
+        CharacterProfile {
+            filename: filename.to_owned(),
+            vip,
+            ..CharacterProfile::default()
+        }
+    }
+
+    /// Team hero (0), reinforcement-eligible Merry Men (1, 2), a VIP gang
+    /// hero (3), and an already-instanced Merry Man (4).
+    fn deferral_fixture() -> (ShippingDatadir, Campaign, ProfileManager) {
+        let mut datadir = ShippingDatadir::default();
+        datadir.missions.insert(
+            "H01".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["missions/h01".into()],
+            },
+        );
+        datadir.missions.insert(
+            "SherwoodOutro".into(),
+            ShippingMissionRef {
+                forest_level: true,
+                files: vec!["missions/sherwood-outro".into()],
+            },
+        );
+        let mut profiles = ProfileManager::new();
+        profiles.characters = vec![
+            named("RobinTown", true),
+            named("MerryManA", false),
+            named("MerryManB", false),
+            named("LittleJohn", true),
+            named("MerryManC", false),
+        ];
+        let campaign = Campaign {
+            characters: vec![
+                description(0, false),
+                description(1, false),
+                description(2, false),
+                description(3, false),
+                description(4, true),
+            ],
+            mission_team_indices: vec![0],
+            gang_indices: vec![1, 2, 3, 4],
+            ..Default::default()
+        };
+        (datadir, campaign, profiles)
+    }
+
+    fn deferral(mission: &str) -> SpriteDeferral {
+        let (datadir, campaign, profiles) = deferral_fixture();
+        SpriteDeferral::new(&datadir, mission, &campaign, &profiles).expect("build deferral")
+    }
+
+    #[test]
+    fn only_reinforcement_eligible_gang_characters_are_deferrable() {
+        let mut deferral = deferral("H01");
+        // Uninstanced non-VIP gang members, and only those.
+        assert_eq!(
+            deferral.candidates,
+            ["Characters/MerryManA.rhs", "Characters/MerryManB.rhs"]
+                .map(str::to_owned)
+                .into()
+        );
+
+        let mut incoming = vec![
+            chunk("Characters/MerryManA.rhs", None, "", 100),
+            chunk("Characters/RobinTown.rhs", None, "", 200),
+            chunk("Characters/LittleJohn.rhs", None, "", 300),
+            chunk("Animations/Day/Cart.rhs", None, "", 400),
+        ];
+        let mut pending = Vec::new();
+        let mut decode_total = 0u64;
+        deferral.absorb(&mut incoming, &mut pending, &mut decode_total);
+
+        let critical: Vec<&str> = pending.iter().map(|c| c.rhs.as_str()).collect();
+        assert_eq!(
+            critical,
+            [
+                "Characters/RobinTown.rhs",
+                "Characters/LittleJohn.rhs",
+                "Animations/Day/Cart.rhs"
+            ]
+        );
+        assert_eq!(decode_total, 200 + 300 + 400);
+        let parked: Vec<&str> = deferral.parked.iter().map(|c| c.rhs.as_str()).collect();
+        assert_eq!(parked, ["Characters/MerryManA.rhs"]);
+    }
+
+    #[test]
+    fn coding_bases_of_critical_chunks_are_promoted_transitively() {
+        let mut deferral = deferral("H01");
+        // A critical chunk codes against MerryManB, which itself codes
+        // against MerryManA: both hubs must decode before activation.
+        let mut incoming = vec![
+            chunk("Characters/MerryManA.rhs", None, "", 10),
+            chunk(
+                "Characters/MerryManB.rhs",
+                Some("Characters/MerryManA.rhs"),
+                "",
+                20,
+            ),
+            chunk(
+                "Characters/RobinTown.rhs",
+                Some("Characters/MerryManB.rhs"),
+                "",
+                30,
+            ),
+        ];
+        let mut pending = Vec::new();
+        let mut decode_total = 0u64;
+        deferral.absorb(&mut incoming, &mut pending, &mut decode_total);
+
+        assert!(deferral.parked.is_empty(), "every hub must be promoted");
+        assert!(deferral.candidates.is_empty());
+        assert_eq!(decode_total, 10 + 20 + 30);
+    }
+
+    #[test]
+    fn second_predecessor_hubs_are_promoted_too() {
+        let mut deferral = deferral("H01");
+        let mut incoming = vec![
+            chunk("Characters/MerryManB.rhs", None, "", 20),
+            chunk(
+                "Characters/RobinTown.rhs",
+                Some("Characters/LittleJohn.rhs"),
+                "Characters/MerryManB.rhs",
+                30,
+            ),
+        ];
+        let mut pending = Vec::new();
+        let mut decode_total = 0u64;
+        deferral.absorb(&mut incoming, &mut pending, &mut decode_total);
+
+        assert!(deferral.parked.is_empty(), "base2 hub must be promoted");
+        assert_eq!(decode_total, 20 + 30);
+    }
+
+    /// A deferrable candidate that the level actually spawns at mission
+    /// start stops being deferrable — the safety property that keeps
+    /// start-visible sprites out of the streaming tail.
+    #[test]
+    fn level_start_entities_pull_their_chunks_back_into_the_critical_set() {
+        let mut deferral = deferral("H01");
+        // MerryManB is deferrable but codes against MerryManA, so making
+        // MerryManA critical must also promote nothing extra; making a
+        // start-spawned character critical must pull its own chunk back.
+        let mut incoming = vec![
+            chunk("Characters/MerryManA.rhs", None, "", 10),
+            chunk("Characters/MerryManB.rhs", None, "", 20),
+        ];
+        let mut pending = Vec::new();
+        let mut decode_total = 0u64;
+        deferral.absorb(&mut incoming, &mut pending, &mut decode_total);
+        assert_eq!(deferral.parked.len(), 2, "both start out deferrable");
+        assert_eq!(decode_total, 0);
+
+        // The level spawns MerryManA at mission start.
+        deferral.exclude_names(
+            &["Characters/MerryManA.rhs".to_owned()].into(),
+            &mut pending,
+            &mut decode_total,
+        );
+
+        let critical: Vec<&str> = pending.iter().map(|c| c.rhs.as_str()).collect();
+        assert_eq!(critical, ["Characters/MerryManA.rhs"]);
+        assert_eq!(decode_total, 10);
+        let parked: Vec<&str> = deferral.parked.iter().map(|c| c.rhs.as_str()).collect();
+        assert_eq!(parked, ["Characters/MerryManB.rhs"]);
+    }
+
+    /// A start-spawned character that is itself a coding base drags its
+    /// dependent chunk's hub chain along.
+    #[test]
+    fn excluding_a_name_promotes_its_dependent_hubs() {
+        let mut deferral = deferral("H01");
+        let mut incoming = vec![
+            chunk("Characters/MerryManA.rhs", None, "", 10),
+            chunk(
+                "Characters/MerryManB.rhs",
+                Some("Characters/MerryManA.rhs"),
+                "",
+                20,
+            ),
+        ];
+        let mut pending = Vec::new();
+        let mut decode_total = 0u64;
+        deferral.absorb(&mut incoming, &mut pending, &mut decode_total);
+        assert_eq!(deferral.parked.len(), 2);
+
+        // The level spawns MerryManB; its base hub MerryManA must follow.
+        deferral.exclude_names(
+            &["Characters/MerryManB.rhs".to_owned()].into(),
+            &mut pending,
+            &mut decode_total,
+        );
+        assert!(deferral.parked.is_empty());
+        assert_eq!(decode_total, 30);
+    }
+
+    /// Sherwood is populated from the uninstanced gang itself, so nothing
+    /// there may be deferred.
+    #[test]
+    fn sherwood_defers_nothing() {
+        let (datadir, campaign, profiles) = deferral_fixture();
+        let deferral = SpriteDeferral::new(&datadir, "SherwoodOutro", &campaign, &profiles)
+            .expect("build deferral");
+        assert!(deferral.candidates.is_empty());
     }
 
     #[test]
