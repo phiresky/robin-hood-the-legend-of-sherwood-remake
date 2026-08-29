@@ -1582,3 +1582,99 @@ phase (~4 s hidden); a schema-v12 binary escape coder (the SEE
 division are ~2 divisions per visited level, an estimated 15-20% of
 decode); SIMD/block-skip symbol scans (`find_by_target` ~10%); and the
 ~6 s session-setup phase, which is engine work, not codec.
+
+## Lossy JXL head-to-head on large sprites: negative (2026-08-29)
+
+Earlier rounds only closed the door on lossless image codecs and on
+JXL over atlas/verbatim dumps of whole banks. Remaining open question:
+the VQ pixels are already lossy (the original game's vector
+quantisation), so for sprites big enough that the per-image header tax
+stops dominating (>= 20x20 px), does *lossy* JXL over the decoded
+RGB565 pixels beat the context-model codec? Answer: no — it loses by
+3.8-5.1x at visibly degraded quality, and by 6.2x at the lossless
+setting that parity actually requires.
+
+Harness: `crates/robin_assets/examples/jxl_sprite_probe.rs` (research
+example; new `png` dev-dep for the cjxl input files; needs an external
+`cjxl` — v0.12.0 here — via `--cjxl` or PATH). Per RHS file it
+collects the script-referenced VQ sprites, selects those >= 20x20 px,
+and compares:
+
+- codec comparator: the selected sprites re-encoded via `sprite_codec`
+  as a standalone chunk with derived self-refs (`blob_sel`, the exact
+  byte comparator; the whole-character `blob_all` reproduces the
+  shipping chunk and agrees with the tile-prorated share within 0.2%);
+- JXL side: each sprite decoded to RGB565 (Day dictionary), exported
+  as RGBA PNG, `cjxl -e 7` at `-q 90`, `-q 80`, and lossless `-d 0`.
+  Both key colors (transparent 0x07C0, shadow 0x001F) are excluded
+  from the image (alpha 0, RGB free for the encoder), and a 2-bit
+  per-pixel class map (transparent/shadow/opaque), zstd'd per
+  character, is counted toward the JXL totals — keys and shadows must
+  be exact, and requantised RGB has no guarantee of avoiding the key
+  values, so the mask is not optional. Lossy output is decoded back
+  with `jxl-rs` (the runtime's decoder), requantised to RGB565, and
+  scored over opaque pixels only.
+
+fullgame_linux, 17,390 selected sprites = 20.6M VQ tiles (>= 20x20
+captures 98.5-100% of all VQ tiles per file — "large sprites" is
+effectively the whole character/animation banks):
+
+```
+character                     n_sel |  codec-sel |    jxl-q90    jxl-q80     jxl-d0     mask+z
+Characters/Knight01.rhs        4352 | 2752.1 KiB |  12.77 MiB 9420.4 KiB  17.05 MiB 1057.6 KiB
+Characters/RobinTown.rhs       7579 | 1965.9 KiB | 9211.2 KiB 6733.4 KiB  10.72 MiB 1052.7 KiB
+Characters/Guard A00.rhs       5072 | 1516.3 KiB | 7075.3 KiB 5309.7 KiB 8198.1 KiB  821.1 KiB
+Animations/Day/chariot01.rhs    267 |  575.2 KiB | 2257.3 KiB 1593.8 KiB 2589.2 KiB  152.5 KiB
+Animations/Day/sherwood.rhs     120 |  176.0 KiB |  708.4 KiB  457.9 KiB 1139.2 KiB     4256 B
+TOTAL                         17390 | 6985.5 KiB |  31.57 MiB  22.96 MiB  39.42 MiB 3088.1 KiB
+ratio vs codec-sel                  |            |      5.07x      3.81x      6.22x  (incl mask)
+```
+
+Every axis is a loss:
+
+- **Size at lossy settings.** q80+mask is 3.81x the codec; q90+mask
+  5.07x. Even the class masks ALONE cost 44% of the codec's entire
+  budget for the same sprites. Per sprite: codec 411 B avg vs 1.4 KiB
+  (q80) / 1.9 KiB (q90) / 2.4 KiB (d0) plus 182 B mask.
+- **Quality at those settings is already bad.** Opaque-pixel PSNR at
+  q90: 25.1 dB Knight01, 29.6-30.7 dB the other characters, 33-34 dB
+  the two animations (worst single sprites 22.7 dB); q80 is 2-3 dB
+  worse. Visually the VQ dither patterns smear into gradients (see
+  the `worst_q90/` side-by-side dumps). Only 7-26% of opaque pixels
+  (per file; 6.8-10.3% on characters) survive q90 with their exact
+  RGB565 value — parity tests compare composited RGB565 framebuffers,
+  so lossy JXL is a parity break by construction, and the setting
+  that is not (`-d 0`) is 6.22x the codec.
+- **Atlas packing doesn't save it.** Packing the biggest animation
+  (Knight act6, 320 frames) into one grid atlas recovers ~15% of the
+  per-image header tax (938.8 -> 800.4 KiB q90) but the codec does
+  the same frames in 225.6 KiB — still 3.5x. Same shape on all five
+  files.
+- **Decode is slower, not faster.** jxl-rs single-thread decode of the
+  17,390 q90 images: 16.4 s (0.4-1.2 ms/img for character sprites) vs
+  4.6 s for the codec to decode the same content from the blobs — 3.5x
+  slower where it hurts (wasm is single-threaded today), before adding
+  RGB565 requantisation and mask application. Encode side: cjxl -e 7
+  took 171 s wall on 12 threads for the sweep.
+- Zero key collisions were measured (0 collisions on 24.7M opaque px,
+  at both qualities), so the mask scheme works — but it never gets
+  cheap.
+
+Why it loses: the content is 4096-entry dictionary indices arranged in
+grids — the codec models exactly that symbol stream with context, ~2.8
+bits/tile. JXL sees the rasterised OUTPUT of that quantiser: VarDCT
+spends bits re-approximating dither texture the dictionary already
+paid for once, and modular/lossless has to reproduce it exactly.
+Pixel-domain image codecs are the wrong model for this data at every
+quality point; this closes the last JXL-for-sprites variant. (JXL
+remains the right tool where it shipped: maps and interface images,
+which are true continuous-tone rasters.)
+
+Repro:
+
+```
+cargo run --release --example jxl_sprite_probe -- \
+    --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe
+# report: tmp/jxl_sprite_probe/report.txt; worst-case side-by-side
+# PNGs under tmp/jxl_sprite_probe/<char>/worst_q{80,90}/
+```
