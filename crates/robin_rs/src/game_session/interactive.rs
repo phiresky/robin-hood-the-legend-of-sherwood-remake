@@ -9,8 +9,7 @@ use super::modal_state::ActiveModal;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
-    LoadedInteractiveResources, MissionProcessResources, MissionSprites, load_mission_sprites,
-    setup_input_and_camera,
+    LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
 use super::tick::tick_audio;
 use crate::audio_backend::KiraAudioBackend;
@@ -263,6 +262,10 @@ impl InteractiveRendererAssembly {
     /// Consume pre-loop process resources into the complete frontend assembly
     /// needed by the lost-Sherwood gate. HUD trackers are intentionally added
     /// only after that gate and campaign-entry setup have succeeded.
+    ///
+    /// `cursor` and `menu_res` are the two `DEFAULT.RES` views produced by
+    /// [`MissionProcessResources::take_interface`] — ideally already eagerly
+    /// decoded on a worker while the level loaded.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn assemble_process_frontend(
         mut self,
@@ -271,18 +274,16 @@ impl InteractiveRendererAssembly {
         game: &Game,
         engine: &mut robin_engine::engine::Engine,
         assets: &robin_engine::engine::LevelAssets,
-        process: MissionProcessResources,
+        mut text: ResourceManager,
+        mut cursor: ResourceManager,
+        menu_res: ResourceManager,
+        audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
         decoded: LoadedInteractiveResources,
         short_briefing_strings: HashMap<u32, String>,
         args: &crate::main_entry::CliArgs,
         mission_idx: usize,
         location: MissionLocation,
     ) -> InteractiveFrontendAssembly {
-        let MissionProcessResources {
-            mut text,
-            mut cursor,
-            audio_backend,
-        } = process;
         let sprites = load_mission_sprites(
             engine,
             host,
@@ -308,7 +309,11 @@ impl InteractiveRendererAssembly {
         window.grab_mouse(true);
         timer.step("input + camera");
 
-        let menu = IngameMenuResources::new(&mut self.renderer, host.shipping.as_deref());
+        let menu = IngameMenuResources::from_manager(
+            &mut self.renderer,
+            host.shipping.as_deref(),
+            menu_res,
+        );
         if menu.is_none() {
             tracing::error!(
                 "In-game menu resources unavailable — pause actions require a successful reload"

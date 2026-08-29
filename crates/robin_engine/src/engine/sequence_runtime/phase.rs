@@ -2202,6 +2202,7 @@ impl EngineInner {
                                 }
                             }
                             Command::TieCmd
+                            | Command::Untie
                             | Command::HealCmd
                             | Command::WhistleCmd
                             | Command::EatCmd

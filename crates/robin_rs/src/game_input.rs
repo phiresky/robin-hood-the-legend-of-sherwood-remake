@@ -1927,6 +1927,35 @@ fn determine_use_command(
         return None;
     }
 
+    if engine.sim_config().enable_unbinding && is_tied && entity.is_npc() && !is_dead {
+        let npc_money = match entity {
+            Entity::Soldier(s) => s.npc.money,
+            Entity::Civilian(c) => c.npc.money,
+            _ => unreachable!("NPC human interaction target must be soldier or civilian"),
+        };
+        if npc_money != 0
+            && engine.selected_pc_has_contextual_action(
+                assets,
+                Some(pc_id),
+                engine_profiles::Action::Search,
+            )
+            && (!engine.is_entity_vip(assets, entity)
+                || engine
+                    .get_entity(pc_id)
+                    .and_then(|selected| selected.pc_data())
+                    .is_some_and(|pc| pc.robin))
+        {
+            return Some(Command::SearchCmd);
+        }
+        if engine.selected_pc_has_contextual_action(
+            assets,
+            Some(pc_id),
+            engine_profiles::Action::Tie,
+        ) {
+            return Some(Command::Untie);
+        }
+    }
+
     if is_dead {
         return Some(Command::SearchCmd);
     }
@@ -2258,6 +2287,35 @@ mod tests {
             }
         ));
         assert_eq!(queued.len(), 2);
+    }
+
+    #[test]
+    fn shift_queues_resolved_untie_interaction_without_re_resolving_it() {
+        let pc = EntityId::Pc(robin_engine::entity_id::PcId(2));
+        let target = EntityId::Soldier(robin_engine::entity_id::SoldierId(7));
+        let queued = queue_shift_click_commands(
+            vec![PlayerCommand::LaunchInteraction {
+                actor: pc,
+                target,
+                command: Command::Untie,
+                running: false,
+            }],
+            Action::Tie,
+            true,
+        );
+
+        assert!(matches!(
+            queued.as_slice(),
+            [PlayerCommand::QueueQuickAction {
+                action: Action::Tie,
+                command: QueuedQuickActionCommand::LaunchInteraction {
+                    actor,
+                    target: queued_target,
+                    command: Command::Untie,
+                    running: false,
+                },
+            }] if *actor == pc && *queued_target == target
+        ));
     }
 
     #[test]

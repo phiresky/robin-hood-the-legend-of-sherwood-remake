@@ -140,6 +140,11 @@ if (logEl === null) {
 const shareReplayButton = document.querySelector<HTMLButtonElement>('#share-replay');
 const fullscreenButton = document.querySelector<HTMLButtonElement>('#fullscreen');
 const replayTimeline = document.querySelector<HTMLDivElement>('#replay-timeline');
+const gameCanvas = document.querySelector<HTMLCanvasElement>('#canvas');
+if (gameCanvas === null) {
+    throw new Error('main.ts: missing #canvas element in index.html');
+}
+const syncCanvasBackingStore = installCanvasBackingStore(gameCanvas);
 
 const logOk = (t: string): void => appendLogLine(logEl, t);
 const logErr = (t: string): void => appendLogLine(logEl, t, 'err');
@@ -223,6 +228,45 @@ function installFullscreenButton(button: HTMLButtonElement | null): void {
         button.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
         button.title = active ? 'Exit fullscreen' : 'Enter fullscreen';
     });
+}
+
+/**
+ * Keep CSS layout pixels separate from the WebGPU backing store. The canvas
+ * fits the browser viewport in CSS while its drawable size follows device
+ * pixels, allowing winit to report native-resolution resize events on HiDPI
+ * and fullscreen displays.
+ */
+function installCanvasBackingStore(canvas: HTMLCanvasElement): () => void {
+    const sync = (): void => {
+        const fullscreen = document.fullscreenElement === canvas;
+        const availableWidth = Math.max(1, window.innerWidth - (fullscreen ? 0 : 16));
+        const availableHeight = Math.max(1, window.innerHeight - (fullscreen ? 0 : 16));
+        const availableAspect = availableWidth / availableHeight;
+        const targetAspect = fullscreen
+            ? availableAspect
+            : Math.min(16 / 9, Math.max(4 / 3, availableAspect));
+        const cssWidth = availableAspect >= targetAspect
+            ? availableHeight * targetAspect
+            : availableWidth;
+        const cssHeight = availableAspect >= targetAspect
+            ? availableHeight
+            : availableWidth / targetAspect;
+        canvas.style.width = `${Math.round(cssWidth)}px`;
+        canvas.style.height = `${Math.round(cssHeight)}px`;
+
+        const bounds = canvas.getBoundingClientRect();
+        const scale = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(bounds.width * scale));
+        const height = Math.max(1, Math.round(bounds.height * scale));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+    };
+    const observer = new ResizeObserver(sync);
+    observer.observe(canvas);
+    window.addEventListener('resize', sync, { passive: true });
+    document.addEventListener('fullscreenchange', sync);
+    sync();
+    return sync;
 }
 
 async function fetchJson(url: string): Promise<BuildManifest> {
@@ -311,6 +355,10 @@ async function main(): Promise<void> {
 
     bootProgress('boot', 'starting game…', 0.5);
     wasm.wasm_boot(new Uint8Array(buf), dataUrl.slice(0, dataUrl.lastIndexOf('/')));
+    // winit attaches to the existing canvas during its next event-loop turn
+    // and may restore the requested 1024x768 attributes. Re-apply the actual
+    // CSS/device-pixel size after attachment without coupling Rust to the DOM.
+    requestAnimationFrame(() => requestAnimationFrame(syncCanvasBackingStore));
     logOk('[handed off to Rust - winit drives rAF from here]');
     // The game draws its own loading screen from the next animation frame;
     // drop the shell's bar once the canvas is live.

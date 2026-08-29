@@ -111,6 +111,7 @@ impl ApplicationContext {
         let difficulty = active.difficulty;
         let amount_of_speaking = active.sound_config.amount_of_speaking;
         let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
+        let enable_unbinding = active.gameplay_config.enable_unbinding;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -125,6 +126,7 @@ impl ApplicationContext {
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
+        sim_config.enable_unbinding = enable_unbinding;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -141,6 +143,7 @@ impl ApplicationContext {
         let mut sim_config = engine_api::SimConfig::from_options(&options, existing.difficulty);
         sim_config.amount_of_speaking = existing.amount_of_speaking;
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
+        sim_config.enable_unbinding = existing.enable_unbinding;
         *self
             .sim_config
             .lock()
@@ -193,7 +196,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, amount_of_speaking, fix_hard_reaction_times) = {
+        let (result, difficulty, amount_of_speaking, fix_hard_reaction_times, enable_unbinding) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -208,12 +211,14 @@ impl ApplicationContext {
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config.fix_hard_reaction_times,
+                active.gameplay_config.enable_unbinding,
             )
         };
         self.refresh_profile_derived_state(
             difficulty,
             amount_of_speaking,
             fix_hard_reaction_times,
+            enable_unbinding,
         )?;
         Ok(result)
     }
@@ -228,7 +233,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, amount_of_speaking, fix_hard_reaction_times) = {
+        let (profile_id, difficulty, amount_of_speaking, fix_hard_reaction_times, enable_unbinding) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -276,6 +281,7 @@ impl ApplicationContext {
             let difficulty = active.difficulty;
             let amount_of_speaking = active.sound_config.amount_of_speaking;
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
+            let enable_unbinding = active.gameplay_config.enable_unbinding;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -304,6 +310,7 @@ impl ApplicationContext {
                 difficulty,
                 amount_of_speaking,
                 fix_hard_reaction_times,
+                enable_unbinding,
             )
         };
 
@@ -311,6 +318,7 @@ impl ApplicationContext {
             difficulty,
             amount_of_speaking,
             fix_hard_reaction_times,
+            enable_unbinding,
         )?;
         Ok(profile_id)
     }
@@ -387,10 +395,12 @@ impl ApplicationContext {
         difficulty: robin_engine::player_profile::DifficultyLevel,
         amount_of_speaking: u16,
         fix_hard_reaction_times: bool,
+        enable_unbinding: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
+        sim_config.enable_unbinding = enable_unbinding;
         *self
             .sim_config
             .lock()

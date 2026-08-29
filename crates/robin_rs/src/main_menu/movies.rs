@@ -13,8 +13,8 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_H, MENU_W, MenuTransform, align_bottom_right, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt,
+    MENU_H, MENU_W, align_bottom_right, draw_screen_background, enter_modal_gpu_phase,
+    render_text_virt,
 };
 use crate::ingame_menu::resources::{MT_BTN_BACK, MT_BTN_SHOW_MOVIES};
 use crate::ingame_menu::widget_bridge::{self, ModalInputState};
@@ -66,10 +66,6 @@ pub(crate) async fn show_movies(
     let mut keyboard_selection: u32 = ID_INTRO;
 
     loop {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
-
         // Build the frame fresh each frame so state changes are picked up
         // (matches the pattern other in-place sub-menus use).
         let mut frame = FrameWnd::default();
@@ -105,7 +101,9 @@ pub(crate) async fn show_movies(
 
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
-        for event in event_pump.poll_events() {
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit

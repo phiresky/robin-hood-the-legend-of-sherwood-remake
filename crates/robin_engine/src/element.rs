@@ -4068,6 +4068,21 @@ impl Entity {
         }
     }
 
+    /// Release a tied human while preserving their neurological state.
+    ///
+    /// This is deliberately strict: interaction validation guarantees a
+    /// living tied human, so a stale or non-human completion is an invariant
+    /// violation rather than a silent no-op.
+    pub fn untie_human(&mut self) {
+        let (human, posture) = match self {
+            Self::Pc(e) => (&mut e.human, &mut e.element.posture),
+            Self::Soldier(e) => (&mut e.human, &mut e.element.posture),
+            Self::Civilian(e) => (&mut e.human, &mut e.element.posture),
+            _ => panic!("cannot untie a non-human entity"),
+        };
+        crate::combat::untie(human, posture);
+    }
+
     pub fn set_posture_stuck_under_net_for_human(&mut self) -> bool {
         match self {
             Self::Pc(e) => {
@@ -4605,7 +4620,11 @@ impl Entity {
 
         let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
 
-        let mut pt = self.human_feet_point_3d();
+        // Original's ComputeDetectionPoint copies GetPosition(), the raw
+        // retained 3-D cache. During the bounded elevation-crossing callback
+        // window that cache still names the outgoing plane; resolving it
+        // here exposes the incoming plane one callback too early.
+        let mut pt = self.element_data().position();
         let raw_posture = e.posture;
         let posture = if raw_posture == Posture::Undefined {
             Posture::Upright
@@ -5755,12 +5774,68 @@ mod tests {
                 dz: 35.5,
             }),
         );
-        position.restore_cached_position_3d_invalid(outgoing);
+        let mut state = position.v48_serialized_state();
+        state.position = outgoing;
+        state
+            .computed_position
+            .remove(crate::position_interface::PositionComputed::THREE_D);
+        position.restore_v48_serialized_state(state);
 
         assert_eq!(
             pc.compute_belt_point(),
             Some(WorldPoint3D::new(198.0, 318.0, 61.0)),
             "ComputeBeltPoint must preserve Original's raw GetPosition bytes"
+        );
+    }
+
+    #[test]
+    fn detection_point_uses_retained_position_during_elevation_crossing_callback() {
+        use crate::position_interface::{ObstacleHandle, PlaneZCoeffs};
+
+        let mut soldier = Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData {
+                rider: true,
+                ..SoldierData::default()
+            },
+        });
+        let position = soldier.position_iface_mut();
+        position.set_obstacle(
+            Some(ObstacleHandle::new(1).unwrap()),
+            Some(PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 36.0,
+            }),
+        );
+        position.set_map_position(MapPoint::new(198.0, 282.0));
+        let outgoing = position.get_position();
+        position.set_obstacle(
+            Some(ObstacleHandle::new(2).unwrap()),
+            Some(PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 35.5,
+            }),
+        );
+        let mut state = position.v48_serialized_state();
+        state.position = outgoing;
+        state
+            .computed_position
+            .remove(crate::position_interface::PositionComputed::THREE_D);
+        position.restore_v48_serialized_state(state);
+
+        assert_eq!(
+            soldier.compute_detection_point(),
+            Some(WorldPoint3D::new(198.0, 318.0, 96.0)),
+            "ComputeDetectionPoint must preserve Original's raw GetPosition bytes"
         );
     }
 

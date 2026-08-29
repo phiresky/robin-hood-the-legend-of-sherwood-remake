@@ -371,6 +371,7 @@ pub fn command_requires_upright(command: Command) -> bool {
             | Command::Take
             | Command::Pay
             | Command::TieCmd
+            | Command::Untie
             | Command::WhistleCmd
             | Command::UseLever
             | Command::HandleTarget

@@ -133,7 +133,9 @@ pub async fn show_options(
         input_state.seed_mouse_from_window(event_pump, transform);
 
         while !done {
-            for event in event_pump.poll_events() {
+            let (events, transform) =
+                super::layout::poll_events_with_transform(event_pump, renderer);
+            for event in events {
                 input_state.update_from_event(&event, transform);
                 match event {
                     GameEvent::Quit => done = true,
@@ -166,18 +168,14 @@ pub async fn show_options(
                         .await;
                         outcome.changed |= changed;
                         if resolution_changed {
-                            // Apply the new resolution to the renderer so
-                            // the outer loop's next iteration lays the
-                            // Options window out at the new size.  The
-                            // caller still owns engine / cache-surface /
-                            // input-translator resizing on return.
+                            // Apply the selected 4:3 scale reference and
+                            // aspect policy together. This keeps pointer
+                            // conversion aligned while the Options dialog
+                            // rebuilds itself; the caller still owns engine,
+                            // HUD, and input-cache propagation on return.
                             outcome.resolution_changed = true;
-                            let new_w = graphic_config.resolution_x.round() as u16;
-                            let new_h = graphic_config.resolution_y.round() as u16;
-                            if renderer.screen_width() != new_w || renderer.screen_height() != new_h
-                            {
-                                renderer.resize(new_w, new_h);
-                            }
+                            event_pump.set_logical_resolution_policy(graphic_config);
+                            renderer.sync_window_size(event_pump);
                             re_display = true;
                             done = true;
                         }
