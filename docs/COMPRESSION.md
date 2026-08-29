@@ -1928,3 +1928,111 @@ also gained a boot progress bar (streamed byte progress through engine
 download/compile, assets, datadir, boot) and, for static hosts, the
 coi-serviceworker so threads work on GitHub Pages after one automatic
 first-visit reload.
+
+## Session bootstrap: overlapped terrain + interface decodes (2026-08-29)
+
+Follow-up to the final integrated browser measurement above, whose closing
+note named the two remaining session-setup hot spots: the JXL background-map
+decode (`level+bank setup: background map dims`, 3.1 s) and frontend/menu
+resource assembly (`mission bootstrap: frontend assembly`, 2.6 s, of which
+`process frontend: in-game menu resources` 1.6 s and `mission sprite setup:
+portrait cache` 0.7 s).
+
+Two things changed since that run, and both matter for reading the numbers:
+main enabled jxl-rs SIMD and `opt-level = 3` for the load-path decoders
+(which alone cut the map decode several-fold), and this work overlapped the
+remaining decodes with the rest of setup. Everything below is measured on top
+of the SIMD build, so it is *additional* to that win, not a restatement of it.
+
+### What changed
+
+- **Terrain (background `.map` + minimap `.min`)** — `PendingTerrainDecode`
+  (`crates/robin_rs/src/level_loading_host.rs`) starts the decode as soon as
+  the mission header names the map: a dedicated thread natively, a rayon
+  worker job on `wasm-threads` builds (joined by awaiting a oneshot, so the
+  browser main thread never `atomics.wait`s), and the old inline pre-engine
+  decode as the single-threaded-wasm fallback. `Engine::new` still runs on
+  header-probed dimensions; interactive missions now carry the pending decode
+  through spellforge/audio/descriptor setup and join it in frontend assembly,
+  immediately before the GPU upload. True-headless joins right after engine
+  construction as before. The minimap decode rides in the same job instead of
+  running on the main thread.
+- **Interface (`DEFAULT.RES`)** — after pre-engine metadata extraction,
+  `MissionProcessResources::start_interface_decode` hands the archive to a
+  worker that eagerly decodes every encoded (JXL) picture once
+  (`ResourceManager::decode_all_encoded_pictures`) and duplicates the decoded
+  manager for the in-game menus. Frontend assembly awaits the pair, so
+  `load_mission_sprites` (portrait cache) and `IngameMenuResources` find every
+  picture already decoded instead of decoding hundreds of interface images
+  serially on the loading path.
+- **jxl-rs parallelism** — `Picture::load_jxl_rgb565_parallel` installs a
+  rayon-backed `JxlParallelRunner`, plus a row-parallel RGB565 collapse. Used
+  only off the browser main thread.
+
+### Browser: baseline vs. after, same machine, same load
+
+Headless Chrome, loopback COOP/COEP server, `H01_Lin_VL`, RHDDNA13 tree,
+4 worker threads. Baseline is main + this branch's instrumentation commit
+(same SIMD jxl, same spans), after is the full branch; the two runs were taken
+back to back at load ~6 so the comparison is not confounded (an earlier
+after-run taken at load ~14 read roughly twice these numbers throughout).
+
+```
+span                                        baseline     after
+level+bank setup: background map dims          429 ms      < 50 ms (probe only)
+level+bank setup: total                        681 ms       395 ms
+frontend assembly: terrain decode join           —          438 ms
+frontend assembly: map upload                  131 ms        97 ms
+mission sprite setup: portrait cache           194 ms        89 ms (whole phase)
+process frontend: in-game menu resources       272 ms        58 ms
+mission bootstrap: frontend assembly           708 ms       721 ms
+mission bootstrap: total                     1,804 ms     1,418 ms
+navigation -> in-game                           10.8 s       10.0 s
+```
+
+Session bootstrap drops 1.80 s -> 1.42 s (-21%). The interface pre-decode is
+the clear winner: menu resources 272 -> 58 ms and the portrait-cache phase
+194 -> 89 ms, i.e. ~380 ms of JXL decoding moved off the loading path
+entirely.
+
+### Native (`--headless --mission H01_Lin_VL`, fullgame_linux, dev build)
+
+```
+span                                        before(*)     after
+level+bank setup: background map join        1,742 ms      0 ms
+level+bank setup: total                      3,890 ms  1,301 ms
+```
+
+(*) the before column is this branch's own pre-SIMD run; the SIMD merge and
+the worker overlap both contribute to the after number. What the after run
+shows unambiguously is that the join itself is free: the decode thread
+finishes inside the 912 ms `Engine::new`, so true-headless pays nothing for
+the map even though it cannot defer to frontend assembly.
+
+### What did not pay off, and what is still open
+
+- **jxl-rs has no ROI/tile decode.** jxl 0.6 exposes parallelism only through
+  a caller-supplied `JxlParallelRunner` (an index-addressed task set per
+  decode group); there is no crop/region API, and `scan_frames_only` /
+  `start_new_frame` are animation-frame seeking, not spatial. So "decode the
+  visible region first" is not available without patching jxl-rs.
+- **Parallel sections inside the browser worker look counterproductive.**
+  With SIMD on, the whole map decode is ~430 ms serial, yet the deferred join
+  still waited 438 ms — the job spread across the same 4-worker pool did not
+  finish inside the ~700 ms of overlap it was given. Running the job serially
+  on one worker (the pool exists to keep it off the main thread, not to split
+  it) should close that gap; the change is a one-line flag at the wasm
+  dispatch site in `PendingTerrainDecode::start`. It is *not* in this branch:
+  the machine's btrfs metadata filled up (8.20/8.72 GiB with zero unallocated
+  space, so every build failed with ENOSPC despite ~50 GiB free), and shipping
+  an unmeasured perf change would have broken the code/measurement pairing.
+- **Remaining serial cost.** After this work the largest session-setup span is
+  the terrain join (438 ms); frontend assembly's own total barely moved
+  because the join simply replaced the decode that used to sit earlier in the
+  timeline. Fixing the point above is the next ~400 ms.
+
+State safety: only host-side pixel/GPU preparation moved. The order of every
+engine-affecting step (bank install, scripts, `Engine::new` inputs, spellforge
+startup, audio, campaign clock, peasant-name generation) is unchanged, so
+replay determinism is preserved; an existing 790-frame replay plays back
+cleanly on the new binary.

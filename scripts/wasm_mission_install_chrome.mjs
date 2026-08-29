@@ -24,12 +24,14 @@ let mission = 'H01_Lin_VL';
 let pkgDir = 'wasm-www/pkg';
 let chromeBin = 'google-chrome';
 let isolated = true;
+let waitIngame = false;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
     else if (arg === '--pkg') pkgDir = args[++i];
     else if (arg === '--chrome') chromeBin = args[++i];
     else if (arg === '--serial') isolated = false;
+    else if (arg === '--wait-ingame') waitIngame = true;
     else positional.push(arg);
 }
 const [root] = positional;
@@ -126,10 +128,21 @@ const server = createServer((req, res) => {
                 console.log(`[page] ${line}`);
                 if (line.includes('boot t0')) bootAt = performance.now();
                 if (line.includes('activated shipping mission') && bootAt !== null && !done) {
-                    done = true;
                     const secs = ((performance.now() - bootAt) / 1000).toFixed(1);
                     console.log(`RESULT: mission installed ${secs}s after wasm_boot`);
-                    // Give trailing logs a moment, then finish.
+                    if (!waitIngame) {
+                        done = true;
+                        // Give trailing logs a moment, then finish.
+                        setTimeout(() => finish(0), 1500);
+                    }
+                }
+                // --wait-ingame: run through session bootstrap until the
+                // replay recorder arms (the "in-game" moment), so the
+                // PhaseTimer spans of mission setup reach the log.
+                if (waitIngame && line.includes('Recording replay') && bootAt !== null && !done) {
+                    done = true;
+                    const secs = ((performance.now() - bootAt) / 1000).toFixed(1);
+                    console.log(`RESULT: in-game (replay recording) ${secs}s after wasm_boot`);
                     setTimeout(() => finish(0), 1500);
                 }
             }

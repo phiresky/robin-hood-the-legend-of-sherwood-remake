@@ -913,6 +913,23 @@ impl IngameMenuResources {
             tracing::warn!("Ingame menu resources: DEFAULT.RES unavailable: {e}");
             return None;
         }
+        Self::from_manager(renderer, shipping, res)
+    }
+
+    /// Build the shared menu resources from an already-attached (ideally
+    /// eagerly pre-decoded) `DEFAULT.RES` manager. `shipping` is still
+    /// needed for the menu text tables (`Level.res` / `Start.sxt`).
+    pub fn from_manager(
+        renderer: &mut Renderer,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+        mut res: ResourceManager,
+    ) -> Option<Self> {
+        let mut timer = crate::game_session::PhaseTimer::new("ingame menu load");
+        if res.is_empty() {
+            tracing::warn!("Ingame menu resources: provided DEFAULT.RES manager is empty");
+            return None;
+        }
+        timer.step("attach DEFAULT.RES");
 
         // `Data/Text/Level.res` is already attached by the game session
         // loop for portrait names; it also contains the menu text string
@@ -922,6 +939,7 @@ impl IngameMenuResources {
         let _ = text_res.attach_or_from_shipping("Data/Text/Level.res", shipping);
         let _ = text_res.attach_or_from_shipping("Data/Interface/Start.sxt", shipping);
         let menu_text = MenuText::load(&mut text_res);
+        timer.step("menu text");
 
         let (button_w, button_h, button_surfaces) =
             load_sprite_pack(&mut res, renderer, resource_ids::RHID_MENU_BUTTON);
@@ -954,6 +972,7 @@ impl IngameMenuResources {
             }
         }
 
+        timer.step("button sprite packs");
         let parchment_huge = load_surface(&mut res, renderer, resource_ids::RHID_PARCHMENT_HUGE);
         let menu_bg_small =
             load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_SMALL);
@@ -994,7 +1013,10 @@ impl IngameMenuResources {
             load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_HUGE, 2),
         ];
 
+        timer.step("backgrounds + widgets + blazons");
         let fonts = MenuFonts::load();
+        timer.step("fonts");
+        timer.total();
 
         tracing::info!(
             "Ingame menus: button={}x{} ({} frames), input_field={}x{}, parchment={:?}, menu_text={} entries",
