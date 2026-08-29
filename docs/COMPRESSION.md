@@ -1626,3 +1626,39 @@ median ratio 0.90 — **~8-10% decode saved for +0.22% blocking bytes**.
 Short of the 15-20% hoped for from division counting alone: the escape
 bit adds a data-dependent branch per level, and the surviving hit-path
 `decode_target` division was always the more predictable of the two.
+
+## Negative result: block-skip symbol scan (2026-08-29)
+
+Tried the other decode lever from the v11 ledger: `Ctx::find_by_target`
+(the frequency-ordered interval walk, ~10% of decode) rewritten to scan
+the first 8 (symbol, count) pairs element-wise, then skip whole
+8-pair blocks by a branchless reduction-tree count sum
+(`target >= cum + block_sum`), resolving element-wise only inside the
+target's block. Identical (index, symbol, cum, count) results; all
+roundtrip tests green (default and ROBIN_EXCL_CAP=256).
+
+It measures SLOWER, and `perf stat` on the H01 single-thread
+decode-bench (two samples each, v12 tree) shows exactly why:
+
+```
+                      plain walk           block-skip
+instructions          66.7 / 67.0 G        54.4 / 54.4 G   (-19%)
+branches              13.1 G                7.5 G          (-42%)
+branch-miss rate      1.28%                2.40%
+cycles                50.9 / 55.5 G        56.7 / 59.2 G   (+8-11%)
+IPC                   1.20-1.32            0.92-0.96
+wall (interleaved
+ mins, loaded box)    12.48 s              12.83 s
+```
+
+Fewer instructions, more cycles: the plain walk's per-element exit
+branch is almost always correctly predicted "keep scanning", so the
+core speculates deep ahead and pipelines all the loads — the loop runs
+memory-parallel. The block variant makes each skip decision depend on
+a just-computed 8-count reduction (a serial chain the branch must wait
+for) and roughly doubles the mispredict rate, wiping out the
+instruction savings. Same physics as the 2026-08-29 dense-promotion
+regression (6.4 -> 11.8 s): these contexts are so skewed that the
+bubbled list answers from its cache-resident head, and any cleverness
+that adds latency to the head path loses. Change dropped; the plain
+walk stays.
