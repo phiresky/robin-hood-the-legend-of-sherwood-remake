@@ -181,6 +181,14 @@ enum Ctx {
     Small {
         syms: Vec<(u16, u16)>,
         sum: u32,
+        /// Lazily-allocated alphabet-sized count mirror, kept in exact sync
+        /// with `syms` once the list crosses [`DENSE_MIRROR_AT`] entries.
+        /// Pure accelerator for the exclusion path: coding decisions and
+        /// interval layout still come from `syms` alone, but
+        /// [`Ctx::excl_stats`] can subtract the excluded mass by iterating
+        /// the (small) exclusion list with O(1) count lookups instead of
+        /// walking the whole symbol list.
+        dense: Option<Box<[u16]>>,
     },
     Big {
         counts: Box<[u16]>,
@@ -247,9 +255,16 @@ impl Default for Ctx {
         Ctx::Small {
             syms: Vec::new(),
             sum: 0,
+            dense: None,
         }
     }
 }
+
+/// Allocate the [`Ctx::Small`] dense count mirror once the symbol list holds
+/// this many entries. Contexts this large are the expensive ones to walk on
+/// the exclusion path (order-0 approaches the full alphabet); the mirror
+/// costs `2 * alphabet` bytes for each context that crosses the threshold.
+const DENSE_MIRROR_AT: usize = 128;
 
 enum CtxCode {
     /// (cum, freq, total, see bucket) of the coded symbol.
@@ -453,43 +468,99 @@ impl Ctx {
         unreachable!("target beyond context sum");
     }
 
-    /// Copy the non-excluded (symbol, count) pairs into `out`.
-    /// Returns `(sum, total)` of the reduced interval (0, 0 when empty).
-    fn fill_scratch(
-        &self,
-        excl: &Excl,
-        see: &See,
-        level: usize,
-        out: &mut Vec<(u16, u32)>,
-    ) -> (u32, u32, SeeKey) {
-        out.clear();
+    /// Sum and total of the non-excluded interval (pass 1 of the exclusion
+    /// path). Symbols are re-walked by [`Self::find_by_target_excl`] on a
+    /// hit instead of being materialized into a scratch list: the copy's
+    /// `Vec` pushes were over half the decode profile, and the escape case
+    /// (the common one — an exclusion set exists because a more specific
+    /// level already escaped) never needs the individual pairs at all.
+    /// Returns `(0, 0, _)` when every present symbol is excluded.
+    fn excl_stats(&self, excl: &Excl, see: &See, level: usize) -> (u32, u32, SeeKey) {
         let mut sum = 0u32;
-        let mut push = |s: u16, c: u32, out: &mut Vec<(u16, u32)>| {
-            if !excl.contains(s) {
-                out.push((s, c));
-                sum += c;
-            }
-        };
+        let mut distinct = 0u32;
         match self {
-            Ctx::Small { syms, .. } => {
-                for &(s, c) in syms {
-                    push(s, c as u32, out);
+            Ctx::Small {
+                syms,
+                sum: ctx_sum,
+                dense,
+            } => {
+                let ex = excl.list();
+                if let Some(dense) = dense
+                    && ex.len() * 2 < syms.len()
+                {
+                    // Subtract the excluded mass via the mirror instead of
+                    // walking the whole (large) symbol list. Identical
+                    // result by construction: the mirror holds exactly the
+                    // counts in `syms`.
+                    let mut ex_sum = 0u32;
+                    let mut ex_distinct = 0u32;
+                    for &s in ex {
+                        let c = dense[s as usize] as u32;
+                        if c > 0 {
+                            ex_sum += c;
+                            ex_distinct += 1;
+                        }
+                    }
+                    sum = ctx_sum - ex_sum;
+                    distinct = syms.len() as u32 - ex_distinct;
+                } else {
+                    for &(s, c) in syms {
+                        if !excl.contains(s) {
+                            sum += c as u32;
+                            distinct += 1;
+                        }
+                    }
                 }
             }
             Ctx::Big { counts, .. } => {
                 for (s, &c) in counts.iter().enumerate() {
-                    if c > 0 {
-                        push(s as u16, c as u32, out);
+                    if c > 0 && !excl.contains(s as u16) {
+                        sum += c as u32;
+                        distinct += 1;
                     }
                 }
             }
         }
-        if out.is_empty() {
+        if distinct == 0 {
             (0, 0, See::key(level, 0, 1, 0))
         } else {
-            let key = See::key(level, sum, out.len() as u32, self.top());
+            let key = See::key(level, sum, distinct, self.top());
             (sum, sum + see.esc_freq(key, sum), key)
         }
+    }
+
+    /// Find the symbol whose exclusion-reduced interval contains `target`
+    /// (caller has already checked `target < sum` from [`Self::excl_stats`]
+    /// with the same exclusion set).
+    fn find_by_target_excl(&self, excl: &Excl, target: u32) -> (u16, u32, u32) {
+        let mut cum = 0u32;
+        match self {
+            Ctx::Small { syms, .. } => {
+                for &(s, c) in syms {
+                    if excl.contains(s) {
+                        continue;
+                    }
+                    let c = c as u32;
+                    if target < cum + c {
+                        return (s, cum, c);
+                    }
+                    cum += c;
+                }
+            }
+            Ctx::Big { counts, .. } => {
+                for (s, &c) in counts.iter().enumerate() {
+                    if c == 0 || excl.contains(s as u16) {
+                        continue;
+                    }
+                    let c = c as u32;
+                    if target < cum + c {
+                        return (s as u16, cum, c);
+                    }
+                    cum += c;
+                }
+            }
+        }
+        unreachable!("target beyond non-excluded sum");
     }
 
     /// Append this context's symbols to the exclusion list.
@@ -523,20 +594,40 @@ impl Ctx {
     #[allow(clippy::absurd_extreme_comparisons)]
     fn bump(&mut self, x: u16, alphabet: u32) {
         match self {
-            Ctx::Small { syms, sum } => {
+            Ctx::Small { syms, sum, dense } => {
                 match syms.iter().position(|&(s, _)| s == x) {
-                    Some(mut i) => {
-                        syms[i].1 += BUMP;
-                        // Bubble toward the front while more frequent than
-                        // the predecessor so scans hit hot symbols first.
-                        // Deterministic, so both coder sides keep identical
-                        // interval layouts.
-                        while i > 0 && syms[i].1 > syms[i - 1].1 {
-                            syms.swap(i, i - 1);
-                            i -= 1;
+                    Some(i) => {
+                        let c = syms[i].1 + BUMP;
+                        syms[i].1 = c;
+                        // Bubble toward the front past every predecessor
+                        // with a smaller count so scans hit hot symbols
+                        // first. The list is non-increasing by count, so
+                        // the destination is found by binary search and the
+                        // intervening block shifts right in one rotate —
+                        // the same final layout the pairwise-swap loop
+                        // produced (deterministic, both coder sides
+                        // identical), without walking long equal-count
+                        // runs one swap at a time.
+                        let dest = syms[..i].partition_point(|&(_, pc)| pc >= c);
+                        if dest < i {
+                            syms[dest..=i].rotate_right(1);
+                        }
+                        if let Some(dense) = dense {
+                            dense[x as usize] = c;
                         }
                     }
-                    None => syms.push((x, BUMP)),
+                    None => {
+                        syms.push((x, BUMP));
+                        if let Some(dense) = dense {
+                            dense[x as usize] = BUMP;
+                        } else if syms.len() >= DENSE_MIRROR_AT {
+                            let mut mirror = vec![0u16; alphabet as usize].into_boxed_slice();
+                            for &(s, c) in syms.iter() {
+                                mirror[s as usize] = c;
+                            }
+                            *dense = Some(mirror);
+                        }
+                    }
                 }
                 *sum += BUMP as u32;
                 if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
@@ -544,6 +635,11 @@ impl Ctx {
                     for (_, c) in syms.iter_mut() {
                         *c = (*c / 2).max(1);
                         *sum += *c as u32;
+                    }
+                    if let Some(dense) = dense {
+                        for &(s, c) in syms.iter() {
+                            dense[s as usize] = c;
+                        }
                     }
                 }
                 if syms.len() >= PROMOTE_AT && alphabet <= PROMOTE_MAX_ALPHABET {
@@ -610,11 +706,13 @@ const SEE_LEVEL_AUX: usize = 5;
 const EXCL_SOURCE_CAP: u32 = 256;
 
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
-/// membership, O(1) reset per coded symbol (bump the generation).
+/// membership, O(1) reset per coded symbol (bump the generation). The
+/// deduplicated insertion order is also kept as a list so scans can iterate
+/// the (usually much smaller) exclusion side instead of a context's symbols.
 struct Excl {
     stamp: Vec<u32>,
     generation: u32,
-    inserted: u32,
+    list: Vec<u16>,
 }
 
 impl Excl {
@@ -622,13 +720,13 @@ impl Excl {
         Self {
             stamp: vec![0; alphabet as usize],
             generation: 0,
-            inserted: 0,
+            list: Vec::new(),
         }
     }
 
     fn begin(&mut self) {
         self.generation += 1;
-        self.inserted = 0;
+        self.list.clear();
         if self.generation == u32::MAX {
             self.stamp.fill(0);
             self.generation = 1;
@@ -637,7 +735,7 @@ impl Excl {
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.inserted == 0
+        self.list.is_empty()
     }
 
     #[inline]
@@ -647,8 +745,15 @@ impl Excl {
 
     #[inline]
     fn insert(&mut self, s: u16) {
-        self.stamp[s as usize] = self.generation;
-        self.inserted += 1;
+        if self.stamp[s as usize] != self.generation {
+            self.stamp[s as usize] = self.generation;
+            self.list.push(s);
+        }
+    }
+
+    #[inline]
+    fn list(&self) -> &[u16] {
+        &self.list
     }
 }
 
@@ -675,10 +780,6 @@ struct Model {
     c0: Ctx,
     alphabet: u32,
     excl: Excl,
-    /// Reusable buffer for the exclusion-aware decode path: one scan copies
-    /// the non-excluded (symbol, count) pairs here, and the target search
-    /// walks this compact array instead of re-scanning with stamp checks.
-    scratch: Vec<(u16, u32)>,
     see: See,
 }
 
@@ -695,7 +796,6 @@ impl Model {
             c0: Ctx::default(),
             alphabet: alphabet as u32,
             excl: Excl::new(alphabet),
-            scratch: Vec::new(),
             see: See::new(),
         }
     }
@@ -838,35 +938,26 @@ impl Model {
         let key2 = ((above as u32) << 16) | left as u32;
         self.excl.begin();
         let excl = &mut self.excl;
-        let scratch = &mut self.scratch;
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
         let mut coded_at: usize = 5;
         let skip_aux = aux == EDGE;
+        let alphabet = self.alphabet;
+        const LEVELS: [usize; 5] = [SEE_LEVEL_AUX, 0, 1, 2, 3];
+        let mut chain: [&mut Ctx; 5] = [
+            self.c2aux.entry(key_aux).or_default(),
+            self.c2.entry(key2).or_default(),
+            &mut self.c1[(above as usize).min(alphabet as usize)],
+            &mut self.c1b[(left as usize).min(alphabet as usize)],
+            &mut self.c0,
+        ];
         {
-            let chain: [(bool, usize, &Ctx); 5] = [
-                (
-                    skip_aux,
-                    SEE_LEVEL_AUX,
-                    self.c2aux.entry(key_aux).or_default(),
-                ),
-                (false, 0, self.c2.entry(key2).or_default()),
-                (
-                    false,
-                    1,
-                    &self.c1[(above as usize).min(self.alphabet as usize)],
-                ),
-                (
-                    false,
-                    2,
-                    &self.c1b[(left as usize).min(self.alphabet as usize)],
-                ),
-                (false, 3, &self.c0),
-            ];
-            for (pos, (skip, level, ctx)) in chain.into_iter().enumerate() {
-                if skip {
+            for pos in 0..chain.len() {
+                if pos == 0 && skip_aux {
                     continue;
                 }
+                let level = LEVELS[pos];
+                let ctx: &Ctx = &*chain[pos];
                 if excl.is_empty() {
                     if ctx.is_empty() {
                         continue;
@@ -889,7 +980,7 @@ impl Model {
                     coded_at = pos;
                     break;
                 }
-                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
+                let (sum, total, key) = ctx.excl_stats(excl, see, level);
                 if total == 0 {
                     continue;
                 }
@@ -900,17 +991,10 @@ impl Model {
                     ctx.exclude_into(excl);
                     continue;
                 }
-                let mut cum = 0u32;
-                for &(s, c) in scratch.iter() {
-                    if target < cum + c {
-                        dec.commit(cum, c, total);
-                        see.update(key, false);
-                        decoded = Some(s);
-                        break;
-                    }
-                    cum += c;
-                }
-                debug_assert!(decoded.is_some());
+                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
+                dec.commit(cum, c, total);
+                see.update(key, false);
+                decoded = Some(s);
                 coded_at = pos;
                 break;
             }
@@ -918,26 +1002,16 @@ impl Model {
         let x = match decoded {
             Some(s) => s,
             None => {
-                let target = dec.decode_target(self.alphabet);
-                dec.commit(target, 1, self.alphabet);
+                let target = dec.decode_target(alphabet);
+                dec.commit(target, 1, alphabet);
                 target as u16
             }
         };
-        let alphabet = self.alphabet;
-        if !skip_aux {
-            self.c2aux.entry(key_aux).or_default().bump(x, alphabet);
-        }
-        if coded_at >= 1 {
-            self.c2.entry(key2).or_default().bump(x, alphabet);
-        }
-        if coded_at >= 2 {
-            self.c1[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 3 {
-            self.c1b[(left as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 4 {
-            self.c0.bump(x, alphabet);
+        for (pos, ctx) in chain.iter_mut().enumerate().take(coded_at + 1) {
+            if pos == 0 && skip_aux {
+                continue;
+            }
+            ctx.bump(x, alphabet);
         }
         x
     }
@@ -946,21 +1020,24 @@ impl Model {
     fn decode_sym3(&mut self, dec: &mut RangeDecoder, b1: u16, b2: u16, above: u16) -> u16 {
         let key_pair = ((b1 as u32) << 16) | b2 as u32;
         let key2 = ((b1 as u32) << 16) | above as u32;
+        let alphabet = self.alphabet;
         self.excl.begin();
         let excl = &mut self.excl;
-        let scratch = &mut self.scratch;
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
         let mut coded_at: usize = 5;
+        const LEVELS: [usize; 5] = [SEE_LEVEL_PAIR2, 0, 1, 2, 3];
+        let mut chain: [&mut Ctx; 5] = [
+            self.c2pair.entry(key_pair).or_default(),
+            self.c2.entry(key2).or_default(),
+            &mut self.c1[(b1 as usize).min(alphabet as usize)],
+            &mut self.c1b[(above as usize).min(alphabet as usize)],
+            &mut self.c0,
+        ];
         {
-            let chain: [(usize, &Ctx); 5] = [
-                (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
-                (0, self.c2.entry(key2).or_default()),
-                (1, &self.c1[(b1 as usize).min(self.alphabet as usize)]),
-                (2, &self.c1b[(above as usize).min(self.alphabet as usize)]),
-                (3, &self.c0),
-            ];
-            for (pos, (level, ctx)) in chain.into_iter().enumerate() {
+            for pos in 0..chain.len() {
+                let level = LEVELS[pos];
+                let ctx: &Ctx = &*chain[pos];
                 if excl.is_empty() {
                     if ctx.is_empty() {
                         continue;
@@ -983,7 +1060,7 @@ impl Model {
                     coded_at = pos;
                     break;
                 }
-                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
+                let (sum, total, key) = ctx.excl_stats(excl, see, level);
                 if total == 0 {
                     continue;
                 }
@@ -994,17 +1071,10 @@ impl Model {
                     ctx.exclude_into(excl);
                     continue;
                 }
-                let mut cum = 0u32;
-                for &(s, c) in scratch.iter() {
-                    if target < cum + c {
-                        dec.commit(cum, c, total);
-                        see.update(key, false);
-                        decoded = Some(s);
-                        break;
-                    }
-                    cum += c;
-                }
-                debug_assert!(decoded.is_some());
+                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
+                dec.commit(cum, c, total);
+                see.update(key, false);
+                decoded = Some(s);
                 coded_at = pos;
                 break;
             }
@@ -1017,43 +1087,34 @@ impl Model {
                 target as u16
             }
         };
-        let alphabet = self.alphabet;
-        self.c2pair.entry(key_pair).or_default().bump(x, alphabet);
-        if coded_at >= 1 {
-            self.c2.entry(key2).or_default().bump(x, alphabet);
-        }
-        if coded_at >= 2 {
-            self.c1[(b1 as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 3 {
-            self.c1b[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 4 {
-            self.c0.bump(x, alphabet);
+        for ctx in chain.iter_mut().take(coded_at + 1) {
+            ctx.bump(x, alphabet);
         }
         x
     }
 
     fn decode_sym(&mut self, dec: &mut RangeDecoder, primary: u16, second: u16) -> u16 {
         let key2 = ((primary as u32) << 16) | second as u32;
+        let alphabet = self.alphabet;
         self.excl.begin();
         let excl = &mut self.excl;
-        let scratch = &mut self.scratch;
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
-        // Decode over the chain first (contexts stay immutable; exclusions
-        // accumulate in the stamp set), then bump the visited levels
-        // (update exclusion: levels below the coding level never see the
-        // symbol — mirrors encode_sym exactly).
+        // Decode over the chain first (contexts stay unmodified; exclusions
+        // accumulate in the stamp set), then bump the visited levels through
+        // the same references (update exclusion: levels below the coding
+        // level never see the symbol — mirrors encode_sym exactly, without
+        // re-running the context lookups).
         let mut coded_at: usize = 4;
+        let mut chain: [&mut Ctx; 4] = [
+            self.c2.entry(key2).or_default(),
+            &mut self.c1[(primary as usize).min(alphabet as usize)],
+            &mut self.c1b[(second as usize).min(alphabet as usize)],
+            &mut self.c0,
+        ];
         {
-            let chain: [&Ctx; 4] = [
-                self.c2.entry(key2).or_default(),
-                &self.c1[(primary as usize).min(self.alphabet as usize)],
-                &self.c1b[(second as usize).min(self.alphabet as usize)],
-                &self.c0,
-            ];
-            for (level, ctx) in chain.into_iter().enumerate() {
+            for level in 0..chain.len() {
+                let ctx: &Ctx = &*chain[level];
                 if excl.is_empty() {
                     // Fast path: `sum` is tracked and the escape interval
                     // starts at it, so escapes are O(1) and symbol scans
@@ -1079,7 +1140,7 @@ impl Model {
                     coded_at = level;
                     break;
                 }
-                let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
+                let (sum, total, key) = ctx.excl_stats(excl, see, level);
                 if total == 0 {
                     continue;
                 }
@@ -1090,17 +1151,10 @@ impl Model {
                     ctx.exclude_into(excl);
                     continue;
                 }
-                let mut cum = 0u32;
-                for &(s, c) in scratch.iter() {
-                    if target < cum + c {
-                        dec.commit(cum, c, total);
-                        see.update(key, false);
-                        decoded = Some(s);
-                        break;
-                    }
-                    cum += c;
-                }
-                debug_assert!(decoded.is_some());
+                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
+                dec.commit(cum, c, total);
+                see.update(key, false);
+                decoded = Some(s);
                 coded_at = level;
                 break;
             }
@@ -1108,21 +1162,13 @@ impl Model {
         let x = match decoded {
             Some(s) => s,
             None => {
-                let target = dec.decode_target(self.alphabet);
-                dec.commit(target, 1, self.alphabet);
+                let target = dec.decode_target(alphabet);
+                dec.commit(target, 1, alphabet);
                 target as u16
             }
         };
-        let alphabet = self.alphabet;
-        self.c2.entry(key2).or_default().bump(x, alphabet);
-        if coded_at >= 1 {
-            self.c1[(primary as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 2 {
-            self.c1b[(second as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        }
-        if coded_at >= 3 {
-            self.c0.bump(x, alphabet);
+        for ctx in chain.iter_mut().take(coded_at + 1) {
+            ctx.bump(x, alphabet);
         }
         x
     }

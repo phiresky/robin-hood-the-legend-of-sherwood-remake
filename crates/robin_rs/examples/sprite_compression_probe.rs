@@ -110,6 +110,14 @@ struct Cli {
     #[arg(long)]
     prune_unreferenced: Option<PathBuf>,
 
+    /// Time the runtime decode path (chunk zstd+deser merge, then VQ blob
+    /// materialization) without loading the source bank, mirroring what the
+    /// browser does at mission install. "<Data dir>" decodes every rhs
+    /// chunk; "<Data dir>:<mission>" decodes just that mission's blocking
+    /// rhs set. Honors RAYON_NUM_THREADS=1 to approximate wasm.
+    #[arg(long)]
+    decode_bench: Option<String>,
+
     /// Context-mixing prototype (PAQ-lite): binary-decompose tile indices
     /// and code each bit with a logistic mix of order-2/order-1/order-0
     /// adaptive predictors. Exact cost accounting, no bitstream.
@@ -2375,6 +2383,76 @@ fn mix(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
 }
 
 /// Blocking-download accounting for one mission of a converted tree.
+fn decode_bench(spec: &str) -> Result<()> {
+    use robin_assets::shipping_datadir::{
+        ShippingDatadir, ShippingMission, decode_mission_compressed,
+    };
+    let (dir, mission) = match spec.rsplit_once(':') {
+        Some((d, m)) if std::path::Path::new(d).join("datadir.bin").is_file() => (d, Some(m)),
+        _ => (spec, None),
+    };
+    let data_out = std::path::Path::new(dir);
+    let files: Vec<PathBuf> = if let Some(mission) = mission {
+        let dd = ShippingDatadir::load_from_file(&data_out.join("datadir.bin"))?;
+        let mission_ref = dd
+            .missions
+            .get(mission)
+            .ok_or_else(|| anyhow!("mission {mission} not in manifest"))?;
+        mission_ref
+            .files
+            .iter()
+            .filter(|rel| rel.starts_with("rhs/"))
+            .map(|rel| data_out.join(rel))
+            .collect()
+    } else {
+        let mut all: Vec<PathBuf> = fs::read_dir(data_out.join("rhs"))?
+            .filter_map(|e| Some(e.ok()?.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "zst"))
+            .collect();
+        all.sort();
+        all
+    };
+    let compressed: Vec<Vec<u8>> = files
+        .iter()
+        .map(|p| fs::read(p).with_context(|| format!("read {}", p.display())))
+        .collect::<Result<_>>()?;
+    let comp_bytes: u64 = compressed.iter().map(|b| b.len() as u64).sum();
+    let t0 = std::time::Instant::now();
+    let mut merged = ShippingMission::default();
+    for (path, bytes) in files.iter().zip(&compressed) {
+        merged
+            .merge_part(
+                decode_mission_compressed(bytes)
+                    .with_context(|| format!("decode {}", path.display()))?,
+            )
+            .with_context(|| format!("merge {}", path.display()))?;
+    }
+    let t_merge = t0.elapsed();
+    let Some(merged_bank) = merged.sprite_bank.as_mut() else {
+        bail!("rhs chunks contain no sprite bank");
+    };
+    let n_blobs = merged_bank.vq_chunks.len();
+    let blob_bytes: u64 = merged_bank
+        .vq_chunks
+        .iter()
+        .map(|c| c.blob.len() as u64)
+        .sum();
+    let t1 = std::time::Instant::now();
+    merged_bank
+        .materialize_vq_chunks(&merged.rhs_files)
+        .context("materialize VQ sprite chunks")?;
+    let t_mat = t1.elapsed();
+    let n_sprites = merged_bank.sprites.len();
+    println!(
+        "## decode-bench {spec}: {} files ({comp_bytes} B) merged in {:.2}s; \
+         {n_blobs} VQ blobs ({blob_bytes} B) materialized in {:.2}s; {n_sprites} sprites",
+        files.len(),
+        t_merge.as_secs_f64(),
+        t_mat.as_secs_f64(),
+    );
+    Ok(())
+}
+
 fn prune_unreferenced(data_out: &std::path::Path) -> Result<()> {
     use robin_assets::shipping_datadir::ShippingDatadir;
     let dd = ShippingDatadir::load_from_file(&data_out.join("datadir.bin"))?;
@@ -2463,6 +2541,9 @@ fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(spec) = &cli.decode_bench {
+        return decode_bench(spec);
+    }
     let data_dir_s = cli.data_dir.to_str().unwrap();
     let mut holder = FrameHolder::new();
     holder
