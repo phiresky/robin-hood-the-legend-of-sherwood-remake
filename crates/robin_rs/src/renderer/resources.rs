@@ -7,17 +7,21 @@ use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
 use crate::ui::AlphaMask;
 use crate::window::GpuContext;
 
+use super::atlas::SpriteAtlas;
 use super::{
-    BackgroundTexture, CachedSprite, FontAtlas, ManagedSurface, MaskAlpha, OUTLINE_PAD,
-    SpriteCacheKey, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg, outline_cache_key,
-    rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba, sprite_rgba_for_upload,
-    upload_counter, upload_rgba_texture,
+    BackgroundTexture, FontAtlas, LegacySpriteTexture, ManagedSurface, MaskAlpha, OUTLINE_PAD,
+    SpriteCacheKey, SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg,
+    outline_cache_key, rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_atlas_enabled,
+    sprite_outline_rgba, sprite_rgba_for_upload, upload_counter, upload_rgba_texture,
 };
 
 pub(super) struct GpuResources {
     pub(super) managed_surfaces: HashMap<u32, ManagedSurface>,
     next_id: u32,
     pub(super) bit_depth: u16,
+    /// Shared textures every decoded sprite frame is packed into.
+    pub(super) sprite_atlas: SpriteAtlas,
+    /// `(bank_id, variant, shadow) → sub-rect of a `sprite_atlas` layer.
     pub(super) sprite_cache: SpriteTextureCache,
     pub(super) mask_alpha_cache: HashMap<u32, MaskAlpha>,
     pub(super) background_texture: Option<BackgroundTexture>,
@@ -48,8 +52,8 @@ impl GpuResources {
             shadow_color: shadow_color as u32,
             shadow_alpha,
         };
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
+        if let Some(entry) = self.sprite_cache.entries.get(&key) {
+            return Some(entry.dimensions());
         }
         // A still-streaming sprite must not enter the permanent cache as a
         // blank texture — skip the draw; it pops in once its grid lands.
@@ -75,31 +79,61 @@ impl GpuResources {
             shadow_alpha,
             self.bit_depth,
         );
+        let label = format!("sprite {bank_id:?}/{variant:?}");
+        let residency = self.place_sprite(gpu, w, h, &rgba, &label, "sprite bg");
+        self.sprite_cache.entries.insert(key, residency);
+        Some((w, h))
+    }
+
+    /// Put one decoded RGBA frame on the GPU, either packed into the
+    /// shared atlas or (A/B flag only) as its own texture.
+    ///
+    /// `rgba` is uploaded verbatim on both paths — that is what makes
+    /// the two residencies pixel-identical.
+    fn place_sprite(
+        &mut self,
+        gpu: &GpuContext,
+        width: u16,
+        height: u16,
+        rgba: &[u8],
+        texture_label: &str,
+        bind_group_label: &str,
+    ) -> SpriteResidency {
+        if sprite_atlas_enabled() {
+            // Counted where the per-sprite `upload_rgba_texture` used
+            // to be, so the `uploads/f` FPS line stays comparable
+            // across the migration.
+            upload_counter::inc("sprite atlas insert");
+            return SpriteResidency::Atlas(self.sprite_atlas.insert(
+                gpu,
+                &self.bgl_tex,
+                &self.sampler,
+                width,
+                height,
+                rgba,
+            ));
+        }
         let (texture, view) = upload_rgba_texture(
             gpu,
-            &rgba,
-            w as u32,
-            h as u32,
-            &format!("sprite {bank_id:?}/{variant:?}"),
+            rgba,
+            u32::from(width),
+            u32::from(height),
+            texture_label,
         );
         let bind_group = make_tex_bg(
             &gpu.device,
             &self.bgl_tex,
             &view,
             &self.sampler,
-            "sprite bg",
+            bind_group_label,
         );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: w,
-                height: h,
-            },
-        );
-        Some((w, h))
+        SpriteResidency::Legacy(LegacySpriteTexture {
+            _texture: texture,
+            _view: view,
+            bind_group,
+            width,
+            height,
+        })
     }
 
     /// Build the GPU cache for the edge-map outline used by the
@@ -116,8 +150,8 @@ impl GpuResources {
         _shadow_level: u16,
     ) -> Option<(u16, u16)> {
         let key = outline_cache_key(bank_id, variant, shadow_color);
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
+        if let Some(entry) = self.sprite_cache.entries.get(&key) {
+            return Some(entry.dimensions());
         }
         // See `ensure_sprite_cached`: never cache a still-streaming sprite.
         if frame_holder.sprite_pixels_pending(bank_id) {
@@ -154,30 +188,10 @@ impl GpuResources {
             TRANSPARENT_COLOR_KEY_16,
             shadow_color,
         );
-        let (texture, view) = upload_rgba_texture(
-            gpu,
-            &rgba,
-            outline_w as u32,
-            h as u32,
-            &format!("sprite outline {bank_id:?}/{variant:?}"),
-        );
-        let bind_group = make_tex_bg(
-            &gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite outline bg",
-        );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: outline_w as u16,
-                height: h,
-            },
-        );
+        let label = format!("sprite outline {bank_id:?}/{variant:?}");
+        let residency =
+            self.place_sprite(gpu, outline_w as u16, h, &rgba, &label, "sprite outline bg");
+        self.sprite_cache.entries.insert(key, residency);
         Some((outline_w as u16, h))
     }
 
@@ -347,6 +361,7 @@ impl GpuResources {
             managed_surfaces: HashMap::new(),
             next_id: 2,
             bit_depth: 16,
+            sprite_atlas: SpriteAtlas::default(),
             sprite_cache: SpriteTextureCache::default(),
             mask_alpha_cache: HashMap::new(),
             background_texture: None,

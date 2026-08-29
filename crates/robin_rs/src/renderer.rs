@@ -28,11 +28,13 @@ use crate::ui::AlphaMask;
 use crate::window::{GpuContext, SharedSurface};
 use crate::zoom_hud::ZoomTooltipTracker;
 
+mod atlas;
 mod frame;
 mod pipelines;
 mod readback;
 mod resources;
 
+use atlas::AtlasSlot;
 use frame::FrameState;
 use pipelines::PipelineStore;
 use resources::GpuResources;
@@ -73,21 +75,57 @@ struct SpriteCacheKey {
     shadow_alpha: u8,
 }
 
-struct CachedSprite {
-    /// Held alive for the bind group's lifetime; the renderer only
-    /// touches the bind group on draws.
+/// One decoded sprite frame's GPU residency.
+enum SpriteResidency {
+    /// Normal path: a sub-rect of a shared [`atlas`] layer.
+    Atlas(AtlasSlot),
+    /// Legacy path: this sprite owns a whole texture. Reachable only
+    /// with `ROBIN_SPRITE_ATLAS=0`, which exists so one binary can
+    /// produce both halves of a pixel-identity A/B capture — see
+    /// [`sprite_atlas_enabled`]. Delete along with the flag once the
+    /// atlas path has been signed off.
+    Legacy(LegacySpriteTexture),
+}
+
+impl SpriteResidency {
+    fn dimensions(&self) -> (u16, u16) {
+        match self {
+            Self::Atlas(slot) => (slot.width, slot.height),
+            Self::Legacy(tex) => (tex.width, tex.height),
+        }
+    }
+}
+
+/// A sprite that owns its own texture (legacy A/B path only).
+struct LegacySpriteTexture {
+    /// Held alive for the bind group's lifetime.
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
-    /// Cached `(texture, sampler)` bind group so per-frame draws of
-    /// this sprite don't rebuild it.
     bind_group: wgpu::BindGroup,
     width: u16,
     height: u16,
 }
 
+/// Whether decoded sprites are packed into shared atlas layers.
+///
+/// Defaults to on. `ROBIN_SPRITE_ATLAS=0` restores the pre-atlas
+/// one-texture-per-sprite path so a single binary can render both
+/// halves of an A/B comparison with every other variable — data,
+/// build, driver, scene — held fixed. Temporary validation
+/// scaffolding.
+pub(crate) fn sprite_atlas_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !matches!(
+            std::env::var("ROBIN_SPRITE_ATLAS").as_deref(),
+            Ok("0") | Ok("off") | Ok("false")
+        )
+    })
+}
+
 #[derive(Default)]
 struct SpriteTextureCache {
-    entries: HashMap<SpriteCacheKey, CachedSprite>,
+    entries: HashMap<SpriteCacheKey, SpriteResidency>,
 }
 
 #[inline]
@@ -1557,15 +1595,13 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [1.0, 1.0, 1.0, 1.0],
             tex: TextureRef::Frame(tex_idx),
             blend: BlendMode::Blend,
@@ -1590,15 +1626,13 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [1.0, 1.0, 1.0, alpha as f32 / 255.0],
             tex: TextureRef::Frame(tex_idx),
             blend: BlendMode::Blend,
@@ -1619,15 +1653,13 @@ impl Renderer {
         alpha: u8,
     ) -> bool {
         let key = outline_cache_key(bank_id, variant, shadow_color);
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [
                 rgb.0 as f32 / 255.0,
                 rgb.1 as f32 / 255.0,
@@ -2043,6 +2075,47 @@ impl Renderer {
     fn queue_cached_bg(&mut self, bg: wgpu::BindGroup) -> u32 {
         self.frame.queue_cached_bg(bg)
     }
+
+    /// Resolve a cached sprite to `(per-frame bind-group index, uv)`,
+    /// or `None` when it was never cached.
+    ///
+    /// The atlas path returns the layer's shared bind group and the
+    /// sprite's sub-rect; the legacy A/B path returns the sprite's own
+    /// bind group and the full `0..1` rect.
+    fn queue_sprite_texture(&mut self, key: &SpriteCacheKey) -> Option<(u32, [f32; 4])> {
+        // Resolve out of the cache first so the immutable borrow of
+        // `self.resources` ends before the `&mut self` queue calls.
+        enum Resolved {
+            Atlas(AtlasSlot),
+            Legacy(wgpu::BindGroup),
+        }
+        let resolved = match self.resources.sprite_cache.entries.get(key)? {
+            SpriteResidency::Atlas(slot) => Resolved::Atlas(*slot),
+            SpriteResidency::Legacy(tex) => Resolved::Legacy(tex.bind_group.clone()),
+        };
+        Some(match resolved {
+            Resolved::Atlas(slot) => (self.queue_atlas_layer(slot.layer), slot.uv),
+            Resolved::Legacy(bg) => (self.queue_cached_bg(bg), [0.0, 0.0, 1.0, 1.0]),
+        })
+    }
+
+    /// Resolve an atlas layer to a per-frame bind-group index,
+    /// memoized for the frame.
+    ///
+    /// The memo is what turns the atlas into actual batching: the
+    /// draw encoder elides `set_bind_group` when consecutive draws
+    /// carry the same `TextureRef::Frame(idx)`, so every sprite from a
+    /// layer has to resolve to *one* index rather than a fresh one per
+    /// draw.
+    fn queue_atlas_layer(&mut self, layer: u32) -> u32 {
+        if let Some(idx) = self.frame.atlas_bg_slot(layer) {
+            return idx;
+        }
+        let bg = self.resources.sprite_atlas.bind_group(layer).clone();
+        let idx = self.frame.queue_cached_bg(bg);
+        self.frame.remember_atlas_bg_slot(layer, idx);
+        idx
+    }
 }
 
 /// Shadow opacity for `FrameHolder::global_shadow()` = 40, gamma-compensated
@@ -2365,13 +2438,21 @@ fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
 /// Per-second FPS counter + per-frame draw / upload counts logged at
 /// info level. Cheap — one mutex take per `present`. Run with
 /// `RUST_LOG=fps=info`.
-fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
+fn log_fps(
+    draws_this_frame: usize,
+    uploads_this_frame: usize,
+    binds_this_frame: usize,
+    draw_calls_this_frame: usize,
+    atlas: atlas::AtlasStats,
+) {
     use std::sync::OnceLock;
     static STATE: OnceLock<std::sync::Mutex<FpsState>> = OnceLock::new();
     struct FpsState {
         frames: u32,
         draws_total: usize,
         uploads_total: usize,
+        binds_total: usize,
+        draw_calls_total: usize,
         last: web_time::Instant,
     }
     let m = STATE.get_or_init(|| {
@@ -2379,6 +2460,8 @@ fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
             frames: 0,
             draws_total: 0,
             uploads_total: 0,
+            binds_total: 0,
+            draw_calls_total: 0,
             last: web_time::Instant::now(),
         })
     });
@@ -2386,21 +2469,32 @@ fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
     g.frames += 1;
     g.draws_total += draws_this_frame;
     g.uploads_total += uploads_this_frame;
+    g.binds_total += binds_this_frame;
+    g.draw_calls_total += draw_calls_this_frame;
     if g.last.elapsed().as_secs() >= 1 {
         let avg_draws = g.draws_total / g.frames as usize;
         let avg_uploads = g.uploads_total / g.frames as usize;
+        let avg_binds = g.binds_total / g.frames as usize;
+        let avg_draw_calls = g.draw_calls_total / g.frames as usize;
         let (present_avg_us, _) = present_time::take_avg();
         let upload_labels = upload_counter::take_labels();
         tracing::debug!(
             target: "fps",
-            "{} fps  draws/f={}  uploads/f={}  present={:.2}ms  upload_labels={}",
-            g.frames, avg_draws, avg_uploads,
+            "{} fps  quads/f={}  drawcalls/f={}  binds/f={}  uploads/f={}  \
+             present={:.2}ms  atlas={}L/{:.0}MiB/{:.0}%occ/{}spr  upload_labels={}",
+            g.frames, avg_draws, avg_draw_calls, avg_binds, avg_uploads,
             present_avg_us as f32 / 1000.0,
+            atlas.layers,
+            atlas.bytes() as f32 / (1024.0 * 1024.0),
+            atlas.occupancy() * 100.0,
+            atlas.sprites,
             upload_labels,
         );
         g.frames = 0;
         g.draws_total = 0;
         g.uploads_total = 0;
+        g.binds_total = 0;
+        g.draw_calls_total = 0;
         g.last = web_time::Instant::now();
     }
 }
@@ -2466,6 +2560,39 @@ mod upload_counter {
             .map(|(label, count)| format!("{label}:{count}"))
             .collect::<Vec<_>>()
             .join(",")
+    }
+}
+
+/// Counts `set_bind_group(1, …)` calls issued while encoding the scene
+/// pass.
+///
+/// This is the number the sprite atlas is meant to move: before it,
+/// every sprite owned a texture and so forced its own texture bind, and
+/// `binds/f` tracked `draws/f` almost exactly. Packed into shared
+/// layers, a run of sprites from one layer costs a single bind.
+/// …and the `draw` calls actually recorded, which is not the same as
+/// the number of queued quads once consecutive same-state draws are
+/// coalesced into one contiguous vertex range.
+mod bind_counter {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static BINDS: AtomicUsize = AtomicUsize::new(0);
+    static DRAW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    pub fn inc() {
+        BINDS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_draw_call() {
+        DRAW_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn take_count() -> usize {
+        BINDS.swap(0, Ordering::Relaxed)
+    }
+
+    pub fn take_draw_calls() -> usize {
+        DRAW_CALLS.swap(0, Ordering::Relaxed)
     }
 }
 
