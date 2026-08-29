@@ -7,6 +7,13 @@ publish.workspace = true
 [lib]
 name = "robin_assets"
 
+# Wasm sprite-decode benchmark (see the example header for build/run steps).
+# cdylib so wasm-bindgen can process it; native profiles compile it to an
+# empty library (the whole file is cfg(target_arch = "wasm32")).
+[[example]]
+name = "wasm_decode_bench"
+crate-type = ["cdylib"]
+
 [dependencies]
 robin_util.workspace = true
 robin_engine.workspace = true
@@ -44,8 +51,15 @@ bzip2 = "0.6"
 # copy it; sprites fault their pages in on first draw.
 memmap2 = "0.9"
 
-[dev-dependencies]
+# tempfile has no wasm32-unknown-unknown support; the tests that use it are
+# native-only anyway, and gating it keeps `--example wasm_decode_bench`
+# buildable for wasm (cargo builds every dev-dependency for example targets).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
 
 [lints]
 workspace = true

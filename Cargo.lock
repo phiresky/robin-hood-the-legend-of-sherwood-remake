@@ -5381,6 +5381,7 @@ dependencies = [
  "bzip2",
  "flate2",
  "foldhash 0.2.0",
+ "js-sys",
  "jxl",
  "memmap2",
  "rayon",
@@ -5390,6 +5391,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "wasm-bindgen",
  "zstd",
 ]
 
