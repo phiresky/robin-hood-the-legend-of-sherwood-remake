@@ -644,7 +644,7 @@ fn render_campaign_progress(
 
     if presentation == CampaignPresentationMode::ProgressTree {
         for (idx, node) in graph.nodes.iter().enumerate() {
-            let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
+            let (x, y, _w, h) = progress_node_rect(graph, presentation, idx);
             for &parent in &node.prerequisite_nodes {
                 let (px, py, pw, ph) = progress_node_rect(graph, presentation, parent);
                 renderer.render_gpu_line(
