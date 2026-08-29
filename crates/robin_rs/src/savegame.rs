@@ -325,9 +325,11 @@ impl SaveGameManager {
         }
 
         // Spawn the slow serialization + write on a background thread.
-        // Wasm doesn't support threads, so run inline there — slower
-        // mid-mission stall, but no other path until we either offload
-        // to a Web Worker or move the write off the critical path.
+        // Wasm doesn't support threads; defer it to a queued task on the
+        // main-thread executor instead, so mission startup (this call sits
+        // between level load and the first gameplay frame) doesn't stall on
+        // serializing the whole engine. The captured state is already
+        // snapshotted above, so writing later loses nothing.
         let do_write = move || {
             tracing::info!("{log_label}: writing to {}", path.display());
             if let Err(err) = save.write_to(&path) {
@@ -348,7 +350,9 @@ impl SaveGameManager {
                 .expect("failed to spawn background save thread");
         }
         #[cfg(target_arch = "wasm32")]
-        do_write();
+        wasm_bindgen_futures::spawn_local(async move {
+            do_write();
+        });
     }
 
     /// Whether a "Restart" auto-save snapshot exists on disk.  The

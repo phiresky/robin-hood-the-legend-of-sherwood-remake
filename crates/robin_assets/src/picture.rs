@@ -329,6 +329,37 @@ impl Picture {
         Self::load_sixteen_from_stream(file)
     }
 
+    /// Pixel dimensions of a terrain bitmap (`.map` / `.min`) without
+    /// decoding the pixels: the Sixteen header carries them directly, and
+    /// JXL exposes them after the (cheap) image-info decoder stage.
+    ///
+    /// Lets level setup hand `Engine::new` its grid dimensions while the
+    /// full bitmap decode still runs on a worker thread.
+    pub fn terrain_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+        use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
+
+        if is_jxl_signature(bytes) {
+            let mut input: &[u8] = bytes;
+            let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+            let dec_with_image = match dec.process(&mut input, None) {
+                Ok(ProcessingResult::Complete { result }) => result,
+                Ok(ProcessingResult::NeedsMoreInput { .. }) => {
+                    bail!("jxl: decoder requested more input but we provided the whole blob")
+                }
+                Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
+            };
+            let (w, h) = dec_with_image.basic_info().size;
+            return Ok((
+                u16::try_from(w).context("jxl terrain width exceeds u16")?,
+                u16::try_from(h).context("jxl terrain height exceeds u16")?,
+            ));
+        }
+        let mut reader = Reader::new(bytes);
+        let x_size = reader.u16("Sixteen frame width")?;
+        let y_size = reader.u16("Sixteen frame height")?;
+        Ok((x_size, y_size))
+    }
+
     /// Same dispatch as [`Self::load_terrain_from_stream`] but on an
     /// already-buffered byte slice — used when the bytes come from the
     /// shipping datadir's `raw` map rather than from disk.
@@ -476,16 +507,17 @@ impl Picture {
         };
         drop(output_bufs);
 
-        // Collapse RGB888 → RGB565.
+        // Collapse RGB888 → RGB565. Chunked writes into a preallocated
+        // buffer — the per-pixel `Vec` growth path was a measurable slice
+        // of map decode on wasm (single-threaded, no vectorizer at -Oz).
         let pixel_count = w * h;
-        let mut data = Vec::with_capacity(pixel_count * 2);
-        for i in 0..pixel_count {
-            let off = i * 3;
-            let r = rgb[off] as u16;
-            let g = rgb[off + 1] as u16;
-            let b = rgb[off + 2] as u16;
+        let mut data = vec![0u8; pixel_count * 2];
+        for (dst, src) in data.chunks_exact_mut(2).zip(rgb.chunks_exact(3)) {
+            let r = src[0] as u16;
+            let g = src[1] as u16;
+            let b = src[2] as u16;
             let px: u16 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
-            data.extend_from_slice(&px.to_le_bytes());
+            dst.copy_from_slice(&px.to_le_bytes());
         }
 
         Ok(Self {

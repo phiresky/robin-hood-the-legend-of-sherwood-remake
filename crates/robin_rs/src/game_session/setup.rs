@@ -39,13 +39,60 @@ use robin_engine::sbfile as engine_sbfile;
 use robin_engine::scb as engine_scb;
 use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sound::ExclamationGroup;
-use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::titbit::SpriteRow;
+
+/// Wall-clock step timer for the mission setup phase.  Each [`step`] logs the
+/// time since the previous step at debug level (info when it crossed
+/// `SLOW_STEP_MS`), so a slow launch shows exactly which setup stage ate the
+/// time on both native and wasm builds.
+pub(crate) struct PhaseTimer {
+    phase: &'static str,
+    started: web_time::Instant,
+    last: web_time::Instant,
+}
+
+impl PhaseTimer {
+    const SLOW_STEP_MS: u64 = 50;
+
+    pub(crate) fn new(phase: &'static str) -> Self {
+        let now = web_time::Instant::now();
+        Self {
+            phase,
+            started: now,
+            last: now,
+        }
+    }
+
+    /// Log the elapsed time of the step that just finished.
+    pub(crate) fn step(&mut self, label: &str) {
+        let now = web_time::Instant::now();
+        let ms = now.duration_since(self.last).as_millis() as u64;
+        self.last = now;
+        if ms >= Self::SLOW_STEP_MS {
+            tracing::info!(elapsed_ms = ms, "{}: {label}", self.phase);
+        } else {
+            tracing::debug!(elapsed_ms = ms, "{}: {label}", self.phase);
+        }
+    }
+
+    /// Log the total time since construction.
+    pub(crate) fn total(&self) {
+        tracing::info!(
+            elapsed_ms = self.started.elapsed().as_millis() as u64,
+            "{}: total",
+            self.phase
+        );
+    }
+}
 
 // Tail-phase loading targets share one monotonic schedule. Keeping these in
 // one place prevents a slow earlier phase (notably map decompression) from
 // advancing beyond a later phase's ceiling and making the loading bar stall.
+// Referenced by the wasm synchronous map-decode branch and the
+// monotonic-schedule test; native decodes the map on a worker thread
+// without loading-bar status updates.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(super) const LOADING_MAP_DECODE_PROGRESS: f32 = 0.85;
 pub(super) const LOADING_SPRITE_VARIANTS_PROGRESS: f32 = 0.88;
 pub(super) const LOADING_AUDIO_PROGRESS: f32 = 0.91;
@@ -608,6 +655,7 @@ pub(super) fn setup_mission_audio(
     location: MissionLocation,
     sound_dir: &str,
 ) {
+    let mut timer = PhaseTimer::new("mission audio setup");
     let loader = crate::audio_backend::create_sample_loader(std::path::PathBuf::from(sound_dir));
 
     // FX bank, menu bank, and exclamation cache come pre-parsed from
@@ -615,6 +663,7 @@ pub(super) fn setup_mission_audio(
     // startup); only the registration into this mission's sound cache
     // happens here.
     let asset_cache = crate::process_asset_cache::get_or_build(host.shipping.as_deref(), profiles);
+    timer.step("process asset cache");
     if let Some(elements) = asset_cache.fx_bank.as_ref() {
         host.audio.sound.sound_cache.initialize_fx_cache(elements);
         tracing::info!("Loaded FX bank: {} elements", elements.len());
@@ -652,7 +701,9 @@ pub(super) fn setup_mission_audio(
         .sound
         .sound_cache
         .finalize_sound_sources(&engine.sound_sim().sources);
-    populate_sound_duration_tables(host, assets, profiles, &loader, sound_dir);
+    timer.step("bank registration");
+    populate_sound_duration_tables(host, assets, profiles, sound_dir);
+    timer.step("sound duration tables");
 
     // Per-entry sample validation block.  When
     // `gGlobalOptions.bCheckSoundData` is set, the engine validates
@@ -663,6 +714,7 @@ pub(super) fn setup_mission_audio(
     let check = host.application_context.options().check_sound_data;
     if check {
         host.audio.sound.sound_cache.validate_data(&loader);
+        timer.step("check_sound_data validation");
     }
 
     if let Some(backend) = backend {
@@ -674,25 +726,48 @@ pub(super) fn setup_mission_audio(
         // stage. SetMode(Mission) halts the menu stream and
         // re-raises load_music so mission music starts from the pool.
         host.audio.sound.set_mode(SoundMode::Mission, backend);
+        timer.step("mixer activation");
     }
+    timer.total();
 }
 
 fn populate_sound_duration_tables(
     host: &Host,
     assets: &mut LevelAssets,
     profiles: &engine_profiles::ProfileManager,
-    loader: &engine_sound_cache::SampleLoader,
     sound_dir: &str,
 ) {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     // Durations only depend on the sample files, so they're served from
-    // the persistent one-file cache; the loader (a full sample read) is
-    // only hit for files the cache hasn't seen.
+    // the persistent one-file cache; the probe (a full sample read) is
+    // only hit for files the cache hasn't seen, and those probes run in
+    // parallel on native.
     let mut duration_cache = crate::audio_duration_cache::AudioDurationCache::load();
     let sample_base =
         crate::audio_duration_cache::SampleResolver::new(std::path::Path::new(sound_dir));
+    let sound_base = std::path::PathBuf::from(sound_dir);
+    let probe = move |name: &str| crate::audio_backend::sample_duration_ms(&sound_base, name);
+
+    // Every distinct sample the tables below will ask about, derived once.
+    let speech_cache = &host.audio.sound.sound_cache.speech_cache;
+    let needed = speech_cache
+        .groups
+        .values()
+        .flat_map(|group| group.entry_indices.iter())
+        .filter_map(|&idx| speech_cache.entries.get(idx))
+        .map(|entry| entry.file_name.clone())
+        .chain(
+            host.audio
+                .sound
+                .sound_cache
+                .source_cache
+                .entries
+                .values()
+                .map(|entry| entry.file_name.clone()),
+        );
+    let durations = duration_cache.durations_for(&sample_base, needed, &probe);
 
     fn frames_from_ms(ms: u32) -> u32 {
         ((ms.saturating_add(39)) / 40).max(1)
@@ -731,14 +806,14 @@ fn populate_sound_duration_tables(
     }
 
     let mut exclamation_durations = BTreeMap::new();
-    for (&group_id, group) in &host.audio.sound.sound_cache.speech_cache.groups {
+    for (&group_id, group) in &speech_cache.groups {
         let profile_prefix = group_id & 0xFFFF_0000;
         let exclamation_id = (group_id & 0xFFFF) as u16;
         let duration_ms = group
             .entry_indices
             .iter()
-            .filter_map(|&idx| host.audio.sound.sound_cache.speech_cache.entries.get(idx))
-            .filter_map(|entry| duration_cache.duration_ms(&sample_base, &entry.file_name, loader))
+            .filter_map(|&idx| speech_cache.entries.get(idx))
+            .filter_map(|entry| durations.get(&entry.file_name).copied())
             .max();
         let Some(duration_ms) = duration_ms else {
             continue;
@@ -756,9 +831,7 @@ fn populate_sound_duration_tables(
 
     let mut source_durations = BTreeMap::new();
     for (&sample_id, entry) in &host.audio.sound.sound_cache.source_cache.entries {
-        if let Some(duration_ms) =
-            duration_cache.duration_ms(&sample_base, &entry.file_name, loader)
-        {
+        if let Some(duration_ms) = durations.get(&entry.file_name).copied() {
             source_durations.insert(sample_id, frames_from_ms(duration_ms));
         }
     }
@@ -1033,6 +1106,7 @@ pub(super) fn pre_decode_maps_and_resources(
     host: &Host,
     game: &Game,
 ) -> LoadedInteractiveResources {
+    let mut timer = PhaseTimer::new("descriptor+font setup");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
@@ -1076,12 +1150,14 @@ pub(super) fn pre_decode_maps_and_resources(
     if let Some(descriptors) = level_descriptors.as_mut() {
         apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors);
     }
+    timer.step("level descriptors");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
         ls.set_status("Loading HUD fonts...", LOADING_HUD_FONTS_PROGRESS);
     }
     let hud_fonts = HudFonts::load();
+    timer.step("HUD fonts");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     // Background + minimap bitmaps are pre-decoded inside
@@ -1148,6 +1224,7 @@ pub(super) fn load_mission_sprites(
     // ── Cursor setup ──
     // `cursor_res` (DEFAULT.RES) was pre-attached above while the
     // loading screen was still visible.
+    let mut timer = PhaseTimer::new("mission sprite setup");
     let mut cursor_renderer = CursorRenderer::new();
     cursor_renderer.init(renderer);
 
@@ -1155,6 +1232,7 @@ pub(super) fn load_mission_sprites(
     if !cursor_renderer.load_cursor(resource_ids::RHMOUSE_DEFAULT, cursor_res, renderer) {
         tracing::warn!("Failed to load default cursor — using fallback arrow");
     }
+    timer.step("cursor");
 
     // ── Minimap corner button ──
     // Corner-sprite dims + hit mask were pre-computed from
@@ -1259,11 +1337,14 @@ pub(super) fn load_mission_sprites(
         }
     }
 
+    timer.step("minimap + ground-focus sprites");
+
     // ── Selection mark renderer ──
     // Loads RHID_GROUND_SELECT (green idle) and RHID_GROUND_SELECT_SWORD
     // (red combat) sprites from DEFAULT.RES.
     let mut selection_mark_renderer = SelectionMarkRenderer::new();
     selection_mark_renderer.load(cursor_res, renderer, engine.weather().night_color);
+    timer.step("selection marks");
 
     // ── Swordfight mouse-trail renderer ──
     // Loads RHID_MOUSE_TRAIL, builds the 32-level alpha pattern table,
@@ -1301,11 +1382,13 @@ pub(super) fn load_mission_sprites(
     );
     // Row frame counts were absorbed by the engine at construction via
     // `EngineArgs::titbit_row_frame_counts`; no post-load setter needed.
+    timer.step("titbit renderer");
 
     // ── Portrait pictures (character faces in the bottom panel) ──
     // Portraits live in the same DEFAULT.RES file as cursors.
     let mut portrait_cache = PortraitCache::new();
     portrait_cache.load(cursor_res, renderer);
+    timer.step("portrait cache");
 
     // ── Localized character names ──
     // `text_res` (Data/Text/Level.res) was pre-attached in the loading-
@@ -1325,6 +1408,8 @@ pub(super) fn load_mission_sprites(
         &mut host.frontend.input,
         assets,
     );
+    timer.step("localized + peasant names");
+    timer.total();
 
     MissionSprites {
         cursor_renderer,
@@ -1604,6 +1689,82 @@ pub(super) fn load_level_and_sprite_bank(
     assets.profile_manager = std::sync::Arc::new(profiles.clone());
     let mut dev = engine_api::DevState::new();
     dev.debug.surface_display = game.global_options.options().debug_surfaces;
+    let mut timer = PhaseTimer::new("level+bank setup");
+
+    // Load the mission binaries FIRST — they're cheap and they carry the
+    // mission header (map filename + ambiance), which lets the slow
+    // background-map decode start on a worker thread (native) while this
+    // thread continues with the sprite bank, scripts, and minimap.
+    let mission_name = campaign.current_mission_idx.map(|i| {
+        campaign.missions[i]
+            .profile(&assets.profile_manager)
+            .mission_filename
+            .clone()
+    });
+    let level_directory = game.global_options.level_directory.clone();
+    let loaded_result = {
+        let mut progress = |delta: f32| {
+            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+        };
+        if let Some(name) = mission_name.as_deref()
+            && let Some(level) = host
+                .shipping
+                .as_ref()
+                .and_then(|datadir| datadir.loaded_level(name))
+        {
+            tracing::info!(mission = name, "level loaded from shipping mission payload");
+            progress(1.0);
+            progress(1.0);
+            Ok(level)
+        } else {
+            engine_api::level_loading::load_mission_for_campaign(
+                &campaign,
+                &assets.profile_manager,
+                &level_directory,
+                &mut progress,
+            )
+            .map_err(|e| format!("Level load failed: {e}"))
+        }
+    };
+    let loaded = match loaded_result {
+        Ok(loaded) => loaded,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
+    };
+    timer.step("mission binaries");
+
+    let ambiance_dir = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance)
+        .directory()
+        .to_string();
+    let map_name = loaded.mission.header.map_filename.clone();
+
+    // Start the background-map decode (bzip2/JXL — the slowest CPU-only
+    // step of level setup) on a worker thread so it overlaps the rest of
+    // this function: `Engine::new` needs only the pixel *dimensions*
+    // (probed cheaply from the map header below), so the join can wait
+    // until after engine construction. Wasm has no threads; it decodes
+    // synchronously at the pre-engine join point. Loading-bar phase
+    // text/ticks for this step are skipped on native — the bar keeps
+    // advancing through the overlapped steps instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    let bg_decode_thread = {
+        let map_name = map_name.clone();
+        let ambiance_dir = ambiance_dir.clone();
+        let level_directory = level_directory.clone();
+        let shipping = host.shipping.clone();
+        std::thread::Builder::new()
+            .name("bg-map-decode".into())
+            .spawn(move || {
+                crate::level_loading_host::pre_decode_background_map(
+                    &map_name,
+                    &ambiance_dir,
+                    &level_directory,
+                    shipping.as_deref(),
+                    &mut |_| {},
+                )
+                .map_err(|e| format!("Background map load failed: {e}"))
+            })
+            .expect("failed to spawn background-map decode thread")
+    };
 
     // Install the sprite bank — must happen before entity sprite
     // loading in initialize_for_mission. The parsed bank comes from the
@@ -1623,7 +1784,9 @@ pub(super) fn load_level_and_sprite_bank(
         }
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }
+    timer.step("sprite bank from process asset cache");
     preload_hackable_character_dirs(host, &mut assets, &campaign);
+    timer.step("hackable character preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
     assets.bank_signature = host.frame_holder.signature();
@@ -1642,12 +1805,6 @@ pub(super) fn load_level_and_sprite_bank(
     // files itself; the host parses them (preferring shipping, falling
     // back to disk for the current mission), decodes immutable bytecode,
     // and stores the programs in `LevelAssets` before level load.
-    let mission_name = campaign.current_mission_idx.map(|i| {
-        campaign.missions[i]
-            .profile(&assets.profile_manager)
-            .mission_filename
-            .clone()
-    });
     let mut scripts: std::collections::BTreeMap<String, engine_scb::ScbFile> = mission_name
         .as_deref()
         .and_then(|name| host.shipping.as_ref().map(|dd| dd.mission_scripts(name)))
@@ -1687,6 +1844,7 @@ pub(super) fn load_level_and_sprite_bank(
         })
         .collect();
     assets.scripts.mission_programs = std::sync::Arc::new(script_programs);
+    timer.step("mission scripts");
 
     // Initialize Game's per-mission state from the campaign before we
     // hand it off to the engine.
@@ -1701,76 +1859,6 @@ pub(super) fn load_level_and_sprite_bank(
     (assets.peasant_firstnames, assets.peasant_surnames) = load_peasant_name_pool(text_res);
     assets.fixed_vip_names = load_fixed_vip_name_map(text_res);
 
-    let level_directory = game.global_options.level_directory.clone();
-
-    // RAII: load the mission binaries *before* `Engine::new` so the
-    // mission header (map filename + ambiance) is available to pre-
-    // decode the background bitmap, whose pixel dimensions then go
-    // into `LevelLoadArgs::bg_pixel_dims`.  With those in hand the
-    // constructor returns an engine whose `fast_grid.map_bbox`,
-    // motion lines, pathfinder graph, and AI init are all already
-    // live — no post-construction fixup, no patrol paths silently
-    // failing `TestIfPathIsFine` because the grid hadn't been sized
-    // yet.
-    let loaded_result = {
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        if let Some(name) = mission_name.as_deref()
-            && let Some(level) = host
-                .shipping
-                .as_ref()
-                .and_then(|datadir| datadir.loaded_level(name))
-        {
-            tracing::info!(mission = name, "level loaded from shipping mission payload");
-            progress(1.0);
-            progress(1.0);
-            Ok(level)
-        } else {
-            engine_api::level_loading::load_mission_for_campaign(
-                &campaign,
-                &assets.profile_manager,
-                &level_directory,
-                &mut progress,
-            )
-            .map_err(|e| format!("Level load failed: {e}"))
-        }
-    };
-    let loaded = match loaded_result {
-        Ok(loaded) => loaded,
-        Err(message) => return Err(MissionLoadError::new(campaign, message)),
-    };
-
-    // Pre-decode the background bitmap before `Engine::new` — the
-    // constructor wants `bg_pixel_dims` to size the fast-find grid.
-    let ambiance_dir = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance)
-        .directory()
-        .to_string();
-    let map_name = loaded.mission.header.map_filename.clone();
-    let pre_decoded_bg_result = {
-        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
-            assets_frame_holder::ProgressUpdate::Tick(d) => {
-                tick_progress(loading_screen, event_pump.as_deref_mut(), d);
-            }
-            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
-                if let Some(ls) = loading_screen.as_mut() {
-                    ls.set_status(text, LOADING_MAP_DECODE_PROGRESS);
-                }
-            }
-        };
-        crate::level_loading_host::pre_decode_background_map(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.shipping.as_deref(),
-            &mut update,
-        )
-        .map_err(|e| format!("Background map load failed: {e}"))
-    };
-    let pre_decoded_bg = match pre_decoded_bg_result {
-        Ok(background) => background,
-        Err(message) => return Err(MissionLoadError::new(campaign, message)),
-    };
     let pre_decoded_mm = {
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
@@ -1783,10 +1871,72 @@ pub(super) fn load_level_and_sprite_bank(
             &mut progress,
         )
     };
+    timer.step("minimap pre-decode");
+
+    // `Engine::new` needs the background bitmap's pixel dimensions to size
+    // the fast-find grid. Wasm decodes the whole bitmap here; native
+    // probes the dimensions from the map header and lets the worker thread
+    // keep decoding pixels through engine construction, falling back to an
+    // early join when the header can't be probed (missing/corrupt map, or
+    // no map at all) so the existing pre-engine error path reports it.
+    #[cfg(target_arch = "wasm32")]
+    let pre_decoded_bg = {
+        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
+            assets_frame_holder::ProgressUpdate::Tick(d) => {
+                tick_progress(loading_screen, event_pump.as_deref_mut(), d);
+            }
+            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
+                if let Some(ls) = loading_screen.as_mut() {
+                    ls.set_status(text, LOADING_MAP_DECODE_PROGRESS);
+                }
+            }
+        };
+        match crate::level_loading_host::pre_decode_background_map(
+            &map_name,
+            &ambiance_dir,
+            &level_directory,
+            host.shipping.as_deref(),
+            &mut update,
+        ) {
+            Ok(background) => background,
+            Err(e) => {
+                return Err(MissionLoadError::new(
+                    campaign,
+                    format!("Background map load failed: {e}"),
+                ));
+            }
+        }
+    };
+    #[cfg(target_arch = "wasm32")]
     let bg_pixel_dims = pre_decoded_bg
         .as_ref()
         .map(|b| (b.width as f32, b.height as f32))
         .unwrap_or((0.0, 0.0));
+    #[cfg(not(target_arch = "wasm32"))]
+    let (mut pre_decoded_bg, bg_pixel_dims, bg_pending) =
+        match crate::level_loading_host::probe_background_map_dims(
+            &map_name,
+            &ambiance_dir,
+            &level_directory,
+            host.shipping.as_deref(),
+        ) {
+            Some((w, h)) => (None, (w as f32, h as f32), Some(bg_decode_thread)),
+            None => {
+                let background = match bg_decode_thread
+                    .join()
+                    .expect("background-map decode thread panicked")
+                {
+                    Ok(background) => background,
+                    Err(message) => return Err(MissionLoadError::new(campaign, message)),
+                };
+                let dims = background
+                    .as_ref()
+                    .map(|b| (b.width as f32, b.height as f32))
+                    .unwrap_or((0.0, 0.0));
+                (background, dims, None)
+            }
+        };
+    timer.step("background map dims");
 
     // Resolve the engine's initial RNG seed before construction so
     // `Engine::new` is the only site that touches RNG state during
@@ -1847,6 +1997,33 @@ pub(super) fn load_level_and_sprite_bank(
             }
         }
     };
+    timer.step("engine construction");
+
+    // Engine construction ran on probed header dimensions; collect the
+    // decoded pixels now. A decode failure still fails the mission load
+    // (via the replay campaign clone — `campaign` moved into the engine),
+    // and diverging dimensions would corrupt the already-built grid, so
+    // that is a hard error rather than a fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(handle) = bg_pending {
+        let background = match handle
+            .join()
+            .expect("background-map decode thread panicked")
+        {
+            Ok(background) => background,
+            Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
+        };
+        if let Some(bg) = background.as_ref() {
+            assert_eq!(
+                (bg.width as f32, bg.height as f32),
+                bg_pixel_dims,
+                "background map header dimensions diverge from decoded bitmap"
+            );
+        }
+        pre_decoded_bg = background;
+        timer.step("background map join");
+    }
+
     if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
         let mission_scb = legacy_capture_scb
             .as_ref()
@@ -1916,6 +2093,8 @@ pub(super) fn load_level_and_sprite_bank(
     // inside it rather than leaving an Arc::make_mut copy detached.
     assets.pixel_opacity = Some(host.publish_frame_holder_opacity());
     tick_progress(loading_screen, event_pump, 1.0);
+    timer.step("sprite variants + Arno's Law");
+    timer.total();
 
     Ok(LoadedMissionCore {
         engine,
