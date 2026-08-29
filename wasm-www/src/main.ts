@@ -188,6 +188,15 @@ async function main(): Promise<void> {
     const buildBase = build.buildBase ?? `${WASM_BUILDS_BASE}/${build.short}`;
     logOk(`[selected ${build.source} build ${build.short}]`);
 
+    // coi-serviceworker (index.html) turns this on after a one-time reload on
+    // hosts without COOP/COEP headers. Rust checks the same flag and decides
+    // between the worker-pool and serial sprite-decode paths.
+    logOk(
+        crossOriginIsolated
+            ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
+            : '[not cross-origin isolated: sprite decode stays single-threaded]',
+    );
+
     logOk('[loading wasm module]');
     const wasm = await loadWasmModule(buildBase, build.short !== 'local', build.source === 'latest');
 
@@ -231,26 +240,21 @@ async function loadWasmModule(
     const wasmUrl = `${buildBase}/robin_bg.wasm`;
     const cache: RequestCache = noCache ? 'no-cache' : 'force-cache';
 
-    // GitHub Pages serves checked-in `.gz` files as opaque gzip downloads,
-    // without a Content-Encoding header. Decompress those in the browser so
-    // the large wasm module does not cross the network uncompressed. Local
-    // development keeps the ordinary URL/import path and its useful source
-    // identity instead of paying for two failed `.gz` probes on every boot.
-    const jsBytes = preferPrecompressed
-        ? await fetchPrecompressed(`${jsUrl}.gz`, cache)
-        : undefined;
-    let wasm: RobinWasmModule;
-    if (jsBytes === undefined) {
-        wasm = await import(/* @vite-ignore */ jsUrl) as RobinWasmModule;
-    } else {
-        const moduleUrl = URL.createObjectURL(new Blob([jsBytes], { type: 'text/javascript' }));
-        try {
-            wasm = await import(/* @vite-ignore */ moduleUrl) as RobinWasmModule;
-        } finally {
-            URL.revokeObjectURL(moduleUrl);
-        }
-    }
+    // The JS glue is always imported from its real URL — never through a
+    // decompressed-blob module. Worker-pool builds statically import their
+    // `snippets/` worker helper relative to the module URL, and each Web
+    // Worker re-imports the glue by that same URL; a blob: module would
+    // break both. GitHub Pages applies on-the-fly gzip to JavaScript, so
+    // (unlike the wasm binary below) nothing is lost by skipping the
+    // precompressed `.gz` sibling.
+    const wasm = await import(/* @vite-ignore */ jsUrl) as RobinWasmModule;
 
+    // GitHub Pages serves checked-in `.gz` files as opaque gzip downloads,
+    // without a Content-Encoding header, and does not compress binary
+    // types. Decompress the wasm sibling in the browser so the large module
+    // does not cross the network uncompressed. Local development keeps the
+    // ordinary URL path instead of paying a failed `.gz` probe on every
+    // boot.
     const wasmResponse = preferPrecompressed
         ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache)
         : undefined;
@@ -284,32 +288,6 @@ async function fetchPrecompressedWasm(
     return new Response(body, {
         headers: { 'Content-Type': 'application/wasm' },
     });
-}
-
-async function fetchPrecompressed(
-    url: string,
-    cache: RequestCache,
-): Promise<ArrayBuffer | undefined> {
-    if (typeof DecompressionStream === 'undefined') {
-        return undefined;
-    }
-    const resp = await fetch(url, { cache });
-    if (resp.status === 404) {
-        return undefined;
-    }
-    if (!resp.ok) {
-        throw new Error(`fetch ${url}: HTTP ${resp.status}`);
-    }
-    if (resp.body === null) {
-        throw new Error(`fetch ${url}: response has no body`);
-    }
-    // A conventional host may recognize the suffix and attach
-    // Content-Encoding itself. Fetch has already decoded such a response.
-    if (resp.headers.get('Content-Encoding')?.toLowerCase().includes('gzip') === true) {
-        return await resp.arrayBuffer();
-    }
-    const decompressed = resp.body.pipeThrough(new DecompressionStream('gzip'));
-    return await new Response(decompressed).arrayBuffer();
 }
 
 function installRpcClient(wasm: RobinWasmModule): RobinRpc {

@@ -52,13 +52,63 @@ pub fn bench_init(datadir: &[u8]) -> Result<String, JsError> {
     Ok(json)
 }
 
+/// Initialize the wasm-bindgen-rayon worker pool (wasm-threads builds only).
+/// Must resolve before [`bench_mission_parallel`] runs; requires an
+/// environment with Web Workers and `SharedArrayBuffer`.
+#[cfg(feature = "wasm-threads")]
+#[wasm_bindgen]
+pub async fn bench_init_threads(threads: usize) -> Result<(), JsError> {
+    robin_assets::wasm_threads::init_pool(threads)
+        .await
+        .map_err(js_err)
+}
+
 /// Decode one mission from its compressed part files (a JS array of
 /// Uint8Array, in `ShippingMissionRef::files` order) and materialize its VQ
 /// sprite chunks. Returns JSON phase timings and corpus counters.
 #[wasm_bindgen]
 pub fn bench_mission(parts: js_sys::Array) -> Result<String, JsError> {
     let now = js_sys::Date::now;
+    let (mut merged, part_bytes, decode_ms) = decode_parts(parts)?;
 
+    let stats = vq_stats(&merged);
+    let t1 = now();
+    if let Some(bank) = merged.sprite_bank.as_mut() {
+        bank.materialize_vq_chunks(&merged.rhs_files)
+            .map_err(js_err)?;
+    }
+    let materialize_ms = now() - t1;
+
+    report(&merged, part_bytes, decode_ms, materialize_ms, stats)
+}
+
+/// [`bench_mission`] with the worker-pool materialization path of the
+/// wasm-threads build ([`bench_init_threads`] must have resolved first;
+/// without it this transparently measures the serial fallback).
+#[cfg(feature = "wasm-threads")]
+#[wasm_bindgen]
+pub async fn bench_mission_parallel(parts: js_sys::Array) -> Result<String, JsError> {
+    let now = js_sys::Date::now;
+    let (mut merged, part_bytes, decode_ms) = decode_parts(parts)?;
+
+    let stats = vq_stats(&merged);
+    let t1 = now();
+    if let Some(bank) = merged.sprite_bank.as_mut() {
+        // Split borrow: the bank lives inside `merged`, whose `rhs_files`
+        // field is read concurrently by the materializer.
+        let rhs_files = &merged.rhs_files;
+        bank.materialize_vq_chunks_parallel(rhs_files)
+            .await
+            .map_err(js_err)?;
+    }
+    let materialize_ms = now() - t1;
+
+    report(&merged, part_bytes, decode_ms, materialize_ms, stats)
+}
+
+/// zstd+bitcode-decode and merge every part buffer of one mission.
+fn decode_parts(parts: js_sys::Array) -> Result<(ShippingMission, usize, f64), JsError> {
+    let now = js_sys::Date::now;
     let t0 = now();
     let mut merged = ShippingMission::default();
     let mut part_bytes = 0usize;
@@ -68,19 +118,35 @@ pub fn bench_mission(parts: js_sys::Array) -> Result<String, JsError> {
         let part = decode_mission_compressed(&bytes).map_err(js_err)?;
         merged.merge_part(part).map_err(js_err)?;
     }
-    let decode_ms = now() - t0;
+    Ok((merged, part_bytes, now() - t0))
+}
 
-    let (mut chunks, mut blob_bytes, mut vq_sprites) = (0usize, 0usize, 0usize);
-    let t1 = now();
-    if let Some(bank) = merged.sprite_bank.as_mut() {
-        chunks = bank.vq_chunks.len();
-        blob_bytes = bank.vq_chunks.iter().map(|c| c.blob.len()).sum();
-        vq_sprites = bank.vq_chunks.iter().map(|c| c.sprite_ids.len()).sum();
-        bank.materialize_vq_chunks(&merged.rhs_files)
-            .map_err(js_err)?;
+/// VQ corpus counters captured before materialization consumes the chunks.
+#[derive(Default)]
+struct VqStats {
+    chunks: usize,
+    blob_bytes: usize,
+    sprites: usize,
+}
+
+fn vq_stats(merged: &ShippingMission) -> VqStats {
+    let Some(bank) = merged.sprite_bank.as_ref() else {
+        return VqStats::default();
+    };
+    VqStats {
+        chunks: bank.vq_chunks.len(),
+        blob_bytes: bank.vq_chunks.iter().map(|c| c.blob.len()).sum(),
+        sprites: bank.vq_chunks.iter().map(|c| c.sprite_ids.len()).sum(),
     }
-    let materialize_ms = now() - t1;
+}
 
+fn report(
+    merged: &ShippingMission,
+    part_bytes: usize,
+    decode_ms: f64,
+    materialize_ms: f64,
+    stats: VqStats,
+) -> Result<String, JsError> {
     // FNV-1a over every sprite's materialized packed data, in bank-id order:
     // two builds of this bench must report identical hashes regardless of
     // compiler flags, or one of them miscompiled the codec.
@@ -101,9 +167,9 @@ pub fn bench_mission(parts: js_sys::Array) -> Result<String, JsError> {
         "part_bytes": part_bytes,
         "decode_ms": decode_ms,
         "materialize_ms": materialize_ms,
-        "vq_chunks": chunks,
-        "vq_blob_bytes": blob_bytes,
-        "vq_sprites": vq_sprites,
+        "vq_chunks": stats.chunks,
+        "vq_blob_bytes": stats.blob_bytes,
+        "vq_sprites": stats.sprites,
         "grids_fnv": format!("{grids_fnv:016x}"),
     })
     .to_string())

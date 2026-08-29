@@ -98,6 +98,19 @@ builds enable the `simd128` target feature (`.cargo/config.toml`).  The
 two custom profiles force the LLVM codegen backend — cranelift doesn't
 target wasm.
 
+The deployed browser build is THREADED: `scripts/build-wasm-threads.sh`
+wraps the same pipeline with `-C target-feature=+atomics,+bulk-memory,
++mutable-globals` and a shared, 4 GiB-max imported memory (extra rustflags
+merged from `scripts/wasm-threads.cargo-config.toml`), plus the
+`wasm-threads` cargo feature, which enables a `wasm-bindgen-rayon` worker
+pool for parallel VQ sprite decode at mission install. The pool requires a
+cross-origin-isolated page — `wasm-www/public/coi-serviceworker.js`
+injects the COOP/COEP headers on header-less hosts like GitHub Pages (one
+automatic reload on first visit) — and every decode path keeps a serial
+fallback when isolation or the pool is unavailable, so the same artifact
+still boots anywhere. The plain single-threaded pipeline above remains
+supported and byte-identical.
+
 Run `wasm-bindgen --target web` on the produced `.wasm` into
 `wasm-www/pkg/`, then build the web package from `wasm-www/`:
 

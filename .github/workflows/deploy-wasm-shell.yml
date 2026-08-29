@@ -7,6 +7,7 @@ on:
       - wasm-www/index.html
       - wasm-www/package.json
       - wasm-www/pnpm-lock.yaml
+      - wasm-www/public/**
       - wasm-www/scripts/inline-dist-index.mjs
       - wasm-www/src/**
       - wasm-www/tsconfig.json
@@ -49,6 +50,10 @@ jobs:
         run: |
           mkdir -p target/wasm-shell-pages
           cp wasm-www/dist-inline/index.html target/wasm-shell-pages/index.html
+          # Cross-origin-isolation polyfill for wasm threads. A service
+          # worker must be a real same-origin file (it cannot be inlined
+          # into index.html), served next to the page it controls.
+          cp wasm-www/public/coi-serviceworker.js target/wasm-shell-pages/coi-serviceworker.js
 
       - uses: actions/configure-pages@v5
 

@@ -34,7 +34,21 @@ for (const inputPath of paths) {
         execFileSync(
             'wasm-opt',
             // --enable-simd: modules are built with +simd128 (.cargo/config.toml).
-            ['-Oz', '--enable-simd', '--strip-debug', '--strip-dwarf', '-o', tmpPath, wasmPath],
+            // --enable-threads/--enable-bulk-memory: required to PARSE the
+            // shared-memory modules from scripts/build-wasm-threads.sh; for
+            // plain single-threaded modules they merely permit features the
+            // module does not use.
+            [
+                '-Oz',
+                '--enable-simd',
+                '--enable-threads',
+                '--enable-bulk-memory',
+                '--strip-debug',
+                '--strip-dwarf',
+                '-o',
+                tmpPath,
+                wasmPath,
+            ],
             { stdio: 'inherit' },
         );
         renameSync(tmpPath, wasmPath);

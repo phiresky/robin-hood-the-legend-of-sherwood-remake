@@ -356,6 +356,129 @@ pub struct ShippingSprite {
     pub packed_data: Arc<Vec<u16>>,
 }
 
+/// Dispatcher state for worker-pool VQ chunk decode (wasm-threads builds).
+///
+/// Owns the set of in-flight decodes. The dispatching thread alternates
+/// [`Self::dispatch_ready`] (move dependency-satisfied chunks onto the rayon
+/// pool) with [`Self::apply_next`] (await one completion and write it into
+/// the bank), so a family hub's variants unblock immediately when the hub
+/// lands. The mission loader also drives this incrementally while part files
+/// are still downloading.
+///
+/// Transient scheduling state, never serialized — deliberately no serde.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+#[derive(Default)]
+pub struct VqDecodeScheduler {
+    in_flight: futures_util::stream::FuturesUnordered<
+        futures_channel::oneshot::Receiver<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>, f64)>,
+    >,
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+impl VqDecodeScheduler {
+    /// Move every chunk of `pending` whose base grids are materialized onto
+    /// the worker pool. With `strict` readiness a chunk naming a base sprite
+    /// that is missing from the bank is a hard error (the full mission
+    /// payload is present, so the manifest is broken); lenient readiness
+    /// treats it as "not yet" — the row is still being fetched.
+    pub fn dispatch_ready(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteVqChunk>,
+        rhs_files: &BTreeMap<String, RhsData>,
+        strict: bool,
+    ) -> Result<()> {
+        let mut index = 0;
+        while index < pending.len() {
+            let ready = if strict {
+                bank.vq_chunk_bases_ready(&pending[index])?
+            } else {
+                bank.vq_chunk_ready_lenient(&pending[index], rhs_files)?
+            };
+            if !ready {
+                index += 1;
+                continue;
+            }
+            let chunk = pending.swap_remove(index);
+            let inputs = bank
+                .prepare_vq_chunk_inputs(&chunk, rhs_files)
+                .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            rayon::spawn(move || {
+                // Workers can call JS imports of their own instantiation;
+                // Date.now is the cheap cross-thread clock here.
+                let started = js_sys::Date::now();
+                let grids = ShippingSpriteBank::run_vq_chunk_decode(&chunk, &inputs);
+                let elapsed = js_sys::Date::now() - started;
+                // An unreceived result only means the dispatcher bailed out
+                // on an earlier chunk's error; nothing to report.
+                let _ = sender.send((chunk, grids, elapsed));
+            });
+            self.in_flight.push(receiver);
+        }
+        Ok(())
+    }
+
+    /// Await the next completed decode and write its grids into the bank.
+    /// `Ok(false)` when no decode is in flight.
+    pub async fn apply_next(&mut self, bank: &mut ShippingSpriteBank) -> Result<bool> {
+        use futures_util::StreamExt as _;
+        let Some(result) = self.in_flight.next().await else {
+            return Ok(false);
+        };
+        let (chunk, grids, decode_ms) =
+            result.map_err(|_| anyhow!("VQ decode worker dropped its result"))?;
+        let grids = grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
+        tracing::debug!(chunk = %chunk.rhs, decode_ms, "VQ sprite chunk decoded on worker");
+        bank.apply_decoded_vq_chunk(&chunk, grids)?;
+        Ok(true)
+    }
+
+    /// True while at least one decode is running on the pool.
+    pub fn has_in_flight(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
+}
+
+/// Error for a fixpoint round that made no progress: every remaining chunk
+/// names base sprites that never materialized, meaning the manifest omitted a
+/// base RHS chunk from the mission payload.
+fn vq_chunks_stuck_error(still_pending: &[SpriteVqChunk]) -> anyhow::Error {
+    let stuck: Vec<String> = still_pending
+        .iter()
+        .map(|chunk| {
+            let mut label = format!(
+                "{} (base {}",
+                chunk.rhs,
+                chunk.base_rhs.as_deref().unwrap_or("?")
+            );
+            if !chunk.base2_rhs.is_empty() {
+                label.push_str(&format!(", base2 {}", chunk.base2_rhs));
+            }
+            label.push(')');
+            label
+        })
+        .collect();
+    anyhow!(
+        "VQ sprite chunks cannot be decoded because their base sprites never \
+         materialized — base RHS chunk missing from the mission payload: {}",
+        stuck.join(", ")
+    )
+}
+
+/// Owned inputs for one chunk's grid decode, resolved from the bank by
+/// [`ShippingSpriteBank::prepare_vq_chunk_inputs`]. `Send + 'static` (base
+/// grids are `Arc`-shared with the bank rows) so the decode itself can run on
+/// a rayon worker while the bank stays borrowed on the dispatching thread.
+/// Transient decode state, never serialized — deliberately no serde derives.
+struct VqChunkDecodeInputs {
+    /// Per sprite: `(width / 4, height)` — the VQ grid dimensions.
+    dims: Vec<(u16, u16)>,
+    selfref: Vec<Option<crate::sprite_codec::SelfRef>>,
+    base_grids: Vec<Option<Arc<Vec<u16>>>>,
+    base2_grids: Vec<Option<Arc<Vec<u16>>>>,
+}
+
 impl ShippingSpriteBank {
     /// Decode every [`SpriteVqChunk`] blob back into per-sprite packed index
     /// data, consuming the chunk list.
@@ -408,30 +531,48 @@ impl ShippingSpriteBank {
                 self.apply_decoded_vq_chunk(&chunk, grids)?;
             }
             if !made_progress {
-                let stuck: Vec<String> = still_pending
-                    .iter()
-                    .map(|chunk| {
-                        let mut label = format!(
-                            "{} (base {}",
-                            chunk.rhs,
-                            chunk.base_rhs.as_deref().unwrap_or("?")
-                        );
-                        if !chunk.base2_rhs.is_empty() {
-                            label.push_str(&format!(", base2 {}", chunk.base2_rhs));
-                        }
-                        label.push(')');
-                        label
-                    })
-                    .collect();
-                return Err(anyhow!(
-                    "VQ sprite chunks cannot be decoded because their base sprites never \
-                     materialized — base RHS chunk missing from the mission payload: {}",
-                    stuck.join(", ")
-                ));
+                return Err(vq_chunks_stuck_error(&still_pending));
             }
             pending = still_pending;
         }
         Ok(())
+    }
+
+    /// Parallel wasm counterpart of [`Self::materialize_vq_chunks`]: each
+    /// chunk's decode is dispatched to the rayon worker pool the moment its
+    /// base grids exist, while this (main) thread only prepares inputs and
+    /// applies results. Awaiting instead of blocking matters on the browser
+    /// main thread, which must never `atomics.wait`.
+    ///
+    /// Unlike the serial fixpoint's rounds, there is no barrier here: one
+    /// family's variants start decoding as soon as their own hub is applied,
+    /// not when the slowest chunk of the previous round happens to finish —
+    /// the wall time is bounded by the longest single dependency chain, and
+    /// hub -> variant chains are at most a few links deep.
+    ///
+    /// Falls back to the serial [`Self::materialize_vq_chunks`] when the pool
+    /// was never initialized (page not cross-origin isolated).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    pub async fn materialize_vq_chunks_parallel(
+        &mut self,
+        rhs_files: &BTreeMap<String, RhsData>,
+    ) -> Result<()> {
+        if crate::wasm_threads::pool_threads() == 0 {
+            return self.materialize_vq_chunks(rhs_files);
+        }
+        let mut pending = std::mem::take(&mut self.vq_chunks);
+        let mut scheduler = VqDecodeScheduler::default();
+        loop {
+            scheduler.dispatch_ready(self, &mut pending, rhs_files, true)?;
+            if !scheduler.apply_next(self).await? {
+                break;
+            }
+        }
+        if pending.is_empty() {
+            Ok(())
+        } else {
+            Err(vq_chunks_stuck_error(&pending))
+        }
     }
 
     fn sprite_row(&self, id: u32) -> Option<&ShippingSprite> {
@@ -497,13 +638,78 @@ impl ShippingSpriteBank {
         Ok(true)
     }
 
-    /// Decode one chunk's blob into `(sprite id, grid)` pairs. Immutable so
-    /// independent chunks of a fixpoint round can decode in parallel.
-    fn decode_vq_chunk(
+    /// Streaming-time readiness: like [`Self::vq_chunk_bases_ready`], but
+    /// while mission parts are still arriving nothing is allowed to be a
+    /// "missing from the payload" error — a base sprite row, the chunk's own
+    /// sprite rows, or its RHS metadata may simply not have been fetched yet,
+    /// so all of those report `Ok(false)`. Structural contradictions in rows
+    /// that DID arrive (non-VQ base, wrong grid length) still error: rows are
+    /// immutable once merged, so waiting longer cannot fix them.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    fn vq_chunk_ready_lenient(
         &self,
         chunk: &SpriteVqChunk,
         rhs_files: &BTreeMap<String, RhsData>,
-    ) -> Result<Vec<(u32, Vec<u16>)>> {
+    ) -> Result<bool> {
+        if chunk.self_refs && !rhs_files.contains_key(&chunk.rhs) {
+            return Ok(false);
+        }
+        for sprite_id in &chunk.sprite_ids {
+            match self.sprite_row(*sprite_id) {
+                None => return Ok(false),
+                Some(sprite) if sprite.dictionary_index == UNMAPPED_DICT => {
+                    return Err(anyhow!(
+                        "chunk for {} names sprite {sprite_id}, which is not dictionary-coded",
+                        chunk.rhs
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        if chunk.base2_rhs.is_empty() && chunk.base2_ids.iter().any(Option::is_some) {
+            return Err(anyhow!(
+                "VQ sprite chunk for {} carries base2 sprite ids without a base2 RHS",
+                chunk.rhs
+            ));
+        }
+        for ids in [&chunk.base_ids, &chunk.base2_ids] {
+            for base_id in ids.iter().flatten() {
+                let Some(base) = self.sprite_row(*base_id) else {
+                    return Ok(false);
+                };
+                if base.dictionary_index == UNMAPPED_DICT {
+                    return Err(anyhow!(
+                        "VQ sprite chunk for {} names base sprite {base_id}, which is not \
+                         dictionary-coded",
+                        chunk.rhs
+                    ));
+                }
+                let expected = Self::vq_grid_len(base);
+                match base.packed_data.len() {
+                    len if len == expected => {}
+                    0 => return Ok(false),
+                    len => {
+                        return Err(anyhow!(
+                            "base sprite {base_id} for chunk {} has {len} packed words, \
+                             expected {expected}",
+                            chunk.rhs
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Resolve everything one chunk's decode needs from the bank into an
+    /// owned, `Send + 'static` bundle, so [`Self::run_vq_chunk_decode`] can
+    /// execute on any thread without borrowing `self`. Immutable so
+    /// independent chunks of a fixpoint round can prepare/decode in parallel.
+    fn prepare_vq_chunk_inputs(
+        &self,
+        chunk: &SpriteVqChunk,
+        rhs_files: &BTreeMap<String, RhsData>,
+    ) -> Result<VqChunkDecodeInputs> {
         let selfref: Vec<Option<crate::sprite_codec::SelfRef>> = if chunk.self_refs {
             let rhs_data = rhs_files.get(&chunk.rhs).ok_or_else(|| {
                 anyhow!(
@@ -561,23 +767,49 @@ impl ShippingSpriteBank {
             base_grids.push(resolve(base_id));
             base2_grids.push(resolve(chunk.base2_ids.get(index).unwrap_or(&None)));
         }
+        Ok(VqChunkDecodeInputs {
+            dims,
+            selfref,
+            base_grids,
+            base2_grids,
+        })
+    }
+
+    /// Decode one chunk's blob into `(sprite id, grid)` pairs. Pure compute
+    /// over the prepared inputs — no `self` access, so a wasm worker thread
+    /// can run it against inputs prepared on the main thread.
+    fn run_vq_chunk_decode(
+        chunk: &SpriteVqChunk,
+        inputs: &VqChunkDecodeInputs,
+    ) -> Result<Vec<(u32, Vec<u16>)>> {
         fn as_slices(grids: &[Option<Arc<Vec<u16>>>]) -> Vec<Option<&[u16]>> {
             grids
                 .iter()
                 .map(|grid| grid.as_ref().map(|grid| grid.as_slice()))
                 .collect()
         }
-        let base_slices = as_slices(&base_grids);
-        let base2_slices = as_slices(&base2_grids);
+        let base_slices = as_slices(&inputs.base_grids);
+        let base2_slices = as_slices(&inputs.base2_grids);
         let decoded = crate::sprite_codec::decode_grids_shipping(
             chunk.alphabet,
-            &dims,
+            &inputs.dims,
             Some(&base_slices),
             Some(&base2_slices),
-            &selfref,
+            &inputs.selfref,
             &chunk.blob,
         )?;
         Ok(chunk.sprite_ids.iter().copied().zip(decoded).collect())
+    }
+
+    /// Prepare and decode in one step; the serial and rayon fixpoint rounds
+    /// run this per chunk.
+    fn decode_vq_chunk(
+        &self,
+        chunk: &SpriteVqChunk,
+        rhs_files: &BTreeMap<String, RhsData>,
+    ) -> Result<Vec<(u32, Vec<u16>)>> {
+        let inputs = self.prepare_vq_chunk_inputs(chunk, rhs_files)?;
+        Self::run_vq_chunk_decode(chunk, &inputs)
     }
 
     /// Write one chunk's decoded grids into the sprite rows.

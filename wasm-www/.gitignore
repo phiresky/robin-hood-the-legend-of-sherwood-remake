@@ -7,7 +7,10 @@ dist-inline/
 # wasm-bindgen output: regenerated from
 # `target/wasm32-unknown-unknown/wasm-dev/robin.wasm` by
 # `wasm-bindgen --target web --out-dir wasm-www/pkg ...`.
+# pkg-bench*: wasm_decode_bench glue from scripts/build-wasm-threads.sh.
 pkg/
+pkg-bench/
+pkg-bench-serial/
 
 # Local dev: symlink `public/data/` at a datadir of choice
 # (e.g. `../../../../../datadirs/demo_shipping_wasm`).

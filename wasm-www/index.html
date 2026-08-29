@@ -74,6 +74,13 @@
     </style>
 </head>
 <body>
+    <!-- COOP/COEP polyfill: static hosts (GitHub Pages) cannot send the
+         cross-origin-isolation headers wasm threads require, so a service
+         worker injects them and reloads once on first visit. Must be a
+         classic script (it registers document.currentScript.src) and must
+         run before the module below decides threaded vs serial decode.
+         Kept as a real sibling file: service workers cannot be inlined. -->
+    <script src="./coi-serviceworker.js"></script>
     <canvas id="canvas" width="1024" height="768"></canvas>
     <div id="replay-timeline"></div>
     <div id="toolbar">

@@ -189,6 +189,10 @@ native-fs = ["dep:dirs"]
 # librashader pulls in glslang + SPIRV-Cross (C++), which on windows-gnu
 # makes the exe depend on libstdc++-6.dll.
 retroarch-shaders = ["dep:librashader"]
+# Browser worker-pool build: parallel VQ sprite decode at mission install via
+# wasm-bindgen-rayon.  Requires the atomics/shared-memory build produced by
+# scripts/build-wasm-threads.sh; the plain wasm build must not enable this.
+wasm-threads = ["robin_assets/wasm-threads"]
 
 [[bin]]
 name = "robin"

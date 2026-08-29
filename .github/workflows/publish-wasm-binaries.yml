@@ -62,12 +62,19 @@ jobs:
           wasm-bindgen --version
 
       - name: Build release wasm
+        # Threaded (atomics + shared memory) build: the extra rustflags in
+        # scripts/wasm-threads.cargo-config.toml merge with the base
+        # .cargo/config.toml wasm flags, and the `wasm-threads` feature turns
+        # on the wasm-bindgen-rayon worker pool for parallel VQ sprite decode
+        # (with a compiled-in serial fallback for pages that are not
+        # cross-origin isolated).
         run: |
-          cargo build -Zbuild-std=std,panic_abort \
+          cargo build --config scripts/wasm-threads.cargo-config.toml \
+            -Zbuild-std=std,panic_abort \
             --target wasm32-unknown-unknown \
             --profile wasm-release \
             --no-default-features \
-            --features audio \
+            --features audio,wasm-threads \
             -p robin_rs --bin robin
 
       - name: Stage versioned artifact
@@ -89,9 +96,13 @@ jobs:
           # --enable-simd: the module contains simd128 instructions (see
           # [target.wasm32-unknown-unknown] rustflags in .cargo/config.toml);
           # explicit rather than relying on target_features section detection.
+          # --enable-threads/--enable-bulk-memory: required to parse the
+          # shared-memory atomics module of the wasm-threads build.
           wasm-opt \
             -Oz \
             --enable-simd \
+            --enable-threads \
+            --enable-bulk-memory \
             --strip-debug \
             --strip-dwarf \
             -o "${optimized_wasm}" \
@@ -102,6 +113,9 @@ jobs:
           smoke_wasm_artifact() {
             node --input-type=module -e '
               import { readFile } from "node:fs/promises";
+              // The wasm-bindgen-rayon worker snippet references the Web
+              // Worker global scope alias at module scope; give node one.
+              globalThis.self = globalThis;
               const artifact = process.argv[1];
               const wasm = await import(`file://${process.cwd()}/${artifact}/robin.js`);
               const bytes = await readFile(`${artifact}/robin_bg.wasm`);

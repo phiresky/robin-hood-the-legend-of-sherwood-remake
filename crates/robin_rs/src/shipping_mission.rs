@@ -100,6 +100,17 @@ where
         // this a no-op.
         crate::window::yield_to_runtime().await;
     }
+    // Browser worker-pool builds materialize the VQ sprite chunks before the
+    // synchronous install step, decoding chunks in parallel while the main
+    // thread only dispatches and applies. `install_mission` still runs its
+    // own (now no-op) materialization for every other configuration.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if let Some(bank) = merged.sprite_bank.as_mut() {
+        let rhs_files = &merged.rhs_files;
+        bank.materialize_vq_chunks_parallel(rhs_files)
+            .await
+            .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
+    }
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;

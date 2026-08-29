@@ -14,3 +14,5 @@ pub mod scb;
 pub mod serialize;
 pub mod shipping_datadir;
 pub mod sprite_codec;
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+pub mod wasm_threads;

@@ -168,6 +168,19 @@ fn main() {}
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn wasm_start() {
+    // Worker-pool builds re-instantiate this module inside each Web Worker
+    // against the shared memory, which reruns the start export. Process-wide
+    // state (panic hook, global tracing subscriber) must only be installed by
+    // the first (main-thread) instantiation — tracing's global-default set
+    // would panic on the second call.
+    #[cfg(feature = "wasm-threads")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static STARTED: AtomicBool = AtomicBool::new(false);
+        if STARTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+    }
     console_error_panic_hook::set_once();
     let (max_level, invalid_level) = wasm_log_level_from_query();
     let mut tracing_config = tracing_wasm::WASMLayerConfigBuilder::new();
@@ -239,10 +252,42 @@ pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("preload asset {path}: {e}")))
 }
 
+/// Worker-pool bring-up for `wasm-threads` builds. Requires cross-origin
+/// isolation (`SharedArrayBuffer`); without it the sprite decode paths stay
+/// on their serial fallback, which is a supported configuration — pages
+/// served without COOP/COEP (e.g. the very first visit before the
+/// coi-serviceworker reload) must still boot.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+async fn wasm_init_thread_pool() {
+    let global = js_sys::global();
+    let isolated = js_sys::Reflect::get(&global, &"crossOriginIsolated".into())
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !isolated {
+        tracing::info!("page is not cross-origin isolated; sprite decode stays single-threaded");
+        return;
+    }
+    let threads = js_sys::Reflect::get(&global, &"navigator".into())
+        .and_then(|navigator| js_sys::Reflect::get(&navigator, &"hardwareConcurrency".into()))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .map(|value| value as usize)
+        .filter(|&threads| threads >= 1)
+        .unwrap_or(1);
+    match robin_assets::wasm_threads::init_pool(threads).await {
+        Ok(()) => tracing::info!(threads, "wasm rayon worker pool ready"),
+        // A failed pool spawn leaves the serial decode path fully functional.
+        Err(error) => tracing::warn!("wasm worker pool init failed, staying serial: {error:#}"),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "wasm-threads")]
+    wasm_init_thread_pool().await;
     let args = robin_rs::main_entry::parse_cli();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
