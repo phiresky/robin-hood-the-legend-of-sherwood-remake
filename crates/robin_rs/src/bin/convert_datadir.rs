@@ -977,8 +977,8 @@ mod tests {
     use super::{
         AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
         animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
-        level_asset_rel_existing, normalize_robin_profile_index, prepare_shipping_payload,
-        transcode_audio_to_opus,
+        level_asset_rel_existing, normalize_robin_profile_index, positional_pair_map,
+        prepare_shipping_payload, transcode_audio_to_opus,
     };
     use robin_assets::shipping_datadir::ShippingMission;
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
@@ -1070,6 +1070,17 @@ mod tests {
             normalize_robin_profile_index(&profiles, 2, true).unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn positional_pairing_drops_conflicting_variant_frames() {
+        // Frame 10 pairs consistently with 20; frame 11 pairs with both 21
+        // and 22 (a duplicated variant frame against different hub frames)
+        // and must be dropped; frame 12 duplicates a consistent pair.
+        let pairs = positional_pair_map(&[10, 11, 12, 11, 12], &[20, 21, 30, 22, 30]);
+        assert_eq!(pairs.get(&10), Some(&20));
+        assert_eq!(pairs.get(&11), None);
+        assert_eq!(pairs.get(&12), Some(&30));
     }
 
     #[test]
@@ -1543,6 +1554,11 @@ struct RhsChunkPrep {
     base_rel: Option<String>,
     /// Variant bank id -> base bank id for the sprites coded against a base.
     base_ids: std::collections::BTreeMap<u32, u32>,
+    /// Second-hub RHS rel when this chunk is star-2 coded (schema v10).
+    base2_rel: Option<String>,
+    /// Variant bank id -> second-predecessor bank id. Every key must also be
+    /// present in `base_ids` (the codec requires base2 => base).
+    base2_ids: std::collections::BTreeMap<u32, u32>,
 }
 
 /// Expected packed word count of a VQ sprite's `(width/4) x height` index
@@ -1611,6 +1627,8 @@ fn build_rhs_chunk_payload(
     let mut blob_grids: Vec<Vec<u16>> = Vec::new();
     let mut blob_bases: Vec<Option<Vec<u16>>> = Vec::new();
     let mut blob_base_ids: Vec<Option<u32>> = Vec::new();
+    let mut blob_base2s: Vec<Option<Vec<u16>>> = Vec::new();
+    let mut blob_base2_ids: Vec<Option<u32>> = Vec::new();
     let mut alphabet: u16 = 0;
     for &idx in &prep.used_sprite_ids {
         let sprite = holder
@@ -1643,6 +1661,28 @@ fn build_rhs_chunk_payload(
                     None => {
                         blob_bases.push(None);
                         blob_base_ids.push(None);
+                    }
+                }
+                match prep.base2_ids.get(&idx) {
+                    Some(&base2_id) => {
+                        if prep.base_ids.get(&idx).is_none() {
+                            bail!(
+                                "sprite {idx} of RHS {rel} plans a base2 predecessor without a base"
+                            );
+                        }
+                        let base2 =
+                            remapped_packed(holder, dict_remaps, base2_id)?.ok_or_else(|| {
+                                anyhow!(
+                                    "family base2 sprite {base2_id} for RHS {rel} has no packed \
+                                     data"
+                                )
+                            })?;
+                        blob_base2s.push(Some(base2));
+                        blob_base2_ids.push(Some(base2_id));
+                    }
+                    None => {
+                        blob_base2s.push(None);
+                        blob_base2_ids.push(None);
                     }
                 }
                 blob_ids.push(idx);
@@ -1695,15 +1735,35 @@ fn build_rhs_chunk_payload(
             )
             .collect();
         let bases: Vec<Option<&[u16]>> = blob_bases.iter().map(|base| base.as_deref()).collect();
-        let blob = robin_assets::sprite_codec::encode_grids(alphabet, &grids, Some(&bases))
-            .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
+        let base2s: Vec<Option<&[u16]>> = blob_base2s.iter().map(|base| base.as_deref()).collect();
+        let has_base2 = blob_base2_ids.iter().any(Option::is_some);
+        let blob = robin_assets::sprite_codec::encode_grids_multi(
+            alphabet,
+            &grids,
+            Some(&bases),
+            Some(&base2s),
+        )
+        .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
         blob_bytes = blob.len();
+        if has_base2 && prep.base2_rel.is_none() {
+            bail!("RHS {rel} coded base2 sprites without a planned base2 chunk");
+        }
         vq_chunks.push(SpriteVqChunk {
             rhs: rel.to_owned(),
             base_rhs: prep.base_rel.clone(),
+            base2_rhs: if has_base2 {
+                prep.base2_rel.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
             alphabet,
             sprite_ids: blob_ids,
             base_ids: blob_base_ids,
+            base2_ids: if has_base2 {
+                blob_base2_ids
+            } else {
+                Vec::new()
+            },
             blob,
         });
     }
@@ -1721,6 +1781,7 @@ fn build_rhs_chunk_payload(
         vq_sprites = coded_sprites,
         vq_blob_bytes = blob_bytes,
         base = prep.base_rel.as_deref().unwrap_or(""),
+        base2 = prep.base2_rel.as_deref().unwrap_or(""),
         "built shared RHS sprite payload"
     );
     Ok(payload)
@@ -2292,6 +2353,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 used_sprite_ids,
                 base_rel: None,
                 base_ids: std::collections::BTreeMap::new(),
+                base2_rel: None,
+                base2_ids: std::collections::BTreeMap::new(),
             },
         );
     }
@@ -2410,6 +2473,68 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         family_bases.insert(key.clone(), base);
     }
 
+    // Star-2 topology (schema v10, docs/COMPRESSION.md 2026-08-29): family
+    // members after the first two code each tile against TWO already-decoded
+    // siblings — measured -22..25% on third-and-later members. hub1 is the
+    // proxy-selected base above; hub2 is the member (excluding hub1) that is
+    // the best SECOND predictor for the remaining members: argmin over
+    // candidates c != hub1 of sum over members m not in {hub1, c} of
+    // H(m | c tile). hub2's own chunk keeps coding against hub1 only.
+    // Two-member families have no "third-and-later" members and skip this.
+    let mut family_second_bases = std::collections::BTreeMap::<String, String>::new();
+    for (key, members) in &families {
+        if members.len() < 3 {
+            continue;
+        }
+        let hub1 = &family_bases[key];
+        let mut best: Option<(f64, &String)> = None;
+        let mut proxy_failed = false;
+        for candidate in members {
+            if candidate == hub1 {
+                continue;
+            }
+            let mut cost = 0.0;
+            for member in members {
+                if member == candidate || member == hub1 {
+                    continue;
+                }
+                match family_base_pair_proxy(
+                    &holder,
+                    &member_orders[candidate],
+                    &member_orders[member],
+                ) {
+                    Some(bits) => cost += bits,
+                    None => {
+                        proxy_failed = true;
+                        break;
+                    }
+                }
+            }
+            if proxy_failed {
+                break;
+            }
+            if best.is_none_or(|(b, _)| cost < b) {
+                best = Some((cost, candidate));
+            }
+        }
+        match (proxy_failed, best) {
+            (false, Some((_, name))) => {
+                tracing::info!(
+                    family = key.as_str(),
+                    base2 = name.as_str(),
+                    "selected family second base"
+                );
+                family_second_bases.insert(key.clone(), name.clone());
+            }
+            _ => {
+                tracing::warn!(
+                    family = key.as_str(),
+                    "family second-base proxy unavailable; coding this family star-1"
+                );
+            }
+        }
+    }
+
     // Lowercased variant name -> disk-cased base name. CPF-derived rels and
     // on-disk filenames can disagree in case, so matching is case-blind.
     let variant_base_names: std::collections::BTreeMap<String, String> = families
@@ -2425,10 +2550,35 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .map(move |name| (name.to_ascii_lowercase(), base.clone()))
         })
         .collect();
+    // Lowercased third-and-later member name -> disk-cased second-hub name.
+    // hub2 itself keeps coding against hub1 only, so it is excluded here.
+    let variant_base2_names: std::collections::BTreeMap<String, String> = families
+        .iter()
+        .filter_map(|(key, members)| {
+            let hub2 = family_second_bases.get(key)?;
+            let hub1 = &family_bases[key];
+            Some(
+                members
+                    .iter()
+                    .filter(move |name| *name != hub1 && *name != hub2)
+                    .map(move |name| (name.to_ascii_lowercase(), hub2.clone())),
+            )
+        })
+        .flatten()
+        .collect();
 
     let prep_rels: Vec<String> = rhs_preps.keys().cloned().collect();
     let mut loaded_base_script_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
-    let mut planned_variants = Vec::<(String, String, std::collections::BTreeMap<u32, u32>)>::new();
+    struct PlannedVariant {
+        rel: String,
+        base_rel: String,
+        base_ids: std::collections::BTreeMap<u32, u32>,
+        base2_rel: Option<String>,
+        base2_ids: std::collections::BTreeMap<u32, u32>,
+        /// Hub chunk rels this variant's decode depends on at install time.
+        dep_rels: Vec<String>,
+    }
+    let mut planned_variants = Vec::<PlannedVariant>::new();
     let mut base_extra_ids = std::collections::BTreeMap::<String, BTreeSet<u32>>::new();
     for rel in &prep_rels {
         let Some(name) = rel
@@ -2440,65 +2590,45 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let Some(base_name) = variant_base_names.get(&name.to_ascii_lowercase()) else {
             continue;
         };
-        // Reuse an existing prep's rel spelling for the base when one exists.
-        let disk_base_rel = format!("Characters/{base_name}.rhs");
-        let base_rel = prep_rels
-            .iter()
-            .find(|r| r.eq_ignore_ascii_case(&disk_base_rel))
-            .cloned()
-            .unwrap_or(disk_base_rel);
-        if !rhs_preps.contains_key(&base_rel) && !loaded_base_script_orders.contains_key(&base_rel)
-        {
-            let path = in_path(&base_rel).ok_or_else(|| {
-                anyhow!(
-                    "family base RHS {base_rel} (for variant {rel}) is missing from the datadir"
-                )
-            })?;
-            let (_, profiles) =
-                sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
-                    .map_err(|error| anyhow!("rhs {base_rel}: {error}"))?;
-            let mut order = Vec::new();
-            for (_, info) in &profiles {
-                for script in info.scripts.iter() {
-                    order.extend_from_slice(&script.frame_ids);
-                }
-            }
-            loaded_base_script_orders.insert(base_rel.clone(), order);
-        }
-        let base_script: &[u32] = rhs_preps
-            .get(&base_rel)
-            .map(|prep| prep.script_order.as_slice())
-            .or_else(|| loaded_base_script_orders.get(&base_rel).map(Vec::as_slice))
-            .expect("base script order resolved above");
+        let base_rel = resolve_family_hub_rel(
+            &prep_rels,
+            &rhs_preps,
+            &mut loaded_base_script_orders,
+            &in_path,
+            base_name,
+            rel,
+        )?;
+        // Second hub, when this member is third-or-later in a star-2 family.
+        let base2_rel = match variant_base2_names.get(&name.to_ascii_lowercase()) {
+            Some(hub2_name) => Some(resolve_family_hub_rel(
+                &prep_rels,
+                &rhs_preps,
+                &mut loaded_base_script_orders,
+                &in_path,
+                hub2_name,
+                rel,
+            )?),
+            None => None,
+        };
+        let hub_script = |hub_rel: &str| {
+            rhs_preps
+                .get(hub_rel)
+                .map(|prep| prep.script_order.as_slice())
+                .or_else(|| loaded_base_script_orders.get(hub_rel).map(Vec::as_slice))
+                .expect("hub script order resolved above")
+        };
         let variant_prep = rhs_preps.get(rel).expect("prep listed in prep_rels");
         // Positional pairing over the script frame-id tables (the variant's
-        // tables mirror the base's 1:1); duplicated variant frames that pair
-        // with conflicting base frames fall back to standalone coding.
-        let mut pairs: Vec<(u32, u32)> = variant_prep
-            .script_order
-            .iter()
-            .copied()
-            .zip(base_script.iter().copied())
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        let mut pair_base = std::collections::BTreeMap::<u32, u32>::new();
-        let mut conflicted = BTreeSet::<u32>::new();
-        for (vid, bid) in pairs {
-            match pair_base.get(&vid) {
-                Some(&existing) if existing != bid => {
-                    conflicted.insert(vid);
-                }
-                Some(_) => {}
-                None => {
-                    pair_base.insert(vid, bid);
-                }
-            }
-        }
-        for vid in &conflicted {
-            pair_base.remove(vid);
-        }
+        // tables mirror each hub's 1:1); duplicated variant frames that pair
+        // with conflicting hub frames fall back per hub.
+        let pair_base = positional_pair_map(&variant_prep.script_order, hub_script(&base_rel));
+        let pair_base2 = base2_rel
+            .as_deref()
+            .map(|hub2_rel| positional_pair_map(&variant_prep.script_order, hub_script(hub2_rel)));
         let mut base_ids = std::collections::BTreeMap::<u32, u32>::new();
+        let mut base2_ids = std::collections::BTreeMap::<u32, u32>::new();
+        let mut hub1_used = BTreeSet::<u32>::new();
+        let mut hub2_used = BTreeSet::<u32>::new();
         let (mut vq_total, mut unbased) = (0usize, 0usize);
         for &vid in &variant_prep.used_sprite_ids {
             let sprite = holder.sprites().get(vid as usize).ok_or_else(|| {
@@ -2513,47 +2643,102 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 continue;
             }
             vq_total += 1;
-            let base = pair_base.get(&vid).copied().filter(|&bid| {
-                let Some(base_sprite) = holder.sprites().get(bid as usize) else {
+            let aligned = |bid: &u32| {
+                let Some(base_sprite) = holder.sprites().get(*bid as usize) else {
                     return false;
                 };
-                let Some(base_packed) = holder.packed_data(bid) else {
+                let Some(base_packed) = holder.packed_data(*bid) else {
                     return false;
                 };
                 base_sprite.dictionary_index != UNMAPPED_DICT
                     && (base_sprite.width, base_sprite.height) == (sprite.width, sprite.height)
                     && base_packed.len() == packed.len()
-            });
-            match base {
-                Some(bid) => {
-                    base_ids.insert(vid, bid);
+            };
+            let b1 = pair_base.get(&vid).copied().filter(aligned);
+            let b2 = pair_base2
+                .as_ref()
+                .and_then(|pairs| pairs.get(&vid))
+                .copied()
+                .filter(aligned);
+            // The probe's `code3` ladder: both aligned predecessors when
+            // possible; a sprite aligning with only one hub takes that hub as
+            // its single base (base ids are plain bank ids, so a hub2 sprite
+            // works as a primary base); otherwise standalone.
+            match (b1, b2) {
+                (Some(b1), Some(b2)) => {
+                    base_ids.insert(vid, b1);
+                    base2_ids.insert(vid, b2);
+                    hub1_used.insert(b1);
+                    hub2_used.insert(b2);
                 }
-                None => unbased += 1,
+                (Some(b1), None) => {
+                    base_ids.insert(vid, b1);
+                    hub1_used.insert(b1);
+                }
+                (None, Some(b2)) => {
+                    base_ids.insert(vid, b2);
+                    hub2_used.insert(b2);
+                }
+                (None, None) => unbased += 1,
             }
         }
         if base_ids.is_empty() || unbased * 10 > vq_total {
             tracing::info!(
                 rhs = rel.as_str(),
                 base = base_rel.as_str(),
+                base2 = base2_rel.as_deref().unwrap_or(""),
                 vq = vq_total,
                 unbased,
-                "family variant pairs poorly with its base; coding standalone"
+                "family variant pairs poorly with its hubs; coding standalone"
             );
             continue;
         }
         base_extra_ids
             .entry(base_rel.clone())
             .or_default()
-            .extend(base_ids.values().copied());
-        planned_variants.push((rel.clone(), base_rel, base_ids));
+            .extend(hub1_used.iter().copied());
+        if let Some(hub2_rel) = base2_rel.as_ref().filter(|_| !hub2_used.is_empty()) {
+            base_extra_ids
+                .entry(hub2_rel.clone())
+                .or_default()
+                .extend(hub2_used.iter().copied());
+        }
+        // Dependency edges: hub1 always (hub2's own chunk decodes against
+        // hub1, so hub1 must be in the closure whenever hub2 is), plus hub2
+        // when any of its grids are referenced.
+        let mut dep_rels = vec![base_rel.clone()];
+        if let Some(hub2_rel) = base2_rel.as_ref().filter(|_| !hub2_used.is_empty()) {
+            dep_rels.push(hub2_rel.clone());
+        }
+        planned_variants.push(PlannedVariant {
+            rel: rel.clone(),
+            base_rel,
+            base_ids,
+            base2_rel: base2_rel.filter(|_| !base2_ids.is_empty()),
+            base2_ids,
+            dep_rels,
+        });
     }
-    for (rel, base_rel, base_ids) in planned_variants {
-        let prep = rhs_preps.get_mut(&rel).expect("variant prep exists");
-        prep.base_rel = Some(base_rel);
-        prep.base_ids = base_ids;
+    // Variant chunk -> family-hub chunks. Every dependency list that names a
+    // variant chunk must also name its hub chunks: the runtime decodes the
+    // variant grids against the hubs' materialized grids at install time.
+    let mut rhs_base_dep = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for planned in planned_variants {
+        rhs_base_dep.insert(planned.rel.clone(), planned.dep_rels);
+        let prep = rhs_preps
+            .get_mut(&planned.rel)
+            .expect("variant prep exists");
+        prep.base_rel = Some(planned.base_rel);
+        prep.base_ids = planned.base_ids;
+        prep.base2_rel = planned.base2_rel;
+        prep.base2_ids = planned.base2_ids;
     }
-    // The base grids a variant decodes against must ship in the base chunk
-    // even when no mission profile reaches them (or the whole base RHS).
+    // The hub grids a variant decodes against must ship in the hub chunks
+    // even when no mission profile reaches them (or the whole hub RHS).
+    // TODO: extra grids landing in a hub2 chunk that is itself a planned
+    // variant are coded standalone within that chunk (its own base pairing
+    // was fixed before the extras arrived); pairing them against hub1 too
+    // would shave a little more.
     for (base_rel, extra) in base_extra_ids {
         match rhs_preps.get_mut(&base_rel) {
             Some(prep) => prep.used_sprite_ids.extend(extra),
@@ -2561,7 +2746,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 tracing::info!(
                     rhs = base_rel.as_str(),
                     sprites = extra.len(),
-                    "synthesizing sprite-only family-base chunk"
+                    "synthesizing sprite-only family-hub chunk"
                 );
                 rhs_preps.insert(
                     base_rel.clone(),
@@ -2572,18 +2757,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                         used_sprite_ids: extra,
                         base_rel: None,
                         base_ids: std::collections::BTreeMap::new(),
+                        base2_rel: None,
+                        base2_ids: std::collections::BTreeMap::new(),
                     },
                 );
             }
         }
     }
-    // Variant chunk -> family-base chunk. Every dependency list that names a
-    // variant chunk must also name its base chunk: the runtime decodes the
-    // variant grids against the base's materialized grids at install time.
-    let rhs_base_dep: std::collections::BTreeMap<String, String> = rhs_preps
-        .iter()
-        .filter_map(|(rel, prep)| prep.base_rel.clone().map(|base| (rel.clone(), base)))
-        .collect();
 
     // Phase C: assemble the chunk payloads. `encode_grids` dominates this
     // stage, so it runs on the bounded worker pool.
@@ -2762,17 +2942,18 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let relative = format!("rhs/{filename}");
         rhs_files.insert(rel, relative);
     }
-    // A dependency on a family-variant chunk implies its base chunk: the
-    // runtime decodes the variant's VQ grids against the base's at install.
+    // A dependency on a family-variant chunk implies its hub chunk(s): the
+    // runtime decodes the variant's VQ grids against the hubs' at install
+    // (star-2 chunks depend on both hubs).
     let rhs_chunk_files = |rel: &str| -> Result<Vec<String>> {
-        let mut chunk_files = Vec::with_capacity(2);
+        let mut chunk_files = Vec::with_capacity(3);
         let file = rhs_files
             .get(rel)
             .ok_or_else(|| anyhow!("missing shipping RHS payload {rel}"))?;
         chunk_files.push(file.clone());
-        if let Some(base_rel) = rhs_base_dep.get(rel) {
+        for base_rel in rhs_base_dep.get(rel).into_iter().flatten() {
             let base_file = rhs_files.get(base_rel).ok_or_else(|| {
-                anyhow!("missing shipping RHS family-base payload {base_rel} (required by {rel})")
+                anyhow!("missing shipping RHS family-hub payload {base_rel} (required by {rel})")
             })?;
             chunk_files.push(base_file.clone());
         }
@@ -4133,6 +4314,76 @@ fn family_proxy_bits(
         bits -= n as f64 * (n as f64 / ctx_total).log2();
     }
     bits / sampled as f64 * full_tiles as f64
+}
+
+/// Resolve a family hub's chunk rel (reusing an existing prep's spelling when
+/// one matches case-insensitively) and ensure its full-profile script order is
+/// available — either from its prep or loaded into `loaded_orders`.
+fn resolve_family_hub_rel(
+    prep_rels: &[String],
+    rhs_preps: &std::collections::BTreeMap<String, RhsChunkPrep>,
+    loaded_orders: &mut std::collections::BTreeMap<String, Vec<u32>>,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+    hub_name: &str,
+    variant_rel: &str,
+) -> Result<String> {
+    let disk_rel = format!("Characters/{hub_name}.rhs");
+    let hub_rel = prep_rels
+        .iter()
+        .find(|rel| rel.eq_ignore_ascii_case(&disk_rel))
+        .cloned()
+        .unwrap_or(disk_rel);
+    if !rhs_preps.contains_key(&hub_rel) && !loaded_orders.contains_key(&hub_rel) {
+        let path = in_path(&hub_rel).ok_or_else(|| {
+            anyhow!(
+                "family hub RHS {hub_rel} (for variant {variant_rel}) is missing from the datadir"
+            )
+        })?;
+        let (_, profiles) =
+            sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                .map_err(|error| anyhow!("rhs {hub_rel}: {error}"))?;
+        let mut order = Vec::new();
+        for (_, info) in &profiles {
+            for script in info.scripts.iter() {
+                order.extend_from_slice(&script.frame_ids);
+            }
+        }
+        loaded_orders.insert(hub_rel.clone(), order);
+    }
+    Ok(hub_rel)
+}
+
+/// Positional variant->hub frame pairing over two script frame-id orders:
+/// zip, dedup, and drop variant frames that pair with conflicting hub frames
+/// (those fall back to weaker contexts per sprite).
+fn positional_pair_map(
+    variant_order: &[u32],
+    hub_order: &[u32],
+) -> std::collections::BTreeMap<u32, u32> {
+    let mut pairs: Vec<(u32, u32)> = variant_order
+        .iter()
+        .copied()
+        .zip(hub_order.iter().copied())
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut pair_map = std::collections::BTreeMap::<u32, u32>::new();
+    let mut conflicted = BTreeSet::<u32>::new();
+    for (vid, hid) in pairs {
+        match pair_map.get(&vid) {
+            Some(&existing) if existing != hid => {
+                conflicted.insert(vid);
+            }
+            Some(_) => {}
+            None => {
+                pair_map.insert(vid, hid);
+            }
+        }
+    }
+    for vid in &conflicted {
+        pair_map.remove(vid);
+    }
+    pair_map
 }
 
 /// Sampled H(tile | above) * tile-count for one family member coded
