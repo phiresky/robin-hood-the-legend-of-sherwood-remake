@@ -570,7 +570,7 @@ impl Ctx {
         // level for marginal probability-mass savings. Skipping those
         // contexts must match on both coder sides (it does: this is the
         // single exclusion entry point).
-        if self.distinct() > EXCL_SOURCE_CAP {
+        if self.distinct() > excl_source_cap() {
             return;
         }
         match self {
@@ -620,7 +620,7 @@ impl Ctx {
                         syms.push((x, BUMP));
                         if let Some(dense) = dense {
                             dense[x as usize] = BUMP;
-                        } else if syms.len() >= DENSE_MIRROR_AT {
+                        } else if excl_source_cap() > 0 && syms.len() >= DENSE_MIRROR_AT {
                             let mut mirror = vec![0u16; alphabet as usize].into_boxed_slice();
                             for &(s, c) in syms.iter() {
                                 mirror[s as usize] = c;
@@ -700,10 +700,34 @@ const SEE_LEVEL_AUX: usize = 5;
 /// Escaped contexts holding more than this many distinct symbols do not
 /// contribute to the exclusion set (see [`Ctx::exclude_into`]). Part of the
 /// bitstream contract: both coder sides must share the value, so changing
-/// it is a chunk-schema version change. Measured trade (Knight01/RobinTown,
-/// size vs uncapped exclusion, decode time): 256 -> +0.4/+0.6%, -10..15%;
-/// 128 -> +0.8/+1.2%, -14..24%; 64 -> +1.1/+1.7%, -16..30%.
-const EXCL_SOURCE_CAP: u32 = 256;
+/// it is a chunk-schema version change (RHMISN06 shipped with 0). Measured
+/// trade vs uncapped exclusion (Knight01/RobinTown, size, decode time):
+/// 256 -> +0.4/+0.6%, -10..15%; 128 -> +0.8/+1.2%, -14..24%;
+/// 64 -> +1.1/+1.7%, -16..30%.
+///
+/// 2026-08-29, re-measured against cap 256 after the decode-path rework
+/// (no scratch materialization, dense mirrors): 0 (exclusion disabled)
+/// costs +1.1% (Knight01) / +1.4% (RobinTown) / +2.7% (Guard A02 variant
+/// stream) and cuts decode a further 35-43% — every level stays on the
+/// tracked-sum fast path and the filtered rescans disappear entirely.
+/// Speed was declared the priority over ~1.5 MB of fullgame rhs bucket,
+/// so exclusion is off.
+const EXCL_SOURCE_CAP: u32 = 0;
+
+/// TEMPORARY experiment override for [`EXCL_SOURCE_CAP`] via the
+/// `ROBIN_EXCL_CAP` env var, to measure the size/decode-time ladder without
+/// rebuilding per value. Bitstream contract still applies: encode and decode
+/// must run with the same value. TODO: bake the chosen value back into the
+/// const and delete this before shipping chunks encoded with it.
+fn excl_source_cap() -> u32 {
+    static CAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("ROBIN_EXCL_CAP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(EXCL_SOURCE_CAP)
+    })
+}
 
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
 /// membership, O(1) reset per coded symbol (bump the generation). The

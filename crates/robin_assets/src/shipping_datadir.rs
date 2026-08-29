@@ -1101,10 +1101,17 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // thing standing between an old binary and a misparse. (The datadir magic is
 // spelled `RHDDNA10` because the tag is exactly 8 bytes; the u32 version
 // beside it is the authoritative number.)
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA10";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN05";
-pub const SHIPPING_DATADIR_VERSION: u32 = 10;
-pub const SHIPPING_MISSION_VERSION: u32 = 5;
+//
+// Schema v11 / mission v6: identical container layout, but the VQ blobs are
+// coded with PPM exclusion disabled (`EXCL_SOURCE_CAP = 0` in
+// `sprite_codec`) — a decode-speed/size trade (~+1.6% rhs bytes for
+// -35..43% decode time). The constant is part of the bitstream contract, so
+// chunks encoded either way are mutually undecodable and both magics
+// advance.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA11";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN06";
+pub const SHIPPING_DATADIR_VERSION: u32 = 11;
+pub const SHIPPING_MISSION_VERSION: u32 = 6;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -1363,7 +1370,7 @@ mod tests {
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA10");
+        assert_eq!(&encoded[..8], b"RHDDNA11");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -1420,7 +1427,7 @@ mod tests {
             .audio_durations_ms
             .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
-        assert_eq!(&encoded[..8], b"RHMISN05");
+        assert_eq!(&encoded[..8], b"RHMISN06");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));
