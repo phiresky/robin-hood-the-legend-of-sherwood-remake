@@ -577,6 +577,16 @@ impl FrameHolder {
         &self.dictionaries
     }
 
+    /// The dictionary set one [`SpriteVariant`] renders from. Empty for
+    /// Night/Fog until the matching `generate_*_dictionaries` has run.
+    pub fn variant_dictionaries(&self, variant: SpriteVariant) -> &[FrameDictionary] {
+        match variant {
+            SpriteVariant::Day => &self.dictionaries,
+            SpriteVariant::Night => &self.dictionaries_night,
+            SpriteVariant::Fog => &self.dictionaries_fog,
+        }
+    }
+
     pub fn num_sprites(&self) -> usize {
         self.sprites.len()
     }

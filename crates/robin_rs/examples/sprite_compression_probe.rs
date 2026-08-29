@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 
-use robin_assets::frame_holder::{FrameHolder, TRANSPARENT_COLOR_16, UNMAPPED_DICT};
+use robin_assets::frame_holder::{
+    FrameHolder, SHADOW_KEY, SpriteVariant, TRANSPARENT_COLOR_16, UNMAPPED_DICT,
+};
 use robin_engine::sprite_script::SpriteScriptor;
 
 #[derive(Parser, Debug)]
@@ -38,6 +40,13 @@ struct Cli {
     /// Print per-character composition stats.
     #[arg(long)]
     stats: Vec<String>,
+
+    /// Count night-colour collisions in the dictionaries for one ambiance
+    /// ("day", "fog" or "night"): art colours, and fog/night blend results,
+    /// that land on the shadow colour and would otherwise render as flat
+    /// shadow. Verifies `apply_arno_law` defuses them.
+    #[arg(long)]
+    shadow_collisions: Vec<String>,
 
     /// Test whether charB is a consistent color remap of charA ("A:B").
     #[arg(long)]
@@ -250,6 +259,103 @@ fn decode_raw(holder: &FrameHolder, id: u32) -> Option<(u16, u16, Vec<u16>)> {
         }
     }
     Some((s.width, s.height, dst))
+}
+
+/// Count shadow-key collisions in the dictionary pixel values.
+///
+/// Two ways a non-shadow pixel can end up indistinguishable from a shadow
+/// pixel, which would make it render as flat black at the shadow alpha and
+/// drop out of the hit test:
+///
+///   (a) a source art colour that already equals the ambience's night
+///       colour, and
+///   (b) a fog/night blend result that lands exactly on it.
+///
+/// `apply_arno_law` is supposed to defuse both by bumping any value equal to
+/// the incoming shadow colour by +1 *before* remapping `SHADOW_KEY` onto it,
+/// and the load order runs it after the variant dictionaries are blended
+/// (`game_session/setup.rs`), so (b) is in its scope too. This counts how
+/// often each case actually fires on real data, and verifies that nothing
+/// equal to the night colour survives that is not a genuine shadow pixel.
+fn shadow_collisions(holder: &FrameHolder, ambiance: &str) -> Result<()> {
+    // Ambiance::night_color_rgb() -> rgb565, from engine/types.rs.
+    let (variant, rgb) = match ambiance {
+        "day" => (SpriteVariant::Day, (45u8, 45u8, 35u8)),
+        "fog" => (SpriteVariant::Fog, (85, 77, 90)),
+        "night" => (SpriteVariant::Night, (0, 0, 0)),
+        other => {
+            return Err(anyhow!(
+                "--shadow-collisions wants day|fog|night, got {other}"
+            ));
+        }
+    };
+    let night_color = robin_util::color::rgb565(rgb.0, rgb.1, rgb.2);
+
+    let mut fh = holder.clone();
+    // Mirror `initialize_sprite_variants`: blend the variant set first...
+    match variant {
+        SpriteVariant::Night => fh.generate_night_dictionaries(),
+        SpriteVariant::Fog => fh.generate_fog_dictionaries(),
+        SpriteVariant::Day => {}
+    }
+
+    // ...then measure, pre-arno-law, over exactly the dictionaries this
+    // ambiance renders from.
+    let pre: Vec<Vec<u16>> = variant_values(&fh, variant);
+    let total: u64 = pre.iter().map(|d| d.len() as u64).sum();
+    let genuine_shadow: u64 = count_eq(&pre, SHADOW_KEY);
+    let collide: u64 = count_eq(&pre, night_color);
+    let dicts_hit = pre.iter().filter(|d| d.contains(&night_color)).count();
+
+    // ...then apply the law and re-measure.
+    fh.apply_arno_law(night_color);
+    let post = variant_values(&fh, variant);
+    let post_shadow = count_eq(&post, night_color);
+    let post_key = count_eq(&post, SHADOW_KEY);
+
+    println!("## shadow collisions — {ambiance} (night_color = {night_color:#06x})");
+    println!("  dictionary pixel slots:     {total}");
+    println!("  genuine shadow (SHADOW_KEY):{genuine_shadow:>10}");
+    println!(
+        "  collisions bumped by +1:    {collide:>10}  ({:.4}% of slots, in {dicts_hit} dictionaries)",
+        100.0 * collide as f64 / total as f64
+    );
+    println!(
+        "  == night_color after law:   {post_shadow:>10}  (expected {genuine_shadow} = genuine shadow only)"
+    );
+    println!(
+        "  == SHADOW_KEY after law:    {post_key:>10}  (expected 0 unless night_color == key)"
+    );
+    if post_shadow != genuine_shadow {
+        println!(
+            "  !! MISMATCH: {} art pixels are indistinguishable from shadow",
+            post_shadow as i64 - genuine_shadow as i64
+        );
+    }
+    // The one way the +1 bump can fail: it lands on the *old* shadow colour
+    // and is then remapped straight back onto the new one.
+    if night_color.wrapping_add(1) == SHADOW_KEY {
+        println!("  !! night_color + 1 == SHADOW_KEY: the bump re-collides");
+    }
+    Ok(())
+}
+
+fn variant_values(fh: &FrameHolder, variant: SpriteVariant) -> Vec<Vec<u16>> {
+    fh.variant_dictionaries(variant)
+        .iter()
+        .map(|d| {
+            (0..d.num_entries())
+                .flat_map(|i| d.lookup_pixels(i).to_vec())
+                .collect()
+        })
+        .collect()
+}
+
+fn count_eq(values: &[Vec<u16>], needle: u16) -> u64 {
+    values
+        .iter()
+        .map(|d| d.iter().filter(|&&v| v == needle).count() as u64)
+        .sum()
 }
 
 fn stats(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result<()> {
@@ -2556,6 +2662,9 @@ fn main() -> Result<()> {
     );
     for name in &cli.stats {
         stats(&holder, &cli.data_dir, name)?;
+    }
+    for ambiance in &cli.shadow_collisions {
+        shadow_collisions(&holder, ambiance)?;
     }
     for pair in &cli.recolor {
         let (a, b) = pair
