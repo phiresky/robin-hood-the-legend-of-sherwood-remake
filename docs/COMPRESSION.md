@@ -1305,3 +1305,32 @@ VQ blob bytes 16,796,145 -> 16,148,418 (-3.9%); corpus decode 110 s -> 55 s
 with the fast paths. verify-shipping: all 65,058 sprites / 146,584,025
 pixels identical to the source bank. The demo carries no complete variant
 families; fullgame conversion exercises the cross-variant path.
+
+## Sibling-context coding and the cluster negative (2026-08-29)
+
+✗ Tile-similarity cluster contexts (a (cluster(primary), cluster(second))
+level between the exact pair and the order-1 fallbacks, clusters derived
+from dictionary colors): RobinTown +1.4%, Knight01 +2.2%, Guard A01 vs base
++25%. Same failure mode as order-3: a mid-strength level inserted into the
+escape chain delays stronger fallbacks at real escape cost. Reverted.
+
+✓ Two-predecessor ("sibling") coding: a family member with two already-
+decoded siblings codes through (b1,b2) -> (b1,above) -> b1 -> above ->
+order-0 (`encode_grids_multi`). Ships zero extra bytes — the decoder holds
+both predecessors via dependency edges. Conditional-entropy pricing
+(--entropy3) promised ~2x; the real chain (--code3) delivers:
+
+```
+                         one base        two bases
+Guard A02 (vs A00+A01)     515,795 ->     401,680   -22%
+Archer02  (vs 00+01)      ~515,000 ->     385,605   -25%
+Knight03  (vs 01+02)     1,156,196 ->   1,148,686   -0.6%  (Knight02 adds
+                                                    little over Knight01)
+```
+
+~30 of the 39 variants are third-or-later family members; wiring a star-2
+topology into the converter (each later member coded against the two best
+hubs) is the follow-up, worth an estimated ~3-4 MB on the fullgame corpus.
+This supersedes the "synthetic centroid base" idea: a computed base would
+have to be shipped (~a member's own coded size), canceling its gains, while
+sibling contexts are free.
