@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use std::fs;
 
+use robin_util::asset_fs::AssetBytes;
+
 pub const SBFILE_NO_ERROR: i32 = 0;
 pub const SBFILE_ERROR_FILE_NOT_FOUND: i32 = -1;
 pub const SBFILE_ERROR_NO_FILE: i32 = -4;
@@ -258,7 +260,7 @@ pub struct SbFile {
     /// That lets `SbFile::open` uniformly consume bytes from the native
     /// filesystem *or* the shipping-datadir byte store hosted in
     /// `robin_util::asset_fs` without a type split.
-    file: Cursor<Vec<u8>>,
+    file: Cursor<AssetBytes>,
     size: u64,
     position: u64,
     last_error: i32,
@@ -498,8 +500,8 @@ fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
 /// miss to drive an "insert CD" disc-swap prompt. The Rust port ships
 /// from a flat datadir, has no CD-media support, and therefore has no
 /// equivalent — intentionally dropped.
-fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<Vec<u8>>, i32> {
-    match file_system.assets.read(path) {
+fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<AssetBytes>, i32> {
+    match file_system.assets.read_shared(path) {
         Ok(bytes) => return Ok(Some(bytes)),
         Err(robin_util::asset_fs::AssetError::NotFound(_)) => {
             tracing::trace!("asset {path}: not found");
@@ -513,7 +515,7 @@ fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<Vec<u8>>, i
         }
     }
     if let Some(resolved) = resolve_case_insensitive(Path::new(path)) {
-        match robin_util::asset_fs::read(&resolved) {
+        match robin_util::asset_fs::read_shared(&resolved) {
             Ok(bytes) => return Ok(Some(bytes)),
             Err(robin_util::asset_fs::AssetError::NotFound(_)) => {
                 tracing::trace!(
@@ -605,7 +607,8 @@ impl SbFile {
         Self::from_bytes(bytes, display_path.into())
     }
 
-    fn from_bytes(bytes: Vec<u8>, path: String) -> Self {
+    fn from_bytes(bytes: impl Into<AssetBytes>, path: String) -> Self {
+        let bytes = bytes.into();
         let size = bytes.len() as u64;
         SbFile {
             file: Cursor::new(bytes),
@@ -628,7 +631,7 @@ impl SbFile {
     /// back out through the stream API — for the sprite bank that copy
     /// is hundreds of megabytes.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.file.into_inner()
+        self.file.into_inner().into_vec()
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> i32 {
@@ -1041,7 +1044,7 @@ fn read_from_overlay(
     file_system: &SbFileSystem,
     root: &OverlayRoot,
     normalised: &str,
-) -> Result<Option<Vec<u8>>, i32> {
+) -> Result<Option<AssetBytes>, i32> {
     match root {
         OverlayRoot::Directory(dir) => {
             let Some(resolved) = resolve_case_insensitive(&dir.join(normalised)) else {
@@ -1064,7 +1067,7 @@ fn read_from_overlay(
             }
             try_read(file_system, &resolved.to_string_lossy())
         }
-        OverlayRoot::Zip(z) => Ok(z.try_read(normalised)),
+        OverlayRoot::Zip(z) => Ok(z.try_read(normalised).map(AssetBytes::from)),
     }
 }
 
@@ -1163,6 +1166,25 @@ mod tests {
         isolated.set_primary_path(primary.path().to_str().unwrap());
         assert_eq!(isolated.read_all("shared.dat").unwrap(), b"primary");
         assert!(isolated.overlay_paths().is_empty());
+    }
+
+    #[test]
+    fn file_system_reads_host_preloaded_assets_from_its_vfs() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset(
+                "Data/Interface/UI/allied_portrait_background.png",
+                b"png".to_vec(),
+            )
+            .unwrap();
+        let file_system = SbFileSystem::new(assets);
+
+        assert_eq!(
+            file_system
+                .read_all("Data/Interface/UI/allied_portrait_background.png")
+                .unwrap(),
+            b"png"
+        );
     }
 
     #[test]

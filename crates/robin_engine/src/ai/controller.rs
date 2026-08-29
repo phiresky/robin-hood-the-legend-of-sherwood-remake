@@ -1719,7 +1719,9 @@ impl AiController {
     /// drain runs `DeleteDetectable(body, BODY)` (every newly-merged
     /// body, regardless of `UPDATE_BODIES`) and
     /// `AddDetectable(charly, MISSED_FRIEND)` (when a new charly handle
-    /// is adopted under `UPDATE_CHARLY`).
+    /// is adopted under `UPDATE_CHARLY`). The shipped Original appends that
+    /// entry even when the detectable list already contains Charly: its
+    /// uniqueness check is an assertion and is absent in release builds.
     ///
     /// Flag bits:
     /// * `0x01` — `UPDATE_BODIES`: copy `seen_bodies` from `other`.
@@ -1822,7 +1824,7 @@ impl AiController {
             && self.my_reconnaissance_report.charly == 0
         {
             self.my_reconnaissance_report.charly = other.charly;
-            self.outbox.actor.add_detectables.push((
+            self.outbox.actor.append_detectables.push((
                 EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
                 DetectableType::MissedFriend,
             ));
@@ -2251,7 +2253,20 @@ impl AiController {
     /// Keep the current Think frame alive until a queued movement/turn
     /// intent has received its engine-owned synchronous completion verdict.
     pub(crate) fn defer_end_think_for_engine_completion(&mut self) -> bool {
-        let typed_continuation = self.outbox.reentrant.brawl_hitting_completion_pending;
+        // Several synchronous helpers have to release the AI borrow while the
+        // engine constructs a route, then resume the caller tail from
+        // `owner_work`.  That tail is still inside the enclosing Original
+        // Think even though it temporarily owns the movement order itself.
+        // Keep EndThink open until the typed continuation has consumed the
+        // first verdict and any fallback movement it authors has settled.
+        // Only continuations whose *resumed tail can enqueue another route*
+        // need to hold EndThink open while their first order lives solely in
+        // owner work. Friendly AlertSoldier and the ordinary battle route
+        // tails consume their result entirely inside the owner-work drain;
+        // treating those as an open EndThink changes later timer ownership
+        // (notably a PC door-route callback's 10-frame timer to 30).
+        let typed_continuation = self.outbox.reentrant.dead_body_alert_completion_pending
+            || self.outbox.reentrant.brawl_hitting_completion_pending;
         if !self.completion_latch_inside_think
             || (self.outbox.actor.orders.is_empty() && !typed_continuation)
         {
@@ -2262,6 +2277,23 @@ impl AiController {
             self.engine_deferred_end_think_frames.saturating_add(1);
         self.engine_completion_verdict_resolved = false;
         true
+    }
+
+    pub(crate) fn has_typed_completion_pending(&self) -> bool {
+        self.outbox.reentrant.reconsider_approach_completion_pending
+            || self.outbox.reentrant.battle_observe_completion_pending
+            || self.outbox.reentrant.look_for_help_completion_pending
+            || self.outbox.reentrant.alert_soldier_completion_pending
+            || self.outbox.reentrant.dead_body_alert_completion_pending
+            || self
+                .outbox
+                .reentrant
+                .tower_guard_alert_officer_completion_pending
+            || self
+                .outbox
+                .reentrant
+                .civilian_report_alert_officer_completion_pending
+            || self.outbox.reentrant.brawl_hitting_completion_pending
     }
 
     /// Publish that the engine has consumed the order whose synchronous
@@ -6047,6 +6079,34 @@ mod tests {
                 EntityId::Soldier(SoldierId(11)),
                 DetectableType::MissedFriend,
             )]
+        );
+    }
+
+    #[test]
+    fn consider_report_charly_preserves_release_build_detectable_append() {
+        use crate::element::{DetectableType, EntityId};
+        use crate::entity_id::SoldierId;
+
+        let mut ai = AiController::new(17);
+        let report = ReconnaissanceReport {
+            charly: 91,
+            ..Default::default()
+        };
+
+        ai.consider_report_merged(
+            &report,
+            crate::ai_enemy::ReportUpdateFlags::UPDATE_CHARLY.bits(),
+            &crate::ai_entity_view::AiEntityViewMap::new(),
+        );
+
+        assert!(ai.outbox.actor.add_detectables.is_empty());
+        assert_eq!(
+            ai.outbox.actor.append_detectables,
+            vec![(
+                EntityId::Soldier(SoldierId(91)),
+                DetectableType::MissedFriend,
+            )],
+            "Original release AddDetectable must append even if live storage already has Charly"
         );
     }
 

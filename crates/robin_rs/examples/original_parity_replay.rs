@@ -9779,10 +9779,11 @@ fn compare_frame(
                 actual_them,
             );
             let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
-            let enemy = actual.enemy_ai().unwrap_or_else(|| {
-                panic!("trace reports my_line_jump for non-enemy entity {id:?}")
-            });
-            let actual_line = enemy.my_line_jump.map(|line_index| {
+            let actual_line_index = actual.enemy_ai().and_then(|enemy| enemy.my_line_jump);
+            if expected_line.is_some() && actual.enemy_ai().is_none() {
+                panic!("trace reports a non-null my_line_jump for non-enemy entity {id:?}");
+            }
+            let actual_line = actual_line_index.map(|line_index| {
                 let line = engine
                     .fast_grid()
                     .level

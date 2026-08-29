@@ -65,11 +65,8 @@ pub(crate) async fn show_main_menu_options(
     // event_id` lookup actually finds entries.  Same path + parse as
     // `game_session::run_session`.
     {
-        let menu_bank_path = robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(
-            "Data/Sounds/Menu/menu.fxg",
-        ))
-        .unwrap_or_else(|| std::path::PathBuf::from("Data/Sounds/Menu/menu.fxg"));
-        match std::fs::read(&menu_bank_path) {
+        let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
+        match robin_engine::sbfile::SbFile::read_all(menu_bank_path) {
             Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => {
                     sound_mgr.sound_cache.initialize_menu_cache(&entries);
@@ -77,8 +74,7 @@ pub(crate) async fn show_main_menu_options(
                 Err(e) => tracing::warn!("Main-menu Options: menu bank parse failed: {e}"),
             },
             Err(e) => tracing::warn!(
-                "Main-menu Options: menu bank unreadable at {}: {e}",
-                menu_bank_path.display()
+                "Main-menu Options: menu bank unreadable at {menu_bank_path}: error {e}"
             ),
         }
     }

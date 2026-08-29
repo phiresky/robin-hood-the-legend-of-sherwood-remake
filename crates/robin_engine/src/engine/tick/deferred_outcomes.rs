@@ -998,6 +998,171 @@ impl EngineInner {
         }
     }
 
+    pub(super) fn drain_taking_net_ticks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        ticks: Vec<crate::engine::animation::TakingNetTick>,
+    ) {
+        use crate::coordinates::MapVec;
+        use crate::element::Animation;
+        use crate::order::OrderType;
+
+        for tick in ticks {
+            if tick.action_done {
+                let (seq_id, elem_idx) = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(tick.taker)
+                    .unwrap_or_else(|| {
+                        panic!("TakingNet taker {:?} lost its live element", tick.taker)
+                    });
+                let valid = {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .expect("TakingNet live element disappeared");
+                    self.check_sequence_element_validity(assets, tick.taker, element, true)
+                };
+                if !valid {
+                    self.get_entity_mut(tick.taker)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("TakingNet invalidation lost taker actor data")
+                        .continuation
+                        .motion_state = crate::sprite::MotionState::Aborted;
+                    self.orders
+                        .sequence_manager
+                        .element_impossible_from_execute(seq_id, elem_idx);
+                    continue;
+                }
+                let taker_point = self
+                    .get_entity(tick.taker)
+                    .unwrap_or_else(|| panic!("TakingNet taker {:?} disappeared", tick.taker))
+                    .cxx_current_point_map()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "TakingNet taker {:?} has no current action point",
+                            tick.taker
+                        )
+                    });
+                let (net_position, crumpled, duration) = {
+                    let net = self.get_entity(tick.net).unwrap_or_else(|| {
+                        panic!("TakingNet antagonist {:?} disappeared", tick.net)
+                    });
+                    let Entity::Net(net) = net else {
+                        panic!("TakingNet antagonist {:?} is not a net", tick.net);
+                    };
+                    let animation = if net.net.crumpled {
+                        OrderType::NetBeingTakenCrumpled
+                    } else {
+                        OrderType::NetBeingTaken
+                    };
+                    (
+                        net.element.position_map(),
+                        net.net.crumpled,
+                        net.element.sprite.cxx_time_for_anim(animation),
+                    )
+                };
+                assert!(
+                    duration != 0,
+                    "TakingNet antagonist {:?} has no pickup animation",
+                    tick.net
+                );
+                let dx = taker_point.x - net_position.x;
+                let dy = taker_point.y - net_position.y;
+                let length = (dx * dx + dy * dy).sqrt();
+                let radius = if crumpled { 7.0 } else { 40.0 };
+                let increment = if length == 0.0 {
+                    MapVec::ZERO
+                } else {
+                    let scale = radius / f32::from(duration) / length;
+                    MapVec::new(dx * scale, dy * scale)
+                };
+                let Entity::Net(net) = self
+                    .get_entity_mut(tick.net)
+                    .expect("validated TakingNet antagonist disappeared")
+                else {
+                    unreachable!()
+                };
+                let animation = if crumpled {
+                    Animation::NetBeingTakenCrumpled
+                } else {
+                    Animation::NetBeingTaken
+                };
+                net.object.animation = animation;
+                // RHElementObject::SetAnimation immediately calls
+                // RHSprite::ForceAnimation, so the first snapshot on the
+                // DONE edge already exposes frame zero of the pickup row.
+                net.element.sprite.force_animation(animation, 0);
+                net.element
+                    .sprite
+                    .position_iface
+                    .set_map_increment(increment);
+                let actor = self
+                    .get_entity_mut(tick.taker)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("validated TakingNet taker lost actor data");
+                actor.wait_time = 8;
+                actor.seek_refresh_wait = 8;
+            }
+
+            // Actor::Execute observes `pOrder->bDone` before the enclosing
+            // hourglass marks the order done. Consequently the DONE edge only
+            // initializes the tail; pulling begins on the following owner
+            // slot, and removal happens one slot after the counter reaches
+            // zero.
+            if tick.order_was_done {
+                let wait = self
+                    .get_entity(tick.taker)
+                    .and_then(Entity::actor_data)
+                    .expect("TakingNet taker lost actor data")
+                    .wait_time;
+                if wait == 0 {
+                    let taker_is_pc = self
+                        .get_entity(tick.taker)
+                        .expect("TakingNet taker disappeared before removal")
+                        .is_pc();
+                    // RemoveElement unlinks the net from Original's active
+                    // element arrays but deliberately leaves its allocation
+                    // alive because orders may still reference it. Preserve
+                    // that stable entity slot and only deactivate it here.
+                    self.get_entity_mut(tick.net)
+                        .expect("TakingNet net disappeared during deactivation")
+                        .element_data_mut()
+                        .active = false;
+                    self.unapply_net_effect(sim, assets, tick.net);
+                    if taker_is_pc {
+                        self.increase_ammo_and_enable(
+                            assets,
+                            tick.taker,
+                            crate::profiles::Action::Net,
+                            1,
+                        );
+                    }
+                    let actor = self
+                        .get_entity_mut(tick.taker)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("TakingNet taker disappeared after removal");
+                    actor.wait_time = u32::from(u16::MAX);
+                    actor.seek_refresh_wait = actor.wait_time;
+                } else {
+                    let remaining = wait - 1;
+                    let actor = self
+                        .get_entity_mut(tick.taker)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("TakingNet taker disappeared during pull");
+                    actor.wait_time = remaining;
+                    actor.seek_refresh_wait = remaining;
+                    let net = self.get_entity_mut(tick.net).unwrap_or_else(|| {
+                        panic!("TakingNet net {:?} disappeared during pull", tick.net)
+                    });
+                    net.position_iface_mut().update_position_map_scaled(1.0);
+                }
+            }
+        }
+    }
+
     pub(super) fn drain_pickups(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1072,7 +1237,7 @@ impl EngineInner {
 
             match object_type {
                 Some(_) if is_landed_net => {
-                    self.unapply_net_effect(object);
+                    self.unapply_net_effect(sim, assets, object);
                     if taker_is_pc {
                         self.increase_ammo_and_enable(
                             assets,
@@ -1377,7 +1542,10 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{ActorSoldier, ElementData, ElementKind, Posture};
+    use crate::element::{
+        ActorSoldier, ElementData, ElementKind, ElementNet, NetData, ObjectData, ObjectType,
+        Posture, ProjectileData,
+    };
 
     fn test_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {
@@ -1415,6 +1583,83 @@ mod tests {
                 .money,
             125,
             "a stale deferred thief must not destroy the victim's money"
+        );
+    }
+
+    #[test]
+    fn taking_net_tail_pulls_eight_ticks_then_removes_on_ninth() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let taker = engine.add_entity(test_soldier());
+        let mut net_element = ElementData {
+            kind: ElementKind::ObjectNet,
+            active: true,
+            ..Default::default()
+        };
+        net_element.set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
+        net_element
+            .sprite
+            .position_iface
+            .set_map_increment(crate::coordinates::MapVec::new(1.0, 0.0));
+        let net = engine.add_entity(Entity::Net(ElementNet {
+            element: net_element,
+            object: ObjectData {
+                object_type: ObjectType::Net,
+                ..Default::default()
+            },
+            projectile: ProjectileData::default(),
+            net: NetData::default(),
+        }));
+        let actor = engine
+            .get_entity_mut(taker)
+            .and_then(Entity::actor_data_mut)
+            .expect("test taker actor data");
+        actor.wait_time = 8;
+        actor.seek_refresh_wait = 8;
+
+        let tick = crate::engine::animation::TakingNetTick {
+            taker,
+            net,
+            action_done: false,
+            order_was_done: true,
+        };
+        let assets = LevelAssets::new();
+        for expected_remaining in (0..8).rev() {
+            engine.drain_taking_net_ticks(&sim_context, &assets, vec![tick]);
+            assert!(engine.get_entity(net).is_some());
+            assert_eq!(
+                engine
+                    .get_entity(taker)
+                    .and_then(Entity::actor_data)
+                    .unwrap()
+                    .wait_time,
+                expected_remaining
+            );
+        }
+        assert_eq!(
+            engine
+                .get_entity(net)
+                .unwrap()
+                .element_data()
+                .position_map()
+                .x,
+            8.0
+        );
+
+        engine.drain_taking_net_ticks(&sim_context, &assets, vec![tick]);
+        assert!(
+            !engine
+                .get_entity(net)
+                .expect("removed net allocation remains referenceable")
+                .is_active()
+        );
+        assert_eq!(
+            engine
+                .get_entity(taker)
+                .and_then(Entity::actor_data)
+                .unwrap()
+                .wait_time,
+            u32::from(u16::MAX)
         );
     }
 }

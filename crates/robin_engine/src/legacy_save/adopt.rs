@@ -179,8 +179,8 @@ pub(crate) fn retained_position_sector_handle(
 /// Exact Original jump-line pointer space.
 ///
 /// Original serializes a line pointer as its layer plus its ordinal inside
-/// that layer. Rust stores all jump lines in one flat runtime array, so the
-/// raw per-layer ordinal must never be treated as the runtime index.
+/// that layer's combined `RHLine` array. Rust stores jump lines separately,
+/// so neither that ordinal nor jump-only load order is a runtime identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LegacyLineTopology {
     by_original_identity: BTreeMap<(u16, i16), JumpLineIndex>,
@@ -210,23 +210,86 @@ pub enum LegacyLineTopologyError {
         layer: u16,
         index: i16,
     },
+    #[error(
+        "saved jump-line field {field} references shifted Original line layer {layer}, index {index}, but owner {owner} and primary target {target} do not identify a reciprocal table-swordfight line"
+    )]
+    MissingGeometryIdentity {
+        field: &'static str,
+        layer: u16,
+        index: i16,
+        owner: u32,
+        target: u32,
+    },
+    #[error(
+        "saved jump-line field {field} references shifted Original line layer {layer}, index {index}, but owner {owner} and primary target {target} ambiguously identify runtime lines {candidates:?}"
+    )]
+    AmbiguousGeometryIdentity {
+        field: &'static str,
+        layer: u16,
+        index: i16,
+        owner: u32,
+        target: u32,
+        candidates: Vec<u32>,
+    },
+    #[error("initialized mission retained {retained} jump-line identities for {runtime} lines")]
+    RetainedIdentityCountMismatch { retained: usize, runtime: usize },
+    #[error(
+        "initialized mission retained duplicate jump-line identity layer {layer}, index {index}"
+    )]
+    DuplicateIdentity { layer: u16, index: i16 },
 }
 
 impl LegacyLineTopology {
-    /// Reconstruct `(layer, ordinal-in-layer)` identity from the initialized
-    /// mission's stable jump-line load order.
-    pub fn derive(engine: &EngineInner) -> Result<Self, LegacyLineTopologyError> {
-        Self::derive_from_layers(
-            engine
-                .world
-                .fast_grid
-                .level
-                .jump_lines
-                .iter()
-                .map(|line| line.layer),
-        )
+    /// Reconstruct exact `(layer, combined-line ordinal)` identities retained
+    /// while the initialized mission's complete line arrays were built.
+    pub fn derive(
+        engine: &EngineInner,
+        assets: &LevelAssets,
+    ) -> Result<Self, LegacyLineTopologyError> {
+        let runtime = engine.world.fast_grid.level.jump_lines.len();
+        let Some(retained) = assets.legacy_grid_topology.as_ref() else {
+            if runtime == 0 {
+                return Ok(Self::default());
+            }
+            return Err(LegacyLineTopologyError::RetainedIdentityCountMismatch {
+                retained: 0,
+                runtime,
+            });
+        };
+        if retained.jump_line_identities.len() != runtime {
+            return Err(LegacyLineTopologyError::RetainedIdentityCountMismatch {
+                retained: retained.jump_line_identities.len(),
+                runtime,
+            });
+        }
+        Self::derive_from_identities(retained.jump_line_identities.iter().copied())
     }
 
+    fn derive_from_identities(
+        identities: impl IntoIterator<Item = (u16, i16)>,
+    ) -> Result<Self, LegacyLineTopologyError> {
+        let mut by_original_identity = BTreeMap::new();
+        for (runtime_index, identity) in identities.into_iter().enumerate() {
+            let raw_runtime_index = u32::try_from(runtime_index).map_err(|_| {
+                LegacyLineTopologyError::RuntimeIndexOverflow {
+                    index: runtime_index,
+                }
+            })?;
+            let handle = JumpLineIndex::new(raw_runtime_index)
+                .ok_or(LegacyLineTopologyError::RuntimeIndexNullSentinel)?;
+            if by_original_identity.insert(identity, handle).is_some() {
+                return Err(LegacyLineTopologyError::DuplicateIdentity {
+                    layer: identity.0,
+                    index: identity.1,
+                });
+            }
+        }
+        Ok(Self {
+            by_original_identity,
+        })
+    }
+
+    #[cfg(test)]
     fn derive_from_layers(
         layers: impl IntoIterator<Item = u16>,
     ) -> Result<Self, LegacyLineTopologyError> {
@@ -274,6 +337,168 @@ impl LegacyLineTopology {
                 index,
             }),
         }
+    }
+
+    /// Resolve a shifted retail `RHArtificialMalignity::mpMyLineJump` from
+    /// the same owner/primary-target geometry that authored it.
+    ///
+    /// `IsTableSwordfightNeeded` finds a line in the primary target's sector
+    /// whose reciprocal lives in the owner sector, then returns that
+    /// reciprocal owner-side line. A shifted combined-line ordinal is not an
+    /// identity, so equal-distance candidates are rejected rather than using
+    /// runtime load order as an accidental tie-break.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_enemy_jump_line(
+        &self,
+        field: &'static str,
+        reference: LegacyLineRef,
+        fast_grid: &crate::fast_find_grid::FastFindGrid,
+        owner: u32,
+        owner_sector: crate::position_interface::SectorHandle,
+        target: u32,
+        target_sector: crate::position_interface::SectorHandle,
+        target_position: crate::coordinates::MapPoint,
+        maximal_sword_range: f32,
+    ) -> Result<Option<JumpLineIndex>, LegacyLineTopologyError> {
+        let (layer, index) = match (reference.layer, reference.index) {
+            (None, None) => return Ok(None),
+            (Some(layer), Some(index)) if index >= 0 => (layer, index),
+            (layer, index) => {
+                return Err(LegacyLineTopologyError::InconsistentNull {
+                    field,
+                    layer,
+                    index,
+                });
+            }
+        };
+        if let Some(line) = self.by_original_identity.get(&(layer, index)).copied() {
+            return Ok(Some(line));
+        }
+
+        let Some(owner_sector_index) = owner_sector.arena_index() else {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        };
+        let Some(target_sector_index) = target_sector.arena_index() else {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        };
+        if owner_sector_index == target_sector_index {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        }
+        let Some(target_sector_data) = fast_grid
+            .level
+            .sectors
+            .get(usize::from(target_sector_index))
+        else {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        };
+
+        let mut candidates = Vec::<(JumpLineIndex, f32)>::new();
+        for &target_line_index in &target_sector_data.jump_line_indices {
+            let Some(target_line) = fast_grid
+                .level
+                .jump_lines
+                .get(usize::from(target_line_index))
+            else {
+                continue;
+            };
+            let Some(owner_line_raw) = target_line.associated_line_index else {
+                continue;
+            };
+            let Some(owner_line_index) = JumpLineIndex::new(owner_line_raw) else {
+                continue;
+            };
+            let Some(owner_line) = fast_grid.level.jump_lines.get(owner_line_raw as usize) else {
+                continue;
+            };
+            if owner_line.associated_line_index != Some(target_line_index.get())
+                || owner_line.layer != layer
+                || owner_line.sector_index != Some(owner_sector_index)
+            {
+                continue;
+            }
+            let target_distance = target_line.compute_distance(target_position);
+            if target_distance >= maximal_sword_range {
+                continue;
+            }
+            candidates.push((owner_line_index, target_distance));
+        }
+        candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
+        let Some(&(best, best_distance)) = candidates.first() else {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        };
+        let tied = candidates
+            .iter()
+            .take_while(|(_, distance)| *distance == best_distance)
+            .map(|(line, _)| line.get())
+            .collect::<Vec<_>>();
+        if tied.len() != 1 {
+            return Err(LegacyLineTopologyError::AmbiguousGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+                candidates: tied,
+            });
+        }
+        let owner_line = &fast_grid.level.jump_lines[usize::from(best)];
+        let target_line = &fast_grid.level.jump_lines[owner_line
+            .associated_line_index
+            .expect("candidate was reciprocal")
+            as usize];
+        if (owner_line.z_a - target_line.z_a).abs() > 40.0 {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        }
+        let owner_mid = owner_line.get_middle_point();
+        let target_mid = target_line.get_middle_point();
+        let middle_distance =
+            ((owner_mid.x - target_mid.x).powi(2) + (owner_mid.y - target_mid.y).powi(2)).sqrt();
+        if middle_distance + best_distance > maximal_sword_range {
+            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
+                field,
+                layer,
+                index,
+                owner,
+                target,
+            });
+        }
+        Ok(Some(best))
     }
 }
 
@@ -1468,6 +1693,103 @@ mod tests {
                 },
             ),
             Err(LegacyLineTopologyError::Missing { .. })
+        ));
+    }
+
+    fn jump_line(
+        ax: f32,
+        ay: f32,
+        bx: f32,
+        by: f32,
+        associated: u32,
+        sector: u32,
+    ) -> crate::jump_line::JumpLine {
+        let mut line =
+            crate::jump_line::JumpLine::new(MapPoint::new(ax, ay), MapPoint::new(bx, by), 0.0, 0.0);
+        line.layer = 0;
+        line.associated_line_index = Some(associated);
+        line.sector_index = SectorIndex::new(sector);
+        line
+    }
+
+    fn ambiguous_jump_grid(second_target_y: f32) -> crate::fast_find_grid::FastFindGrid {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.sectors = vec![test_grid_sector(10), test_grid_sector(20)];
+        level.jump_lines = vec![
+            jump_line(0.0, 0.0, 10.0, 0.0, 1, 0),
+            jump_line(0.0, 4.0, 10.0, 4.0, 0, 1),
+            jump_line(20.0, 0.0, 30.0, 0.0, 3, 0),
+            jump_line(0.0, second_target_y, 10.0, second_target_y, 2, 1),
+        ];
+        level.sectors[0].jump_line_indices = vec![
+            JumpLineIndex::new(0).unwrap(),
+            JumpLineIndex::new(2).unwrap(),
+        ];
+        level.sectors[1].jump_line_indices = vec![
+            JumpLineIndex::new(1).unwrap(),
+            JumpLineIndex::new(3).unwrap(),
+        ];
+        grid
+    }
+
+    #[test]
+    fn shifted_enemy_line_uses_unique_primary_target_geometry() {
+        let grid = ambiguous_jump_grid(12.0);
+        let topology = LegacyLineTopology::default();
+        let resolved = topology
+            .resolve_enemy_jump_line(
+                "enemy.jump_line",
+                LegacyLineRef {
+                    layer: Some(0),
+                    index: Some(1399),
+                },
+                &grid,
+                126,
+                SectorHandle::new(10)
+                    .unwrap()
+                    .with_arena_index(SectorIndex::new(0).unwrap()),
+                172,
+                SectorHandle::new(20)
+                    .unwrap()
+                    .with_arena_index(SectorIndex::new(1).unwrap()),
+                MapPoint::new(5.0, 4.0),
+                50.0,
+            )
+            .unwrap();
+        assert_eq!(resolved, JumpLineIndex::new(0));
+    }
+
+    #[test]
+    fn shifted_enemy_line_rejects_equal_geometry_instead_of_using_ordinal() {
+        let grid = ambiguous_jump_grid(4.0);
+        let topology = LegacyLineTopology::default();
+        let error = topology
+            .resolve_enemy_jump_line(
+                "enemy.jump_line",
+                LegacyLineRef {
+                    layer: Some(0),
+                    index: Some(1399),
+                },
+                &grid,
+                126,
+                SectorHandle::new(10)
+                    .unwrap()
+                    .with_arena_index(SectorIndex::new(0).unwrap()),
+                172,
+                SectorHandle::new(20)
+                    .unwrap()
+                    .with_arena_index(SectorIndex::new(1).unwrap()),
+                MapPoint::new(5.0, 4.0),
+                50.0,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LegacyLineTopologyError::AmbiguousGeometryIdentity {
+                candidates,
+                ..
+            } if candidates == vec![0, 2]
         ));
     }
 }

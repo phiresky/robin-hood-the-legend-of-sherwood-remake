@@ -16,9 +16,13 @@
 //! [`load_replay_spec`] accepts three flavours:
 //!
 //! 1. A bare `rhrec-…` string (the compact format, inline).
-//! 2. A filesystem path to a file whose contents are a `rhrec-…`
-//!    string (any extension; convenient for shell redirection).
-//! 3. A filesystem path to a legacy `*.rhrec.jsonl` file.
+//! 2. On native builds, a filesystem path to a file whose contents are a
+//!    `rhrec-…` string (any extension; convenient for shell redirection).
+//! 3. On native builds, a filesystem path to a legacy `*.rhrec.jsonl` file.
+//!
+//! Browser builds intentionally accept only the compact inline format. They
+//! have no host filesystem, and URL replay loading must not retain the legacy
+//! JSONL import path in the production wasm module.
 //!
 //! The version hash is checked before playback. A mismatch is rejected because
 //! simulation compatibility is not promised across engine revisions.
@@ -54,8 +58,12 @@ pub enum FormatError {
     Bitcode(#[from] bitcode::Error),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("jsonl decode failed: {0}")]
     Jsonl(String),
+    #[cfg(target_arch = "wasm32")]
+    #[error("browser replay loading accepts only an inline `rhrec-…` compact replay")]
+    BrowserCompactOnly,
     #[error("invalid replay layout: {0}")]
     InvalidLayout(String),
     #[error(
@@ -125,18 +133,25 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
         validate_engine_hash(&hash)?;
         return Ok(data);
     }
-    // Otherwise read the file. If its contents start with `rhrec-`,
-    // treat it as a dumped compact string; otherwise try JSONL.
-    let contents = std::fs::read_to_string(spec)?;
-    let trimmed = contents.trim_start();
-    if trimmed.starts_with(COMPACT_PREFIX) {
-        let (hash, data) = decode_compact(trimmed)?;
-        validate_engine_hash(&hash)?;
-        Ok(data)
-    } else {
-        let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
-        validate_replay_data(&data)?;
-        Ok(data)
+
+    #[cfg(target_arch = "wasm32")]
+    return Err(FormatError::BrowserCompactOnly);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Otherwise read the file. If its contents start with `rhrec-`,
+        // treat it as a dumped compact string; otherwise try JSONL.
+        let contents = std::fs::read_to_string(spec)?;
+        let trimmed = contents.trim_start();
+        if trimmed.starts_with(COMPACT_PREFIX) {
+            let (hash, data) = decode_compact(trimmed)?;
+            validate_engine_hash(&hash)?;
+            Ok(data)
+        } else {
+            let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
+            validate_replay_data(&data)?;
+            Ok(data)
+        }
     }
 }
 

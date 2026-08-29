@@ -10,7 +10,7 @@ name = "robin_util"
 [dependencies]
 geo.workspace = true
 fastrand.workspace = true
-rustc-hash = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 thiserror.workspace = true
 nonmax.workspace = true

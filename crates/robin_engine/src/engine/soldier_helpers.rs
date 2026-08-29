@@ -851,6 +851,43 @@ impl EngineInner {
             self.send_condolation_card_pc(sim, owner, command, seq_id, elem_idx, assets);
         }
 
+        // RHElementActorHuman::SendCondolationCard always completes an
+        // interrupted TAKE of an active net. This is intentionally earlier
+        // than the NPC halt/last-action gates below: a competing instruction
+        // can cancel TakingNet before its pickup animation reaches DONE, but
+        // Original still removes the net and releases its victims here.
+        if command == Command::Take {
+            let antagonist = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, usize::from(elem_idx))
+                .and_then(|element| match element.data {
+                    crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
+                    _ => None,
+                });
+            if let Some(net_id) = antagonist
+                && self.world.entities.get(net_id).is_some_and(|entity| {
+                    matches!(entity, crate::element::Entity::Net(_)) && entity.is_active()
+                })
+            {
+                self.world
+                    .entities
+                    .get_mut(net_id)
+                    .expect("validated Take condolation net disappeared")
+                    .element_data_mut()
+                    .active = false;
+                self.unapply_net_effect(sim, assets, net_id);
+                if self
+                    .world
+                    .entities
+                    .get(owner)
+                    .is_some_and(|entity| entity.is_pc())
+                {
+                    self.increase_ammo_and_enable(assets, owner, crate::profiles::Action::Net, 1);
+                }
+            }
+        }
+
         // Soldier override: ReceiveWaspSting termination clears the
         // wasp-victim flag.  The human-base cleanup runs before the
         // halt-method guard, so it fires whether or not `from_halt`

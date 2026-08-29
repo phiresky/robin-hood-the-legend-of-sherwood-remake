@@ -233,6 +233,52 @@ pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
 }
 
+/// Select the fleeing side for a two-allegiance doorway battle.
+///
+/// Original always puts Royalists in the fleeing list when the legacy camps
+/// are tied (`RHArtificialIntelligence::EnemyInHouseAlert`). Generalized
+/// allegiances retain that source-independent ordering by using their authored
+/// allegiance IDs as the tie-breaker.
+fn doorway_battle_source_side_flees(
+    source_camp: crate::element::Camp,
+    source_count: usize,
+    opposing_camp: crate::element::Camp,
+    opposing_count: usize,
+) -> bool {
+    if source_count != opposing_count {
+        return source_count < opposing_count;
+    }
+    let source_id = source_camp
+        .allegiance_id()
+        .expect("doorway battle source must have a valid allegiance");
+    let opposing_id = opposing_camp
+        .allegiance_id()
+        .expect("doorway battle opponent must have a valid allegiance");
+    source_id < opposing_id
+}
+
+#[cfg(test)]
+mod doorway_battle_side_tests {
+    use super::doorway_battle_source_side_flees;
+    use crate::element::Camp;
+
+    #[test]
+    fn tied_legacy_battle_always_makes_royalists_flee() {
+        assert!(doorway_battle_source_side_flees(
+            Camp::Royalists,
+            1,
+            Camp::Lacklandists,
+            1,
+        ));
+        assert!(!doorway_battle_source_side_flees(
+            Camp::Lacklandists,
+            1,
+            Camp::Royalists,
+            1,
+        ));
+    }
+}
+
 /// Original attaches both ordinary building doors and building-trap doors to
 /// `RHSectorBuilding::GetGates()`. AI house initialization must preserve that
 /// ownership because both rally-point creation and door-fight placement walk
@@ -636,6 +682,40 @@ fn directed_panic_center_is_in_front(
     face_x * dx + face_y * crate::position_interface::ASPECT_RATIO * dy > 0.0
 }
 
+/// Collapse the conservative state staged by the pure-AI panic half back to
+/// its outgoing state. The engine's door/no-door arm immediately replaces it
+/// with the single SetState call which Original exposes to scripts.
+fn fold_new_panic_placeholder(
+    ai: &mut crate::ai::AiController,
+    request: &crate::ai::PanicRequest,
+) -> bool {
+    if !request.is_new_panic {
+        return false;
+    }
+    let Some(index) = ai.outbox.reentrant.owner_work.iter().rposition(|work| {
+        matches!(
+            work,
+            crate::ai::AiOwnerWork::StateChange(change)
+                if change.incoming_state == crate::ai::AiState::Fleeing
+                    && change.incoming_substate == crate::ai::Substate::FleeingPanic
+        )
+    }) else {
+        return false;
+    };
+    let crate::ai::AiOwnerWork::StateChange(staged) = ai.outbox.reentrant.owner_work.remove(index)
+    else {
+        unreachable!("rposition selected a non-state panic work item")
+    };
+    assert_eq!(
+        (ai.current_state, ai.current_substate),
+        (staged.incoming_state, staged.incoming_substate),
+        "new panic placeholder was superseded before its synchronous door lookup"
+    );
+    ai.set_ai_state(staged.outgoing_state);
+    ai.current_substate = staged.outgoing_substate;
+    true
+}
+
 #[cfg(test)]
 mod directed_panic_front_tests {
     use super::*;
@@ -799,6 +879,46 @@ mod panic_boundary_tests {
             .expect("AI-controlled hero must retain its Enemy AI");
         assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingHiding);
+    }
+
+    #[test]
+    fn new_panic_exposes_only_the_resolved_state_transition_to_scripts() {
+        let mut friendly = crate::ai_friendly::FriendlyAi::new(1);
+        friendly.set_state(
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+        );
+        let request = crate::ai::PanicRequest {
+            center: None,
+            runs: 8,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: true,
+        };
+
+        assert!(fold_new_panic_placeholder(&mut friendly.base, &request));
+        assert_eq!(friendly.base.current_state, crate::ai::AiState::Default);
+        assert_eq!(
+            friendly.base.current_substate,
+            crate::ai::Substate::DefaultOnPost
+        );
+        assert!(friendly.base.outbox.reentrant.owner_work.is_empty());
+
+        friendly.set_state(
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingRunToDoor,
+        );
+        let [crate::ai::AiOwnerWork::StateChange(change)] =
+            friendly.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("resolved panic must expose exactly one state callback")
+        };
+        assert_eq!(change.outgoing_state, crate::ai::AiState::Default);
+        assert_eq!(change.outgoing_substate, crate::ai::Substate::DefaultOnPost);
+        assert_eq!(change.incoming_state, crate::ai::AiState::Fleeing);
+        assert_eq!(
+            change.incoming_substate,
+            crate::ai::Substate::FleeingRunToDoor
+        );
     }
 
     #[test]
@@ -4608,11 +4728,11 @@ impl EngineInner {
         let Some(source_ids) = fighter_ids.get(&source_camp).cloned() else {
             return;
         };
-        let Some(opposing_ids) = fighter_ids
+        let Some((opposing_camp, opposing_ids)) = fighter_ids
             .iter()
             .filter(|(camp, ids)| source_camp.is_hostile_to(**camp) && !ids.is_empty())
             .max_by_key(|(_, ids)| ids.len())
-            .map(|(_, ids)| ids.clone())
+            .map(|(camp, ids)| (*camp, ids.clone()))
         else {
             return;
         };
@@ -4629,10 +4749,15 @@ impl EngineInner {
         // independent combatants and can dispatch their own alerts.
         // TODO(multi-team-door-battles): schedule every hostile pair when the
         // door coordinator can own more than one simultaneous battle.
-        let (fleeing, pursuing) = if source_ids.len() > opposing_ids.len() {
-            (opposing_ids, source_ids)
-        } else {
+        let (fleeing, pursuing) = if doorway_battle_source_side_flees(
+            source_camp,
+            source_ids.len(),
+            opposing_camp,
+            opposing_ids.len(),
+        ) {
             (source_ids, opposing_ids)
+        } else {
+            (opposing_ids, source_ids)
         };
 
         self.init_battle_before_door(sim, assets, &door_indices, &fleeing, &pursuing);
@@ -5147,6 +5272,17 @@ impl EngineInner {
         let Some(request) = ai.outbox.actor.begin_panic.take() else {
             return;
         };
+
+        // The pure-AI half has to choose a conservative state while it still
+        // owns the controller, so a new request temporarily stages
+        // Default -> FleeingPanic. Original does not expose that transition:
+        // GetNearestDoor runs synchronously inside Panic and SetState is
+        // called exactly once, with either FleeingRunToDoor or FleeingPanic.
+        // Fold the staged notification back to its outgoing side before the
+        // door lookup; the selected arm below will enqueue the one observable
+        // state callback. This is script-visible for callbacks which inspect
+        // GetAIState, such as S01_Not_VL's PaysanSud class.
+        fold_new_panic_placeholder(ai, &request);
 
         // Resolve the actor's current building for the
         // "not this building" filter used by `GetNearestDoor`.

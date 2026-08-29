@@ -1820,16 +1820,17 @@ fn door_pass_eager_posture(
 ///
 /// Restored Original saves can carry the complete translated order chain in
 /// the serialized PassDoor sequence without reconstructing that Rust-only
-/// mirror.  The crenel climb-up exit is the one completion in this path that
-/// needs no door geometry: the Original Execute arm only publishes the PC's
-/// crouched/waiting state before advancing to `PASSING_DOOR`.
+/// mirror. The caller treats that serialized chain as ownership while the
+/// actor's saved PositionInterface door supplies any geometry. The crenel
+/// climb-up exit is also recoverable without either representation because its
+/// Original Execute arm only publishes the PC's crouched/waiting state.
 pub(super) fn pass_door_transition_completion_has_owner(
     command: crate::element::Command,
-    has_active_door_pass: bool,
+    has_materialized_or_restored_door_pass: bool,
     action: OrderType,
     is_pc: bool,
 ) -> bool {
-    has_active_door_pass
+    has_materialized_or_restored_door_pass
         || (command == crate::element::Command::PassDoor
             && is_pc
             && action == OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel)
@@ -1906,11 +1907,17 @@ mod door_pass_posture_tests {
     }
 
     #[test]
-    fn restored_pass_door_crenel_completion_does_not_require_runtime_latch() {
+    fn restored_pass_door_completion_accepts_serialized_chain_ownership() {
         assert!(pass_door_transition_completion_has_owner(
             Command::PassDoor,
             false,
             OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+            true,
+        ));
+        assert!(pass_door_transition_completion_has_owner(
+            Command::PassDoor,
+            true,
+            OrderType::TransitionWaitingCrouchedClimbingLadderDown,
             true,
         ));
 
@@ -1921,7 +1928,7 @@ mod door_pass_posture_tests {
                 OrderType::TransitionClimbingWallDownWaitingUpright,
                 true,
             ),
-            "door-dependent transition completion must still require ActiveDoorPass"
+            "door-dependent transition completion still requires either the materialized pass or its restored serialized chain"
         );
         assert!(
             !pass_door_transition_completion_has_owner(
@@ -9141,7 +9148,9 @@ impl EngineInner {
                     );
             if pass_door_transition_completion_has_owner(
                 selected_command,
-                door_pass_anim.is_some(),
+                door_pass_anim.is_some()
+                    || (legacy_serialized_order_chain
+                        && selected_command == crate::element::Command::PassDoor),
                 order_action,
                 is_pc,
             ) && door_transition_state_effect_due

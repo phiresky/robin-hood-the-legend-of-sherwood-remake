@@ -53,6 +53,13 @@ A list of which additional features we have added, which ones we might still wan
   mission. Per-RHS grouping deliberately preserves the strong within-character
   zstd matches measured in `docs/COMPRESSION.md`.
 
+- **Browser-native shipping audio.** Web shipping conversion transcodes voice,
+  effects, and music to deterministic Opus dependencies while retaining exact
+  source-duration metadata for simulation timing. The browser fetches and
+  decodes only boot audio plus the selected mission's closure, reports that
+  work on the loading screen, and keeps decoded PCM in Web Audio buffers rather
+  than wasm linear memory. Native and Android artifacts retain source audio.
+
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise
@@ -299,6 +306,18 @@ A list of which additional features we have added, which ones we might still wan
   rollback diagnostic for ordinary single-player Spellforge play. This
   containment is intentional until a versioned Spellforge contract and Lua
   snapshot policy exist.
+
+- **Shipping dictionary rank permutation** (`convert_datadir
+  --rank-dictionaries`, default on). Sprite dictionaries are reordered by
+  tile-use frequency and all VQ indices rewritten to match at conversion time;
+  invisible to the decoder, ~-2.9% on the RHS chunk bucket. Verified
+  pixel-identical via `sprite_compression_probe --verify-shipping`.
+
+- **VQ sprite context-model codec** (`robin_assets::sprite_codec`, library
+  only — not yet wired into the shipping schema). Adaptive PPM + range coder
+  over tile-index grids with optional cross-variant base coding; measures the
+  full character corpus at 2.27x smaller than zstd-19. Integration design in
+  `docs/COMPRESSION.md` (schema v7 section).
 
 ## Todo
 

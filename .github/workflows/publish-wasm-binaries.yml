@@ -60,19 +60,21 @@ jobs:
           artifact="${publish_root}/${short}"
           mkdir -p "${artifact}"
 
-          input_wasm="${RUNNER_TEMP}/robin.pre-bindgen.opt.wasm"
-          wasm-opt \
-            -Oz \
-            --strip-debug \
-            --strip-dwarf \
-            -o "${input_wasm}" \
-            target/wasm32-unknown-unknown/wasm-release/robin.wasm
-
           wasm-bindgen \
             --target web \
             --out-dir "${artifact}" \
             --out-name robin \
-            "${input_wasm}"
+            target/wasm32-unknown-unknown/wasm-release/robin.wasm
+
+          optimized_wasm="${RUNNER_TEMP}/robin_bg.opt.wasm"
+          wasm-opt \
+            -Oz \
+            --strip-debug \
+            --strip-dwarf \
+            -o "${optimized_wasm}" \
+            "${artifact}/robin_bg.wasm"
+          mv "${optimized_wasm}" "${artifact}/robin_bg.wasm"
+          wasm-strip "${artifact}/robin_bg.wasm"
 
           smoke_wasm_artifact() {
             node --input-type=module -e '
@@ -86,6 +88,12 @@ jobs:
 
           smoke_wasm_artifact "${artifact}"
 
+          # GitHub Pages does not apply Content-Encoding to repository files.
+          # Publish deterministic precompressed siblings; the web shell uses
+          # DecompressionStream and falls back to the plain files for older
+          # builds and browsers.
+          gzip -9 -n -k "${artifact}/robin.js" "${artifact}/robin_bg.wasm"
+
           python3 - <<'PY' "${artifact}"
           import json
           import shutil
@@ -93,18 +101,19 @@ jobs:
           from pathlib import Path
 
           artifact = Path(sys.argv[1])
-          src_root = Path("datadirs/demo_leicester_ecoste/DATA")
           entries = []
-          for folder in ("Sounds", "Musics"):
-              for src in sorted((src_root / folder).rglob("*")):
-                  if not src.is_file():
-                      continue
-                  rel = Path("Data") / src.relative_to(src_root)
-                  dst = artifact / rel
-                  dst.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(src, dst)
-                  path = rel.as_posix()
-                  entries.append({"path": path, "url": path})
+          core_root = Path("assets/core-datadir")
+          required = [core_root / "Data/Interface/Fonts/arial.ttf"]
+          required.extend(sorted((core_root / "Data/Interface/UI").glob("*.png")))
+          for src in required:
+              if not src.is_file():
+                  raise SystemExit(f"required web overlay asset is missing: {src}")
+              rel = src.relative_to(core_root)
+              dst = artifact / rel
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              path = rel.as_posix()
+              entries.append({"path": path, "url": path})
           (artifact / "preload-assets.json").write_text(
               json.dumps(entries, indent=2) + "\n",
               encoding="utf-8",
@@ -112,6 +121,7 @@ jobs:
           PY
 
           wasm_sha="$(sha256sum "${artifact}/robin_bg.wasm" | cut -d ' ' -f 1)"
+          wasm_gzip_sha="$(sha256sum "${artifact}/robin_bg.wasm.gz" | cut -d ' ' -f 1)"
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           cat > "${artifact}/manifest.json" <<EOF
@@ -121,10 +131,13 @@ jobs:
             "builtAt": "${built_at}",
             "files": {
               "js": "robin.js",
-              "wasm": "robin_bg.wasm"
+              "jsGzip": "robin.js.gz",
+              "wasm": "robin_bg.wasm",
+              "wasmGzip": "robin_bg.wasm.gz"
             },
             "sha256": {
-              "wasm": "${wasm_sha}"
+              "wasm": "${wasm_sha}",
+              "wasmGzip": "${wasm_gzip_sha}"
             }
           }
           EOF

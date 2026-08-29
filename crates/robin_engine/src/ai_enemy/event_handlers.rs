@@ -1070,6 +1070,8 @@ impl EnemyAi {
 
             StimulusType::EventNetAway => {
                 if self.base.current_substate == Substate::WonderingUnderNet {
+                    self.base.outbox.recovery.set_eye_status =
+                        Some(crate::element::EyeStatus::LookForward);
                     self.set_state(AiState::Wondering, Substate::WonderingLooking1);
                     self.base.set_emoticon(EmoticonType::QuestionMark);
                     self.base.launch_timer(30, ctx.frame);

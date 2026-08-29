@@ -2488,8 +2488,18 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        let first_new_order = self.base.outbox.actor.orders.len();
         if !self.finish_alert_soldiers(global, grid, ctx, tick) {
             self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+        }
+        // AlertSoldiers synchronously calls each recipient's Think before
+        // returning to its caller. Rust resumes that caller tail from the
+        // cross-NPC action queue, after the physical recursion counter has
+        // unwound. A route authored by the resumed formation/failure tail is
+        // nevertheless still inside the original enclosing Think and must
+        // deliver a same-frame failure back through EndThink.
+        if self.base.outbox.actor.orders.len() > first_new_order {
+            self.base.completion_latch_inside_think = true;
         }
     }
 

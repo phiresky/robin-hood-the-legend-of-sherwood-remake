@@ -14,11 +14,13 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
-use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
+use rayon::prelude::*;
+use robin_assets::frame_holder::{FrameDictionary, FrameHolder, SpriteVariant, UNMAPPED_DICT};
 use robin_assets::picture::Picture;
 use robin_assets::res_descr;
 use robin_assets::resource_manager::{EncodedPicture, ResourceManager};
@@ -27,7 +29,7 @@ use robin_engine::level_data::{
     ChunkReader, LevelFormat, LoadedMission, LoadedProtoLevel, load_mission, load_proto_level,
 };
 use robin_engine::order::OrderType;
-use robin_engine::profiles::{CivilianType, ProfileManager};
+use robin_engine::profiles::{Action, CivilianType, ProfileManager};
 use robin_engine::sbfile::{SB_FILE_READ, SbFile, resolve_case_insensitive};
 use robin_engine::sprite_script;
 use robin_rs::main_entry::{FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS};
@@ -56,8 +58,14 @@ struct Args {
     format: OutFormat,
 
     /// Overwrite `output` if it exists.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "resume")]
     force: bool,
+
+    /// Shipping: keep a partial output directory and reuse every existing
+    /// content chunk whose decoded payload exactly matches this conversion.
+    /// Useful after an interrupted max-compression run.
+    #[arg(long, conflicts_with = "force")]
+    resume: bool,
 
     /// Shipping: how to encode `.map` / `.min` terrain bitmaps.
     /// `raw` keeps the original bzip2-RGB565 bytes (current behavior);
@@ -77,6 +85,18 @@ struct Args {
     /// for wasm32 targets (32-bit zstd builds can't decode long=31 streams).
     #[arg(long, default_value_t = 31)]
     zstd_window_log: u32,
+
+    /// Shipping audio representation. `opus` is intended for browser
+    /// artifacts; native/loose datadirs keep their source formats.
+    #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
+    audio_format: AudioFormat,
+
+    /// Shipping: reorder every sprite dictionary by descending tile-index
+    /// frequency and rewrite all VQ sprite indices to match. Invisible to
+    /// the decoder (a consistent permutation), but the ranked index streams
+    /// compress ~5% smaller under zstd (docs/COMPRESSION.md, 2026-08-28).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    rank_dictionaries: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -91,6 +111,14 @@ enum MapFormat {
     JxlQ85,
     /// Shipping transcodes `.map` files to JXL quality 80.
     JxlQ80,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AudioFormat {
+    /// Preserve source WAV or Ogg/Vorbis bytes.
+    Source,
+    /// Transcode all selected audio to deterministic Ogg/Opus.
+    Opus,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -135,11 +163,13 @@ fn main() -> Result<()> {
     if args.output.exists() {
         if args.force {
             fs::remove_dir_all(&args.output)?;
-        } else {
+        } else if !args.resume {
             bail!(
-                "output exists (pass --force to overwrite): {}",
+                "output exists (pass --force to overwrite or --resume to validate and reuse chunks): {}",
                 args.output.display()
             );
+        } else {
+            tracing::info!(output = %args.output.display(), "resuming shipping conversion");
         }
     }
     fs::create_dir_all(&args.output)?;
@@ -149,6 +179,9 @@ fn main() -> Result<()> {
     fs::create_dir_all(&data_out)?;
 
     match args.format {
+        OutFormat::Hackable if args.resume => {
+            bail!("--resume is supported only with --format shipping")
+        }
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
         OutFormat::Shipping => convert_shipping(
             data_in,
@@ -156,7 +189,10 @@ fn main() -> Result<()> {
             ShippingOpts {
                 map_format: args.map_format,
                 interface_image_format: args.interface_image_format,
+                audio_format: args.audio_format,
                 zstd_window_log: args.zstd_window_log,
+                resume: args.resume,
+                rank_dictionaries: args.rank_dictionaries,
             },
         ),
     }
@@ -166,11 +202,73 @@ fn main() -> Result<()> {
 struct ShippingOpts {
     map_format: MapFormat,
     interface_image_format: InterfaceImageFormat,
+    audio_format: AudioFormat,
     zstd_window_log: u32,
+    resume: bool,
+    rank_dictionaries: bool,
 }
 
 /// Locate the game data directory inside the input folder.
 /// The original datadir capitalization varies (`DATA/` in demos, `Data/` in fullgame).
+/// Count how often every dictionary entry is referenced across the whole
+/// bank and derive an old→new index map per dictionary that puts the most
+/// frequent tile at index 0 (ties keep source order for determinism).
+fn build_dictionary_rank_remaps(holder: &FrameHolder) -> Result<Vec<Vec<u16>>> {
+    let mut freq: Vec<Vec<u64>> = holder
+        .dictionaries()
+        .iter()
+        .map(|d| vec![0u64; d.num_entries() as usize])
+        .collect();
+    for (idx, sprite) in holder.sprites().iter().enumerate() {
+        if sprite.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(packed) = holder.packed_data(idx as u32) else {
+            continue;
+        };
+        let f = freq
+            .get_mut(sprite.dictionary_index as usize)
+            .ok_or_else(|| {
+                anyhow!(
+                    "sprite {idx} references missing dictionary {}",
+                    sprite.dictionary_index
+                )
+            })?;
+        for &i in packed {
+            let slot = f.get_mut(i as usize).ok_or_else(|| {
+                anyhow!(
+                    "sprite {idx} index {i} out of range for dictionary {}",
+                    sprite.dictionary_index
+                )
+            })?;
+            *slot += 1;
+        }
+    }
+    Ok(freq
+        .into_iter()
+        .map(|f| {
+            let mut order: Vec<u16> = (0..f.len() as u16).collect();
+            order.sort_by_key(|&i| (std::cmp::Reverse(f[i as usize]), i));
+            let mut remap = vec![0u16; f.len()];
+            for (new, &old) in order.iter().enumerate() {
+                remap[old as usize] = new as u16;
+            }
+            remap
+        })
+        .collect())
+}
+
+/// Apply an old→new index map to a dictionary's entries.
+fn permute_dictionary(dict: &FrameDictionary, remap: &[u16]) -> FrameDictionary {
+    let n = dict.num_entries();
+    let mut values = vec![0u16; n as usize * 4];
+    for old in 0..n {
+        let new = remap[old as usize] as usize;
+        values[new * 4..new * 4 + 4].copy_from_slice(dict.lookup_pixels(old));
+    }
+    FrameDictionary::from_raw(n, values)
+}
+
 fn find_data_dir(input: &Path) -> Result<PathBuf> {
     for name in ["Data", "DATA", "data"] {
         let p = input.join(name);
@@ -877,7 +975,14 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::animation_rhs_paths;
+    use super::{
+        AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
+        animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
+        level_asset_rel_existing, normalize_robin_profile_index, positional_pair_map,
+        prepare_shipping_payload, transcode_audio_to_opus,
+    };
+    use robin_assets::shipping_datadir::ShippingMission;
+    use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -886,6 +991,221 @@ mod tests {
         assert!(paths.contains(&"Animations/Day/chariot02.rhs".to_owned()));
         assert!(paths.contains(&"Animations/chariot02.rhs".to_owned()));
         assert!(paths.iter().all(|path| !path.starts_with("Characters/")));
+    }
+
+    #[test]
+    fn shipping_animation_ambiance_uses_original_bit_values() {
+        let exists = |path: &str| Some(path.into());
+
+        assert_eq!(
+            animation_rhs_rel_existing(1, "river", &exists),
+            "Animations/Day/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(2, "river", &exists),
+            "Animations/Fog/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(4, "river", &exists),
+            "Animations/Night/river.rhs"
+        );
+        assert_eq!(
+            animation_rhs_rel_existing(8, "river", &exists),
+            "Animations/Day/river.rhs"
+        );
+    }
+
+    #[test]
+    fn shipping_level_assets_follow_exact_ambiance_day_root_lookup() {
+        let existing = [
+            "Levels/Attack/castle.map",
+            "Levels/Day/castle.min",
+            "Levels/root.map",
+            "Levels/root.min",
+        ];
+        let exists = |path: &str| existing.contains(&path).then(|| path.into());
+
+        assert_eq!(
+            level_asset_rel_existing(8, "castle", ".map", &exists).unwrap(),
+            "Levels/Attack/castle.map"
+        );
+        assert_eq!(
+            level_asset_rel_existing(8, "castle", ".min", &exists).unwrap(),
+            "Levels/Day/castle.min"
+        );
+        assert_eq!(
+            level_asset_rel_existing(128, "root", ".map", &exists).unwrap(),
+            "Levels/root.map"
+        );
+        assert!(level_asset_rel_existing(16, "missing", ".min", &exists).is_err());
+    }
+
+    #[test]
+    fn robin_profile_normalization_uses_forest_flag() {
+        let profiles = ProfileManager {
+            characters: vec![
+                CharacterProfile {
+                    filename: "RobinHood".into(),
+                    ..CharacterProfile::default()
+                },
+                CharacterProfile {
+                    filename: "RobinTown".into(),
+                    ..CharacterProfile::default()
+                },
+                CharacterProfile {
+                    filename: "LittleJohn".into(),
+                    ..CharacterProfile::default()
+                },
+            ],
+            ..ProfileManager::new()
+        };
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 1, true).unwrap(),
+            0
+        );
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 0, false).unwrap(),
+            1
+        );
+        assert_eq!(
+            normalize_robin_profile_index(&profiles, 2, true).unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn positional_pairing_drops_conflicting_variant_frames() {
+        // Frame 10 pairs consistently with 20; frame 11 pairs with both 21
+        // and 22 (a duplicated variant frame against different hub frames)
+        // and must be dropped; frame 12 duplicates a consistent pair.
+        let pairs = positional_pair_map(&[10, 11, 12, 11, 12], &[20, 21, 30, 22, 30]);
+        assert_eq!(pairs.get(&10), Some(&20));
+        assert_eq!(pairs.get(&11), None);
+        assert_eq!(pairs.get(&12), Some(&30));
+    }
+
+    #[test]
+    fn exclamation_id_maps_to_original_actor_table_name() {
+        assert_eq!(
+            exclamation_dat_filename(u32::from_le_bytes(*b"PCRH")),
+            "actorPCRH.dat"
+        );
+    }
+
+    #[test]
+    fn character_actions_add_projectile_and_pickup_rhs_capabilities() {
+        let mut required = std::collections::BTreeMap::new();
+        add_character_action_rhs_profiles(
+            &mut required,
+            [Action::Bow, Action::Purse, Action::WaspNest],
+        );
+        for path in [
+            "Characters/ACCESSORIES_Arrow.rhs",
+            "Characters/BONUS_Arrows.rhs",
+            "Characters/ACCESSORIES_MoneyBag.rhs",
+            "Characters/ACCESSORIES_Coin.rhs",
+            "Characters/BONUS_MoneyBag.rhs",
+            "Characters/ACCESSORIES_Wasp.rhs",
+            "Characters/ACCESSORIES_WaspSting.rhs",
+            "Characters/BONUS_WaspsNest.rhs",
+        ] {
+            assert!(required.contains_key(path), "missing {path}");
+        }
+        assert!(!required.contains_key("Characters/RELIC_Crown.rhs"));
+    }
+
+    #[test]
+    fn resume_reuses_only_an_exact_decoded_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut payload = ShippingMission::default();
+        payload.raw.insert("one.bin".into(), vec![1, 2, 3]);
+        let (filename, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, false).unwrap();
+        std::fs::write(temp.path().join(&filename), compressed.unwrap()).unwrap();
+
+        let (reused_filename, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
+        assert_eq!(reused_filename, filename);
+        assert!(compressed.is_none());
+
+        let (_, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 29, true).unwrap();
+        assert!(
+            compressed.is_some(),
+            "a different zstd window must not reuse"
+        );
+
+        payload.raw.insert("two.bin".into(), vec![4]);
+        let (_, compressed) =
+            prepare_shipping_payload(temp.path(), "Example", &payload, 30, true).unwrap();
+        assert!(compressed.is_some());
+    }
+
+    #[test]
+    fn standalone_opus_is_cataloged_without_entering_mission_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let assets_dir = temp.path().join("audio/assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let mut catalog = std::collections::BTreeMap::new();
+        let payload = ShippingMission::default();
+        let opus = b"OggS-fake-OpusHead-test-payload";
+
+        insert_standalone_audio(
+            &mut catalog,
+            &assets_dir,
+            "Data/Sounds/Arrow.wav",
+            opus,
+            1_234,
+        )
+        .unwrap();
+
+        assert!(payload.raw.is_empty());
+        assert!(payload.audio_durations_ms.is_empty());
+        let asset = catalog.get("sounds/arrow.opus").unwrap();
+        assert_eq!(asset.encoded_size, opus.len() as u32);
+        assert_eq!(asset.duration_ms, 1_234);
+        assert_eq!(std::fs::read(temp.path().join(&asset.file)).unwrap(), opus);
+        assert!(
+            !robin_assets::shipping_datadir::encode_mission_native(&payload)
+                .windows(opus.len())
+                .any(|window| window == opus)
+        );
+    }
+
+    #[test]
+    #[ignore = "requires ffmpeg with libopus"]
+    fn opus_transcode_is_byte_deterministic() {
+        let sample_rate = 8_000u32;
+        let sample_count = 800u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + sample_count * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(sample_count * 2).to_le_bytes());
+        wav.resize(wav.len() + (sample_count * 2) as usize, 0);
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("determinism-fixture.wav");
+        std::fs::write(&source, wav).unwrap();
+        let first = transcode_audio_to_opus(&source, AudioKind::Voice).unwrap();
+        let second = transcode_audio_to_opus(&source, AudioKind::Voice).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(b"OggS"));
+        assert!(first.windows(8).any(|window| window == b"OpusHead"));
+        assert!(
+            first
+                .windows(b"robinhood-web-shipping".len())
+                .any(|window| window == b"robinhood-web-shipping")
+        );
     }
 }
 
@@ -1201,8 +1521,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingDatadir, ShippingMission, ShippingMissionRef, ShippingSprite,
-    ShippingSpriteBank,
+    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
+    ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
 };
 use robin_engine::level_data::LoadedLevel;
 
@@ -1210,13 +1530,269 @@ use robin_engine::level_data::LoadedLevel;
 struct ShippingMissionBuild {
     payload: ShippingMission,
     required_rhs_profiles: std::collections::BTreeMap<String, BTreeSet<String>>,
+    required_exclamation_ids: BTreeSet<u32>,
+    music_names: BTreeSet<String>,
+    dialogue_samples: BTreeSet<String>,
     map_names: BTreeSet<String>,
+    level_asset_keys: BTreeSet<String>,
     proto_filename: String,
+    forest_level: bool,
+    ambiance: u32,
+}
+
+/// One shared RHS chunk between requirement resolution and payload assembly.
+struct RhsChunkPrep {
+    /// Filtered profile metadata for the chunk, or `None` for a synthesized
+    /// sprite-only family-base chunk no mission requires directly.
+    rhs_data: Option<RhsData>,
+    matched_profiles: usize,
+    /// Frame ids of *all* profiles in RHS load order. Cross-variant pairing
+    /// is positional over this order (a variant's frame tables mirror its
+    /// family base's 1:1), so it includes unmatched profiles too.
+    script_order: Vec<u32>,
+    used_sprite_ids: BTreeSet<u32>,
+    /// Family-base RHS rel when this chunk is coded cross-variant.
+    base_rel: Option<String>,
+    /// Variant bank id -> base bank id for the sprites coded against a base.
+    base_ids: std::collections::BTreeMap<u32, u32>,
+    /// Second-hub RHS rel when this chunk is star-2 coded (schema v10).
+    base2_rel: Option<String>,
+    /// Variant bank id -> second-predecessor bank id. Every key must also be
+    /// present in `base_ids` (the codec requires base2 => base).
+    base2_ids: std::collections::BTreeMap<u32, u32>,
+}
+
+/// Expected packed word count of a VQ sprite's `(width/4) x height` index
+/// grid, or `None` when the dims cannot form one (zero-sized or ragged).
+fn vq_grid_words(width: u16, height: u16) -> Option<usize> {
+    (width > 0 && height > 0 && width % 4 == 0).then(|| (width as usize / 4) * height as usize)
+}
+
+/// A sprite's packed words after the dictionary rank permutation (identity
+/// when ranking is disabled). `None` when the bank holds no data for it.
+fn remapped_packed(
+    holder: &FrameHolder,
+    dict_remaps: Option<&[Vec<u16>]>,
+    idx: u32,
+) -> Result<Option<Vec<u16>>> {
+    let sprite = holder
+        .sprites()
+        .get(idx as usize)
+        .ok_or_else(|| anyhow!("sprite {idx} beyond the shipping bank"))?;
+    let Some(packed) = holder.packed_data(idx) else {
+        return Ok(None);
+    };
+    Ok(Some(match dict_remaps {
+        Some(remaps) if sprite.dictionary_index != UNMAPPED_DICT => {
+            let remap = remaps
+                .get(sprite.dictionary_index as usize)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "sprite {idx} references dictionary {} without a rank remap",
+                        sprite.dictionary_index
+                    )
+                })?;
+            packed
+                .iter()
+                .map(|&i| {
+                    remap.get(i as usize).copied().ok_or_else(|| {
+                        anyhow!(
+                            "sprite {idx} index {i} out of range for dictionary {}",
+                            sprite.dictionary_index
+                        )
+                    })
+                })
+                .collect::<Result<Vec<u16>>>()?
+        }
+        _ => packed.to_vec(),
+    }))
+}
+
+/// Assemble one shared RHS chunk: sprite rows for every reachable bank slot,
+/// with all well-formed VQ grids coded into a single `sprite_codec` blob
+/// (cross-variant against `prep.base_ids` where present) and RLE/ragged
+/// sprites keeping raw packed words.
+fn build_rhs_chunk_payload(
+    holder: &FrameHolder,
+    dict_remaps: Option<&[Vec<u16>]>,
+    rel: &str,
+    prep: &RhsChunkPrep,
+) -> Result<ShippingMission> {
+    let mut payload = ShippingMission::default();
+    if let Some(rhs_data) = &prep.rhs_data {
+        payload.rhs_files.insert(rel.to_owned(), rhs_data.clone());
+    }
+    let mut sprites = Vec::with_capacity(prep.used_sprite_ids.len());
+    let mut blob_ids = Vec::new();
+    let mut blob_dims = Vec::new();
+    let mut blob_grids: Vec<Vec<u16>> = Vec::new();
+    let mut blob_bases: Vec<Option<Vec<u16>>> = Vec::new();
+    let mut blob_base_ids: Vec<Option<u32>> = Vec::new();
+    let mut blob_base2s: Vec<Option<Vec<u16>>> = Vec::new();
+    let mut blob_base2_ids: Vec<Option<u32>> = Vec::new();
+    let mut alphabet: u16 = 0;
+    for &idx in &prep.used_sprite_ids {
+        let sprite = holder
+            .sprites()
+            .get(idx as usize)
+            .ok_or_else(|| anyhow!("RHS {rel} references sprite {idx} beyond the shipping bank"))?;
+        let row_packed = match remapped_packed(holder, dict_remaps, idx)? {
+            Some(packed)
+                if sprite.dictionary_index != UNMAPPED_DICT
+                    && vq_grid_words(sprite.width, sprite.height) == Some(packed.len()) =>
+            {
+                let dict = holder.dictionary(sprite.dictionary_index).ok_or_else(|| {
+                    anyhow!(
+                        "sprite {idx} references missing dictionary {}",
+                        sprite.dictionary_index
+                    )
+                })?;
+                alphabet = alphabet.max(dict.num_entries());
+                match prep.base_ids.get(&idx) {
+                    Some(&base_id) => {
+                        let base =
+                            remapped_packed(holder, dict_remaps, base_id)?.ok_or_else(|| {
+                                anyhow!(
+                                    "family base sprite {base_id} for RHS {rel} has no packed data"
+                                )
+                            })?;
+                        blob_bases.push(Some(base));
+                        blob_base_ids.push(Some(base_id));
+                    }
+                    None => {
+                        blob_bases.push(None);
+                        blob_base_ids.push(None);
+                    }
+                }
+                match prep.base2_ids.get(&idx) {
+                    Some(&base2_id) => {
+                        if prep.base_ids.get(&idx).is_none() {
+                            bail!(
+                                "sprite {idx} of RHS {rel} plans a base2 predecessor without a base"
+                            );
+                        }
+                        let base2 =
+                            remapped_packed(holder, dict_remaps, base2_id)?.ok_or_else(|| {
+                                anyhow!(
+                                    "family base2 sprite {base2_id} for RHS {rel} has no packed \
+                                     data"
+                                )
+                            })?;
+                        blob_base2s.push(Some(base2));
+                        blob_base2_ids.push(Some(base2_id));
+                    }
+                    None => {
+                        blob_base2s.push(None);
+                        blob_base2_ids.push(None);
+                    }
+                }
+                blob_ids.push(idx);
+                blob_dims.push((sprite.width / 4, sprite.height));
+                blob_grids.push(packed);
+                Vec::new()
+            }
+            Some(packed) => {
+                if sprite.dictionary_index != UNMAPPED_DICT {
+                    // VQ words that disagree with the sprite's grid shape
+                    // cannot ride the codec blob; ship them raw rather than
+                    // guessing at dimensions.
+                    tracing::warn!(
+                        rhs = rel,
+                        sprite = idx,
+                        words = packed.len(),
+                        width = sprite.width,
+                        height = sprite.height,
+                        "VQ sprite length does not match its grid; keeping raw indices"
+                    );
+                }
+                packed
+            }
+            None if sprite.width == 0 || sprite.height == 0 => Vec::new(),
+            None => bail!("RHS {rel} references non-empty sprite {idx} with no packed bank data"),
+        };
+        sprites.push((
+            idx,
+            ShippingSprite {
+                width: sprite.width,
+                height: sprite.height,
+                dictionary_index: sprite.dictionary_index,
+                packed_data: Arc::new(row_packed),
+            },
+        ));
+    }
+    let coded_sprites = blob_ids.len();
+    let mut vq_chunks = Vec::new();
+    let mut blob_bytes = 0usize;
+    if !blob_ids.is_empty() {
+        let grids: Vec<robin_assets::sprite_codec::SpriteGrid> = blob_dims
+            .iter()
+            .zip(&blob_grids)
+            .map(
+                |(&(cols, rows), grid)| robin_assets::sprite_codec::SpriteGrid {
+                    cols,
+                    rows,
+                    indices: grid,
+                },
+            )
+            .collect();
+        let bases: Vec<Option<&[u16]>> = blob_bases.iter().map(|base| base.as_deref()).collect();
+        let base2s: Vec<Option<&[u16]>> = blob_base2s.iter().map(|base| base.as_deref()).collect();
+        let has_base2 = blob_base2_ids.iter().any(Option::is_some);
+        let blob = robin_assets::sprite_codec::encode_grids_multi(
+            alphabet,
+            &grids,
+            Some(&bases),
+            Some(&base2s),
+        )
+        .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
+        blob_bytes = blob.len();
+        if has_base2 && prep.base2_rel.is_none() {
+            bail!("RHS {rel} coded base2 sprites without a planned base2 chunk");
+        }
+        vq_chunks.push(SpriteVqChunk {
+            rhs: rel.to_owned(),
+            base_rhs: prep.base_rel.clone(),
+            base2_rhs: if has_base2 {
+                prep.base2_rel.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            alphabet,
+            sprite_ids: blob_ids,
+            base_ids: blob_base_ids,
+            base2_ids: if has_base2 {
+                blob_base2_ids
+            } else {
+                Vec::new()
+            },
+            blob,
+        });
+    }
+    payload.sprite_bank = Some(ShippingSpriteBank {
+        signature: holder.signature(),
+        dictionaries: Vec::new(),
+        sprite_count: holder.sprites().len() as u32,
+        sprites,
+        vq_chunks,
+    });
+    tracing::info!(
+        rhs = rel,
+        sprites = prep.used_sprite_ids.len(),
+        required_rhs_profiles = prep.matched_profiles,
+        vq_sprites = coded_sprites,
+        vq_blob_bytes = blob_bytes,
+        base = prep.base_rel.as_deref().unwrap_or(""),
+        base2 = prep.base2_rel.as_deref().unwrap_or(""),
+        "built shared RHS sprite payload"
+    );
+    Ok(payload)
 }
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
     let mut dd = ShippingDatadir::default();
     let mut beggar_ids: BTreeSet<u32> = BTreeSet::new();
+    let audio_assets_dir = data_out.join("audio/assets");
+    fs::create_dir_all(&audio_assets_dir)?;
 
     let locale_dirs = detect_locale_data_dirs(&data_in);
     for src in &locale_dirs {
@@ -1252,7 +1828,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // table and loading-screen bundle.
     for rel in [
         "Interface/DEFAULT.RES",
-        "Text/actors.res",
         "Text/Level.res",
         "Sounds/Exclamations/actors.res",
     ] {
@@ -1272,6 +1847,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     jxl_quality_label(q)
                 );
             }
+            mgr.disable_recovery_for_shipping();
             dd.res_files.insert(rel.into(), mgr);
         }
     }
@@ -1282,6 +1858,58 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
         dd.pak_files.insert("interface/loading.pak".into(), encoded);
     }
+    // Menu sounds are part of the data artifact, not the wasm executable.
+    // Keep them in the boot manifest because they are needed before any
+    // mission dependency is selected.
+    let mut boot_audio = ShippingMission::default();
+    let mut menu_roots = vec![data_in.join("Sounds/Menu")];
+    menu_roots.extend(
+        locale_dirs
+            .iter()
+            .map(|locale| locale.data_dir.join("Sounds/Menu")),
+    );
+    for root in menu_roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_files_recursive(&root, &mut files)?;
+        files.sort();
+        for path in files {
+            let filename = path
+                .strip_prefix(&root)
+                .expect("menu audio must remain below its collection root");
+            let relative = Path::new("Sounds/Menu").join(filename);
+            insert_shipping_audio(
+                &mut boot_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                &relative.to_string_lossy(),
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
+        }
+    }
+    if let Some((relative, path)) = ["wav", "ogg"].into_iter().find_map(|extension| {
+        let relative = format!("Musics/Menu.{extension}");
+        in_path(&relative).map(|path| (relative, path))
+    }) {
+        insert_shipping_audio(
+            &mut boot_audio,
+            &mut dd.audio_assets,
+            &audio_assets_dir,
+            &relative,
+            &path,
+            AudioKind::Music,
+            opts.audio_format,
+        )?;
+    } else {
+        bail!("required menu music Musics/Menu.{{wav,ogg}} is missing");
+    }
+    dd.raw.extend(boot_audio.raw);
+    dd.audio_durations_ms.extend(boot_audio.audio_durations_ms);
+
     // ── profile.cpf (root index) ───────────────────────────────────────
     let cpf_path =
         in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;
@@ -1293,6 +1921,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .map_err(|e| anyhow!("parse cpf: {e}"))?;
         mgr
     };
+    let character_exclamation_ids: Vec<u32> = cpf
+        .characters
+        .iter()
+        .map(|profile| profile.exclamation_id)
+        .collect();
     for (i, c) in cpf.civilians.iter().enumerate() {
         if c.civilian_type == CivilianType::Beggar {
             beggar_ids.insert(i as u32);
@@ -1302,6 +1935,33 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // Missions → .rhp/.rhm/.scb/.red, also follow level sprite refs.
     let mut mission_builds = std::collections::BTreeMap::<String, ShippingMissionBuild>::new();
 
+    // Mission descriptors are authoritative campaign/UI data even when the
+    // profile deliberately points at the non-loadable `Impossible_mission`
+    // sentinel. Parse them independently from the RHP/RHM payload loop.
+    for mp in &cpf.missions {
+        let filename = res_descr::red_filename(mp.id);
+        let red_rel = format!("Text/{filename}");
+        if let Some(red_path) = in_path(&red_rel) {
+            dd.red_files
+                .insert(filename, res_descr::load(&red_path.to_string_lossy())?);
+        } else {
+            // Some stock profiles have no descriptor in the source install.
+            // Preserve that absence; never synthesize authoritative UI data.
+            tracing::warn!(
+                profile_id = mp.id,
+                "source mission descriptor is absent: {red_rel}"
+            );
+        }
+    }
+
+    // Dialogue descriptors refer to WAVE tables in the localized Level.res.
+    // Resolve those tables while building each mission's dependency closure;
+    // shipping every locale's dialogue at boot would defeat split loading.
+    let level_res_path =
+        in_path("Text/Level.res").ok_or_else(|| anyhow!("Text/Level.res missing"))?;
+    let mut level_res = ResourceManager::new();
+    level_res.attach_resource_file(&level_res_path.to_string_lossy())?;
+
     for mp in &cpf.missions {
         if mp.proto_level_filename.is_empty() || mp.mission_filename.is_empty() {
             continue;
@@ -1309,7 +1969,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let rhp_rel = format!("Levels/{}.rhp", mp.proto_level_filename);
         let rhm_rel = format!("Levels/{}.rhm", mp.mission_filename);
         let scb_rel = format!("Levels/{}.scb", mp.mission_filename);
-        let red_rel = format!("Text/{}", res_descr::red_filename(mp.id));
 
         let Some(rhp_path) = in_path(&rhp_rel) else {
             tracing::warn!("missing: {}", rhp_rel);
@@ -1321,17 +1980,70 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         };
 
         let (proto, mission) = parse_level_pair(&rhp_path, &rhm_path, &beggar_ids)?;
+        let forest_level = proto
+            .misc
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow!(
+                    "proto level {} has no MISC forest-level metadata",
+                    mp.proto_level_filename
+                )
+            })?
+            .forest_level;
         let mut build = ShippingMissionBuild {
             proto_filename: mp.proto_level_filename.clone(),
+            forest_level,
+            ambiance: mission.header.ambiance,
             ..ShippingMissionBuild::default()
         };
+        build.music_names.extend(
+            [&mp.green_music, &mp.yellow_music, &mp.red_music]
+                .into_iter()
+                .filter(|name| !name.is_empty())
+                .cloned(),
+        );
+        let red_filename = res_descr::red_filename(mp.id);
+        if let Some(descriptors) = dd.red_files.get(&red_filename) {
+            for (dialogue_index, dialogue) in descriptors.dialogues.iter().enumerate() {
+                for sentence_index in 0..dialogue.portrait_ids.len() {
+                    match level_res.get_sample(dialogue.sound_table_id, sentence_index) {
+                        Ok(sample) if !sample.is_empty() => {
+                            build
+                                .dialogue_samples
+                                .insert(format!("Text/{}", sample.replace('\\', "/")));
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "resolve dialogue sample for mission {} dialogue {dialogue_index} sentence {sentence_index}",
+                                    mp.mission_filename
+                                )
+                            });
+                        }
+                    }
+                }
+            }
+        }
         let required_rhs_profiles = &mut build.required_rhs_profiles;
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
         if mp.mission_filename == "Dem_Lei_MP" {
-            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RJMT", &in_path);
+            add_required_pc_profiles_for_pcs(
+                required_rhs_profiles,
+                &cpf,
+                "RJMT",
+                forest_level,
+                &in_path,
+            );
         } else if mp.mission_filename == "Demo_Lin" {
-            add_required_pc_profiles_for_pcs(required_rhs_profiles, &cpf, "RSABC", &in_path);
+            add_required_pc_profiles_for_pcs(
+                required_rhs_profiles,
+                &cpf,
+                "RSABC",
+                forest_level,
+                &in_path,
+            );
         }
         // Collect sprite/map refs.
         for p in &proto.patches {
@@ -1354,10 +2066,19 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             build.map_names.insert(mission.header.map_filename.clone());
         }
         for &idx in &mp.required_character_indices {
-            if let Some((rel, profile)) =
-                existing_character_rhs_for_index(&cpf, idx as usize, &in_path)
+            let idx = normalize_robin_profile_index(&cpf, idx as usize, forest_level)?;
+            add_required_character_rhs_profiles_for_index(
+                required_rhs_profiles,
+                &cpf,
+                idx,
+                &in_path,
+            );
+            if let Some(profile) = cpf.characters.get(idx)
+                && profile.exclamation_id != 0
             {
-                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
+                build
+                    .required_exclamation_ids
+                    .insert(profile.exclamation_id);
             }
         }
         for p in &mission.mission_patches {
@@ -1369,11 +2090,18 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             );
         }
         for target in &mission.targets {
-            add_required_rhs_rel(
-                required_rhs_profiles,
-                animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path),
-                &target.profile_name,
-            );
+            let rel =
+                animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path);
+            if in_path(&rel).is_some() {
+                add_required_rhs_rel(required_rhs_profiles, rel, &target.profile_name);
+            } else {
+                // TODO: Determine why a few stock level records name an RHS
+                // that does not exist in any original animation directory.
+                tracing::warn!(
+                    mission = mp.mission_filename,
+                    "source target RHS is absent: {rel}"
+                );
+            }
         }
         for mobile in &mission.mobile_elements {
             for fx in &mobile.sprites {
@@ -1387,6 +2115,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for soldier in &mission.soldiers {
             if let Some(profile) = cpf.soldiers.get(soldier.profile_number as usize) {
+                if profile.exclamation_id != 0 {
+                    build
+                        .required_exclamation_ids
+                        .insert(profile.exclamation_id);
+                }
                 add_required_rhs_rel(
                     required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
@@ -1396,6 +2129,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for civilian in &mission.civilians {
             if let Some(profile) = cpf.civilians.get(civilian.profile_number as usize) {
+                if profile.exclamation_id != 0 {
+                    build
+                        .required_exclamation_ids
+                        .insert(profile.exclamation_id);
+                }
                 add_required_rhs_rel(
                     required_rhs_profiles,
                     format!("Characters/{}.rhs", profile.filename),
@@ -1404,10 +2142,20 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             }
         }
         for pc in &mission.pcs_to_rescue {
-            if let Some((rel, profile)) =
-                existing_character_rhs_for_index(&cpf, pc.profile_index as usize, &in_path)
+            let profile_index =
+                normalize_robin_profile_index(&cpf, pc.profile_index as usize, forest_level)?;
+            add_required_character_rhs_profiles_for_index(
+                required_rhs_profiles,
+                &cpf,
+                profile_index,
+                &in_path,
+            );
+            if let Some(profile) = cpf.characters.get(profile_index)
+                && profile.exclamation_id != 0
             {
-                add_required_rhs_rel(required_rhs_profiles, rel, &profile);
+                build
+                    .required_exclamation_ids
+                    .insert(profile.exclamation_id);
             }
         }
         for bonus in &mission.bonuses {
@@ -1432,8 +2180,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 "BONUS Trefle",
             );
         }
-        add_common_object_rhs_profiles(required_rhs_profiles);
         add_required_rhs_rel(required_rhs_profiles, "Characters/Blip00.rhs", "Blip 00");
+        // The original engine creates every object master at level load.
+        // These payloads are tiny and must be present now that parsed RHS is
+        // authoritative and no raw-file fallback exists.
+        add_all_saved_world_object_rhs_profiles(required_rhs_profiles);
 
         build
             .payload
@@ -1449,12 +2200,39 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         } else {
             tracing::warn!("missing: {}", scb_rel);
         }
-        if let Some(p) = in_path(&red_rel) {
-            let desc = res_descr::load(&p.to_string_lossy())?;
-            dd.red_files.insert(res_descr::red_filename(mp.id), desc);
-        }
         mission_builds.insert(mp.mission_filename.clone(), build);
     }
+
+    // Runtime party composition is not known during conversion. Build a
+    // manifest index for every character profile so the mission boundary can
+    // fetch only the selected team plus eligible reinforcement candidates.
+    // Each entry also carries the projectile/pickup masters enabled by that
+    // profile's actions; those objects can be created during a tick and cannot
+    // perform asynchronous loading themselves.
+    let mut character_rhs_requirements = std::collections::BTreeMap::<
+        u32,
+        std::collections::BTreeMap<String, BTreeSet<String>>,
+    >::new();
+    for (index, profile) in cpf.characters.iter().enumerate() {
+        let profile_index = u32::try_from(index).context("character profile index exceeds u32")?;
+        let required = character_rhs_requirements.entry(profile_index).or_default();
+        add_character_rhs_profiles_for_index(required, &cpf, index, &in_path, false);
+        add_character_action_rhs_profiles(
+            required,
+            profile
+                .actions
+                .into_iter()
+                .chain(profile.contextual_actions),
+        );
+    }
+
+    // A decoded save can contain a live object which is neither authored by
+    // the destination mission nor implied by its current party. Until exact
+    // saved-world object types are threaded into this boundary, keep the full
+    // object-master closure explicit and load it only for save launches.
+    let mut saved_world_rhs_requirements =
+        std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    add_all_saved_world_object_rhs_profiles(&mut saved_world_rhs_requirements);
 
     // Load the source bank once. Each RHS gets one shared payload containing
     // its metadata and reachable bank slots; missions reference these files
@@ -1464,10 +2242,29 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         .ok_or_else(|| anyhow!("data dir has no parent"))?;
     let holder =
         FrameHolder::from_data_dir(&parent.to_string_lossy()).context("loading sprite bank")?;
+    // Frequency-rank the dictionaries so the most used tile of each becomes
+    // index 0, and remember the old→new maps to rewrite every VQ sprite's
+    // indices below. A consistent permutation is invisible to the decoder.
+    let dict_remaps = if opts.rank_dictionaries {
+        Some(build_dictionary_rank_remaps(&holder)?)
+    } else {
+        None
+    };
+    let shipping_dictionaries = match &dict_remaps {
+        Some(remaps) => holder
+            .dictionaries()
+            .iter()
+            .zip(remaps)
+            .map(|(dict, remap)| permute_dictionary(dict, remap))
+            .collect(),
+        None => holder.dictionaries().to_vec(),
+    };
     dd.sprite_bank = Some(ShippingSpriteBank {
         signature: holder.signature(),
-        dictionaries: holder.dictionaries().to_vec(),
-        sprites: vec![None; holder.sprites().len()],
+        dictionaries: shipping_dictionaries,
+        sprite_count: holder.sprites().len() as u32,
+        sprites: Vec::new(),
+        vq_chunks: Vec::new(),
     });
     let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     for build in mission_builds.values() {
@@ -1478,19 +2275,54 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .extend(profiles.iter().cloned());
         }
     }
-    let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    for required in character_rhs_requirements.values() {
+        for (rel, profiles) in required {
+            rhs_requirements
+                .entry(rel.clone())
+                .or_default()
+                .extend(profiles.iter().cloned());
+        }
+    }
+    for (rel, profiles) in &saved_world_rhs_requirements {
+        rhs_requirements
+            .entry(rel.clone())
+            .or_default()
+            .extend(profiles.iter().cloned());
+    }
+    // Max-level zstd and the VQ context-model encoder are deliberately
+    // expensive and memory hungry. Bound the worker count; each completed
+    // chunk is written in its worker so the result vectors retain only small
+    // manifest metadata, not every compressed RHS.
+    let compression_workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(4);
+    let compression_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(compression_workers)
+        .thread_name(|index| format!("shipping-zstd-{index}"))
+        .build()
+        .context("create bounded shipping compression pool")?;
+
+    // Phase A: load each required RHS and resolve which bank sprites its
+    // matched profiles reach. Payload assembly happens after the family pass
+    // below so variant chunks can be coded against their family base.
+    let mut rhs_preps = std::collections::BTreeMap::<String, RhsChunkPrep>::new();
     for (rel, required_profiles) in &rhs_requirements {
         if rel.is_empty() {
             continue;
         }
-        let Some(path) = in_path(rel) else {
-            tracing::warn!("missing shared RHS {rel}");
-            continue;
-        };
+        let path = in_path(rel)
+            .ok_or_else(|| anyhow!("required authoritative shipping RHS is missing: {rel}"))?;
         let mut used_sprite_ids = BTreeSet::<u32>::new();
         let (signature, profiles) =
             sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
                 .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+        let mut script_order = Vec::new();
+        for (_, info) in &profiles {
+            for script in info.scripts.iter() {
+                script_order.extend_from_slice(&script.frame_ids);
+            }
+        }
         let all_profiles_required = required_profiles.contains("");
         let mut matched_profiles = BTreeSet::new();
         for (profile_name, info) in &profiles {
@@ -1503,61 +2335,470 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         for required in required_profiles {
             if !required.is_empty() && !matched_profiles.contains(required) {
-                tracing::warn!("rhs {rel} missing required profile '{required}'");
+                bail!("authoritative shipping RHS {rel} is missing required profile '{required}'");
             }
         }
-        let mut payload = ShippingMission::default();
-        payload.rhs_files.insert(
+        let profiles = profiles
+            .into_iter()
+            .filter(|(name, _)| all_profiles_required || matched_profiles.contains(name))
+            .collect();
+        rhs_preps.insert(
             rel.clone(),
-            RhsData {
-                signature,
-                profiles,
+            RhsChunkPrep {
+                rhs_data: Some(RhsData {
+                    signature,
+                    profiles,
+                }),
+                matched_profiles: matched_profiles.len(),
+                script_order,
+                used_sprite_ids,
+                base_rel: None,
+                base_ids: std::collections::BTreeMap::new(),
+                base2_rel: None,
+                base2_ids: std::collections::BTreeMap::new(),
             },
         );
-        payload.raw.insert(
-            rel.to_ascii_lowercase(),
-            fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        );
-        let sprites = holder
-            .sprites()
-            .iter()
-            .enumerate()
-            .map(|(idx, sprite)| {
-                used_sprite_ids
-                    .contains(&(idx as u32))
-                    .then(|| ShippingSprite {
-                        width: sprite.width,
-                        height: sprite.height,
-                        dictionary_index: sprite.dictionary_index,
-                        packed_data: holder
-                            .packed_data(idx as u32)
-                            .map(<[u16]>::to_vec)
-                            .unwrap_or_default(),
-                    })
-            })
-            .collect();
-        payload.sprite_bank = Some(ShippingSpriteBank {
-            signature: holder.signature(),
-            dictionaries: Vec::new(),
-            sprites,
-        });
-        tracing::info!(
-            rhs = rel,
-            sprites = used_sprite_ids.len(),
-            required_rhs_profiles = matched_profiles.len(),
-            "built shared RHS sprite payload"
-        );
-        rhs_payloads.insert(rel.clone(), payload);
     }
 
-    // Terrain/loading art stays with the small mission core. Maps remain JXL
-    // according to the chosen converter option.
+    // Phase B: variant families among Characters/*.rhs (the probe's corpus
+    // rule: trailing-two-digit stem shared by more than one file; base = the
+    // lexicographically first member). Variant chunks are coded against the
+    // base's positionally aligned grids — measured 3.9x smaller than zstd on
+    // that half of the character corpus (docs/COMPRESSION.md, 2026-08-28).
+    let mut disk_character_names: Vec<String> = Vec::new();
+    if let Some(dir) = resolve_case_insensitive(&data_in.join("Characters")).filter(|p| p.is_dir())
+    {
+        for entry in fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("rhs"))
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                disk_character_names.push(stem.to_owned());
+            }
+        }
+    }
+    disk_character_names.sort();
+    let family_key = |name: &str| -> Option<String> {
+        let stripped = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        (stripped.len() + 2 == name.len() && !stripped.is_empty()).then(|| stripped.to_owned())
+    };
+    let mut families = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for name in &disk_character_names {
+        if let Some(key) = family_key(name) {
+            families.entry(key).or_default().push(name.clone());
+        }
+    }
+    families.retain(|_, members| members.len() > 1);
+
+    // Measured base selection (docs/COMPRESSION.md 2026-08-29): the
+    // lexicographically-first member is the best coding hub in only 1 of 9
+    // fullgame families; choosing the base that minimizes a sampled
+    // conditional-entropy proxy — H(base | above) for the base itself plus
+    // H(member | base tile) for every other member — recovers ~4% of the
+    // family half of the corpus at zero format cost (the chunk already
+    // records `base_rhs`). Falls back to the first member when the proxy
+    // cannot be computed (e.g. indices beyond the 12-bit proxy key).
+    let mut member_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    for members in families.values() {
+        for name in members {
+            if member_orders.contains_key(name) {
+                continue;
+            }
+            let rel = format!("Characters/{name}.rhs");
+            let path = in_path(&rel)
+                .ok_or_else(|| anyhow!("family member RHS {rel} missing from the datadir"))?;
+            let (_, profiles) =
+                sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                    .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+            let mut order = Vec::new();
+            for (_, info) in &profiles {
+                for script in info.scripts.iter() {
+                    order.extend_from_slice(&script.frame_ids);
+                }
+            }
+            member_orders.insert(name.clone(), order);
+        }
+    }
+    let mut family_bases = std::collections::BTreeMap::<String, String>::new();
+    for (key, members) in &families {
+        let mut best: Option<(f64, &String)> = None;
+        let mut proxy_failed = false;
+        for candidate in members {
+            let mut cost = match family_base_standalone_proxy(&holder, &member_orders[candidate]) {
+                Some(bits) => bits,
+                None => {
+                    proxy_failed = true;
+                    break;
+                }
+            };
+            for member in members {
+                if member == candidate {
+                    continue;
+                }
+                match family_base_pair_proxy(
+                    &holder,
+                    &member_orders[candidate],
+                    &member_orders[member],
+                ) {
+                    Some(bits) => cost += bits,
+                    None => {
+                        proxy_failed = true;
+                        break;
+                    }
+                }
+            }
+            if proxy_failed {
+                break;
+            }
+            if best.is_none_or(|(b, _)| cost < b) {
+                best = Some((cost, candidate));
+            }
+        }
+        let base = match (proxy_failed, best) {
+            (false, Some((_, name))) => name.clone(),
+            _ => {
+                tracing::warn!(
+                    family = key.as_str(),
+                    "family base proxy unavailable; falling back to first member"
+                );
+                members[0].clone()
+            }
+        };
+        tracing::info!(
+            family = key.as_str(),
+            base = base.as_str(),
+            "selected family coding base"
+        );
+        family_bases.insert(key.clone(), base);
+    }
+
+    // Star-2 topology (schema v10, docs/COMPRESSION.md 2026-08-29): family
+    // members after the first two code each tile against TWO already-decoded
+    // siblings — measured -22..25% on third-and-later members. hub1 is the
+    // proxy-selected base above; hub2 is the member (excluding hub1) that is
+    // the best SECOND predictor for the remaining members: argmin over
+    // candidates c != hub1 of sum over members m not in {hub1, c} of
+    // H(m | c tile). hub2's own chunk keeps coding against hub1 only.
+    // Two-member families have no "third-and-later" members and skip this.
+    let mut family_second_bases = std::collections::BTreeMap::<String, String>::new();
+    for (key, members) in &families {
+        if members.len() < 3 {
+            continue;
+        }
+        let hub1 = &family_bases[key];
+        let mut best: Option<(f64, &String)> = None;
+        let mut proxy_failed = false;
+        for candidate in members {
+            if candidate == hub1 {
+                continue;
+            }
+            let mut cost = 0.0;
+            for member in members {
+                if member == candidate || member == hub1 {
+                    continue;
+                }
+                match family_base_pair_proxy(
+                    &holder,
+                    &member_orders[candidate],
+                    &member_orders[member],
+                ) {
+                    Some(bits) => cost += bits,
+                    None => {
+                        proxy_failed = true;
+                        break;
+                    }
+                }
+            }
+            if proxy_failed {
+                break;
+            }
+            if best.is_none_or(|(b, _)| cost < b) {
+                best = Some((cost, candidate));
+            }
+        }
+        match (proxy_failed, best) {
+            (false, Some((_, name))) => {
+                tracing::info!(
+                    family = key.as_str(),
+                    base2 = name.as_str(),
+                    "selected family second base"
+                );
+                family_second_bases.insert(key.clone(), name.clone());
+            }
+            _ => {
+                tracing::warn!(
+                    family = key.as_str(),
+                    "family second-base proxy unavailable; coding this family star-1"
+                );
+            }
+        }
+    }
+
+    // Lowercased variant name -> disk-cased base name. CPF-derived rels and
+    // on-disk filenames can disagree in case, so matching is case-blind.
+    let variant_base_names: std::collections::BTreeMap<String, String> = families
+        .iter()
+        .flat_map(|(key, members)| {
+            let base = family_bases[key].clone();
+            members
+                .iter()
+                .filter({
+                    let base = base.clone();
+                    move |name| **name != base
+                })
+                .map(move |name| (name.to_ascii_lowercase(), base.clone()))
+        })
+        .collect();
+    // Lowercased third-and-later member name -> disk-cased second-hub name.
+    // hub2 itself keeps coding against hub1 only, so it is excluded here.
+    let variant_base2_names: std::collections::BTreeMap<String, String> = families
+        .iter()
+        .filter_map(|(key, members)| {
+            let hub2 = family_second_bases.get(key)?;
+            let hub1 = &family_bases[key];
+            Some(
+                members
+                    .iter()
+                    .filter(move |name| *name != hub1 && *name != hub2)
+                    .map(move |name| (name.to_ascii_lowercase(), hub2.clone())),
+            )
+        })
+        .flatten()
+        .collect();
+
+    let prep_rels: Vec<String> = rhs_preps.keys().cloned().collect();
+    let mut loaded_base_script_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    struct PlannedVariant {
+        rel: String,
+        base_rel: String,
+        base_ids: std::collections::BTreeMap<u32, u32>,
+        base2_rel: Option<String>,
+        base2_ids: std::collections::BTreeMap<u32, u32>,
+        /// Hub chunk rels this variant's decode depends on at install time.
+        dep_rels: Vec<String>,
+    }
+    let mut planned_variants = Vec::<PlannedVariant>::new();
+    let mut base_extra_ids = std::collections::BTreeMap::<String, BTreeSet<u32>>::new();
+    for rel in &prep_rels {
+        let Some(name) = rel
+            .strip_prefix("Characters/")
+            .and_then(|n| n.strip_suffix(".rhs"))
+        else {
+            continue;
+        };
+        let Some(base_name) = variant_base_names.get(&name.to_ascii_lowercase()) else {
+            continue;
+        };
+        let base_rel = resolve_family_hub_rel(
+            &prep_rels,
+            &rhs_preps,
+            &mut loaded_base_script_orders,
+            &in_path,
+            base_name,
+            rel,
+        )?;
+        // Second hub, when this member is third-or-later in a star-2 family.
+        let base2_rel = match variant_base2_names.get(&name.to_ascii_lowercase()) {
+            Some(hub2_name) => Some(resolve_family_hub_rel(
+                &prep_rels,
+                &rhs_preps,
+                &mut loaded_base_script_orders,
+                &in_path,
+                hub2_name,
+                rel,
+            )?),
+            None => None,
+        };
+        let hub_script = |hub_rel: &str| {
+            rhs_preps
+                .get(hub_rel)
+                .map(|prep| prep.script_order.as_slice())
+                .or_else(|| loaded_base_script_orders.get(hub_rel).map(Vec::as_slice))
+                .expect("hub script order resolved above")
+        };
+        let variant_prep = rhs_preps.get(rel).expect("prep listed in prep_rels");
+        // Positional pairing over the script frame-id tables (the variant's
+        // tables mirror each hub's 1:1); duplicated variant frames that pair
+        // with conflicting hub frames fall back per hub.
+        let pair_base = positional_pair_map(&variant_prep.script_order, hub_script(&base_rel));
+        let pair_base2 = base2_rel
+            .as_deref()
+            .map(|hub2_rel| positional_pair_map(&variant_prep.script_order, hub_script(hub2_rel)));
+        let mut base_ids = std::collections::BTreeMap::<u32, u32>::new();
+        let mut base2_ids = std::collections::BTreeMap::<u32, u32>::new();
+        let mut hub1_used = BTreeSet::<u32>::new();
+        let mut hub2_used = BTreeSet::<u32>::new();
+        let (mut vq_total, mut unbased) = (0usize, 0usize);
+        for &vid in &variant_prep.used_sprite_ids {
+            let sprite = holder.sprites().get(vid as usize).ok_or_else(|| {
+                anyhow!("RHS {rel} references sprite {vid} beyond the shipping bank")
+            })?;
+            let Some(packed) = holder.packed_data(vid) else {
+                continue;
+            };
+            if sprite.dictionary_index == UNMAPPED_DICT
+                || vq_grid_words(sprite.width, sprite.height) != Some(packed.len())
+            {
+                continue;
+            }
+            vq_total += 1;
+            let aligned = |bid: &u32| {
+                let Some(base_sprite) = holder.sprites().get(*bid as usize) else {
+                    return false;
+                };
+                let Some(base_packed) = holder.packed_data(*bid) else {
+                    return false;
+                };
+                base_sprite.dictionary_index != UNMAPPED_DICT
+                    && (base_sprite.width, base_sprite.height) == (sprite.width, sprite.height)
+                    && base_packed.len() == packed.len()
+            };
+            let b1 = pair_base.get(&vid).copied().filter(aligned);
+            let b2 = pair_base2
+                .as_ref()
+                .and_then(|pairs| pairs.get(&vid))
+                .copied()
+                .filter(aligned);
+            // The probe's `code3` ladder: both aligned predecessors when
+            // possible; a sprite aligning with only one hub takes that hub as
+            // its single base (base ids are plain bank ids, so a hub2 sprite
+            // works as a primary base); otherwise standalone.
+            match (b1, b2) {
+                (Some(b1), Some(b2)) => {
+                    base_ids.insert(vid, b1);
+                    base2_ids.insert(vid, b2);
+                    hub1_used.insert(b1);
+                    hub2_used.insert(b2);
+                }
+                (Some(b1), None) => {
+                    base_ids.insert(vid, b1);
+                    hub1_used.insert(b1);
+                }
+                (None, Some(b2)) => {
+                    base_ids.insert(vid, b2);
+                    hub2_used.insert(b2);
+                }
+                (None, None) => unbased += 1,
+            }
+        }
+        if base_ids.is_empty() || unbased * 10 > vq_total {
+            tracing::info!(
+                rhs = rel.as_str(),
+                base = base_rel.as_str(),
+                base2 = base2_rel.as_deref().unwrap_or(""),
+                vq = vq_total,
+                unbased,
+                "family variant pairs poorly with its hubs; coding standalone"
+            );
+            continue;
+        }
+        base_extra_ids
+            .entry(base_rel.clone())
+            .or_default()
+            .extend(hub1_used.iter().copied());
+        if let Some(hub2_rel) = base2_rel.as_ref().filter(|_| !hub2_used.is_empty()) {
+            base_extra_ids
+                .entry(hub2_rel.clone())
+                .or_default()
+                .extend(hub2_used.iter().copied());
+        }
+        // Dependency edges: hub1 always (hub2's own chunk decodes against
+        // hub1, so hub1 must be in the closure whenever hub2 is), plus hub2
+        // when any of its grids are referenced.
+        let mut dep_rels = vec![base_rel.clone()];
+        if let Some(hub2_rel) = base2_rel.as_ref().filter(|_| !hub2_used.is_empty()) {
+            dep_rels.push(hub2_rel.clone());
+        }
+        planned_variants.push(PlannedVariant {
+            rel: rel.clone(),
+            base_rel,
+            base_ids,
+            base2_rel: base2_rel.filter(|_| !base2_ids.is_empty()),
+            base2_ids,
+            dep_rels,
+        });
+    }
+    // Variant chunk -> family-hub chunks. Every dependency list that names a
+    // variant chunk must also name its hub chunks: the runtime decodes the
+    // variant grids against the hubs' materialized grids at install time.
+    let mut rhs_base_dep = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for planned in planned_variants {
+        rhs_base_dep.insert(planned.rel.clone(), planned.dep_rels);
+        let prep = rhs_preps
+            .get_mut(&planned.rel)
+            .expect("variant prep exists");
+        prep.base_rel = Some(planned.base_rel);
+        prep.base_ids = planned.base_ids;
+        prep.base2_rel = planned.base2_rel;
+        prep.base2_ids = planned.base2_ids;
+    }
+    // The hub grids a variant decodes against must ship in the hub chunks
+    // even when no mission profile reaches them (or the whole hub RHS).
+    // TODO: extra grids landing in a hub2 chunk that is itself a planned
+    // variant are coded standalone within that chunk (its own base pairing
+    // was fixed before the extras arrived); pairing them against hub1 too
+    // would shave a little more.
+    for (base_rel, extra) in base_extra_ids {
+        match rhs_preps.get_mut(&base_rel) {
+            Some(prep) => prep.used_sprite_ids.extend(extra),
+            None => {
+                tracing::info!(
+                    rhs = base_rel.as_str(),
+                    sprites = extra.len(),
+                    "synthesizing sprite-only family-hub chunk"
+                );
+                rhs_preps.insert(
+                    base_rel.clone(),
+                    RhsChunkPrep {
+                        rhs_data: None,
+                        matched_profiles: 0,
+                        script_order: Vec::new(),
+                        used_sprite_ids: extra,
+                        base_rel: None,
+                        base_ids: std::collections::BTreeMap::new(),
+                        base2_rel: None,
+                        base2_ids: std::collections::BTreeMap::new(),
+                    },
+                );
+            }
+        }
+    }
+
+    // Phase C: assemble the chunk payloads. `encode_grids` dominates this
+    // stage, so it runs on the bounded worker pool.
+    let built_payloads = compression_pool.install(|| {
+        rhs_preps
+            .par_iter()
+            .map(|(rel, prep)| {
+                Ok((
+                    rel.clone(),
+                    build_rhs_chunk_payload(&holder, dict_remaps.as_deref(), rel, prep)?,
+                ))
+            })
+            .collect::<Vec<Result<(String, ShippingMission)>>>()
+    });
+    let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    for built in built_payloads {
+        let (rel, payload) = built?;
+        rhs_payloads.insert(rel, payload);
+    }
+
+    // Resolve only the terrain and loading art the original runtime can open
+    // for this mission. Keep each logical source asset in its own shared
+    // payload so missions that reuse a city also reuse one HTTP-cache key.
+    let mut encoded_level_assets = std::collections::BTreeMap::<String, Vec<u8>>::new();
+    let mut level_asset_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
     for build in mission_builds.values_mut() {
         for map in &build.map_names {
-            for sub in ["Day", "Night", "Fog"] {
-                for ext in [".map", ".min"] {
-                    let rel = format!("Levels/{sub}/{map}{ext}");
-                    let Some(path) = in_path(&rel) else { continue };
+            for ext in [".map", ".min"] {
+                let rel = level_asset_rel_existing(build.ambiance, map, ext, &in_path)?;
+                let path = in_path(&rel)
+                    .ok_or_else(|| anyhow!("resolved shipping level asset disappeared: {rel}"))?;
+                let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
+                    bytes.clone()
+                } else {
                     let bytes = match (ext, opts.map_format) {
                         (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&path, None)?,
                         (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&path, Some(90))?,
@@ -1568,18 +2809,32 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                         }
                         _ => fs::read(&path)?,
                     };
-                    build.payload.raw.insert(rel.to_ascii_lowercase(), bytes);
-                }
+                    encoded_level_assets.insert(rel.clone(), bytes.clone());
+                    bytes
+                };
+                level_asset_payloads
+                    .entry(rel.clone())
+                    .or_default()
+                    .raw
+                    .insert(rel.to_ascii_lowercase(), bytes);
+                build.level_asset_keys.insert(rel);
             }
         }
-        for ambiance in [1, 2, 4] {
-            let rel = format!("Levels/{ambiance:02}/{}.pak", build.proto_filename);
-            if let Some(path) = in_path(&rel) {
-                build
-                    .payload
-                    .raw
-                    .insert(rel.to_ascii_lowercase(), transcode_pak_drop_bzip(&path)?);
-            }
+        let rel = format!("Levels/{:02}/{}.pak", build.ambiance, build.proto_filename);
+        if let Some(path) = in_path(&rel) {
+            let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
+                bytes.clone()
+            } else {
+                let bytes = transcode_pak_drop_bzip(&path)?;
+                encoded_level_assets.insert(rel.clone(), bytes.clone());
+                bytes
+            };
+            level_asset_payloads
+                .entry(rel.clone())
+                .or_default()
+                .raw
+                .insert(rel.to_ascii_lowercase(), bytes);
+            build.level_asset_keys.insert(rel);
         }
     }
 
@@ -1639,29 +2894,455 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // shared RHS files avoid duplicating heroes/accessories across missions.
     let mission_dir = data_out.join("missions");
     let rhs_dir = data_out.join("rhs");
+    let terrain_dir = data_out.join("terrain");
+    let audio_dir = data_out.join("audio");
     fs::create_dir_all(&mission_dir)?;
     fs::create_dir_all(&rhs_dir)?;
+    fs::create_dir_all(&terrain_dir)?;
+    fs::create_dir_all(&audio_dir)?;
+    let encoded_level_assets = compression_pool.install(|| {
+        level_asset_payloads
+            .into_par_iter()
+            .map(|(rel, payload)| {
+                let (filename, compressed) = prepare_shipping_payload(
+                    &terrain_dir,
+                    &rel,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                write_prepared_shipping_payload(&terrain_dir, &filename, compressed)?;
+                Ok((rel, format!("terrain/{filename}")))
+            })
+            .collect::<Vec<Result<(String, String)>>>()
+    });
+    let mut level_asset_files = std::collections::BTreeMap::<String, String>::new();
+    for encoded in encoded_level_assets {
+        let (rel, filename) = encoded?;
+        level_asset_files.insert(rel, filename);
+    }
+    let encoded_rhs = compression_pool.install(|| {
+        rhs_payloads
+            .into_par_iter()
+            .map(|(rel, payload)| {
+                let (filename, compressed) = prepare_shipping_payload(
+                    &rhs_dir,
+                    &rel,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                write_prepared_shipping_payload(&rhs_dir, &filename, compressed)?;
+                Ok((rel, filename))
+            })
+            .collect::<Vec<Result<(String, String)>>>()
+    });
     let mut rhs_files = std::collections::BTreeMap::<String, String>::new();
-    for (rel, payload) in rhs_payloads {
-        let compressed = encode_shipping_payload(&payload, opts.zstd_window_log)?;
-        let filename = shipping_payload_filename(&rel, &compressed);
+    for encoded in encoded_rhs {
+        let (rel, filename) = encoded?;
         let relative = format!("rhs/{filename}");
-        let path = rhs_dir.join(&filename);
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
         rhs_files.insert(rel, relative);
     }
-    for (mission_name, build) in mission_builds {
-        let compressed = encode_shipping_payload(&build.payload, opts.zstd_window_log)?;
-        let filename = shipping_payload_filename(&mission_name, &compressed);
+    // A dependency on a family-variant chunk implies its hub chunk(s): the
+    // runtime decodes the variant's VQ grids against the hubs' at install
+    // (star-2 chunks depend on both hubs).
+    let rhs_chunk_files = |rel: &str| -> Result<Vec<String>> {
+        let mut chunk_files = Vec::with_capacity(3);
+        let file = rhs_files
+            .get(rel)
+            .ok_or_else(|| anyhow!("missing shipping RHS payload {rel}"))?;
+        chunk_files.push(file.clone());
+        for base_rel in rhs_base_dep.get(rel).into_iter().flatten() {
+            let base_file = rhs_files.get(base_rel).ok_or_else(|| {
+                anyhow!("missing shipping RHS family-hub payload {base_rel} (required by {rel})")
+            })?;
+            chunk_files.push(base_file.clone());
+        }
+        Ok(chunk_files)
+    };
+    for (profile_index, requirements) in character_rhs_requirements {
+        let mut files = Vec::with_capacity(requirements.len());
+        for rel in requirements.keys() {
+            files.extend(rhs_chunk_files(rel).with_context(|| {
+                format!("character profile {profile_index} RHS dependency {rel}")
+            })?);
+        }
+        files.sort();
+        files.dedup();
+        dd.character_rhs_files.insert(profile_index, files);
+    }
+    for rel in saved_world_rhs_requirements.keys() {
+        dd.saved_world_rhs_files.extend(
+            rhs_chunk_files(rel)
+                .with_context(|| format!("saved-world compatibility RHS dependency {rel}"))?,
+        );
+    }
+    dd.saved_world_rhs_files.sort();
+    dd.saved_world_rhs_files.dedup();
+
+    // Source-format audio remains in dependency payloads for native builds.
+    // Opus browser audio is cataloged as standalone content-addressed files;
+    // these payloads then retain only small blocking metadata such as FXG and
+    // exclamation DAT files.
+    let mut common_audio = ShippingMission::default();
+    let sounds_root = data_in.join("Sounds");
+    if sounds_root.is_dir() {
+        let mut files = Vec::new();
+        collect_files_recursive(&sounds_root, &mut files)?;
+        files.sort();
+        for path in files {
+            let relative = path
+                .strip_prefix(&sounds_root)
+                .expect("collected sound must remain below Sounds")
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            if relative.starts_with("menu/") || relative.starts_with("exclamations/") {
+                continue;
+            }
+            insert_shipping_audio(
+                &mut common_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                &format!("Sounds/{relative}"),
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
+        }
+    }
+    let common_audio_file = write_shipping_dependency(
+        &audio_dir,
+        "common-sfx",
+        &common_audio,
+        opts.zstd_window_log,
+        opts.resume,
+    )?;
+
+    // Mission-authored exclamation profiles must resolve completely; ids
+    // that only appear in the all-profiles character manifest index may be
+    // absent from a trimmed (demo) datadir and are then dropped from the
+    // manifest instead of failing the conversion.
+    let mission_exclamation_ids: BTreeSet<u32> = mission_builds
+        .values()
+        .flat_map(|build| build.required_exclamation_ids.iter().copied())
+        .collect();
+    let mut dropped_exclamation_ids = BTreeSet::<u32>::new();
+    let mut required_exclamation_ids: BTreeSet<u32> = mission_builds
+        .values()
+        .flat_map(|build| build.required_exclamation_ids.iter().copied())
+        .chain(
+            character_exclamation_ids
+                .iter()
+                .copied()
+                .filter(|id| *id != 0),
+        )
+        .collect();
+    let mut exclamation_metadata = ShippingMission::default();
+    let exclamation_root = data_in.join("Sounds/Exclamations");
+    if exclamation_root.is_dir() {
+        let mut files = Vec::new();
+        collect_files_recursive(&exclamation_root, &mut files)?;
+        files.sort();
+        for path in files {
+            // actors.res is already represented authoritatively in
+            // `ShippingDatadir::res_files`; voice WAVs are actor chunks below.
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or_default();
+            if extension.eq_ignore_ascii_case("dat") {
+                let relative = path
+                    .strip_prefix(&data_in)
+                    .expect("base exclamation metadata must remain below Data")
+                    .to_string_lossy();
+                insert_shipping_raw(&mut exclamation_metadata, &relative, &path)?;
+            }
+        }
+    }
+    // A localized install may put actor tables in its locale overlay rather
+    // than the base Exclamations directory. Ensure every referenced table is
+    // mounted under the logical path used by the runtime.
+    for exclamation_id in &required_exclamation_ids {
+        let dat_rel = format!(
+            "Sounds/Exclamations/{}",
+            exclamation_dat_filename(*exclamation_id)
+        );
+        if let Some(path) = in_path(&dat_rel) {
+            insert_shipping_raw(&mut exclamation_metadata, &dat_rel, &path)?;
+        }
+    }
+    let actors_res_path = in_path("Sounds/Exclamations/actors.res")
+        .ok_or_else(|| anyhow!("Sounds/Exclamations/actors.res missing"))?;
+    let mut actors_res = ResourceManager::new();
+    actors_res.attach_resource_file(&actors_res_path.to_string_lossy())?;
+    let mut actor_samples = std::collections::BTreeMap::<u32, Vec<(String, PathBuf)>>::new();
+    let mut sample_profile_counts = std::collections::BTreeMap::<String, usize>::new();
+    'ids: for &exclamation_id in &required_exclamation_ids {
+        let strict = mission_exclamation_ids.contains(&exclamation_id);
+        let dat_filename = exclamation_dat_filename(exclamation_id);
+        let dat_rel = format!("Sounds/Exclamations/{dat_filename}");
+        let dat_path = match in_path(&dat_rel) {
+            Some(path) => path,
+            None if strict => bail!(
+                "required exclamation profile {exclamation_id:#010x} is missing metadata {dat_rel}"
+            ),
+            None => {
+                tracing::warn!(
+                    "exclamation profile {exclamation_id:#010x} has no metadata {dat_rel} in this datadir; omitting from manifest index"
+                );
+                dropped_exclamation_ids.insert(exclamation_id);
+                continue 'ids;
+            }
+        };
+        let dat = fs::read(&dat_path)
+            .with_context(|| format!("read exclamation metadata {}", dat_path.display()))?;
+        let prefix_id = exclamation_id & 0xffff_0000;
+        let (table_id, exclamations) =
+            robin_engine::sound_cache::parse_exclamation_file(&dat, prefix_id)
+                .map_err(|error| anyhow!("parse exclamation metadata {dat_filename}: {error}"))?;
+        let variant_indices: BTreeSet<u32> = exclamations
+            .into_iter()
+            .flat_map(|(_, variants)| variants)
+            .collect();
+        let mut samples = Vec::with_capacity(variant_indices.len());
+        for variant_index in variant_indices {
+            let sample = actors_res
+                .get_sample(table_id as i32, variant_index as usize)
+                .with_context(|| {
+                    format!("resolve exclamation {exclamation_id:#010x} variant {variant_index}")
+                })?
+                .replace('\\', "/");
+            let sample_rel = format!("Sounds/Exclamations/{sample}");
+            let sample_path = match in_path(&sample_rel) {
+                Some(path) => path,
+                None if strict => bail!(
+                    "required exclamation profile {exclamation_id:#010x} variant {variant_index} references missing sample {sample_rel}"
+                ),
+                None => {
+                    tracing::warn!(
+                        "exclamation profile {exclamation_id:#010x} references missing sample {sample_rel} in this datadir; omitting from manifest index"
+                    );
+                    dropped_exclamation_ids.insert(exclamation_id);
+                    continue 'ids;
+                }
+            };
+            samples.push((sample_rel.clone(), sample_path));
+        }
+        for (sample_rel, _) in &samples {
+            *sample_profile_counts.entry(sample_rel.clone()).or_default() += 1;
+        }
+        actor_samples.insert(exclamation_id, samples);
+    }
+    required_exclamation_ids.retain(|id| !dropped_exclamation_ids.contains(id));
+
+    // A handful of generic samples (notably x_empty.wav) are referenced by
+    // multiple actor tables. Store those once in the shared exclamation
+    // payload rather than downloading duplicate bytes or mounting duplicate
+    // VFS keys from several actor chunks.
+    for (sample_rel, profile_count) in &sample_profile_counts {
+        if *profile_count > 1 {
+            let sample_path = in_path(sample_rel).ok_or_else(|| {
+                anyhow!("shared exclamation sample disappeared during conversion: {sample_rel}")
+            })?;
+            insert_shipping_audio(
+                &mut exclamation_metadata,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                sample_rel,
+                &sample_path,
+                AudioKind::Voice,
+                opts.audio_format,
+            )?;
+        }
+    }
+    let exclamation_metadata_file = write_shipping_dependency(
+        &audio_dir,
+        "exclamation-metadata",
+        &exclamation_metadata,
+        opts.zstd_window_log,
+        opts.resume,
+    )?;
+
+    let mut actor_voice_files = std::collections::BTreeMap::<u32, String>::new();
+    for exclamation_id in required_exclamation_ids {
+        let mut actor_audio = ShippingMission::default();
+        let samples = actor_samples.remove(&exclamation_id).ok_or_else(|| {
+            anyhow!("missing resolved sample set for exclamation profile {exclamation_id:#010x}")
+        })?;
+        for (sample_rel, sample_path) in samples {
+            if sample_profile_counts.get(&sample_rel).copied().unwrap_or(0) == 1 {
+                insert_shipping_audio(
+                    &mut actor_audio,
+                    &mut dd.audio_assets,
+                    &audio_assets_dir,
+                    &sample_rel,
+                    &sample_path,
+                    AudioKind::Voice,
+                    opts.audio_format,
+                )?;
+            }
+        }
+        if let Some(relative) = write_shipping_dependency(
+            &audio_dir,
+            &format!("voice-{exclamation_id:08x}"),
+            &actor_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            actor_voice_files.insert(exclamation_id, relative);
+        }
+    }
+
+    for (profile_index, exclamation_id) in character_exclamation_ids.into_iter().enumerate() {
+        let profile_index =
+            u32::try_from(profile_index).context("character profile index exceeds u32")?;
+        let files = actor_voice_files
+            .get(&exclamation_id)
+            .cloned()
+            .into_iter()
+            .collect();
+        dd.character_audio_files.insert(profile_index, files);
+        if exclamation_id != 0 && !dropped_exclamation_ids.contains(&exclamation_id) {
+            dd.character_exclamation_ids
+                .insert(profile_index, exclamation_id);
+        }
+    }
+
+    let encoded_missions = compression_pool.install(|| {
+        mission_builds
+            .into_par_iter()
+            .map(|(mission_name, build)| {
+                let ShippingMissionBuild {
+                    payload,
+                    required_rhs_profiles,
+                    required_exclamation_ids,
+                    music_names,
+                    dialogue_samples,
+                    level_asset_keys,
+                    forest_level,
+                    ..
+                } = build;
+                let (filename, compressed) = prepare_shipping_payload(
+                    &mission_dir,
+                    &mission_name,
+                    &payload,
+                    opts.zstd_window_log,
+                    opts.resume,
+                )?;
+                let compressed_len =
+                    write_prepared_shipping_payload(&mission_dir, &filename, compressed)?;
+                Ok((
+                    mission_name,
+                    filename,
+                    compressed_len,
+                    required_rhs_profiles,
+                    required_exclamation_ids,
+                    music_names,
+                    dialogue_samples,
+                    level_asset_keys,
+                    forest_level,
+                ))
+            })
+            .collect::<Vec<Result<_>>>()
+    });
+    for encoded in encoded_missions {
+        let (
+            mission_name,
+            filename,
+            compressed_len,
+            required_rhs_profiles,
+            required_exclamation_ids,
+            music_names,
+            dialogue_samples,
+            level_asset_keys,
+            forest_level,
+        ) = encoded?;
         let relative = format!("missions/{filename}");
-        let compressed_len = compressed.len();
-        let path = mission_dir.join(&filename);
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
         let mut files = vec![relative.clone()];
-        for rel in build.required_rhs_profiles.keys() {
-            if let Some(file) = rhs_files.get(rel) {
+        for rel in level_asset_keys {
+            let file = level_asset_files.get(&rel).ok_or_else(|| {
+                anyhow!("shipping mission {mission_name} requires missing terrain payload {rel}")
+            })?;
+            files.push(file.clone());
+        }
+        for rel in required_rhs_profiles.keys() {
+            files.extend(
+                rhs_chunk_files(rel)
+                    .with_context(|| format!("shipping mission {mission_name} RHS dependency"))?,
+            );
+        }
+        if let Some(file) = common_audio_file.as_ref() {
+            files.push(file.clone());
+        }
+        if let Some(file) = exclamation_metadata_file.as_ref() {
+            files.push(file.clone());
+        }
+        for exclamation_id in &required_exclamation_ids {
+            if let Some(file) = actor_voice_files.get(exclamation_id) {
                 files.push(file.clone());
             }
+        }
+        let mut dialogue_audio = ShippingMission::default();
+        for sample_rel in &dialogue_samples {
+            let sample_path = in_path(sample_rel).ok_or_else(|| {
+                anyhow!(
+                    "shipping mission {mission_name} references missing dialogue sample {sample_rel}"
+                )
+            })?;
+            insert_shipping_audio(
+                &mut dialogue_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                sample_rel,
+                &sample_path,
+                AudioKind::Voice,
+                opts.audio_format,
+            )?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-dialogue",
+            &dialogue_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
+        }
+        let mut music_audio = ShippingMission::default();
+        for name in &music_names {
+            // SoundManager requests `.wav`, but the Linux release ships Ogg
+            // and the audio backend deliberately falls back between them.
+            // Preserve whichever real file the source datadir provides.
+            let (relative, path) = ["wav", "ogg"]
+                .into_iter()
+                .find_map(|extension| {
+                    let relative = format!("Musics/{name}.{extension}");
+                    in_path(&relative).map(|path| (relative, path))
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "shipping mission {mission_name} references missing music Musics/{name}.{{wav,ogg}}"
+                    )
+                })?;
+            insert_shipping_audio(
+                &mut music_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                &relative,
+                &path,
+                AudioKind::Music,
+                opts.audio_format,
+            )?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-music",
+            &music_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
         }
         tracing::info!(
             mission = mission_name,
@@ -1670,8 +3351,19 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             file = relative,
             "wrote shipping mission payload"
         );
-        dd.missions
-            .insert(mission_name, ShippingMissionRef { files });
+        dd.mission_exclamation_ids.insert(
+            mission_name.clone(),
+            required_exclamation_ids.iter().copied().collect(),
+        );
+        files.sort();
+        files.dedup();
+        dd.missions.insert(
+            mission_name,
+            ShippingMissionRef {
+                forest_level,
+                files,
+            },
+        );
     }
 
     // Serialize + compress with the configured window log.
@@ -1681,10 +3373,11 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         robin_assets::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
     fs::write(&out_file, compressed).with_context(|| format!("write {}", out_file.display()))?;
     tracing::info!(
-        "wrote {} (windowLog={}, map={:?})",
+        "wrote {} (windowLog={}, map={:?}, audio={:?})",
         out_file.display(),
         opts.zstd_window_log,
-        opts.map_format
+        opts.map_format,
+        opts.audio_format
     );
     Ok(())
 }
@@ -1701,19 +3394,415 @@ fn shipping_file_stem(name: &str) -> String {
         .collect()
 }
 
-fn shipping_payload_filename(name: &str, compressed: &[u8]) -> String {
+fn shipping_payload_filename(name: &str, window_log: u32, compressed: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     let digest = Sha256::digest(compressed);
     let hash: String = digest[..6]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    format!("{}-{hash}.rhmission.zst", shipping_file_stem(name))
+    format!(
+        "{}-w{window_log}-{hash}.rhmission.zst",
+        shipping_file_stem(name)
+    )
 }
 
 fn encode_shipping_payload(payload: &ShippingMission, window_log: u32) -> Result<Vec<u8>> {
     let encoded = robin_assets::shipping_datadir::encode_mission_native(payload);
     robin_assets::shipping_datadir::zstd_compress_with_window(&encoded, window_log)
+}
+
+fn write_prepared_shipping_payload(
+    output_dir: &Path,
+    filename: &str,
+    compressed: Option<Vec<u8>>,
+) -> Result<usize> {
+    let path = output_dir.join(filename);
+    if let Some(compressed) = compressed {
+        let len = compressed.len();
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        Ok(len)
+    } else {
+        Ok(fs::metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?
+            .len() as usize)
+    }
+}
+
+/// Return a validated existing content filename, or freshly compressed bytes
+/// and their content-addressed filename. Reuse compares the complete decoded
+/// native-bitcode payload, so an interrupted run cannot accidentally mix
+/// schemas, source data, or converter options.
+fn prepare_shipping_payload(
+    output_dir: &Path,
+    label: &str,
+    payload: &ShippingMission,
+    window_log: u32,
+    resume: bool,
+) -> Result<(String, Option<Vec<u8>>)> {
+    if resume {
+        let prefix = format!("{}-w{window_log}-", shipping_file_stem(label));
+        let expected = robin_assets::shipping_datadir::encode_mission_native(payload);
+        let mut candidates = fs::read_dir(output_dir)
+            .with_context(|| format!("read_dir {}", output_dir.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(&prefix) && name.ends_with(".rhmission.zst")
+                    })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        for path in candidates {
+            let compressed = match fs::read(&path) {
+                Ok(compressed) => compressed,
+                Err(_) => continue,
+            };
+            let decoded =
+                match robin_assets::shipping_datadir::decode_mission_compressed(&compressed) {
+                    Ok(decoded) => decoded,
+                    Err(_) => continue,
+                };
+            if robin_assets::shipping_datadir::encode_mission_native(&decoded) == expected {
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("candidate shipping filename was valid UTF-8")
+                    .to_owned();
+                tracing::info!(label, filename, "reused validated shipping payload");
+                return Ok((filename, None));
+            }
+        }
+    }
+
+    let compressed = encode_shipping_payload(payload, window_log)?;
+    let filename = shipping_payload_filename(label, window_log, &compressed);
+    Ok((filename, Some(compressed)))
+}
+
+fn collect_files_recursive(src: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn insert_shipping_raw(payload: &mut ShippingMission, relative: &str, path: &Path) -> Result<()> {
+    let relative = relative.replace('\\', "/").to_ascii_lowercase();
+    let bytes = fs::read(path).with_context(|| format!("read audio {}", path.display()))?;
+    if let Some(previous) = payload.raw.get(&relative) {
+        if previous != &bytes {
+            bail!("conflicting shipping audio sources for {relative}");
+        }
+    } else {
+        payload.raw.insert(relative, bytes);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AudioKind {
+    Voice,
+    Effect,
+    Music,
+}
+
+impl AudioKind {
+    fn bitrate_kbps(self) -> u32 {
+        match self {
+            Self::Voice => 24,
+            Self::Effect => 48,
+            Self::Music => 64,
+        }
+    }
+
+    fn opus_application(self) -> &'static str {
+        match self {
+            Self::Voice => "voip",
+            Self::Effect | Self::Music => "audio",
+        }
+    }
+}
+
+fn insert_shipping_audio(
+    payload: &mut ShippingMission,
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
+    relative: &str,
+    path: &Path,
+    kind: AudioKind,
+    format: AudioFormat,
+) -> Result<()> {
+    let is_audio = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("wav") || extension.eq_ignore_ascii_case("ogg")
+        });
+    if !is_audio {
+        return insert_shipping_raw(payload, relative, path);
+    }
+
+    let source = fs::read(path).with_context(|| format!("read audio {}", path.display()))?;
+    let duration_ms = robin_rs::audio_backend::wav_duration_ms(&source).ok_or_else(|| {
+        anyhow!(
+            "cannot derive authoritative audio duration for {}",
+            path.display()
+        )
+    })?;
+    match format {
+        AudioFormat::Source => {
+            let relative = relative.replace('\\', "/").to_ascii_lowercase();
+            if let Some(previous) = payload.raw.get(&relative) {
+                if previous != &source {
+                    bail!("conflicting shipping audio sources for {relative}");
+                }
+            } else {
+                payload.raw.insert(relative.clone(), source);
+            }
+            insert_audio_duration(&mut payload.audio_durations_ms, relative, duration_ms)
+        }
+        AudioFormat::Opus => {
+            let logical = standalone_audio_logical_key(relative);
+            if let Some(existing) = catalog.get(&logical) {
+                if existing.duration_ms != duration_ms {
+                    bail!(
+                        "conflicting source durations for standalone shipping audio {logical}: {} vs {duration_ms}",
+                        existing.duration_ms
+                    );
+                }
+                return Ok(());
+            }
+            let bytes = transcode_audio_to_opus(path, kind)?;
+            insert_standalone_audio(catalog, assets_dir, relative, &bytes, duration_ms)
+        }
+    }
+}
+
+fn insert_standalone_audio(
+    catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
+    assets_dir: &Path,
+    relative: &str,
+    bytes: &[u8],
+    duration_ms: u32,
+) -> Result<()> {
+    let encoded_size =
+        u32::try_from(bytes.len()).context("standalone Opus asset exceeds u32 byte length")?;
+    let logical = standalone_audio_logical_key(relative);
+    let filename = standalone_audio_filename(bytes);
+    let output = assets_dir.join(&filename);
+    if output.exists() {
+        let existing = fs::read(&output)
+            .with_context(|| format!("read existing audio asset {}", output.display()))?;
+        if existing != bytes {
+            bail!("content-addressed audio collision at {}", output.display());
+        }
+    } else {
+        fs::write(&output, bytes)
+            .with_context(|| format!("write audio asset {}", output.display()))?;
+    }
+    let asset = ShippingAudioAsset {
+        file: format!("audio/assets/{filename}"),
+        encoded_size,
+        duration_ms,
+    };
+    match catalog.entry(logical) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(asset);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &asset => {}
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!(
+                "conflicting standalone shipping audio for {}: {:?} vs {asset:?}",
+                entry.key(),
+                entry.get()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn standalone_audio_logical_key(relative: &str) -> String {
+    Path::new(&robin_util::asset_fs::bundle_key(Path::new(relative)))
+        .with_extension("opus")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn insert_audio_duration(
+    durations: &mut std::collections::BTreeMap<String, u32>,
+    relative: String,
+    duration_ms: u32,
+) -> Result<()> {
+    match durations.entry(relative) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(duration_ms);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if *entry.get() == duration_ms => {}
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!(
+                "conflicting source durations for shipping audio {}: {} vs {duration_ms}",
+                entry.key(),
+                entry.get()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn standalone_audio_filename(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(bytes);
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{hash}.opus")
+}
+
+/// Encode through FFmpeg's mature libopus integration, then remux the packets
+/// with a fixed Ogg stream serial and vendor packet. FFmpeg randomizes Ogg
+/// serials, which would otherwise make content-addressed shipping chunks and
+/// `--resume` nondeterministic even when the encoded Opus packets are equal.
+fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Result<Vec<u8>> {
+    use std::io::Cursor;
+
+    let bitrate = format!("{}k", kind.bitrate_kbps());
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(source_path)
+        .args([
+            "-map_metadata",
+            "-1",
+            "-vn",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            &bitrate,
+            "-vbr",
+            "on",
+            "-compression_level",
+            "10",
+            "-frame_duration",
+            "20",
+            "-application",
+            kind.opus_application(),
+            "-f",
+            "ogg",
+            "pipe:1",
+        ])
+        .output()
+        .context("run ffmpeg with libopus support (is ffmpeg installed?)")?;
+    if !output.status.success() {
+        bail!(
+            "ffmpeg Opus encode failed for {} ({}): {}",
+            source_path.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let mut reader = ogg::PacketReader::new(Cursor::new(output.stdout));
+    let mut packets = Vec::new();
+    while let Some(packet) = reader
+        .read_packet()
+        .with_context(|| format!("parse ffmpeg Ogg output for {}", source_path.display()))?
+    {
+        packets.push(packet);
+    }
+    if packets
+        .first()
+        .is_none_or(|packet| !packet.data.starts_with(b"OpusHead"))
+    {
+        bail!(
+            "ffmpeg produced non-Opus Ogg output for {}",
+            source_path.display()
+        );
+    }
+    if packets.len() < 3 {
+        bail!(
+            "ffmpeg produced incomplete Opus stream for {}",
+            source_path.display()
+        );
+    }
+    packets[1].data = deterministic_opus_tags();
+
+    let mut remuxed = Cursor::new(Vec::new());
+    {
+        use ogg::writing::{PacketWriteEndInfo, PacketWriter};
+        let mut writer = PacketWriter::new(&mut remuxed);
+        for packet in packets {
+            let absgp = packet.absgp_page();
+            let end = if packet.last_in_stream() {
+                PacketWriteEndInfo::EndStream
+            } else if packet.last_in_page() {
+                PacketWriteEndInfo::EndPage
+            } else {
+                PacketWriteEndInfo::NormalPacket
+            };
+            writer
+                .write_packet(packet.data, 0x5248_4f50, end, absgp)
+                .with_context(|| {
+                    format!("write deterministic Ogg for {}", source_path.display())
+                })?;
+        }
+    }
+    Ok(remuxed.into_inner())
+}
+
+fn deterministic_opus_tags() -> Vec<u8> {
+    const VENDOR: &[u8] = b"robinhood-web-shipping";
+    let mut tags = Vec::with_capacity(16 + VENDOR.len());
+    tags.extend_from_slice(b"OpusTags");
+    tags.extend_from_slice(&(VENDOR.len() as u32).to_le_bytes());
+    tags.extend_from_slice(VENDOR);
+    tags.extend_from_slice(&0u32.to_le_bytes());
+    tags
+}
+
+fn write_shipping_dependency(
+    output_dir: &Path,
+    label: &str,
+    payload: &ShippingMission,
+    window_log: u32,
+    resume: bool,
+) -> Result<Option<String>> {
+    if payload.raw.is_empty() {
+        return Ok(None);
+    }
+    let (filename, compressed) =
+        prepare_shipping_payload(output_dir, label, payload, window_log, resume)?;
+    let path = output_dir.join(&filename);
+    let compressed_len = if let Some(compressed) = compressed {
+        let compressed_len = compressed.len();
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        compressed_len
+    } else {
+        fs::metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?
+            .len() as usize
+    };
+    tracing::info!(
+        label,
+        files = payload.raw.len(),
+        bytes = compressed_len,
+        "wrote shipping audio dependency"
+    );
+    Ok(Some(format!("audio/{filename}")))
+}
+
+fn exclamation_dat_filename(exclamation_id: u32) -> String {
+    let suffix: String = exclamation_id
+        .to_le_bytes()
+        .into_iter()
+        .filter(|byte| *byte != 0)
+        .map(char::from)
+        .collect();
+    format!("actor{suffix}.dat")
 }
 
 /// Decode an `SBPictureSixteen` (`.map`) file and re-encode it as JXL via
@@ -1739,6 +3828,23 @@ fn is_interface_path(path: &str) -> bool {
         || normalized == "interface/loading.pak"
         || normalized.starts_with("interface/")
         || normalized.contains("/data/interface/")
+}
+
+/// Files represented authoritatively by parsed shipping fields, plus a legacy
+/// launcher slideshow that the Rust runtime never consumes. Keeping these raw
+/// copies doubles their decoded wasm heap cost without providing a fallback.
+fn omit_boot_raw(path: &str) -> bool {
+    matches!(
+        path.replace('\\', "/").to_ascii_lowercase().as_str(),
+        "interface/default.res"
+            | "text/level.res"
+            | "text/actors.res"
+            | "sounds/exclamations/actors.res"
+            | "configuration/profile.cpf"
+            | "configuration/keyset1.cfg"
+            | "configuration/keyset2.cfg"
+            | "interface/slideshow_in.pak"
+    )
 }
 
 fn encode_interface_pak_pictures(
@@ -1920,6 +4026,14 @@ fn walk_and_bundle_small(
             .to_string_lossy()
             .replace('\\', "/")
             .to_ascii_lowercase();
+        if omit_boot_raw(&rel) {
+            continue;
+        }
+        if ext == "red" {
+            // Every mission descriptor was parsed into `dd.red_files` above;
+            // raw fallback would duplicate it and undermine that invariant.
+            continue;
+        }
         if ext == "pak"
             && rel.starts_with("levels/")
             && !exts.iter().any(|candidate| *candidate == "rhm")
@@ -2100,11 +4214,14 @@ fn add_required_animation_rhs_profile(
     if sprite.frame_profile_name.is_empty() || sprite.profile_name.is_empty() {
         return;
     }
-    add_required_rhs_rel(
-        required,
-        animation_rhs_rel_existing(ambiance, &sprite.frame_profile_name, in_path),
-        &sprite.profile_name,
-    );
+    let rel = animation_rhs_rel_existing(ambiance, &sprite.frame_profile_name, in_path);
+    if in_path(&rel).is_some() {
+        add_required_rhs_rel(required, rel, &sprite.profile_name);
+    } else {
+        // TODO: Determine why a few stock level records name an RHS that is
+        // absent from every original animation directory.
+        tracing::warn!("source animation RHS is absent: {rel}");
+    }
 }
 
 fn animation_rhs_rel_existing(
@@ -2112,14 +4229,12 @@ fn animation_rhs_rel_existing(
     file: &str,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) -> String {
+    // Mission headers store the original AMBIANCE_* bit values, not a
+    // zero-based enum. Keep this identical to engine::Ambiance::from_raw()
+    // followed by to_sprite_ambiance(): attack/custom ambiances use Day RHS.
     let dir = match ambiance {
-        1 => "Fog",
-        2 => "Night",
-        3 => "Attack",
-        16 => "Custom1",
-        32 => "Custom2",
-        64 => "Custom3",
-        128 => "Custom4",
+        2 => "Fog",
+        4 => "Night",
         _ => "Day",
     };
     let primary = format!("Animations/{dir}/{file}.rhs");
@@ -2139,34 +4254,290 @@ fn animation_rhs_rel_existing(
     primary
 }
 
-fn existing_character_rhs_for_index(
+fn level_ambiance_directory(ambiance: u32) -> Result<&'static str> {
+    match ambiance {
+        1 => Ok("Day"),
+        2 => Ok("Fog"),
+        4 => Ok("Night"),
+        8 => Ok("Attack"),
+        16 => Ok("Custom1"),
+        32 => Ok("Custom2"),
+        64 => Ok("Custom3"),
+        128 => Ok("Custom4"),
+        _ => bail!("unknown mission ambiance bit value {ambiance}"),
+    }
+}
+
+/// Resolve a map or minimap exactly like the original engine: selected
+/// ambiance first, then Day, then the Levels root. Map and minimap are
+/// resolved independently because installs may place their fallbacks at
+/// different levels.
+fn level_asset_rel_existing(
+    ambiance: u32,
+    map: &str,
+    extension: &str,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+) -> Result<String> {
+    let directory = level_ambiance_directory(ambiance)?;
+    let mut candidates = vec![format!("Levels/{directory}/{map}{extension}")];
+    if directory != "Day" {
+        candidates.push(format!("Levels/Day/{map}{extension}"));
+    }
+    candidates.push(format!("Levels/{map}{extension}"));
+    candidates
+        .into_iter()
+        .find(|candidate| in_path(candidate).is_some())
+        .ok_or_else(|| {
+            anyhow!(
+                "required level asset {map}{extension} is absent from {directory}, Day, and Levels root"
+            )
+        })
+}
+
+/// Cap on sampled tiles per family-base proxy measurement: enough for a
+/// stable entropy estimate, small enough to keep conversion fast.
+const FAMILY_PROXY_TILE_CAP: u64 = 1_500_000;
+
+/// Conditional entropy in *total bits over all tiles* from 24-bit joint
+/// (ctx<<12|sym) counts, scaled from the sampled tile count to `full_tiles`.
+fn family_proxy_bits(
+    joint: &std::collections::HashMap<u32, u32>,
+    ctx_totals: &std::collections::HashMap<u16, u32>,
+    sampled: u64,
+    full_tiles: u64,
+) -> f64 {
+    if sampled == 0 {
+        return 0.0;
+    }
+    let mut bits = 0.0f64;
+    for (&k, &n) in joint {
+        let ctx_total = ctx_totals[&((k >> 12) as u16)] as f64;
+        bits -= n as f64 * (n as f64 / ctx_total).log2();
+    }
+    bits / sampled as f64 * full_tiles as f64
+}
+
+/// Resolve a family hub's chunk rel (reusing an existing prep's spelling when
+/// one matches case-insensitively) and ensure its full-profile script order is
+/// available — either from its prep or loaded into `loaded_orders`.
+fn resolve_family_hub_rel(
+    prep_rels: &[String],
+    rhs_preps: &std::collections::BTreeMap<String, RhsChunkPrep>,
+    loaded_orders: &mut std::collections::BTreeMap<String, Vec<u32>>,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+    hub_name: &str,
+    variant_rel: &str,
+) -> Result<String> {
+    let disk_rel = format!("Characters/{hub_name}.rhs");
+    let hub_rel = prep_rels
+        .iter()
+        .find(|rel| rel.eq_ignore_ascii_case(&disk_rel))
+        .cloned()
+        .unwrap_or(disk_rel);
+    if !rhs_preps.contains_key(&hub_rel) && !loaded_orders.contains_key(&hub_rel) {
+        let path = in_path(&hub_rel).ok_or_else(|| {
+            anyhow!(
+                "family hub RHS {hub_rel} (for variant {variant_rel}) is missing from the datadir"
+            )
+        })?;
+        let (_, profiles) =
+            sprite_script::SpriteScriptor::load_all_profiles(&path.to_string_lossy())
+                .map_err(|error| anyhow!("rhs {hub_rel}: {error}"))?;
+        let mut order = Vec::new();
+        for (_, info) in &profiles {
+            for script in info.scripts.iter() {
+                order.extend_from_slice(&script.frame_ids);
+            }
+        }
+        loaded_orders.insert(hub_rel.clone(), order);
+    }
+    Ok(hub_rel)
+}
+
+/// Positional variant->hub frame pairing over two script frame-id orders:
+/// zip, dedup, and drop variant frames that pair with conflicting hub frames
+/// (those fall back to weaker contexts per sprite).
+fn positional_pair_map(
+    variant_order: &[u32],
+    hub_order: &[u32],
+) -> std::collections::BTreeMap<u32, u32> {
+    let mut pairs: Vec<(u32, u32)> = variant_order
+        .iter()
+        .copied()
+        .zip(hub_order.iter().copied())
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut pair_map = std::collections::BTreeMap::<u32, u32>::new();
+    let mut conflicted = BTreeSet::<u32>::new();
+    for (vid, hid) in pairs {
+        match pair_map.get(&vid) {
+            Some(&existing) if existing != hid => {
+                conflicted.insert(vid);
+            }
+            Some(_) => {}
+            None => {
+                pair_map.insert(vid, hid);
+            }
+        }
+    }
+    for vid in &conflicted {
+        pair_map.remove(vid);
+    }
+    pair_map
+}
+
+/// Sampled H(tile | above) * tile-count for one family member coded
+/// standalone. `None` when an index doesn't fit the 12-bit proxy key.
+fn family_base_standalone_proxy(holder: &FrameHolder, script_order: &[u32]) -> Option<f64> {
+    let mut ids: Vec<u32> = script_order.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut joint = std::collections::HashMap::<u32, u32>::new();
+    let mut ctx_totals = std::collections::HashMap::<u16, u32>::new();
+    let mut sampled = 0u64;
+    let mut full_tiles = 0u64;
+    for &id in &ids {
+        let sprite = holder.sprites().get(id as usize)?;
+        if sprite.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let Some(packed) = holder.packed_data(id) else {
+            continue;
+        };
+        full_tiles += packed.len() as u64;
+        if sampled >= FAMILY_PROXY_TILE_CAP {
+            continue;
+        }
+        let cols = (sprite.width / 4) as usize;
+        for (i, &x) in packed.iter().enumerate().skip(cols) {
+            if x >= 4096 || packed[i - cols] >= 4096 {
+                return None;
+            }
+            *joint
+                .entry(((packed[i - cols] as u32) << 12) | x as u32)
+                .or_default() += 1;
+            *ctx_totals.entry(packed[i - cols]).or_default() += 1;
+            sampled += 1;
+        }
+    }
+    Some(family_proxy_bits(&joint, &ctx_totals, sampled, full_tiles))
+}
+
+/// Sampled H(member tile | candidate-base tile) * tile-count for coding
+/// `member` against `candidate` (positional script pairing, mismatches
+/// skipped like the real chunk builder).
+fn family_base_pair_proxy(
+    holder: &FrameHolder,
+    candidate_order: &[u32],
+    member_order: &[u32],
+) -> Option<f64> {
+    let mut pairs: Vec<(u32, u32)> = member_order
+        .iter()
+        .copied()
+        .zip(candidate_order.iter().copied())
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut joint = std::collections::HashMap::<u32, u32>::new();
+    let mut ctx_totals = std::collections::HashMap::<u16, u32>::new();
+    let mut sampled = 0u64;
+    let mut full_tiles = 0u64;
+    for &(mid, cid) in &pairs {
+        let (ms, cs) = (
+            holder.sprites().get(mid as usize)?,
+            holder.sprites().get(cid as usize)?,
+        );
+        if ms.dictionary_index == UNMAPPED_DICT || cs.dictionary_index == UNMAPPED_DICT {
+            continue;
+        }
+        let (Some(mp), Some(cp)) = (holder.packed_data(mid), holder.packed_data(cid)) else {
+            continue;
+        };
+        if (ms.width, ms.height) != (cs.width, cs.height) || mp.len() != cp.len() {
+            continue;
+        }
+        full_tiles += mp.len() as u64;
+        if sampled >= FAMILY_PROXY_TILE_CAP {
+            continue;
+        }
+        for (&x, &b) in mp.iter().zip(cp.iter()) {
+            if x >= 4096 || b >= 4096 {
+                return None;
+            }
+            *joint.entry(((b as u32) << 12) | x as u32).or_default() += 1;
+            *ctx_totals.entry(b).or_default() += 1;
+            sampled += 1;
+        }
+    }
+    Some(family_proxy_bits(&joint, &ctx_totals, sampled, full_tiles))
+}
+
+fn add_required_character_rhs_profiles_for_index(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
     index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
-) -> Option<(String, String)> {
-    let profile = profiles.characters.get(index)?;
-    let rel = format!("Characters/{}.rhs", profile.filename);
-    if in_path(&rel).is_some() {
-        return Some((rel, profile.profile_name.clone()));
-    }
-    existing_character_rhs_for_profile_name(profiles, &profile.profile_name, in_path)
-        .or_else(|| Some((rel, profile.profile_name.clone())))
+) {
+    add_character_rhs_profiles_for_index(required, profiles, index, in_path, true);
 }
 
-fn existing_character_rhs_for_profile_name(
+/// `required_on_disk = true` insists the RHS exists (mission-authored
+/// characters must ship); `false` skips profiles whose RHS is absent from
+/// this datadir entirely — the boot manifest indexes every CPF profile, but
+/// a demo datadir only carries the files its missions can actually use.
+fn add_character_rhs_profiles_for_index(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
-    profile_name: &str,
+    index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
-) -> Option<(String, String)> {
+    required_on_disk: bool,
+) {
+    let Some(profile) = profiles.characters.get(index) else {
+        return;
+    };
+    // Character profile indices identify physical RHS files. Do not group by
+    // localized profile name: RobinHood and RobinTown can share one logical
+    // name in legacy profile tables but the original PC constructor selects
+    // exactly one physical variant from the level's forest flag.
+    let rel = format!("Characters/{}.rhs", profile.filename);
+    if required_on_disk || in_path(&rel).is_some() {
+        add_required_rhs_rel(required, rel, &profile.profile_name);
+    } else {
+        tracing::warn!(
+            "character profile '{}' ({}) has no RHS in this datadir; omitting from manifest index",
+            profile.profile_name,
+            profile.filename,
+        );
+    }
+}
+
+fn normalize_robin_profile_index(
+    profiles: &ProfileManager,
+    index: usize,
+    forest_level: bool,
+) -> Result<usize> {
+    let profile = profiles
+        .characters
+        .get(index)
+        .ok_or_else(|| anyhow!("character profile index {index} does not exist"))?;
+    if !matches!(profile.filename.as_str(), "RobinHood" | "RobinTown") {
+        return Ok(index);
+    }
+    let wanted = if forest_level {
+        "RobinHood"
+    } else {
+        "RobinTown"
+    };
     profiles
         .characters
         .iter()
-        .filter(|profile| profile.profile_name == profile_name)
-        .find_map(|profile| {
-            let rel = format!("Characters/{}.rhs", profile.filename);
-            in_path(&rel)
-                .is_some()
-                .then(|| (rel, profile.profile_name.clone()))
+        .position(|candidate| candidate.filename == wanted)
+        .ok_or_else(|| {
+            anyhow!(
+                "required {wanted} profile is absent while normalizing Robin for a {} mission",
+                if forest_level { "forest" } else { "town" }
+            )
         })
 }
 
@@ -2174,26 +4545,30 @@ fn add_required_pc_profiles_for_pcs(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     profiles: &ProfileManager,
     pcs: &str,
+    forest_level: bool,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) {
     for profile_name in pcs.chars().filter_map(pc_code_profile_name) {
-        // Some logical PCs have multiple physical RHS files under the same
-        // localized profile name (notably RobinHood/RobinTown). The level
-        // loader swaps those variants according to forest/town ambiance, and
-        // campaign/save state may still ask to preload either one.
-        let mut found = false;
-        for profile in profiles
-            .characters
-            .iter()
-            .filter(|profile| profile.profile_name == profile_name)
-        {
+        let profile = profiles.characters.iter().find(|profile| {
+            if profile.filename == "RobinHood" || profile.filename == "RobinTown" {
+                profile.filename
+                    == if forest_level {
+                        "RobinHood"
+                    } else {
+                        "RobinTown"
+                    }
+            } else {
+                profile.profile_name == profile_name
+            }
+        });
+        if let Some(profile) = profile {
             let rel = format!("Characters/{}.rhs", profile.filename);
             if in_path(&rel).is_some() {
                 add_required_rhs_rel(required, rel, &profile.profile_name);
-                found = true;
+            } else {
+                tracing::warn!("demo PC profile '{}' has no shipped RHS", profile_name);
             }
-        }
-        if !found {
+        } else {
             tracing::warn!("demo PC profile '{}' has no shipped RHS", profile_name);
         }
     }
@@ -2244,7 +4619,53 @@ fn bonus_type_to_sprite_asset_for_shipping(
     }
 }
 
-fn add_common_object_rhs_profiles(
+fn add_character_action_rhs_profiles(
+    required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
+    actions: impl IntoIterator<Item = Action>,
+) {
+    for action in actions {
+        let assets: &[(&str, &str)] = match action {
+            Action::Bow => &[
+                ("ACCESSORIES_Arrow", "ACCESSOIRES Fleche"),
+                ("BONUS_Arrows", "BONUS Fleches"),
+            ],
+            Action::Stone => &[
+                ("ACCESSORIES_Stone", "ACCESSOIRES Cailloux"),
+                ("BONUS_Stones", "BONUS Cailloux"),
+            ],
+            Action::Apple => &[
+                ("ACCESSORIES_Apple", "ACCESSOIRES Pomme"),
+                ("BONUS_Apples", "BONUS Pommes"),
+            ],
+            Action::Ale => &[
+                ("ACCESSORIES_Ale", "ACCESSOIRES Ale"),
+                ("BONUS_Ale", "BONUS Ale"),
+            ],
+            Action::Eat | Action::Guzzle => &[("BONUS_LegOfLamb", "BONUS Gigots")],
+            Action::Heal => &[("BONUS_Plants", "BONUS Plantes")],
+            Action::Net => &[
+                ("ACCESSORIES_Net", "ACCESSOIRES Filet"),
+                ("BONUS_Nets", "BONUS Filets"),
+            ],
+            Action::WaspNest => &[
+                ("ACCESSORIES_Wasp", "ACCESSOIRES Guepes"),
+                ("ACCESSORIES_WaspSting", "Guepe"),
+                ("BONUS_WaspsNest", "BONUS Guepes"),
+            ],
+            Action::Purse => &[
+                ("ACCESSORIES_MoneyBag", "ACCESSOIRES Bourse d'argent"),
+                ("ACCESSORIES_Coin", "ACCESSOIRES Piece d'or"),
+                ("BONUS_MoneyBag", "BONUS Bourses d'argent"),
+            ],
+            _ => &[],
+        };
+        for &(file, profile) in assets {
+            add_required_rhs_rel(required, format!("Characters/{file}.rhs"), profile);
+        }
+    }
+}
+
+fn add_all_saved_world_object_rhs_profiles(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
 ) {
     for (file, profile) in [
@@ -2258,6 +4679,8 @@ fn add_common_object_rhs_profiles(
         ("ACCESSORIES_Net", "ACCESSOIRES Filet"),
         ("ACCESSORIES_Coin", "ACCESSOIRES Piece d'or"),
         ("ACCESSORIES_WaspSting", "Guepe"),
+        ("BONUS_Arrows", "BONUS Fleches"),
+        ("BONUS_Stones", "BONUS Cailloux"),
         ("BONUS_Nets", "BONUS Filets"),
         ("BONUS_WaspsNest", "BONUS Guepes"),
         ("BONUS_Apples", "BONUS Pommes"),
@@ -2267,6 +4690,8 @@ fn add_common_object_rhs_profiles(
         ("BONUS_MoneyBag", "BONUS Bourses d'argent"),
         ("BONUS_GoldBagsRansom", "BONUS Sac d'or rancon"),
         ("BONUS_Shield", "Shield"),
+        ("BONUS_Parchment", "BONUS Parchemin"),
+        ("BONUS_FourLeavedClover", "BONUS Trefle"),
         ("RELIC_Ampulla", "Huile"),
         ("RELIC_Spoon", "Cuillere"),
         ("RELIC_Crown", "Couronne"),

@@ -350,8 +350,13 @@ impl EngineInner {
                     (inside.x, inside.y),
                     raw.direction as i16,
                 );
-                let border = MapPoint::new(border.0, border.1);
-                let outside = MapPoint::new(outside.0, outside.1);
+                // RHFastFindGrid::InitializeReinforcementPointsFromMissionStream
+                // narrows both computed points through SWORD before passing
+                // them to RHDoor::SetPoint{Mid,Out}.  Diagonal exits normally
+                // have fractional intersections/steps, so retaining those
+                // fractions shifts every later GetPointOut movement goal.
+                let border = MapPoint::new(border.0 as i16 as f32, border.1 as i16 as f32);
+                let outside = MapPoint::new(outside.0 as i16 as f32, outside.1 as i16 as f32);
 
                 // Reinforcement doors get 4× WalkingUpright actions
                 // by default.

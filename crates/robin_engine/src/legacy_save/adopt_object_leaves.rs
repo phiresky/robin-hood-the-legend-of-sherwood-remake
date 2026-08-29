@@ -18,7 +18,7 @@ use crate::{
     natives::{ComputedScriptLocation, ScriptHandleCodec},
     order::OrderType,
     patch::PatchIndex,
-    profiles::Action,
+    profiles::{Action, ProfileManager},
     scb::TypeTag,
 };
 
@@ -203,6 +203,14 @@ pub enum LegacyObjectLeafAdoptError {
         "saved object-item creation order {creation_order} is a mobile master; mobile state belongs to the mobile adoption stage"
     )]
     MobileMaster { creation_order: u32 },
+    #[error(
+        "saved arrow creation order {creation_order} references missing bow profile {profile_index} (initialized profile count {profile_count})"
+    )]
+    MissingBowProfile {
+        creation_order: u32,
+        profile_index: u32,
+        profile_count: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -269,6 +277,7 @@ struct PlannedObject {
 
 #[derive(Debug)]
 struct PlannedProjectile {
+    damage: u16,
     flying: bool,
     dive: bool,
     magic_bullet: bool,
@@ -516,9 +525,14 @@ impl LegacyObjectLeafAdoptionPlan {
                         animation_speed: saved.animation_speed,
                     }
                 }
-                LegacyElementPayload::ObjectItem(saved) => {
-                    preflight_object_item(saved, runtime, entity_id, creation_order, entities)?
-                }
+                LegacyElementPayload::ObjectItem(saved) => preflight_object_item(
+                    saved,
+                    runtime,
+                    entity_id,
+                    creation_order,
+                    entities,
+                    &assets.profile_manager,
+                )?,
             };
             records.push(planned);
         }
@@ -707,6 +721,7 @@ fn preflight_object_item(
     entity_id: EntityId,
     creation_order: u32,
     entities: &LegacyEntityFixups,
+    profiles: &ProfileManager,
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
     if let LegacyObjectItemPayload::Wasp(payload) = saved {
         require_kind(
@@ -835,6 +850,7 @@ fn preflight_object_item(
             projectile.arrow_bow_profile = bow;
             projectile.arrow_flat_shot = flat;
             projectile.arrow_play_impact = impact;
+            projectile.damage = saved_arrow_damage(profiles, bow, flat, creation_order)?;
         }
         projectile.leaf = match saved {
             LegacyObjectItemPayload::Purse(payload) => PlannedProjectileLeaf::Purse {
@@ -878,6 +894,43 @@ fn preflight_object_item(
             state: object,
         })
     }
+}
+
+/// Restore the denormalized damage cached by the Rust projectile runtime.
+///
+/// Original does not serialize damage on `RHElementArrow`: `HitHuman` reads
+/// it from the serialized `RHBow` profile pointer and `mbFlatShot` at impact
+/// (`original-code/RHElementArrow.cpp:164-185`). Rust carries the value on
+/// `ProjectileData`, so legacy adoption must rebuild it from those same two
+/// authoritative fields.
+fn saved_arrow_damage(
+    profiles: &ProfileManager,
+    bow: Option<Option<u32>>,
+    flat_shot: bool,
+    creation_order: u32,
+) -> Result<u16, LegacyObjectLeafAdoptError> {
+    let Some(Some(profile_index)) = bow else {
+        // A null bow/profile is representable in a default-constructed saved
+        // arrow. Original only dereferences it if that arrow later hits a
+        // human, so preserve the inert runtime default here.
+        return Ok(0);
+    };
+    // `RHBow::Serialize` writes `RHProfileManager::GetProfileIndex`, which is
+    // the zero-based vector offset. This is deliberately not
+    // `ProfileManager::get_bow`: that API accepts the one-based weapon id
+    // stored on character/soldier profiles.
+    let profile = profiles.bows.get(profile_index as usize).ok_or(
+        LegacyObjectLeafAdoptError::MissingBowProfile {
+            creation_order,
+            profile_index,
+            profile_count: profiles.bows.len(),
+        },
+    )?;
+    Ok(if flat_shot {
+        profile.normal_shoot.damage
+    } else {
+        profile.long_shoot.damage
+    })
 }
 
 fn preflight_projectile(
@@ -929,6 +982,7 @@ fn preflight_projectile(
         "RHPositionInterface::mIncrement",
     )?;
     Ok(PlannedProjectile {
+        damage: 0,
         flying: saved.flying,
         dive: saved.dive,
         magic_bullet: saved.magic_bullet,
@@ -959,6 +1013,7 @@ fn preflight_projectile(
 }
 
 fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
+    runtime.damage = saved.damage;
     runtime.flying = saved.flying;
     runtime.dive = saved.dive;
     runtime.magic_bullet = saved.magic_bullet;
@@ -1474,6 +1529,41 @@ fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyObje
 mod tests {
     use super::*;
     use crate::legacy_save::payload_base::LegacyPoint2;
+    use crate::profiles::{BowProfile, BowShootMode};
+
+    #[test]
+    fn saved_arrow_damage_rebuilds_original_bow_lookup_for_both_shot_modes() {
+        let mut profiles = ProfileManager::default();
+        profiles.bows.push(BowProfile {
+            normal_shoot: BowShootMode {
+                damage: 7,
+                ..Default::default()
+            },
+            long_shoot: BowShootMode {
+                damage: 19,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            saved_arrow_damage(&profiles, Some(Some(0)), true, 97).unwrap(),
+            7
+        );
+        assert_eq!(
+            saved_arrow_damage(&profiles, Some(Some(0)), false, 97).unwrap(),
+            19
+        );
+        assert_eq!(saved_arrow_damage(&profiles, None, false, 97).unwrap(), 0);
+        assert!(matches!(
+            saved_arrow_damage(&profiles, Some(Some(1)), false, 97),
+            Err(LegacyObjectLeafAdoptError::MissingBowProfile {
+                creation_order: 97,
+                profile_index: 1,
+                profile_count: 1,
+            })
+        ));
+    }
 
     #[test]
     fn original_object_type_ordinals_map_exactly_and_strictly() {

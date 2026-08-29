@@ -10,7 +10,7 @@
 //!   stuck-under-nets counter, snap `StuckUnderNet` posture back to
 //!   `Lying`, abort lower-priority sequences, queue a wait, dispatch
 //!   `EventNetAway` (NPCs only), and remove the victim from every
-//!   NPC's `Body` detectable list.
+//!   NPC's `Body` detectable list, including its own.
 //!
 //! - [`EngineInner::tick_nets`]: per-frame driver. Advances the net's
 //!   ballistic trajectory (using the same waypoint loop as
@@ -316,7 +316,12 @@ impl EngineInner {
     ///    remove the victim from every other NPC's `Body` detectable
     ///    list.
     /// 5. Clear the net's `victims` list.
-    pub(crate) fn unapply_net_effect(&mut self, net_id: EntityId) {
+    pub(crate) fn unapply_net_effect(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
         // Snapshot + drain the victim list and the repulsive-point IDs
         // so we can iterate without re-borrowing the net entity.
         let (victims, repulsive_ids): (Vec<EntityId>, Vec<i32>) = match self.get_entity_mut(net_id)
@@ -393,6 +398,12 @@ impl EngineInner {
                     victim_id,
                     crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
                 );
+                // RHElementNet::UnapplyEffect calls Think(EVENT_NET_AWAY)
+                // synchronously, even when the victim's creation slot has
+                // already run this frame.
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                    sim, victim_id, assets, None, None,
+                );
 
                 // Skip the body-detectable cleanup for dead/unconscious
                 // victims — their body is genuinely a body to detect.
@@ -418,9 +429,6 @@ impl EngineInner {
         let det_idx = DetectableType::Body as usize;
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
-            if friend_id == body_id {
-                continue;
-            }
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
@@ -597,6 +605,9 @@ impl EngineInner {
                         }
                     }
                     crate::element::Animation::NetBeingTaken => {
+                        Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
+                    }
+                    crate::element::Animation::NetBeingTakenCrumpled => {
                         Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
                     }
                     _ => None,
@@ -1460,7 +1471,6 @@ mod tests {
             0,
             false,
         );
-
         engine.apply_net_falling_effect(sim, &assets, net_id);
         engine.apply_net_falling_effect(sim, &assets, net_id);
         engine.apply_net_falling_effect(sim, &assets, net_id);
@@ -1709,6 +1719,17 @@ mod tests {
             0,
             false,
         );
+        engine.add_detectable_for_all_npc(victim_id, crate::element::DetectableType::Body);
+        let body_slot = crate::element::DetectableType::Body as usize;
+        assert!(
+            engine
+                .get_entity(victim_id)
+                .and_then(Entity::npc_data)
+                .expect("test victim NPC")
+                .detectable_lists[body_slot]
+                .iter()
+                .any(|detectable| detectable.element == Some(victim_id))
+        );
 
         // First, fire the apply sweep so the victim is registered.
         // The sweep eagerly increments stuck_under_nets_counter; the
@@ -1736,7 +1757,7 @@ mod tests {
             Posture::StuckUnderNet
         );
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1746,6 +1767,11 @@ mod tests {
         let v = engine.get_entity(victim_id).unwrap();
         assert_eq!(v.human_data().unwrap().stuck_under_nets_counter, 0);
         assert_eq!(v.element_data().posture, Posture::Lying);
+        assert!(
+            v.npc_data().expect("test victim NPC").detectable_lists[body_slot]
+                .iter()
+                .all(|detectable| detectable.element != Some(victim_id))
+        );
     }
 
     #[test]
@@ -1825,7 +1851,7 @@ mod tests {
         assert_eq!(sprite.display_order_ref, Some(net_id));
         assert!(sprite.behind_display_order_ref);
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
         let sprite = engine.get_entity(victim_id).unwrap().sprite();
         assert_eq!(
             sprite.display_order_ref, None,
@@ -1836,8 +1862,10 @@ mod tests {
 
     #[test]
     fn landing_registers_repulsive_points() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
-        let _assets = assets_with_profiles();
+        let assets = assets_with_profiles();
         let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
@@ -1865,7 +1893,7 @@ mod tests {
             assert!(registered_ids.contains(id));
         }
 
-        engine.unapply_net_effect(net_id);
+        engine.unapply_net_effect(sim, &assets, net_id);
         // After unapply: zero repulsive points left.
         assert!(engine.ai.global.repulsive_points.is_empty());
     }

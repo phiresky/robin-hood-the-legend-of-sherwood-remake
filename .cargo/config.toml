@@ -55,4 +55,8 @@ codegen-backend = true
 [target.wasm32-unknown-unknown]
 rustflags = [
     "--cfg=getrandom_backend=\"wasm_js\"",
+    # Rust async poll functions can retain large game/session values across
+    # await points. Keep a practical guard margin above the 1 MiB wasm-ld
+    # default even though the largest child futures are heap-boxed.
+    "-C", "link-arg=-zstack-size=4194304",
 ]

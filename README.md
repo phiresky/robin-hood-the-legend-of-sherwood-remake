@@ -129,24 +129,42 @@ The binaries Pages repo stores wasm builds under `/wasm/`, indexed by the
 same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
 
     /wasm/<short-hash>/robin.js
+    /wasm/<short-hash>/robin.js.gz
     /wasm/<short-hash>/robin_bg.wasm
+    /wasm/<short-hash>/robin_bg.wasm.gz
     /wasm/<short-hash>/manifest.json
     /wasm/latest.json
-    /datadirs/demo-leicester/v4-q80.rhdata.zst
+    /datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/audio/assets/*.opus
 
-The shell fetches `/wasm/latest.json` when no query parameter is present.  With
+The shell fetches `/wasm/latest.json` when no query parameter is present. It
+prefers the deterministic `.gz` JS/wasm siblings and expands them with the
+browser's `DecompressionStream`, because GitHub Pages does not attach
+`Content-Encoding` to static `.gz` files. It falls back to the ordinary files
+for old builds, old browsers, and local development. With
 `?replay=rhrec-<hash>-...`, it extracts `<hash>` and loads that exact
-artifact directory. The game data is not rebuilt by CI. Build it locally and
-publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v4-q80.rhdata.zst`, preserving its generated
-`Data/missions/` and `Data/rhs/` directories beside it. The browser initially
-fetches only the manifest, then fetches the selected mission's core and shared
-RHS files concurrently.
-Audio assets for the demo are published beside the wasm artifact and listed in
-`/wasm/<short-hash>/preload-assets.json`; the shell preloads those files into
-Rust before `wasm_boot` starts the synchronous game loop.
+artifact directory. The game data is not rebuilt by CI because the source game
+data cannot be stored in this repository. Build the production web artifact
+with the canonical wrapper (which always selects JXL q80 maps, Opus audio, and
+the wasm-safe zstd window):
+
+    scripts/build_web_shipping_datadir.sh \
+        datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
+
+Publish the generated `Data/datadir.bin` as
+`/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`, preserving its generated
+`Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
+browser initially fetches only the manifest, then fetches the selected
+mission's bounded core, terrain, and exact RHS dependency closure concurrently.
+Web audio is deterministic, content-addressed Opus under `audio/assets/`; each
+file is fetched and decoded by Web Audio only when it is first played, so its
+encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
+and the required Rust UI PNG overlay assets remain beside the wasm artifact and
+are listed in
+`/wasm/<short-hash>/preload-assets.json`; the shell preloads those files before
+`wasm_boot` starts the game loop.
 Replay delivery itself remains handled by the existing browser/RPC path.
 Wasm logging defaults to `info`; add `?wasm-log=debug` (or `trace`,
 `warn`, `error`) to the URL to override it for browser sessions.
@@ -155,7 +173,7 @@ The publishing workflow needs:
 
 - `BINARIES_REPO_TOKEN`: a token that can push to the binaries repo.
 - A manually maintained `/datadirs/demo-leicester/` shipping tree in the
-  binaries repo (manifest plus `missions/` and `rhs/`).
+  binaries repo (manifest plus `missions/`, `rhs/`, `terrain/`, and `audio/`).
 
 ### Android
 
@@ -163,9 +181,10 @@ Android builds use winit's `android-activity` NativeActivity glue. The
 Android entry point is exported from the `robin_rs` cdylib, the
 packaging manifest lives at `android/AndroidManifest.xml`, and the
 Leicester demo shipping datadir is bundled under `android/assets/Data/`:
-`datadir.bin` comes from the published `v4-q80.rhdata.zst`, and the generated
-`missions/` and `rhs/` directories must be copied alongside it. Android reads
-selected payloads directly through `AAssetManager`.
+`datadir.bin` must be generated separately with the converter's default
+`--audio-format source`; do not use the web-only Opus artifact. Its generated
+`missions/`, `rhs/`, and `audio/` directories must be copied alongside it.
+Android reads selected payloads directly through `AAssetManager`.
 
 Prerequisites:
 
