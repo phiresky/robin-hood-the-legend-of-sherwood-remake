@@ -14,7 +14,16 @@ unique small images per character (RobinTown: 7,584 frames, average 37×56
 pixels). Pixels are RGB565 (16-bit color) with two magic values: a transparent
 key (0x07C0) and a shadow key (0x001F).
 
-The original engine already compressed these in two ways:
+Three generations of compression have touched this data, and it matters to
+keep them apart:
+
+| era | what it did |
+|---|---|
+| **original game (2002)** | invented the sprite *representation*: RLE and VQ (below). The bank then shipped essentially raw — 602 MiB on disk for the fullgame |
+| **this port, schemas v1-v8** | added the first *entropy stage*: bitcode serialization + zstd-22 over the bank, plus JXL maps, Opus audio, and per-mission chunking |
+| **this campaign, schema v9** | replaced zstd for the VQ grids with the custom codec this document explains |
+
+The original engine's two sprite representations:
 
 - **RLE sprites** (menus, patches, accessories): each scanline stores
   `[first_x, last_x, literal pixels…]`, skipping transparent margins.
@@ -23,15 +32,20 @@ The original engine already compressed these in two ways:
   pixels. A sprite is then a grid of `(width/4) × height` dictionary indices.
   Twelve bits describe four pixels — 3 bits per pixel before any entropy
   coding, and the dictionary itself (32 KB) carries all the color knowledge.
+  This was a smart 2002 trade: decode is a table lookup, and the quantizer
+  ran once at authoring time.
 
 So a "character" on disk is: one dictionary + a few thousand index grids +
 animation metadata. The index grids are the bulk — RobinTown's grids hold
-3.9 million 12-bit indices (7.8 MB as raw u16 words).
+3.9 million 12-bit indices (7.8 MB as raw u16 words). The original game paid
+those 7.8 MB as-is.
 
 ## 2. Why zstd stalls: the order-0 wall
 
-The shipping pipeline used to serialize those grids and zstd them (level 22,
-long-range matching). zstd got RobinTown to 3.09 MB. Is that good?
+The port's first improvement (long before this campaign) was simply to zstd
+the serialized bank — level 22, long-range matching. That already beat the
+original's raw storage 2.5×: RobinTown's grids went from 7.8 MB to 3.09 MB.
+Is that good?
 
 Information theory gives a precise yardstick. If you ignore all structure and
 just count how often each of the 4,096 index values occurs, the **order-0
