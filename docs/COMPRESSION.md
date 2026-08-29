@@ -1356,3 +1356,30 @@ Soldier B01; Guard A05 / Officer05 diverge from the pairwise matrix's
 A01/O03 but sit near-best in it). Open follow-ups: star-2 wiring
 (two-predecessor coding, measured -22..25% on third-and-later members),
 parallel chunk decode at install, xz stage for the RLE animation bucket.
+
+## Temporal and cross-direction reference contexts (2026-08-29)
+
+Measured whether previously decoded frames can serve as extra context,
+aligned through the script offsets that already ship (--entropy-temporal,
+--entropy-crossdir, --code-aux):
+
+- Previous frame in the same animation row, offset-aligned: 43-68% of tiles
+  match the aligned predecessor exactly; H(x|prev) 2.4-4.0 bits/tile is
+  comparable to |above and largely independent of it (H(x|prev,above)
+  0.86-1.42 on covered tiles). 38% of frame pairs skip because the x offset
+  delta is not a multiple of the 4-pixel tile width.
+- Adjacent camera direction (22.5 deg), same frame: 30-40% exact match; never
+  beats |above alone. Useful only as a fallback where no temporal
+  predecessor exists.
+- Real codec (`encode_grids_auxref`: chain (aux, above) -> (above, left) ->
+  above -> left -> order-0; aux = temporal predecessor, else adjacent
+  direction, ref_id < cur_id for causality; roundtrip verified):
+      Knight01    2,892,434 -> 2,793,636   -3.4%
+      Guard A00   1,639,664 -> 1,555,313   -5.1%
+      WillScarlet             1,631,129    (-3.4% vs its SEE standalone)
+      RobinTown   1,994,346 -> 1,989,761   -0.2%
+  Ordering the aux level after (above,left) measured worse (Knight +2.3%).
+  The gap to the entropy table is the usual escape-chain and overfit tax.
+  Zero shipped bytes; converter/schema wiring pending (fold into the next
+  chunk version bump alongside star-2). Recovering the x-misaligned 38% via
+  shifted-pixel-hash contexts is the known follow-up.
