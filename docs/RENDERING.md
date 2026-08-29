@@ -109,10 +109,21 @@ area actually carries sprite pixels.
 ### Validation
 
 `render_mission_map` is a deterministic one-shot capture (mission
-`Initialize`, no tick, then screenshot and exit), which makes it the
-right A/B instrument. The box has no display server, so captures run
-under `xvfb-run` — the example still needs a GPU-backed window even in
-its hidden `--headless` mode.
+`Initialize`, `--frame N` normal game frames, then screenshot and
+exit), which makes it the right A/B instrument. It is also the only
+reliable way to render a scene headlessly here: an interactive
+`--mission` run stops on the opening modal dialogue, which suspends the
+tick — the game draws ~18 HUD quads and caches no sprites at all, so
+any measurement taken that way is measuring nothing.
+
+The box has no display server, so captures run under `xvfb-run`; the
+example still needs a GPU-backed window even in its hidden
+`--headless` mode, and rasterises through lavapipe. Packages needed on
+a bare box: `xvfb`, `xauth`, `libxkbcommon-x11-0`.
+
+Note that `capture_frame_rgba` encodes its own pass rather than going
+through `present`, so it does **not** reach `log_fps`; the counters for
+a captured scene come from the `capture …` line that readback logs.
 
 ```sh
 ROBIN_SPRITE_ATLAS=0 xvfb-run -a target/debug/examples/render_mission_map \
