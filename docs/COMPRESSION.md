@@ -2036,3 +2036,105 @@ engine-affecting step (bank install, scripts, `Engine::new` inputs, spellforge
 startup, audio, campaign clock, peasant-name generation) is unchanged, so
 replay determinism is preserved; an existing 790-frame replay plays back
 cleanly on the new binary.
+## Lazy character-chunk streaming: activate before the decode tail (2026-08-29)
+
+The browser install no longer waits for every VQ sprite chunk before
+activating the mission. Chunks are partitioned at install time
+(`SpriteDeferral` in `crates/robin_rs/src/shipping_mission.rs`):
+
+- **Critical (blocks activation)**: everything referenced by entities
+  present at mission start — the mission team, the level's authored
+  soldiers/civilians/PCs-to-rescue, all mission-core chunks (targets,
+  patches, animations, objects, Blip00), plus any family-hub chunk a
+  critical chunk names as a coding base (`base_rhs`/`base2_rhs`
+  promotion runs to a fixpoint, so hub-before-variant ordering is
+  preserved).
+- **Deferred (streams after activation)**: reinforcement-only gang
+  characters — uninstanced non-VIP gang profiles whose RHS is not also
+  needed by the team or the level. Unknown/ambiguous chunks default to
+  critical, so a misjudgment can only delay activation, never a
+  start-visible sprite.
+
+After `install_mission`, a `spawn_local` driver streams the deferred
+chunks on the same rayon worker pool (strict dependency dispatch on a
+sparse `Arc`-shared row clone) and publishes each decoded grid through
+the new `robin_assets::late_sprites` registry: every not-yet-decoded VQ
+row in the live `FrameHolder` holds a shared `OnceLock` cell
+(`PackedSprite::late_grid`), so grids appear to rendering and mouse
+hit-testing in place, with no frame-holder republish. A draw that races
+a pending grid degrades safely: `ensure_sprite_cached`/
+`ensure_outline_cached` skip (and crucially do not cache) the sprite
+with a `skipped draw: sprite pixels still streaming` debug line, the
+`uncompress_frame*` family paints transparent instead of panicking, and
+`is_pixel_opaque` reports transparent. Determinism is untouched — the
+simulation never reads pixel data; the only pixel consumers are the
+renderer and host-side mouse focus, whose *results* are recorded into
+the replay command stream. Post-activation decode failures warn and
+leave those sprites skipped; a superseding mission install invalidates
+the tail via a registry epoch. Serial (non-cross-origin-isolated) and
+native installs keep the old fully-blocking behavior. Mission restarts
+reuse the registry cells, so a finished tail survives re-entry.
+
+The loading bar is now work-weighted instead of files-counted: fetch
+progress by bytes received (bodies read through `ReadableStream`
+readers with `Content-Length` learned from the parallel headers; totals
+reconciled to actual body sizes), decode progress by critical VQ blob
+bytes materialized (weight 6.0 per byte vs. one network byte), combined
+into one monotonic fraction (`InstallWorkModel`, reported as n/100 work
+units through the existing `MissionLoadProgress` interface, with a
+150 ms ticker so the bar moves during long bodies). After activation,
+the deferred tail reports honest blob-byte progress as a small
+"Streaming sprites N% (done/total)" HUD line (`hud_text.rs`,
+`late_sprites::tail_status`) until it completes.
+
+No shipping formats changed: same magics, no converter changes,
+`shipping_datadir.rs` untouched — the partition and driver reuse the
+existing `VqDecodeScheduler` entry points.
+
+### What actually defers, measured
+
+The deferrable set is exactly the payload `required_dependencies` pulls
+in *beyond* the mission itself: the reinforcement candidate pool. In the
+fullgame CPF only three of the ten character profiles are non-VIP —
+`MerryManA/B/C` (`datadirs/fullgame_linux/Data/Configuration/profile.json`)
+— and reinforcement selection can only instantiate uninstanced non-VIP
+gang members, so those three (plus the object/projectile RHS their
+actions enable) are the entire candidate set. Everything else is
+critical.
+
+Consequently the size of the win scales with how many Merry Men are
+recruited-but-not-taken on the mission, and it is exactly zero for a
+context-free launch: `Campaign::reset` seeds only Robin into the gang,
+so a `?mission=`/`--mission` launch (what the headless-Chrome harness
+drives) has an empty reinforcement pool, fetches no reinforcement RHS,
+and therefore has nothing to defer. Browser measurements on that path
+are a no-regression check, not a speed-up demo:
+
+```
+                       pkg-base (main)          pkg-after (this change)
+H01_Lin_VL       26.2 / 12.6 / 17.7 s      11.7 / 17.7 / 15.9 s
+                        median 17.7 s             median 15.9 s
+Tac01_FoA_MP                   17.9 s             9.0 / 9.3 s
+Sherwood                        6.1 s                    4.8 s
+```
+
+(headless Chrome, SwiftShader, loopback COOP/COEP server, `ship_web_v13`
+datadir; time from `wasm_boot` to "activated shipping mission", which on
+these launches equals time to "Recording replay"). H01 runs were
+interleaved base/after to share load conditions. The run-to-run spread
+(11.7-26.2 s for the same binary) dwarfs any difference between the
+columns: this machine runs many concurrent agent builds, and the
+measurement is dominated by CPU/IO contention rather than by the
+install. That is the expected result — with an empty reinforcement pool
+the partition is a no-op and both binaries execute the same schedule —
+so these runs are a no-regression check only. No deferred-tail line, no
+`skipped draw` line, and no missing-sprite artifacts appeared on any
+run.
+
+The partition rules themselves are unit-tested in `shipping_mission.rs`
+(`SpriteDeferral` compiles on every target; only the streaming driver is
+browser-only): only uninstanced non-VIP gang members outside the mission
+team are deferrable, coding bases named by critical chunks are promoted
+transitively (including `base2` star-2 hubs), level-start characters are
+pulled back into the critical set along with their hub chains, and
+Sherwood/saved-world launches defer nothing at all.

@@ -93,6 +93,14 @@ pub struct PackedSprite {
     /// storage, when the data is bank-backed rather than owned.
     #[serde(skip)]
     pub bank_span: Option<BankSpan>,
+    /// Shared late-streaming grid cell for a shipping VQ sprite whose blob
+    /// decode was deferred past mission activation (browser builds). Filled
+    /// in place by the background decode driver via
+    /// [`crate::late_sprites::publish_chunk`]; every `FrameHolder` clone and
+    /// the published pixel-opacity generation share the same cell, so the
+    /// pixels appear without republishing. `None` for everything else.
+    #[serde(skip)]
+    pub late_grid: Option<crate::late_sprites::LateGridCell>,
     /// Original runtime-loaded RGBA pixels, when this sprite came from a PNG
     /// overlay instead of the legacy bank.
     #[serde(skip)]
@@ -209,6 +217,7 @@ impl Default for PackedSprite {
             packed_size: 0,
             packed_data: None,
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         }
@@ -587,16 +596,32 @@ impl FrameHolder {
         self.sprite_packed_slice(sprite_index as usize)
     }
 
-    /// Resolve a sprite's packed words: owned data first, then its span
-    /// into the shared bank storage.
+    /// Resolve a sprite's packed words: owned data first, then a filled
+    /// late-streaming cell, then its span into the shared bank storage.
     fn sprite_packed_slice(&self, sprite_index: usize) -> Option<&[u16]> {
         let sprite = self.sprites.get(sprite_index)?;
         if let Some(owned) = sprite.packed_data.as_deref() {
             return Some(owned);
         }
+        if let Some(cell) = sprite.late_grid.as_ref() {
+            // Lock-free read of the shared cell; the background driver
+            // fills it at most once. Empty means "not streamed yet".
+            return cell.get().map(|grid| grid.as_slice());
+        }
         let span = sprite.bank_span?;
         let words = self.bank.as_ref()?.words();
         words.get(span.offset_words as usize..(span.offset_words + span.len_words) as usize)
+    }
+
+    /// True while a shipping VQ sprite's grid is still streaming in the
+    /// background (browser installs activate before every chunk decodes).
+    /// Draw paths must skip — and, crucially, not cache — such a sprite;
+    /// it becomes ready in place a frame or two later.
+    pub fn sprite_pixels_pending(&self, sprite_index: u32) -> bool {
+        self.sprites
+            .get(sprite_index as usize)
+            .and_then(|sprite| sprite.late_grid.as_ref())
+            .is_some_and(|cell| cell.get().is_none())
     }
 
     /// Count `sprite_index` as touched in the shared usage statistics.
@@ -702,6 +727,7 @@ impl FrameHolder {
             packed_size: (sprite.packed_data.len() * 2) as u32,
             packed_data: Some(Arc::new(sprite.packed_data)),
             bank_span: None,
+            late_grid: None,
             rgba_data: sprite.rgba_data,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -838,6 +864,7 @@ impl FrameHolder {
         self.sprites.clear();
         self.sprites
             .resize(bank.sprite_count as usize, PackedSprite::default());
+        let mut late_rows = 0usize;
         for (index, sprite) in &bank.sprites {
             let Some(slot) = self.sprites.get_mut(*index as usize) else {
                 // Shipping conversion validates this too, but fail loudly if
@@ -847,15 +874,38 @@ impl FrameHolder {
                     bank.sprite_count
                 );
             };
+            // A dictionary-coded sprite with an empty grid that should have
+            // tiles is a VQ chunk whose decode was deferred past mission
+            // activation (browser streaming installs). Wire it to the shared
+            // late-grid cell the background driver fills; until then the
+            // sprite draws as nothing and hit-tests as transparent. A
+            // zero-area VQ sprite's empty grid is already complete.
+            let expected_grid = (sprite.width as usize / 4) * sprite.height as usize;
+            let (packed_data, late_grid) = if sprite.dictionary_index != UNMAPPED_DICT
+                && sprite.packed_data.is_empty()
+                && expected_grid > 0
+            {
+                late_rows += 1;
+                (None, Some(crate::late_sprites::cell(*index)))
+            } else {
+                (Some(Arc::clone(&sprite.packed_data)), None)
+            };
             *slot = PackedSprite {
                 width: sprite.width,
                 height: sprite.height,
-                packed_size: (sprite.packed_data.len() * 2) as u32,
-                packed_data: Some(Arc::clone(&sprite.packed_data)),
+                packed_size: (expected_grid.max(sprite.packed_data.len()) * 2) as u32,
+                packed_data,
                 bank_span: None,
+                late_grid,
                 rgba_data: None,
                 dictionary_index: sprite.dictionary_index,
             };
+        }
+        if late_rows > 0 {
+            tracing::info!(
+                late_rows,
+                "sprite bank loaded with rows awaiting background streaming"
+            );
         }
         self.reset_usage_tracker();
     }
@@ -995,6 +1045,7 @@ impl FrameHolder {
                 packed_size: idx.size,
                 packed_data: None,
                 bank_span,
+                late_grid: None,
                 rgba_data: None,
                 dictionary_index: dict_index,
             });
@@ -1011,6 +1062,39 @@ impl FrameHolder {
             .initialize_sprite_bank(data_dir)
             .context("initializing sprite bank")?;
         Ok(holder)
+    }
+
+    /// Safe degrade for a draw that hit a still-streaming sprite: paint the
+    /// frame's rectangle transparent (so stale destination contents cannot
+    /// leak) and count the skip. Never fabricates pixels — the sprite simply
+    /// does not appear until its grid lands a frame or two later.
+    fn skip_pending_frame(
+        &self,
+        dst: &mut [u16],
+        pitch_words: usize,
+        sprite_index: u32,
+        bit_depth: u16,
+    ) {
+        let sprite = &self.sprites[sprite_index as usize];
+        let transparent = if bit_depth == 16 {
+            TRANSPARENT_COLOR_16
+        } else {
+            TRANSPARENT_COLOR_15
+        };
+        let width = sprite.width as usize;
+        for row in dst
+            .chunks_mut(pitch_words.max(1))
+            .take(sprite.height as usize)
+        {
+            let cols = row.len().min(width);
+            row[..cols].fill(transparent);
+        }
+        let skips = crate::late_sprites::note_skipped_draw();
+        tracing::debug!(
+            sprite_index,
+            skips,
+            "skipped draw: sprite pixels still streaming"
+        );
     }
 
     // -- Decompression (high-level) --
@@ -1040,9 +1124,13 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
+        let Some(packed) = self.sprite_packed_slice(idx) else {
+            if self.sprite_pixels_pending(sprite_index) {
+                self.skip_pending_frame(dst, pitch_words, sprite_index, bit_depth);
+                return;
+            }
+            panic!("sprite data not loaded for sprite {sprite_index}");
+        };
         let width = sprite.width as usize;
         let height = sprite.height as usize;
         let dict_idx = sprite.dictionary_index;
@@ -1111,9 +1199,13 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
+        let Some(packed) = self.sprite_packed_slice(idx) else {
+            if self.sprite_pixels_pending(sprite_index) {
+                self.skip_pending_frame(dst, pitch_words, sprite_index, bit_depth);
+                return;
+            }
+            panic!("sprite data not loaded for sprite {sprite_index}");
+        };
         let width = sprite.width as usize;
         let height = sprite.height as usize;
         let dict_idx = sprite.dictionary_index;
@@ -1154,9 +1246,13 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
+        let Some(packed) = self.sprite_packed_slice(idx) else {
+            if self.sprite_pixels_pending(sprite_index) {
+                self.skip_pending_frame(dst, pitch_words, sprite_index, bit_depth);
+                return;
+            }
+            panic!("sprite data not loaded for sprite {sprite_index}");
+        };
         let width = sprite.width as usize;
         let height = sprite.height as usize;
         let dict_idx = sprite.dictionary_index;
@@ -2190,6 +2286,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2221,6 +2318,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2255,6 +2353,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: 0,
         });
@@ -2282,6 +2381,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2307,6 +2407,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });
@@ -2338,6 +2439,7 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
             dictionary_index: UNMAPPED_DICT,
         });

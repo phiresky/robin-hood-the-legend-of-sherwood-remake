@@ -6,6 +6,7 @@ pub mod binary_reader;
 pub mod decompile;
 pub mod disasm;
 pub mod frame_holder;
+pub mod late_sprites;
 pub mod picture;
 pub mod res_descr;
 pub mod resource_manager;
