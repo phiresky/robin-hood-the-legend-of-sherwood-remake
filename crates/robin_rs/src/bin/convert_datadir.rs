@@ -111,6 +111,22 @@ enum MapFormat {
     JxlQ85,
     /// Shipping transcodes `.map` files to JXL quality 80.
     JxlQ80,
+    /// Shipping transcodes `.map` files to JXL quality 70.
+    JxlQ70,
+}
+
+impl MapFormat {
+    /// `None` = keep raw; `Some(None)` = lossless JXL; `Some(Some(q))` = lossy.
+    fn jxl_quality(self) -> Option<Option<u8>> {
+        match self {
+            Self::Raw => None,
+            Self::JxlLossless => Some(None),
+            Self::JxlQ90 => Some(Some(90)),
+            Self::JxlQ85 => Some(Some(85)),
+            Self::JxlQ80 => Some(Some(80)),
+            Self::JxlQ70 => Some(Some(70)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -133,6 +149,8 @@ enum InterfaceImageFormat {
     JxlQ85,
     /// Encode interface resource pictures as JXL quality 80.
     JxlQ80,
+    /// Encode interface resource pictures as JXL quality 70.
+    JxlQ70,
 }
 
 impl InterfaceImageFormat {
@@ -143,6 +161,7 @@ impl InterfaceImageFormat {
             Self::JxlQ90 => Some(Some(90)),
             Self::JxlQ85 => Some(Some(85)),
             Self::JxlQ80 => Some(Some(80)),
+            Self::JxlQ70 => Some(Some(70)),
         }
     }
 }
@@ -2854,15 +2873,12 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
                     bytes.clone()
                 } else {
-                    let bytes = match (ext, opts.map_format) {
-                        (".map", MapFormat::JxlLossless) => transcode_sixteen_to_jxl(&path, None)?,
-                        (".map", MapFormat::JxlQ90) => transcode_sixteen_to_jxl(&path, Some(90))?,
-                        (".map", MapFormat::JxlQ85) => transcode_sixteen_to_jxl(&path, Some(85))?,
-                        (".map", MapFormat::JxlQ80) => transcode_sixteen_to_jxl(&path, Some(80))?,
-                        (".map", MapFormat::Raw) | (".min", _) => {
-                            transcode_sixteen_drop_bzip(&path)?
-                        }
-                        _ => fs::read(&path)?,
+                    // Minimaps follow the map format: the runtime picture
+                    // loader sniffs the JXL signature, so `.min` decodes
+                    // through the same path as `.map` with no extra code.
+                    let bytes = match opts.map_format.jxl_quality() {
+                        Some(quality) => transcode_sixteen_to_jxl(&path, quality)?,
+                        None => transcode_sixteen_drop_bzip(&path)?,
                     };
                     encoded_level_assets.insert(rel.clone(), bytes.clone());
                     bytes
@@ -3574,7 +3590,11 @@ impl AudioKind {
         match self {
             Self::Voice => 24,
             Self::Effect => 48,
-            Self::Music => 64,
+            // 64 -> 48 kbit/s together with switching music to the lossless
+            // remaster sources (see `music_lossless_source`): encoding from
+            // a clean master at 48k beats encoding the shipped lossy WAVs
+            // at 64k, and drops ~25% of the music bytes.
+            Self::Music => 48,
         }
     }
 
@@ -3635,10 +3655,82 @@ fn insert_shipping_audio(
                 }
                 return Ok(());
             }
-            let bytes = transcode_audio_to_opus(path, kind)?;
+            // Music encodes from the lossless remaster drop when one exists;
+            // the catalog duration above stays derived from the GAME source,
+            // so timing-deterministic tables are unaffected by small length
+            // differences in the masters.
+            let encode_source = if matches!(kind, AudioKind::Music) {
+                music_lossless_source(path)
+            } else {
+                None
+            };
+            let bytes = transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
             insert_standalone_audio(catalog, assets_dir, relative, &bytes, duration_ms)
         }
     }
+}
+
+/// Resolve the higher-quality lossless master for a music track, when the
+/// optional `datadirs/music-rhmods-lossless` drop is present. Its
+/// `mapping.json` maps game file names (under `DATA/Musics`) to remaster
+/// file names; entries mapped to `null` have no clean source and fall back
+/// to the game WAV. Matching is by file name, case-insensitive.
+fn music_lossless_source(game_path: &Path) -> Option<PathBuf> {
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    static MAPPING: OnceLock<BTreeMap<String, PathBuf>> = OnceLock::new();
+    let mapping = MAPPING.get_or_init(|| {
+        let root = Path::new("datadirs/music-rhmods-lossless");
+        let mapping_path = root.join("mapping.json");
+        let json: serde_json::Value = match fs::read_to_string(&mapping_path)
+            .map_err(anyhow::Error::from)
+            .and_then(|text| serde_json::from_str(&text).map_err(anyhow::Error::from))
+        {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::warn!(
+                    "no lossless music mapping at {} ({e:#}); music encodes from game sources",
+                    mapping_path.display()
+                );
+                return BTreeMap::new();
+            }
+        };
+        let lossless_root = json
+            .get("lossless_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mut resolved = BTreeMap::new();
+        let Some(pairs) = json.get("game_to_lossless").and_then(|v| v.as_object()) else {
+            tracing::warn!("lossless music mapping has no game_to_lossless object");
+            return resolved;
+        };
+        for (game_name, lossless_name) in pairs {
+            let Some(lossless_name) = lossless_name.as_str() else {
+                continue; // null: no clean source for this track
+            };
+            // The drop has been seen both with and without the
+            // `lossless_root` subdirectory; accept either layout.
+            let candidates = [
+                root.join(lossless_root).join(lossless_name),
+                root.join(lossless_name),
+            ];
+            match candidates.into_iter().find(|p| p.is_file()) {
+                Some(path) => {
+                    resolved.insert(game_name.to_ascii_lowercase(), path);
+                }
+                None => tracing::warn!(
+                    "lossless music mapping names missing file {lossless_name} for {game_name}"
+                ),
+            }
+        }
+        tracing::info!(
+            tracks = resolved.len(),
+            "music will encode from lossless remaster sources"
+        );
+        resolved
+    });
+    let name = game_path.file_name()?.to_str()?.to_ascii_lowercase();
+    mapping.get(&name).cloned()
 }
 
 fn insert_standalone_audio(
