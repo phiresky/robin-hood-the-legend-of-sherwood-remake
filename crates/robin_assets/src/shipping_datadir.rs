@@ -2088,9 +2088,7 @@ mod tests {
             source_lcid: Some("1031".into()),
             ..ShippingLocale::default()
         };
-        german
-            .raw
-            .insert("text/level.res".into(), vec![7, 8, 9]);
+        german.raw.insert("text/level.res".into(), vec![7, 8, 9]);
         datadir.locales.insert("de-DE".into(), german);
 
         let encoded = encode_native(&datadir);

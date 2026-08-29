@@ -32,9 +32,7 @@ use crate::renderer::Renderer;
 use crate::sherwood_hud::{
     SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
 };
-use crate::ui_panel::{
-    self, PortraitCache, PortraitHitArea, PortraitTarget,
-};
+use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};

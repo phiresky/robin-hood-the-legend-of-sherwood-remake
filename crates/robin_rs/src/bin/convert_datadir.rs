@@ -1575,8 +1575,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingMission, ShippingMissionRef,
-    ShippingLocale, ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
+    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingLocale, ShippingMission,
+    ShippingMissionRef, ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
     canonical_shipping_asset_key,
 };
 use robin_engine::level_data::LoadedLevel;

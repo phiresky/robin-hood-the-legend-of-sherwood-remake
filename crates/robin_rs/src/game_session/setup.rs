@@ -949,6 +949,7 @@ fn populate_sound_duration_tables(
         exclamations = exclamation_durations.len(),
         sources = source_durations.len(),
         "Populated deterministic sound duration tables"
+    );
     assets.exclamation_durations = Arc::new(exclamation_durations);
     assets.source_durations = Arc::new(source_durations);
 }
