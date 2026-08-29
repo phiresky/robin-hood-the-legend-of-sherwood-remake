@@ -448,21 +448,23 @@ impl Ctx {
     }
 
     /// Find the symbol whose no-exclusion interval contains `target`
-    /// (caller has already checked `target < self.sum()`).
-    fn find_by_target(&self, target: u32) -> (u16, u32, u32) {
+    /// (caller has already checked `target < self.sum()`). Also returns the
+    /// symbol's list index so the caller can [`Self::bump_at`] it without a
+    /// second scan (for `Big`, the index slot carries the symbol itself).
+    fn find_by_target(&self, target: u32) -> (usize, u16, u32, u32) {
         let mut cum = 0u32;
         match self {
             Ctx::Small { syms, .. } => {
-                for &(s, c) in syms {
+                for (i, &(s, c)) in syms.iter().enumerate() {
                     if target < cum + c as u32 {
-                        return (s, cum, c as u32);
+                        return (i, s, cum, c as u32);
                     }
                     cum += c as u32;
                 }
             }
             Ctx::Big { counts, tree, .. } => {
                 let (s, prefix) = fenwick_descend(tree, target);
-                return (s as u16, prefix, counts[s] as u32);
+                return (s, s as u16, prefix, counts[s] as u32);
             }
         }
         unreachable!("target beyond context sum");
@@ -531,18 +533,19 @@ impl Ctx {
 
     /// Find the symbol whose exclusion-reduced interval contains `target`
     /// (caller has already checked `target < sum` from [`Self::excl_stats`]
-    /// with the same exclusion set).
-    fn find_by_target_excl(&self, excl: &Excl, target: u32) -> (u16, u32, u32) {
+    /// with the same exclusion set). Index slot as in
+    /// [`Self::find_by_target`].
+    fn find_by_target_excl(&self, excl: &Excl, target: u32) -> (usize, u16, u32, u32) {
         let mut cum = 0u32;
         match self {
             Ctx::Small { syms, .. } => {
-                for &(s, c) in syms {
+                for (i, &(s, c)) in syms.iter().enumerate() {
                     if excl.contains(s) {
                         continue;
                     }
                     let c = c as u32;
                     if target < cum + c {
-                        return (s, cum, c);
+                        return (i, s, cum, c);
                     }
                     cum += c;
                 }
@@ -554,7 +557,7 @@ impl Ctx {
                     }
                     let c = c as u32;
                     if target < cum + c {
-                        return (s as u16, cum, c);
+                        return (s, s as u16, cum, c);
                     }
                     cum += c;
                 }
@@ -589,59 +592,70 @@ impl Ctx {
         }
     }
 
+    fn bump(&mut self, x: u16, alphabet: u32) {
+        let small_pos = match self {
+            Ctx::Small { syms, .. } => Some(syms.iter().position(|&(s, _)| s == x)),
+            Ctx::Big { .. } => None,
+        };
+        match small_pos {
+            Some(Some(i)) => self.bump_at(i, x, alphabet),
+            Some(None) => self.push_new(x, alphabet),
+            None => self.bump_big(x),
+        }
+    }
+
+    /// [`Self::bump`] for a symbol whose list index the caller already knows
+    /// (the coding level's find returned it) — skips the position scan.
+    fn bump_at(&mut self, i: usize, x: u16, alphabet: u32) {
+        let _ = alphabet;
+        match self {
+            Ctx::Small { syms, sum, dense } => {
+                debug_assert_eq!(syms[i].0, x);
+                let c = syms[i].1 + BUMP;
+                syms[i].1 = c;
+                // Bubble toward the front past every predecessor with a
+                // smaller count so scans hit hot symbols first. The list is
+                // non-increasing by count, so the destination is found by
+                // binary search and the intervening block shifts right in
+                // one rotate — the same final layout the pairwise-swap loop
+                // produced (deterministic, both coder sides identical),
+                // without walking long equal-count runs one swap at a time.
+                let dest = syms[..i].partition_point(|&(_, pc)| pc >= c);
+                if dest < i {
+                    syms[dest..=i].rotate_right(1);
+                }
+                if let Some(dense) = dense {
+                    dense[x as usize] = c;
+                }
+                small_settle(syms, sum, dense);
+            }
+            Ctx::Big { .. } => self.bump_big(x),
+        }
+    }
+
+    /// [`Self::bump`] for a symbol the caller has proven absent from this
+    /// context: the level escaped (or was empty) while NO exclusions were in
+    /// force, so the coded escape covered the full symbol set. With
+    /// exclusions active, absence from the reduced interval proves nothing
+    /// and the general [`Self::bump`] must be used instead.
     // PROMOTE_AT is a tuning knob currently parked at usize::MAX (promotion
     // disabled), which makes the threshold comparison trivially false.
     #[allow(clippy::absurd_extreme_comparisons)]
-    fn bump(&mut self, x: u16, alphabet: u32) {
+    fn push_new(&mut self, x: u16, alphabet: u32) {
         match self {
             Ctx::Small { syms, sum, dense } => {
-                match syms.iter().position(|&(s, _)| s == x) {
-                    Some(i) => {
-                        let c = syms[i].1 + BUMP;
-                        syms[i].1 = c;
-                        // Bubble toward the front past every predecessor
-                        // with a smaller count so scans hit hot symbols
-                        // first. The list is non-increasing by count, so
-                        // the destination is found by binary search and the
-                        // intervening block shifts right in one rotate —
-                        // the same final layout the pairwise-swap loop
-                        // produced (deterministic, both coder sides
-                        // identical), without walking long equal-count
-                        // runs one swap at a time.
-                        let dest = syms[..i].partition_point(|&(_, pc)| pc >= c);
-                        if dest < i {
-                            syms[dest..=i].rotate_right(1);
-                        }
-                        if let Some(dense) = dense {
-                            dense[x as usize] = c;
-                        }
+                debug_assert!(syms.iter().all(|&(s, _)| s != x));
+                syms.push((x, BUMP));
+                if let Some(dense) = dense {
+                    dense[x as usize] = BUMP;
+                } else if excl_source_cap() > 0 && syms.len() >= DENSE_MIRROR_AT {
+                    let mut mirror = vec![0u16; alphabet as usize].into_boxed_slice();
+                    for &(s, c) in syms.iter() {
+                        mirror[s as usize] = c;
                     }
-                    None => {
-                        syms.push((x, BUMP));
-                        if let Some(dense) = dense {
-                            dense[x as usize] = BUMP;
-                        } else if excl_source_cap() > 0 && syms.len() >= DENSE_MIRROR_AT {
-                            let mut mirror = vec![0u16; alphabet as usize].into_boxed_slice();
-                            for &(s, c) in syms.iter() {
-                                mirror[s as usize] = c;
-                            }
-                            *dense = Some(mirror);
-                        }
-                    }
+                    *dense = Some(mirror);
                 }
-                *sum += BUMP as u32;
-                if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
-                    *sum = 0;
-                    for (_, c) in syms.iter_mut() {
-                        *c = (*c / 2).max(1);
-                        *sum += *c as u32;
-                    }
-                    if let Some(dense) = dense {
-                        for &(s, c) in syms.iter() {
-                            dense[s as usize] = c;
-                        }
-                    }
-                }
+                small_settle(syms, sum, dense);
                 if syms.len() >= PROMOTE_AT && alphabet <= PROMOTE_MAX_ALPHABET {
                     let mut counts = vec![0u16; alphabet as usize].into_boxed_slice();
                     let mut new_sum = 0u32;
@@ -659,6 +673,12 @@ impl Ctx {
                     };
                 }
             }
+            Ctx::Big { .. } => self.bump_big(x),
+        }
+    }
+
+    fn bump_big(&mut self, x: u16) {
+        match self {
             Ctx::Big {
                 counts,
                 tree,
@@ -681,6 +701,95 @@ impl Ctx {
                     }
                     *tree = rebuild_fenwick(counts);
                 }
+            }
+            Ctx::Small { .. } => unreachable!("bump_big on a Small context"),
+        }
+    }
+}
+
+/// One decoder chain level's outcome.
+enum LevelCode {
+    /// The level coded the symbol: (list index, symbol) from the find, so
+    /// the bump can go straight to [`Ctx::bump_at`].
+    Hit(usize, u16),
+    /// The level coded an escape, was empty, or had its whole interval
+    /// excluded. In every miss case the symbol is PROVEN absent from this
+    /// context, so the learning pass uses [`Ctx::push_new`]: the exclusion
+    /// set can never contain the coded symbol (inductively — the first
+    /// escape happens with no exclusions and proves absence outright, so
+    /// the symbols it excludes are all non-matches, and so on down), which
+    /// makes an escape over the reduced interval a proof of full absence
+    /// too.
+    Miss,
+}
+
+/// Decode one chain level: price the escape, pull the target, and either
+/// resolve the symbol or record the escape (feeding the exclusion set).
+/// Shared by all three decoder chains; mirrors `Ctx::code_for` + the encode
+/// loops exactly.
+fn decode_level(
+    ctx: &Ctx,
+    level: usize,
+    dec: &mut RangeDecoder,
+    see: &mut See,
+    excl: &mut Excl,
+) -> LevelCode {
+    if excl.is_empty() {
+        // Fast path: `sum` is tracked and the escape interval starts at it,
+        // so escapes are O(1) and symbol scans stop at the target (hot
+        // symbols sit at the front).
+        if ctx.is_empty() {
+            return LevelCode::Miss;
+        }
+        let sum = ctx.sum();
+        let key = See::key(level, sum, ctx.distinct(), ctx.top());
+        let esc = see.esc_freq(key, sum);
+        let total = sum + esc;
+        let target = dec.decode_target(total);
+        if target >= sum {
+            dec.commit(sum, esc, total);
+            see.update(key, true);
+            ctx.exclude_into(excl);
+            return LevelCode::Miss;
+        }
+        let (i, s, cum, c) = ctx.find_by_target(target);
+        dec.commit(cum, c, total);
+        see.update(key, false);
+        LevelCode::Hit(i, s)
+    } else {
+        let (sum, total, key) = ctx.excl_stats(excl, see, level);
+        if total == 0 {
+            return LevelCode::Miss;
+        }
+        let target = dec.decode_target(total);
+        if target >= sum {
+            dec.commit(sum, total - sum, total);
+            see.update(key, true);
+            ctx.exclude_into(excl);
+            return LevelCode::Miss;
+        }
+        let (i, s, cum, c) = ctx.find_by_target_excl(excl, target);
+        dec.commit(cum, c, total);
+        see.update(key, false);
+        LevelCode::Hit(i, s)
+    }
+}
+
+/// Shared tail of every `Small` bump: account the increment and halve the
+/// counts at the adaptation limit (with the dense mirror refreshed to
+/// match — symbols never leave the list, so refilling from `syms` covers
+/// every nonzero mirror slot).
+fn small_settle(syms: &mut Vec<(u16, u16)>, sum: &mut u32, dense: &mut Option<Box<[u16]>>) {
+    *sum += BUMP as u32;
+    if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
+        *sum = 0;
+        for (_, c) in syms.iter_mut() {
+            *c = (*c / 2).max(1);
+            *sum += *c as u32;
+        }
+        if let Some(dense) = dense {
+            for &(s, c) in syms.iter() {
+                dense[s as usize] = c;
             }
         }
     }
@@ -963,79 +1072,53 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut decoded: Option<u16> = None;
-        let mut coded_at: usize = 5;
         let skip_aux = aux == EDGE;
         let alphabet = self.alphabet;
-        const LEVELS: [usize; 5] = [SEE_LEVEL_AUX, 0, 1, 2, 3];
-        let mut chain: [&mut Ctx; 5] = [
-            self.c2aux.entry(key_aux).or_default(),
+        // The aux level runs first and separately (its context entry is not
+        // even allocated for EDGE tiles); the remainder is the plain
+        // standalone chain.
+        let mut aux_ctx: Option<&mut Ctx> = if skip_aux {
+            None
+        } else {
+            Some(self.c2aux.entry(key_aux).or_default())
+        };
+        if let Some(ctx) = aux_ctx.as_deref_mut()
+            && let LevelCode::Hit(i, s) = decode_level(ctx, SEE_LEVEL_AUX, dec, see, excl)
+        {
+            // Hot exit — 43-68% of aux tiles resolve here; the rest of the
+            // chain (including its hash entry) is never touched.
+            ctx.bump_at(i, s, alphabet);
+            return s;
+        }
+        let mut chain: [&mut Ctx; 4] = [
             self.c2.entry(key2).or_default(),
             &mut self.c1[(above as usize).min(alphabet as usize)],
             &mut self.c1b[(left as usize).min(alphabet as usize)],
             &mut self.c0,
         ];
-        {
-            for pos in 0..chain.len() {
-                if pos == 0 && skip_aux {
-                    continue;
-                }
-                let level = LEVELS[pos];
-                let ctx: &Ctx = &*chain[pos];
-                if excl.is_empty() {
-                    if ctx.is_empty() {
-                        continue;
-                    }
-                    let sum = ctx.sum();
-                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
-                    let esc = see.esc_freq(key, sum);
-                    let total = sum + esc;
-                    let target = dec.decode_target(total);
-                    if target >= sum {
-                        dec.commit(sum, esc, total);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                        continue;
-                    }
-                    let (s, cum, c) = ctx.find_by_target(target);
-                    dec.commit(cum, c, total);
-                    see.update(key, false);
-                    decoded = Some(s);
-                    coded_at = pos;
-                    break;
-                }
-                let (sum, total, key) = ctx.excl_stats(excl, see, level);
-                if total == 0 {
-                    continue;
-                }
-                let target = dec.decode_target(total);
-                if target >= sum {
-                    dec.commit(sum, total - sum, total);
-                    see.update(key, true);
-                    ctx.exclude_into(excl);
-                    continue;
-                }
-                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
-                dec.commit(cum, c, total);
-                see.update(key, false);
-                decoded = Some(s);
-                coded_at = pos;
+        let mut hit: Option<(usize, usize, u16)> = None;
+        for level in 0..chain.len() {
+            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+                hit = Some((level, i, s));
                 break;
             }
         }
-        let x = match decoded {
-            Some(s) => s,
+        let (coded_at, x) = match hit {
+            Some((level, i, s)) => {
+                chain[level].bump_at(i, s, alphabet);
+                (level, s)
+            }
             None => {
                 let target = dec.decode_target(alphabet);
                 dec.commit(target, 1, alphabet);
-                target as u16
+                (chain.len(), target as u16)
             }
         };
-        for (pos, ctx) in chain.iter_mut().enumerate().take(coded_at + 1) {
-            if pos == 0 && skip_aux {
-                continue;
-            }
-            ctx.bump(x, alphabet);
+        if let Some(ctx) = aux_ctx {
+            ctx.push_new(x, alphabet);
+        }
+        for ctx in chain.iter_mut().take(coded_at) {
+            ctx.push_new(x, alphabet);
         }
         x
     }
@@ -1048,71 +1131,40 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut decoded: Option<u16> = None;
-        let mut coded_at: usize = 5;
-        const LEVELS: [usize; 5] = [SEE_LEVEL_PAIR2, 0, 1, 2, 3];
-        let mut chain: [&mut Ctx; 5] = [
-            self.c2pair.entry(key_pair).or_default(),
+        let pair_ctx = self.c2pair.entry(key_pair).or_default();
+        if let LevelCode::Hit(i, s) = decode_level(pair_ctx, SEE_LEVEL_PAIR2, dec, see, excl) {
+            // Hot exit: the (b1, b2) level resolves most pair-coded tiles
+            // without touching the rest of the chain or its hash entry.
+            pair_ctx.bump_at(i, s, alphabet);
+            return s;
+        }
+        let mut chain: [&mut Ctx; 4] = [
             self.c2.entry(key2).or_default(),
             &mut self.c1[(b1 as usize).min(alphabet as usize)],
             &mut self.c1b[(above as usize).min(alphabet as usize)],
             &mut self.c0,
         ];
-        {
-            for pos in 0..chain.len() {
-                let level = LEVELS[pos];
-                let ctx: &Ctx = &*chain[pos];
-                if excl.is_empty() {
-                    if ctx.is_empty() {
-                        continue;
-                    }
-                    let sum = ctx.sum();
-                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
-                    let esc = see.esc_freq(key, sum);
-                    let total = sum + esc;
-                    let target = dec.decode_target(total);
-                    if target >= sum {
-                        dec.commit(sum, esc, total);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                        continue;
-                    }
-                    let (s, cum, c) = ctx.find_by_target(target);
-                    dec.commit(cum, c, total);
-                    see.update(key, false);
-                    decoded = Some(s);
-                    coded_at = pos;
-                    break;
-                }
-                let (sum, total, key) = ctx.excl_stats(excl, see, level);
-                if total == 0 {
-                    continue;
-                }
-                let target = dec.decode_target(total);
-                if target >= sum {
-                    dec.commit(sum, total - sum, total);
-                    see.update(key, true);
-                    ctx.exclude_into(excl);
-                    continue;
-                }
-                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
-                dec.commit(cum, c, total);
-                see.update(key, false);
-                decoded = Some(s);
-                coded_at = pos;
+        let mut hit: Option<(usize, usize, u16)> = None;
+        for level in 0..chain.len() {
+            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+                hit = Some((level, i, s));
                 break;
             }
         }
-        let x = match decoded {
-            Some(s) => s,
+        let (coded_at, x) = match hit {
+            Some((level, i, s)) => {
+                chain[level].bump_at(i, s, alphabet);
+                (level, s)
+            }
             None => {
-                let target = dec.decode_target(self.alphabet);
-                dec.commit(target, 1, self.alphabet);
-                target as u16
+                let target = dec.decode_target(alphabet);
+                dec.commit(target, 1, alphabet);
+                (chain.len(), target as u16)
             }
         };
-        for ctx in chain.iter_mut().take(coded_at + 1) {
-            ctx.bump(x, alphabet);
+        pair_ctx.push_new(x, alphabet);
+        for ctx in chain.iter_mut().take(coded_at) {
+            ctx.push_new(x, alphabet);
         }
         x
     }
@@ -1123,76 +1175,39 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut decoded: Option<u16> = None;
         // Decode over the chain first (contexts stay unmodified; exclusions
-        // accumulate in the stamp set), then bump the visited levels through
-        // the same references (update exclusion: levels below the coding
-        // level never see the symbol — mirrors encode_sym exactly, without
-        // re-running the context lookups).
-        let mut coded_at: usize = 4;
+        // accumulate in the stamp set), then learn on the visited levels
+        // through the same references (update exclusion: levels below the
+        // coding level never see the symbol — mirrors encode_sym exactly).
+        // Every level's outcome is known: the hit carries its list index,
+        // and a miss proves absence (see [`LevelCode`]), so no learning
+        // step ever rescans a symbol list.
         let mut chain: [&mut Ctx; 4] = [
             self.c2.entry(key2).or_default(),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
             &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
         ];
-        {
-            for level in 0..chain.len() {
-                let ctx: &Ctx = &*chain[level];
-                if excl.is_empty() {
-                    // Fast path: `sum` is tracked and the escape interval
-                    // starts at it, so escapes are O(1) and symbol scans
-                    // stop at the target (hot symbols sit at the front).
-                    if ctx.is_empty() {
-                        continue;
-                    }
-                    let sum = ctx.sum();
-                    let key = See::key(level, sum, ctx.distinct(), ctx.top());
-                    let esc = see.esc_freq(key, sum);
-                    let total = sum + esc;
-                    let target = dec.decode_target(total);
-                    if target >= sum {
-                        dec.commit(sum, esc, total);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                        continue;
-                    }
-                    let (s, cum, c) = ctx.find_by_target(target);
-                    dec.commit(cum, c, total);
-                    see.update(key, false);
-                    decoded = Some(s);
-                    coded_at = level;
-                    break;
-                }
-                let (sum, total, key) = ctx.excl_stats(excl, see, level);
-                if total == 0 {
-                    continue;
-                }
-                let target = dec.decode_target(total);
-                if target >= sum {
-                    dec.commit(sum, total - sum, total);
-                    see.update(key, true);
-                    ctx.exclude_into(excl);
-                    continue;
-                }
-                let (s, cum, c) = ctx.find_by_target_excl(excl, target);
-                dec.commit(cum, c, total);
-                see.update(key, false);
-                decoded = Some(s);
-                coded_at = level;
+        let mut hit: Option<(usize, usize, u16)> = None;
+        for level in 0..chain.len() {
+            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+                hit = Some((level, i, s));
                 break;
             }
         }
-        let x = match decoded {
-            Some(s) => s,
+        let (coded_at, x) = match hit {
+            Some((level, i, s)) => {
+                chain[level].bump_at(i, s, alphabet);
+                (level, s)
+            }
             None => {
                 let target = dec.decode_target(alphabet);
                 dec.commit(target, 1, alphabet);
-                target as u16
+                (chain.len(), target as u16)
             }
         };
-        for ctx in chain.iter_mut().take(coded_at + 1) {
-            ctx.bump(x, alphabet);
+        for ctx in chain.iter_mut().take(coded_at) {
+            ctx.push_new(x, alphabet);
         }
         x
     }
