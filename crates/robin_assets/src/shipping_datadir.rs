@@ -2275,6 +2275,94 @@ mod tests {
         }
     }
 
+    /// Lossless 8x4 RGBA JXL atlas (cjxl -d 0 -e 7) holding two RLE
+    /// sprites: A (4x4) at (0,0) and B (4x2) at (4,0), generated from the
+    /// exact canvases of `RLE_A_WORDS` / `RLE_B_WORDS` (opaque pixels
+    /// expanded 565 -> 888, every other class RGBA (0,0,0,0)). Lossless +
+    /// 565-representable colors means materialization must reproduce the
+    /// source words bit-for-bit.
+    const RLE_JXL_FIXTURE: &[u8] = &[
+        0xFF, 0x0A, 0x18, 0x70, 0xB0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x0C, 0x01, 0x4B, 0x18, 0x93,
+        0x8E, 0x83, 0x83, 0x84, 0x13, 0xC4, 0x63, 0x8B, 0xCA, 0x5D, 0x40, 0x14, 0x00, 0x3E, 0x18,
+        0x72, 0xF5, 0x52, 0xFC, 0x6F, 0xC6, 0xC5, 0x18, 0x81, 0x51, 0xFB, 0xDD, 0x8F, 0x6A, 0xB4,
+        0xE8, 0x0B, 0x02, 0x4C, 0xEF, 0x2C, 0x49, 0x8A, 0x2F, 0x32, 0x8A, 0xCD, 0xFA, 0x8B, 0x31,
+        0x04, 0x31, 0x0A, 0x41, 0x73, 0x55, 0xDB, 0xDA, 0x75, 0xEA, 0x8D, 0x0E, 0x17, 0x80, 0x9E,
+        0xF2, 0xE0, 0x05, 0x00,
+    ];
+    const RLE_A_WORDS: [u16; 16] = [
+        0,
+        3,
+        0x1234,
+        0x5678,
+        0x9ABC,
+        0xDEF0,
+        0xFFFF,
+        0xFFFF,
+        1,
+        2,
+        crate::frame_holder::SHADOW_KEY,
+        crate::frame_holder::TRANSPARENT_COLOR_16,
+        2,
+        3,
+        0x0000,
+        0xFFFF,
+    ];
+    const RLE_B_WORDS: [u16; 7] = [0, 1, 0x8410, 0x4208, 3, 3, 0xF800];
+
+    #[test]
+    fn rle_jxl_chunks_materialize_exact_words_from_lossless_fixture() {
+        use crate::rle_jxl;
+        let sprite = |w: u16, h: u16| ShippingSprite {
+            width: w,
+            height: h,
+            dictionary_index: UNMAPPED_DICT,
+            packed_data: Arc::new(Vec::new()),
+        };
+        let mask_of = |w: u16, h: u16, words: &[u16]| {
+            let (_pixels, classes, used) =
+                rle_jxl::decode_rle_canvas(w as usize, h as usize, words).unwrap();
+            assert_eq!(used, words.len());
+            rle_jxl::pack_class_map(&classes)
+        };
+        let mut masks = mask_of(4, 4, &RLE_A_WORDS);
+        masks.extend(mask_of(4, 2, &RLE_B_WORDS));
+        let mission = ShippingMission {
+            sprite_bank: Some(ShippingSpriteBank {
+                signature: 7,
+                dictionaries: Vec::new(),
+                sprite_count: 16,
+                sprites: vec![(5, sprite(4, 4)), (9, sprite(4, 2))],
+                vq_chunks: Vec::new(),
+                rle_jxl_chunks: vec![SpriteRleJxlChunk {
+                    rhs: "Animations/Day/test.rhs".into(),
+                    jxl_blobs: vec![RLE_JXL_FIXTURE.to_vec()],
+                    sprite_ids: vec![5, 9],
+                    placements: vec![
+                        RleJxlPlacement { blob: 0, x: 0, y: 0 },
+                        RleJxlPlacement { blob: 0, x: 4, y: 0 },
+                    ],
+                    masks,
+                }],
+            }),
+            ..ShippingMission::default()
+        };
+        // Ship it the way the converter does, then materialize like a
+        // mission install.
+        let compressed = zstd_compress_with_window(&encode_mission_native(&mission), 30).unwrap();
+        let mut decoded = decode_mission_compressed(&compressed).unwrap();
+        let bank = decoded.sprite_bank.as_mut().unwrap();
+        bank.materialize_rle_jxl_chunks().unwrap();
+        assert!(bank.rle_jxl_chunks.is_empty());
+        assert_eq!(
+            bank.sprite_row(5).unwrap().packed_data.as_slice(),
+            RLE_A_WORDS
+        );
+        assert_eq!(
+            bank.sprite_row(9).unwrap().packed_data.as_slice(),
+            RLE_B_WORDS
+        );
+    }
+
     #[test]
     fn vq_chunks_roundtrip_and_materialize_in_any_merge_order() {
         // Serialize each chunk exactly the way the converter ships it.
