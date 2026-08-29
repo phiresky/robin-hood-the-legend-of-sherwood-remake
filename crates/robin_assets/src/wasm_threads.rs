@@ -28,6 +28,25 @@ pub fn pool_threads() -> usize {
     POOL_THREADS.load(Ordering::Acquire)
 }
 
+/// Run one closure on the rayon worker pool and resolve with its result,
+/// without ever blocking the calling thread (the browser main thread must
+/// not `atomics.wait`). The pool must be initialized; callers check
+/// [`pool_threads`] and run inline otherwise.
+pub async fn run_on_pool<T, F>(task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    rayon::spawn(move || {
+        // An unreceived result only means the caller was dropped.
+        let _ = sender.send(task());
+    });
+    receiver
+        .await
+        .map_err(|_| anyhow!("wasm pool task dropped its result"))
+}
+
 /// Spawn `threads` Web Workers and install them as rayon's global pool.
 ///
 /// Resolves once every worker has instantiated the module against the shared

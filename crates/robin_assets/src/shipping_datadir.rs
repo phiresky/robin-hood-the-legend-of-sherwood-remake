@@ -419,17 +419,27 @@ impl VqDecodeScheduler {
         Ok(())
     }
 
-    /// Await the next completed decode and write its grids into the bank.
-    /// `Ok(false)` when no decode is in flight.
-    pub async fn apply_next(&mut self, bank: &mut ShippingSpriteBank) -> Result<bool> {
+    /// Await the next completed decode. `Ok(None)` when no decode is in
+    /// flight. Cancel-safe: dropping the returned future before completion
+    /// loses nothing (the mission loader races this against part fetches).
+    pub async fn next_decoded(&mut self) -> Result<Option<(SpriteVqChunk, Vec<(u32, Vec<u16>)>)>> {
         use futures_util::StreamExt as _;
         let Some(result) = self.in_flight.next().await else {
-            return Ok(false);
+            return Ok(None);
         };
         let (chunk, grids, decode_ms) =
             result.map_err(|_| anyhow!("VQ decode worker dropped its result"))?;
         let grids = grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
         tracing::debug!(chunk = %chunk.rhs, decode_ms, "VQ sprite chunk decoded on worker");
+        Ok(Some((chunk, grids)))
+    }
+
+    /// Await the next completed decode and write its grids into the bank.
+    /// `Ok(false)` when no decode is in flight.
+    pub async fn apply_next(&mut self, bank: &mut ShippingSpriteBank) -> Result<bool> {
+        let Some((chunk, grids)) = self.next_decoded().await? else {
+            return Ok(false);
+        };
         bank.apply_decoded_vq_chunk(&chunk, grids)?;
         Ok(true)
     }
@@ -812,8 +822,36 @@ impl ShippingSpriteBank {
         Self::run_vq_chunk_decode(chunk, &inputs)
     }
 
+    /// Decode and apply ONE lenient-ready chunk of `pending` on the calling
+    /// thread. `Ok(true)` when a chunk was materialized; `Ok(false)` when
+    /// nothing in `pending` is ready yet. The serial-fallback streaming
+    /// loader calls this repeatedly (yielding to the browser between calls)
+    /// to overlap decode with the remaining part downloads.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    pub fn materialize_next_ready_vq_chunk(
+        &mut self,
+        pending: &mut Vec<SpriteVqChunk>,
+        rhs_files: &BTreeMap<String, RhsData>,
+    ) -> Result<bool> {
+        let Some(position) = pending
+            .iter()
+            .map(|chunk| self.vq_chunk_ready_lenient(chunk, rhs_files))
+            .collect::<Result<Vec<bool>>>()?
+            .iter()
+            .position(|&ready| ready)
+        else {
+            return Ok(false);
+        };
+        let chunk = pending.swap_remove(position);
+        let grids = self
+            .decode_vq_chunk(&chunk, rhs_files)
+            .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
+        self.apply_decoded_vq_chunk(&chunk, grids)?;
+        Ok(true)
+    }
+
     /// Write one chunk's decoded grids into the sprite rows.
-    fn apply_decoded_vq_chunk(
+    pub fn apply_decoded_vq_chunk(
         &mut self,
         _chunk: &SpriteVqChunk,
         grids: Vec<(u32, Vec<u16>)>,
@@ -1260,7 +1298,28 @@ impl ShippingMission {
                 .binary_search_by_key(&index, |(index, _)| *index)
             {
                 Ok(position) => {
-                    if bitcode::encode(&bank.sprites[position].1) != bitcode::encode(&sprite) {
+                    let existing = &bank.sprites[position].1;
+                    // The streaming wasm loader materializes VQ grids while
+                    // later parts are still downloading, so `existing` may
+                    // already carry a decoded grid whose incoming twin is
+                    // still the empty-`packed_data` VQ placeholder. Compare
+                    // with the materialized side blanked; any chunk that
+                    // decodes this sprite again still proves grid equality
+                    // in `apply_decoded_vq_chunk`. Native installs merge
+                    // strictly before materialization, where this branch
+                    // cannot trigger.
+                    let blanked;
+                    let comparable =
+                        if !existing.packed_data.is_empty() && sprite.packed_data.is_empty() {
+                            blanked = ShippingSprite {
+                                packed_data: Arc::new(Vec::new()),
+                                ..existing.clone()
+                            };
+                            &blanked
+                        } else {
+                            existing
+                        };
+                    if bitcode::encode(comparable) != bitcode::encode(&sprite) {
                         return Err(anyhow!(
                             "shipping sprite-bank parts conflict at sprite {index}"
                         ));

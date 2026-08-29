@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use futures::{StreamExt as _, TryStreamExt as _};
+use futures::StreamExt as _;
 use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mission_compressed};
 
+#[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
 const MISSION_FETCH_CONCURRENCY: usize = 8;
 
 /// One observable step at the asynchronous shipping-data boundary.
@@ -70,47 +71,50 @@ where
     }
     let files = dependencies.files;
     let exclamation_ids = dependencies.exclamation_ids;
-    let mut fetched = futures::stream::iter(files.iter().cloned().map(|file| async move {
-        let compressed = fetch(datadir, &file)
-            .await
-            .with_context(|| format!("fetch shipping file {file}"))?;
-        let bytes = compressed.len();
-        let payload = decode_mission_compressed(&compressed)
-            .with_context(|| format!("decode shipping file {file}"))?;
-        Ok::<_, anyhow::Error>((file, bytes, payload))
-    }))
-    .buffer_unordered(MISSION_FETCH_CONCURRENCY);
-    let mut fetched_bytes = 0usize;
-    let mut completed = 0usize;
-    let mut merged = ShippingMission::default();
-    while let Some((file, bytes, payload)) = fetched.try_next().await? {
-        fetched_bytes += bytes;
-        tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
-        merged
-            .merge_part(payload)
-            .with_context(|| format!("merge shipping file {file}"))?;
-        completed += 1;
-        progress(MissionLoadProgress {
-            completed,
-            total,
-            file: Some(&file),
-        });
-        // On wasm, presenting from the observer does not become visible until
-        // this task yields back to the browser event loop. Native builds make
-        // this a no-op.
-        crate::window::yield_to_runtime().await;
-    }
-    // Browser worker-pool builds materialize the VQ sprite chunks before the
-    // synchronous install step, decoding chunks in parallel while the main
-    // thread only dispatches and applies. `install_mission` still runs its
-    // own (now no-op) materialization for every other configuration.
+    // Native (and plain single-threaded wasm) path: bounded-concurrency
+    // fetch, merge on arrival, materialize inside `install_mission`.
+    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
+    let (merged, fetched_bytes) = {
+        use futures::TryStreamExt as _;
+        let mut fetched = futures::stream::iter(files.iter().cloned().map(|file| async move {
+            let compressed = fetch(datadir, &file)
+                .await
+                .with_context(|| format!("fetch shipping file {file}"))?;
+            let bytes = compressed.len();
+            let payload = decode_mission_compressed(&compressed)
+                .with_context(|| format!("decode shipping file {file}"))?;
+            Ok::<_, anyhow::Error>((file, bytes, payload))
+        }))
+        .buffer_unordered(MISSION_FETCH_CONCURRENCY);
+        let mut fetched_bytes = 0usize;
+        let mut completed = 0usize;
+        let mut merged = ShippingMission::default();
+        while let Some((file, bytes, payload)) = fetched.try_next().await? {
+            fetched_bytes += bytes;
+            tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
+            merged
+                .merge_part(payload)
+                .with_context(|| format!("merge shipping file {file}"))?;
+            completed += 1;
+            progress(MissionLoadProgress {
+                completed,
+                total,
+                file: Some(&file),
+            });
+            // On wasm, presenting from the observer does not become visible
+            // until this task yields back to the browser event loop. Native
+            // builds make this a no-op.
+            crate::window::yield_to_runtime().await;
+        }
+        (merged, fetched_bytes)
+    };
+    // Browser worker-pool build: all requests in flight at once, parts merged
+    // as they arrive, and VQ sprite chunks materialized concurrently with the
+    // remaining downloads. `install_mission` still runs its own (now no-op)
+    // materialization pass.
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    if let Some(bank) = merged.sprite_bank.as_mut() {
-        let rhs_files = &merged.rhs_files;
-        bank.materialize_vq_chunks_parallel(rhs_files)
-            .await
-            .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
-    }
+    let (merged, fetched_bytes) =
+        fetch_merge_materialize_streaming(datadir, mission, &files, &mut progress).await?;
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;
@@ -127,6 +131,145 @@ where
         "shipping mission payload loaded"
     );
     Ok(())
+}
+
+/// Streaming mission load for the browser worker-pool build.
+///
+/// Every part request is issued simultaneously — the browser's network stack
+/// multiplexes the actual transfers — and each response is processed the
+/// moment it arrives: the zstd+bitcode part decode runs on a rayon worker
+/// (inline on the serial fallback), the decoded part merges immediately, and
+/// every VQ sprite chunk whose dependencies are satisfied is dispatched to
+/// the pool right away. The main thread never blocks: it awaits whichever
+/// event completes next (a part arrival or a finished chunk decode) via
+/// `futures::select!`, so worker decode, network transfer, and merge overlap
+/// for the whole install instead of running as fetch-everything-then-decode
+/// phases.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+async fn fetch_merge_materialize_streaming<F>(
+    datadir: &ShippingDatadir,
+    mission: &str,
+    files: &[String],
+    progress: &mut F,
+) -> Result<(ShippingMission, usize)>
+where
+    F: FnMut(MissionLoadProgress<'_>),
+{
+    use futures::FutureExt as _;
+    use robin_assets::shipping_datadir::{SpriteVqChunk, VqDecodeScheduler};
+    use robin_assets::wasm_threads;
+
+    let total = files.len();
+    let pooled = wasm_threads::pool_threads() > 0;
+    let mut fetched = futures::stream::iter(files.iter().cloned().map(|file| async move {
+        let compressed = fetch(datadir, &file)
+            .await
+            .with_context(|| format!("fetch shipping file {file}"))?;
+        let bytes = compressed.len();
+        // Pure compute; overlap it with the remaining downloads when the
+        // pool exists.
+        let payload = if wasm_threads::pool_threads() > 0 {
+            wasm_threads::run_on_pool(move || decode_mission_compressed(&compressed)).await?
+        } else {
+            decode_mission_compressed(&compressed)
+        };
+        let payload = payload.with_context(|| format!("decode shipping file {file}"))?;
+        Ok::<_, anyhow::Error>((file, bytes, payload))
+    }))
+    .buffer_unordered(total.max(1))
+    .fuse();
+
+    enum Event {
+        Part(Option<Result<(String, usize, ShippingMission)>>),
+        Decoded(Result<Option<(SpriteVqChunk, Vec<(u32, Vec<u16>)>)>>),
+    }
+
+    let mut merged = ShippingMission::default();
+    let mut fetched_bytes = 0usize;
+    let mut completed = 0usize;
+    let mut pending_chunks: Vec<SpriteVqChunk> = Vec::new();
+    let mut scheduler = VqDecodeScheduler::default();
+    loop {
+        let event = if pooled && scheduler.has_in_flight() {
+            // Boxed: `select!` polls through `&mut`, which needs `Unpin`,
+            // and an `async fn` future is not. One small allocation per
+            // event is noise next to a network fetch or chunk decode.
+            let mut next_decoded = Box::pin(scheduler.next_decoded()).fuse();
+            futures::select! {
+                part = fetched.next() => Event::Part(part),
+                decoded = next_decoded => Event::Decoded(decoded),
+            }
+        } else {
+            Event::Part(fetched.next().await)
+        };
+        match event {
+            Event::Part(None) => break,
+            Event::Part(Some(part)) => {
+                let (file, bytes, payload) = part?;
+                fetched_bytes += bytes;
+                tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
+                merged
+                    .merge_part(payload)
+                    .with_context(|| format!("merge shipping file {file}"))?;
+                completed += 1;
+                progress(MissionLoadProgress {
+                    completed,
+                    total,
+                    file: Some(&file),
+                });
+                if let Some(bank) = merged.sprite_bank.as_mut() {
+                    pending_chunks.append(&mut bank.vq_chunks);
+                    let rhs_files = &merged.rhs_files;
+                    if pooled {
+                        // Lenient readiness: a missing row/base only means
+                        // its part has not arrived yet.
+                        scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                    } else {
+                        // Serial fallback: no pool, but decode still overlaps
+                        // the network by draining ready chunks between
+                        // arrivals, yielding so the loading screen stays
+                        // responsive between chunks.
+                        while bank
+                            .materialize_next_ready_vq_chunk(&mut pending_chunks, rhs_files)?
+                        {
+                            crate::window::yield_to_runtime().await;
+                        }
+                    }
+                }
+                // Present the observer's progress frame.
+                crate::window::yield_to_runtime().await;
+            }
+            Event::Decoded(item) => {
+                let Some((chunk, grids)) = item? else {
+                    continue;
+                };
+                let bank = merged
+                    .sprite_bank
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("decoded VQ chunk without a sprite bank"))?;
+                bank.apply_decoded_vq_chunk(&chunk, grids)?;
+                let rhs_files = &merged.rhs_files;
+                scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+            }
+        }
+    }
+    if let Some(bank) = merged.sprite_bank.as_mut() {
+        // Drain outstanding worker decodes; each applied chunk can unlock
+        // dependents that were still pending.
+        let rhs_files = &merged.rhs_files;
+        while let Some((chunk, grids)) = scheduler.next_decoded().await? {
+            bank.apply_decoded_vq_chunk(&chunk, grids)?;
+            scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+        }
+        // Strict pass for the remainder: with the whole payload merged,
+        // "not fetched yet" is no longer an excuse, so unresolved
+        // dependencies now surface as real manifest errors.
+        bank.vq_chunks.append(&mut pending_chunks);
+        bank.materialize_vq_chunks_parallel(rhs_files)
+            .await
+            .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
+    }
+    Ok((merged, fetched_bytes))
 }
 
 struct RequiredMissionDependencies {

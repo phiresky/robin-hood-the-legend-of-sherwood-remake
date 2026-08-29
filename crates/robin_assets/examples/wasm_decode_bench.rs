@@ -17,6 +17,15 @@
 //! node scripts/wasm_decode_bench.mjs <converted-datadir-root> <outdir>
 //! ```
 //!
+//! Threaded (worker pool) variant — node has no Web Workers, so this one
+//! runs under headless Chrome behind a loopback COOP/COEP server:
+//!
+//! ```text
+//! scripts/build-wasm-threads.sh --bench --no-opt
+//! node scripts/wasm_decode_bench_chrome.mjs <converted-datadir-root> \
+//!     wasm-www/pkg-bench --threads <N> [--mission H01_Lin_VL]
+//! ```
+//!
 //! where `<converted-datadir-root>` is a `convert_datadir --format shipping`
 //! output directory (contains `Data/datadir.bin`).
 
