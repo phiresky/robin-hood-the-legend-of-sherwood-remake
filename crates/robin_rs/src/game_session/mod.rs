@@ -455,6 +455,7 @@ fn simulation_config_for_level_restart(
     if !replay_restart {
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
         checkpoint.enable_unbinding = outcome.enable_unbinding;
+        checkpoint.reusable_cloaks = outcome.reusable_cloaks;
     }
     checkpoint
 }

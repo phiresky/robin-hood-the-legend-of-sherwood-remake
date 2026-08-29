@@ -1238,7 +1238,7 @@ impl WaitCommandContext<'_> {
                 P::OnShoulders => Some(OT::WaitingOnShoulders),
                 P::CarryingCorpse => Some(OT::WaitingWithCorpse),
                 P::SimulatingBeggar => Some(OT::SimulatingBeggar),
-                P::Spy => Some(OT::WaitingCape),
+                P::Spy | P::Cloaked => Some(OT::WaitingCape),
                 P::AnonymousArcher => Some(match after_state {
                     AS::AimingWithBow => OT::AimingWithBowAnonymous,
                     AS::AimingWithBowUp => OT::AimingWithBowUpAnonymous,
@@ -1791,6 +1791,7 @@ impl StealthCommandContext<'_> {
                 | Command::LeaveBeggar
                 | Command::EnterHelpingClimb
                 | Command::LeaveHelpingClimb
+                | Command::EnterCloak
         ) {
             let has_carried = entity.pc_data().is_some_and(|pc| pc.carried.is_some());
             let animations: &[crate::order::OrderType] = if command == Command::LeaveHelpingClimb {

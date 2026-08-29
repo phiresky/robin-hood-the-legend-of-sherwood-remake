@@ -42,6 +42,14 @@ pub struct GameplayConfig {
     /// it restores the original input behavior.
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
 }
 
 impl Default for GameplayConfig {
@@ -50,6 +58,7 @@ impl Default for GameplayConfig {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
             enable_unbinding: true,
+            reusable_cloaks: true,
         }
     }
 }
@@ -69,6 +78,7 @@ mod tests {
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
+        assert!(!config.reusable_cloaks);
     }
 
     #[test]
@@ -76,5 +86,10 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str(r#"{"control_allied_soldiers":true}"#)
             .expect("legacy gameplay config");
         assert!(config.control_tactical_units);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }

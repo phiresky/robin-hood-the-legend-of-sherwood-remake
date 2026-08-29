@@ -31,6 +31,7 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Reusable Cloaks",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -209,6 +210,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
+        3 => config.reusable_cloaks = !config.reusable_cloaks,
         _ => {}
     }
 }
@@ -218,6 +220,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
+        3 => config.reusable_cloaks,
         _ => false,
     }
 }

@@ -1076,6 +1076,7 @@ impl EngineInner {
                 posture,
                 Posture::Upright
                     | Posture::Spy
+                    | Posture::Cloaked
                     | Posture::LeaningOut
                     | Posture::Leisure
                     | Posture::Siesta
