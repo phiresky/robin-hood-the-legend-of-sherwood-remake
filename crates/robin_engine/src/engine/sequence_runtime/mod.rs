@@ -1943,6 +1943,22 @@ impl DirectAbilityCommandContext<'_> {
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
+            Command::Untie => {
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                };
+                let result = abilities::begin_untie(
+                    self.entities,
+                    self.sequence_manager,
+                    owner,
+                    target,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
             Command::HealCmd => {
                 let Some(target) = self.interaction_target(seq_id, elem_idx) else {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);

@@ -4068,6 +4068,21 @@ impl Entity {
         }
     }
 
+    /// Release a tied human while preserving their neurological state.
+    ///
+    /// This is deliberately strict: interaction validation guarantees a
+    /// living tied human, so a stale or non-human completion is an invariant
+    /// violation rather than a silent no-op.
+    pub fn untie_human(&mut self) {
+        let (human, posture) = match self {
+            Self::Pc(e) => (&mut e.human, &mut e.element.posture),
+            Self::Soldier(e) => (&mut e.human, &mut e.element.posture),
+            Self::Civilian(e) => (&mut e.human, &mut e.element.posture),
+            _ => panic!("cannot untie a non-human entity"),
+        };
+        crate::combat::untie(human, posture);
+    }
+
     pub fn set_posture_stuck_under_net_for_human(&mut self) -> bool {
         match self {
             Self::Pc(e) => {

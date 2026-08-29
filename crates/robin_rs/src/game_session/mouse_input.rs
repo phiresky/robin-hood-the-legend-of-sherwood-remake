@@ -1473,9 +1473,15 @@ pub(super) async fn handle_pause_menu_events(
                         mut sound_config,
                     )) = profile_settings
                     {
+                        // Replay headers and multiplayer snapshots own the
+                        // active simulation value. A local profile can differ,
+                        // so seed this deterministic option from the mission
+                        // rather than showing a stale local preference.
+                        gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
+                        let simulation_enable_unbinding = gameplay_config.enable_unbinding;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1543,6 +1549,12 @@ pub(super) async fn handle_pause_menu_events(
                         {
                             let cmd = PlayerCommand::SetFixHardReactionTimes {
                                 enabled: gameplay_config.fix_hard_reaction_times,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.enable_unbinding != simulation_enable_unbinding {
+                            let cmd = PlayerCommand::SetUnbindingEnabled {
+                                enabled: gameplay_config.enable_unbinding,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }

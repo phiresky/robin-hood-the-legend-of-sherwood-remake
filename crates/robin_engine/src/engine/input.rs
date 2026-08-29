@@ -903,11 +903,12 @@ impl EngineInner {
                     return true;
                 }
 
-                // Search (loot money). Requires money > 0, out-of-order,
-                // not stuck under net, the SEARCH contextual action,
-                // and VIPs only by Robin.
+                // Search (loot money). Requires money > 0, out-of-order (or
+                // a living tied NPC while Untie is enabled), not stuck under
+                // net, the SEARCH contextual action, and VIPs only by Robin.
                 if npc_money != 0
-                    && is_out_of_order
+                    && (is_out_of_order
+                        || (self.control.sim_config.enable_unbinding && is_tied && !is_dead))
                     && !is_stuck_under_net
                     && posture != Posture::Carried
                     && self.selected_pc_has_contextual_action(
@@ -916,6 +917,20 @@ impl EngineInner {
                         crate::profiles::Action::Search,
                     )
                     && (!is_vip || selected_pc_is_robin)
+                {
+                    return true;
+                }
+                // Rust extension: a Tie-skilled PC can release any living
+                // tied NPC. Keep this below Search so remaining loot wins the
+                // same click/cursor until it has been collected.
+                if self.control.sim_config.enable_unbinding
+                    && is_tied
+                    && !is_dead
+                    && self.selected_pc_has_contextual_action(
+                        assets,
+                        selected_pc_id,
+                        crate::profiles::Action::Tie,
+                    )
                 {
                     return true;
                 }
@@ -1310,7 +1325,8 @@ impl EngineInner {
     ///      RHMOUSE_PAY_YES / RHMOUSE_PAY_NO depending on remaining
     ///      ransom
     ///   1. Scroll-attached → RHMOUSE_TALK
-    ///   2. Dead/unconscious + SEARCH → RHMOUSE_SEARCH
+    ///   2. Dead/unconscious (or tied with Untie enabled) + SEARCH →
+    ///      RHMOUSE_SEARCH
     ///   3. Unconscious + EXECUTE + lying → RHMOUSE_FINISH_HIM
     ///   4. Unconscious + TIE → RHMOUSE_TIE
     ///   5. Unconscious + RESUSCITATE + same camp → RHMOUSE_WAKE_UP
@@ -1418,11 +1434,32 @@ impl EngineInner {
             Entity::Civilian(c) => c.npc.money,
             _ => 0,
         };
-        if (dead || unconscious)
+        let tied_search_allowed_for_selector = posture != Posture::Tied
+            || !self.is_entity_vip(assets, entity)
+            || selected_pc_id
+                .and_then(|id| self.get_entity(id))
+                .and_then(Entity::pc_data)
+                .is_some_and(|pc| pc.robin);
+        if (dead
+            || unconscious
+            || (self.control.sim_config.enable_unbinding && posture == Posture::Tied))
             && npc_money != 0
+            && tied_search_allowed_for_selector
             && self.selected_pc_has_contextual_action(assets, selected_pc_id, PA::Search)
         {
             return RHMOUSE_SEARCH;
+        }
+
+        // Rust extension: the rope cursor represents both directions of the
+        // tying interaction. This also covers script-authored conscious tied
+        // NPCs, which the Original cursor chain could not express.
+        if self.control.sim_config.enable_unbinding
+            && !dead
+            && posture == Posture::Tied
+            && entity.is_npc()
+            && self.selected_pc_has_contextual_action(assets, selected_pc_id, PA::Tie)
+        {
+            return RHMOUSE_TIE;
         }
 
         // 3. Unconscious + EXECUTE + lying → murder cursor

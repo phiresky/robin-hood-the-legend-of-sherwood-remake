@@ -4606,54 +4606,59 @@ impl EngineInner {
             }
         }
 
-        let pending_tie_init = self
+        let pending_tying_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
                 let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Tie)
-                    && actor.execute_order_initialising)
+                let kind = ability.kind?;
+                (matches!(
+                    kind,
+                    crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
+                ) && actor.execute_order_initialising)
                     .then(|| {
                         (
+                            kind,
                             ability
                                 .sequence_id
-                                .expect("pending Tie initialization lost sequence identity"),
+                                .expect("pending tying initialization lost sequence identity"),
                             ability.element_index,
                             ability
                                 .target
-                                .expect("pending Tie initialization lost antagonist identity"),
+                                .expect("pending tying initialization lost antagonist identity"),
                             ability
                                 .order_id
-                                .expect("pending Tie initialization lost order identity"),
+                                .expect("pending tying initialization lost order identity"),
                         )
                     })
             });
-        if let Some((seq_id, elem_idx, target_id, order_id)) = pending_tie_init {
+        if let Some((kind, seq_id, elem_idx, target_id, order_id)) = pending_tying_init {
+            let command = match kind {
+                crate::movement::AbilityKind::Tie => crate::element::Command::TieCmd,
+                crate::movement::AbilityKind::Untie => crate::element::Command::Untie,
+                _ => unreachable!("pending tying initializer accepted a non-tying ability"),
+            };
             let valid = {
                 let element = self
                     .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .unwrap_or_else(|| {
-                        panic!("pending Tie owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                        panic!(
+                            "pending {kind:?} owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
                     });
                 assert_eq!(element.owner, Some(actor_id));
-                assert_eq!(element.command, crate::element::Command::TieCmd);
+                assert_eq!(element.command, command);
                 let order = element.current_order().unwrap_or_else(|| {
-                    panic!("pending Tie element {seq_id:?}/{elem_idx} lost its selected order")
+                    panic!("pending {kind:?} element {seq_id:?}/{elem_idx} lost its selected order")
                 });
                 assert_eq!(order.order_id, order_id);
                 assert_eq!(order.target_actor, Some(target_id.index()));
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Tie,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
@@ -4663,12 +4668,12 @@ impl EngineInner {
 
             let actor_pos = self
                 .get_entity(actor_id)
-                .expect("validated Tie owner vanished during initialization")
+                .expect("validated tying owner vanished during initialization")
                 .element_data()
                 .position_map();
             let target_pos = self
                 .get_entity(target_id)
-                .expect("validated Tie target vanished during initialization")
+                .expect("validated tying target vanished during initialization")
                 .element_data()
                 .position_map();
             let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -4681,7 +4686,7 @@ impl EngineInner {
             // be interrupted by an earlier manager-FIFO continuation before
             // its animation ever owns an actor slot.
             self.get_entity_mut(actor_id)
-                .expect("validated Tie owner vanished before direction initialization")
+                .expect("validated tying owner vanished before direction initialization")
                 .element_data_mut()
                 .set_direction_goal(facing);
         }
@@ -5077,6 +5082,28 @@ impl EngineInner {
                         actor = ?actor_id,
                         target = ?target_id,
                         "Tie: enemy tied up"
+                    );
+                }
+                AbilityTickResult::UntieDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    let target = self
+                        .get_entity_mut(target_id)
+                        .unwrap_or_else(|| panic!("untie target {target_id:?} vanished at Done"));
+                    assert!(target.is_active(), "untie target became inactive at Done");
+                    assert!(target.is_npc(), "untie target stopped being an NPC at Done");
+                    assert!(!target.is_dead(), "untie target died before Done");
+                    target.untie_human();
+                    // Preserve unconsciousness and concussion. The regular
+                    // human recovery tick remains the sole wake-up authority.
+                    self.actor_wait(target_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        target = ?target_id,
+                        "Untie: NPC released"
                     );
                 }
                 AbilityTickResult::ClimbOnShouldersDone {

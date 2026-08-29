@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+const fn enabled_by_default() -> bool {
+    true
+}
+
 /// Gameplay extensions which intentionally differ from the original game.
 #[derive(
     Debug,
@@ -30,6 +34,14 @@ pub struct GameplayConfig {
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default, alias = "control_allied_soldiers")]
     pub control_tactical_units: bool,
+
+    /// Allow a PC with the Tie contextual action to release a tied NPC.
+    ///
+    /// The original shipped an unused `RHCOMMAND_UNTIE` slot but exposed no
+    /// playable interaction. This post-port extension defaults on; disabling
+    /// it restores the original input behavior.
+    #[serde(default = "enabled_by_default")]
+    pub enable_unbinding: bool,
 }
 
 impl Default for GameplayConfig {
@@ -37,6 +49,7 @@ impl Default for GameplayConfig {
         Self {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
+            enable_unbinding: true,
         }
     }
 }
@@ -55,6 +68,7 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
+        assert!(config.enable_unbinding);
     }
 
     #[test]
