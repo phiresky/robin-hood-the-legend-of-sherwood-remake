@@ -1331,6 +1331,209 @@ pub fn decode_grids_auxref(
     Ok(out)
 }
 
+/// A within-batch auxiliary reference: grid `i` reads its aux context from
+/// batch grid `grid` (which must satisfy `grid < i`, so the decoder has
+/// already produced it), shifted by `(dtx, dy)` in tile space. Derived
+/// deterministically from shipped script metadata on both coder sides, so
+/// it costs no format bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfRef {
+    pub grid: u32,
+    pub dtx: i32,
+    pub dy: i32,
+}
+
+/// The full shipping combination: family bases (cross-chunk) for variant
+/// sprites plus within-batch aux references for standalone sprites. A grid
+/// may use bases or a self-reference, not both.
+pub fn encode_grids_shipping(
+    alphabet: u16,
+    grids: &[SpriteGrid],
+    base: Option<&[Option<&[u16]>]>,
+    base2: Option<&[Option<&[u16]>]>,
+    selfref: &[Option<SelfRef>],
+) -> Result<Vec<u8>> {
+    if selfref.len() != grids.len() {
+        return Err(anyhow!(
+            "selfref list length {} != grid count {}",
+            selfref.len(),
+            grids.len()
+        ));
+    }
+    for (label, list) in [("base", base), ("base2", base2)] {
+        if let Some(list) = list {
+            if list.len() != grids.len() {
+                return Err(anyhow!(
+                    "{label} list length {} != grid count {}",
+                    list.len(),
+                    grids.len()
+                ));
+            }
+        }
+    }
+    let mut enc = RangeEncoder::new();
+    let mut model = Model::new(alphabet);
+    for (gi, g) in grids.iter().enumerate() {
+        let cols = g.cols as usize;
+        if g.indices.len() != cols * g.rows as usize {
+            return Err(anyhow!(
+                "grid {gi}: {} indices for {}x{}",
+                g.indices.len(),
+                g.cols,
+                g.rows
+            ));
+        }
+        let b = base.and_then(|b| b[gi]);
+        let b2 = base2.and_then(|b| b[gi]);
+        if b2.is_some() && b.is_none() {
+            return Err(anyhow!("grid {gi}: base2 without base"));
+        }
+        for (label, s) in [("base", b), ("base2", b2)] {
+            if let Some(s) = s {
+                if s.len() != g.indices.len() {
+                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
+                }
+            }
+        }
+        let aux = match &selfref[gi] {
+            Some(r) if b.is_some() => {
+                return Err(anyhow!(
+                    "grid {gi}: self-reference combined with base ({r:?})"
+                ));
+            }
+            Some(r) => {
+                if r.grid as usize >= gi {
+                    return Err(anyhow!(
+                        "grid {gi}: self-reference to grid {} is not causal",
+                        r.grid
+                    ));
+                }
+                let t = &grids[r.grid as usize];
+                Some(AuxRef {
+                    indices: t.indices,
+                    cols: t.cols,
+                    rows: t.rows,
+                    dtx: r.dtx,
+                    dy: r.dy,
+                })
+            }
+            None => None,
+        };
+        for (i, &x) in g.indices.iter().enumerate() {
+            if x as u32 >= alphabet as u32 {
+                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
+            }
+            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
+            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
+            match (b, b2) {
+                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
+                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
+                _ => {
+                    let a = aux_tile(&aux, i, cols);
+                    model.encode_sym_aux(&mut enc, a, above, left, x);
+                }
+            }
+        }
+    }
+    Ok(enc.finish())
+}
+
+/// Decoder for [`encode_grids_shipping`]; every input must match the
+/// encoding call exactly, with self-references resolved against the
+/// decoder's own earlier output grids.
+pub fn decode_grids_shipping(
+    alphabet: u16,
+    dims: &[(u16, u16)],
+    base: Option<&[Option<&[u16]>]>,
+    base2: Option<&[Option<&[u16]>]>,
+    selfref: &[Option<SelfRef>],
+    blob: &[u8],
+) -> Result<Vec<Vec<u16>>> {
+    if selfref.len() != dims.len() {
+        return Err(anyhow!(
+            "selfref list length {} != grid count {}",
+            selfref.len(),
+            dims.len()
+        ));
+    }
+    for (label, list) in [("base", base), ("base2", base2)] {
+        if let Some(list) = list {
+            if list.len() != dims.len() {
+                return Err(anyhow!(
+                    "{label} list length {} != grid count {}",
+                    list.len(),
+                    dims.len()
+                ));
+            }
+        }
+    }
+    let mut dec = RangeDecoder::new(blob);
+    let mut model = Model::new(alphabet);
+    let mut out: Vec<Vec<u16>> = Vec::with_capacity(dims.len());
+    for (gi, &(cols16, rows)) in dims.iter().enumerate() {
+        let cols = cols16 as usize;
+        let n = cols * rows as usize;
+        let b = base.and_then(|b| b[gi]);
+        let b2 = base2.and_then(|b| b[gi]);
+        if b2.is_some() && b.is_none() {
+            return Err(anyhow!("grid {gi}: base2 without base"));
+        }
+        for (label, s) in [("base", b), ("base2", b2)] {
+            if let Some(s) = s {
+                if s.len() != n {
+                    return Err(anyhow!("grid {gi}: {label} length mismatch"));
+                }
+            }
+        }
+        let aux = match &selfref[gi] {
+            Some(r) if b.is_some() => {
+                return Err(anyhow!(
+                    "grid {gi}: self-reference combined with base ({r:?})"
+                ));
+            }
+            Some(r) => {
+                if r.grid as usize >= gi {
+                    return Err(anyhow!(
+                        "grid {gi}: self-reference to grid {} is not causal",
+                        r.grid
+                    ));
+                }
+                let (tc, tr) = dims[r.grid as usize];
+                Some((r.grid as usize, tc, tr, r.dtx, r.dy))
+            }
+            None => None,
+        };
+        let mut g: Vec<u16> = Vec::with_capacity(n);
+        for i in 0..n {
+            let above = if i >= cols { g[i - cols] } else { EDGE };
+            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
+            let x = match (b, b2) {
+                (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
+                (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
+                _ => {
+                    let a = match aux {
+                        Some((tg, tc, tr, dtx, dy)) => {
+                            let r = AuxRef {
+                                indices: &out[tg],
+                                cols: tc,
+                                rows: tr,
+                                dtx,
+                                dy,
+                            };
+                            aux_tile(&Some(r), i, cols)
+                        }
+                        None => EDGE,
+                    };
+                    model.decode_sym_aux(&mut dec, a, above, left)
+                }
+            };
+            g.push(x);
+        }
+        out.push(g);
+    }
+    Ok(out)
+}
+
 /// The reference tile for grid position `i`, or EDGE when absent.
 fn aux_tile(aux: &Option<AuxRef>, i: usize, cols: usize) -> u16 {
     let Some(r) = aux else {
@@ -1619,6 +1822,96 @@ mod tests {
         for ((_, _, v), d) in grids.iter().zip(decoded.iter()) {
             assert_eq!(v, d);
         }
+    }
+
+    #[test]
+    fn roundtrip_shipping_with_self_refs_and_bases() {
+        // Batch: grid0 standalone, grid1 self-refs grid0, grid2 self-refs
+        // grid1 with a shift, grid3 coded against an external base, grid4
+        // against two bases.
+        let g0: Vec<u16> = (0..40u16).map(|i| (i * 29) % 4096).collect();
+        let g1: Vec<u16> = g0
+            .iter()
+            .map(|&v| if v % 5 == 0 { v } else { (v + 7) % 4096 })
+            .collect();
+        let g2: Vec<u16> = (0..30u16)
+            .map(|i| g1[(i as usize + 3) % g1.len()])
+            .collect();
+        let ext_base: Vec<u16> = (0..24u16).map(|i| (i * 13) % 4096).collect();
+        let ext_base2: Vec<u16> = ext_base.iter().map(|&v| (v + 100) % 4096).collect();
+        let g3: Vec<u16> = ext_base.iter().map(|&v| (v + 5) % 4096).collect();
+        let g4: Vec<u16> = ext_base
+            .iter()
+            .zip(&ext_base2)
+            .map(|(&a, &b)| (a + b) % 4096)
+            .collect();
+        let grids = [
+            SpriteGrid {
+                cols: 5,
+                rows: 8,
+                indices: &g0,
+            },
+            SpriteGrid {
+                cols: 5,
+                rows: 8,
+                indices: &g1,
+            },
+            SpriteGrid {
+                cols: 5,
+                rows: 6,
+                indices: &g2,
+            },
+            SpriteGrid {
+                cols: 4,
+                rows: 6,
+                indices: &g3,
+            },
+            SpriteGrid {
+                cols: 4,
+                rows: 6,
+                indices: &g4,
+            },
+        ];
+        let base: Vec<Option<&[u16]>> = vec![None, None, None, Some(&ext_base), Some(&ext_base)];
+        let base2: Vec<Option<&[u16]>> = vec![None, None, None, None, Some(&ext_base2)];
+        let selfref = vec![
+            None,
+            Some(SelfRef {
+                grid: 0,
+                dtx: 0,
+                dy: 0,
+            }),
+            Some(SelfRef {
+                grid: 1,
+                dtx: 1,
+                dy: -1,
+            }),
+            None,
+            None,
+        ];
+        let blob =
+            encode_grids_shipping(4096, &grids, Some(&base), Some(&base2), &selfref).unwrap();
+        let dims: Vec<(u16, u16)> = grids.iter().map(|g| (g.cols, g.rows)).collect();
+        let decoded =
+            decode_grids_shipping(4096, &dims, Some(&base), Some(&base2), &selfref, &blob).unwrap();
+        for (g, d) in grids.iter().zip(decoded.iter()) {
+            assert_eq!(g.indices, d.as_slice());
+        }
+        // Non-causal self-reference is rejected.
+        let bad = vec![
+            Some(SelfRef {
+                grid: 0,
+                dtx: 0,
+                dy: 0
+            });
+            1
+        ];
+        let one = [SpriteGrid {
+            cols: 2,
+            rows: 2,
+            indices: &g0[..4],
+        }];
+        assert!(encode_grids_shipping(4096, &one, None, None, &bad).is_err());
     }
 
     #[test]
