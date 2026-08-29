@@ -1504,9 +1504,11 @@ audio played through startup        1,322,900 B        1,322,900 B
 total through first-mission        41,659,633 B       41,699,607 B
 ```
 
-The 1.28 MB blocking-set win is offset by 1.29 MB of wasm growth (present
-before this campaign's codec work; the wasm was 4.63 MB gzip at v8 and
-5.90 MB at current HEAD — needs its own bisection). The mission pulls 73
+The 1.28 MB blocking-set win is offset by 1.29 MB of wasm growth — a
+deliberate trade, not a regression: commit 03ffb67b3 switched wasm-release
+to no-LTO with robin_assets at opt-level 3 + simd128 for decode speed
+(4.92 → 5.73 MB gzip on its own; the rest is the fob branch's UI/webfont
+work). The mission pulls 73
 files instead of 59 because family variants now ride with their hub
 chunks; usage-weighted hubs removed the pure dependency tax (A05) but the
 mission uses most family members anyway, so H01's closure moved only
