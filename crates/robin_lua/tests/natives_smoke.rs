@@ -31,9 +31,12 @@ fn test_soldier() -> robin_engine::element::Entity {
         actor: robin_engine::element::ActorData::default(),
         human: robin_engine::element::HumanData::default(),
         npc: robin_engine::element::NpcData {
-            ai_brain: robin_engine::element::AiBrain::Enemy(Box::new(
-                robin_engine::ai_enemy::EnemyAi::new(0),
-            )),
+            ai: robin_engine::element::AiActorData {
+                ai_brain: robin_engine::element::AiBrain::Enemy(Box::new(
+                    robin_engine::ai_enemy::EnemyAi::new(0),
+                )),
+                ..Default::default()
+            },
             ..Default::default()
         },
         soldier: robin_engine::element::SoldierData::default(),
