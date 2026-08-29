@@ -7,8 +7,8 @@ use crate::window::{GpuContext, SharedSurface};
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
 use super::{
-    QuadVertex, QueuedDraw, ScreenUniform, TextureRef, log_fps, make_alpha_source, make_tex_bg,
-    present_time_record, upload_counter,
+    QuadVertex, QueuedDraw, ScreenUniform, TextureRef, bind_counter, log_fps, make_alpha_source,
+    make_tex_bg, present_time_record, upload_counter,
 };
 
 pub(super) struct FrameState {
@@ -34,6 +34,10 @@ pub(super) struct FrameState {
     vertex_capacity: u64,
     pub(super) queued: Vec<QueuedDraw>,
     pub(super) frame_texture_bgs: Vec<wgpu::BindGroup>,
+    /// Atlas layer → its index in `frame_texture_bgs` for this frame.
+    /// Small and dense (a mission uses a handful of layers), so a Vec
+    /// of `(layer, idx)` beats a hash map.
+    atlas_bg_slots: Vec<(u32, u32)>,
     blit_vbo: Option<wgpu::Buffer>,
     pub(super) frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
@@ -285,7 +289,12 @@ impl FrameState {
         // Frame done — clear queues and reset GPU phase for next frame.
         self.clear_recording();
 
-        log_fps(draws_this_frame, uploads_this_frame);
+        log_fps(
+            draws_this_frame,
+            uploads_this_frame,
+            bind_counter::take_count(),
+            resources.sprite_atlas.stats(),
+        );
     }
 
     pub(super) fn dimensions(&self) -> (u16, u16) {
@@ -419,6 +428,7 @@ impl FrameState {
             vertex_capacity: 0,
             queued: Vec::new(),
             frame_texture_bgs: Vec::new(),
+            atlas_bg_slots: Vec::new(),
             blit_vbo: None,
             frozen_scene: None,
         }
@@ -509,6 +519,19 @@ impl FrameState {
         index
     }
 
+    /// This frame's `frame_texture_bgs` index for an atlas layer, if it
+    /// has already been queued.
+    pub(super) fn atlas_bg_slot(&self, layer: u32) -> Option<u32> {
+        self.atlas_bg_slots
+            .iter()
+            .find(|&&(l, _)| l == layer)
+            .map(|&(_, idx)| idx)
+    }
+
+    pub(super) fn remember_atlas_bg_slot(&mut self, layer: u32, index: u32) {
+        self.atlas_bg_slots.push((layer, index));
+    }
+
     pub(super) fn queue_frame_texture(
         &mut self,
         gpu: &GpuContext,
@@ -528,6 +551,7 @@ impl FrameState {
     pub(super) fn clear_recording(&mut self) {
         self.queued.clear();
         self.frame_texture_bgs.clear();
+        self.atlas_bg_slots.clear();
         self.gpu_phase_active = false;
     }
 
@@ -764,10 +788,32 @@ impl FrameState {
         let mut last_blend: Option<usize> = None;
         let mut last_tex: Option<BoundTex> = None;
         let mut last_frame_idx: Option<u32> = None;
+
+        // Consecutive draws that need no state change are recorded as
+        // one `draw` over a contiguous vertex range instead of one call
+        // per quad. Quads are laid out in queue order (6 vertices at
+        // `i * 6`), so a run is always contiguous. This is what the
+        // atlas buys: sprites sharing a layer no longer rebind, so they
+        // coalesce.
+        //
+        // `pending` is `(first_vertex, vertex_count)`. It MUST be
+        // flushed before any pipeline/bind-group/stencil change and
+        // before any `continue`, or those draws would be recorded
+        // against the wrong state.
+        let mut pending: Option<(u32, u32)> = None;
+        macro_rules! flush_run {
+            () => {
+                if let Some((first, count)) = pending.take() {
+                    pass.draw(first..first + count, 0..1);
+                }
+            };
+        }
+
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
                 TextureRef::ColorizeFromFrozen => {
                     if last_pipeline != Some(BoundPipeline::Colorize) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.colorize_pipeline);
                         last_pipeline = Some(BoundPipeline::Colorize);
                         last_blend = None;
@@ -775,6 +821,7 @@ impl FrameState {
                 }
                 TextureRef::FramebufferAlpha => {
                     if last_pipeline != Some(BoundPipeline::BgAlpha) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.bg_alpha_pipeline);
                         last_pipeline = Some(BoundPipeline::BgAlpha);
                         last_blend = None;
@@ -782,6 +829,7 @@ impl FrameState {
                 }
                 TextureRef::ViewConeGradient => {
                     if last_pipeline != Some(BoundPipeline::ViewCone) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.view_cone_pipeline);
                         last_pipeline = Some(BoundPipeline::ViewCone);
                         last_blend = None;
@@ -789,10 +837,14 @@ impl FrameState {
                 }
                 TextureRef::MaskAlpha(_) | TextureRef::StencilClear => {
                     if last_pipeline != Some(BoundPipeline::MaskStencil) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.mask_stencil_pipeline);
                         last_pipeline = Some(BoundPipeline::MaskStencil);
                         last_blend = None;
                     }
+                    // Unconditional, so stencil draws never coalesce —
+                    // they are rare and each carries its own reference.
+                    flush_run!();
                     pass.set_stencil_reference(if matches!(d.tex, TextureRef::MaskAlpha(_)) {
                         1
                     } else {
@@ -803,6 +855,7 @@ impl FrameState {
                     let bidx = blend_index(d.blend);
                     if last_pipeline != Some(BoundPipeline::MaskedQuad) || last_blend != Some(bidx)
                     {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.masked_pipelines[bidx]);
                         pass.set_stencil_reference(0);
                         last_pipeline = Some(BoundPipeline::MaskedQuad);
@@ -811,6 +864,7 @@ impl FrameState {
                 }
                 TextureRef::LoadingDissolveFrame(_) => {
                     if last_pipeline != Some(BoundPipeline::LoadingDissolve) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.loading_dissolve_pipeline);
                         last_pipeline = Some(BoundPipeline::LoadingDissolve);
                         last_blend = None;
@@ -819,6 +873,7 @@ impl FrameState {
                 _ => {
                     let bidx = blend_index(d.blend);
                     if last_pipeline != Some(BoundPipeline::Quad) || last_blend != Some(bidx) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.pipelines[bidx]);
                         last_pipeline = Some(BoundPipeline::Quad);
                         last_blend = Some(bidx);
@@ -843,6 +898,12 @@ impl FrameState {
                 }
             };
             if need_rebind_tex {
+                // Covers both the `set_bind_group` calls below and the
+                // `continue` arms that skip a draw entirely — either
+                // way the pending run must not extend across this
+                // point.
+                flush_run!();
+                bind_counter::inc();
                 match d.tex {
                     TextureRef::White => {
                         pass.set_bind_group(1, &resources.white_bg, &[]);
@@ -902,7 +963,19 @@ impl FrameState {
                 }
             }
             let v0 = (i * 6) as u32;
-            pass.draw(v0..v0 + 6, 0..1);
+            // `Option<(u32, u32)>` is `Copy`, so match by value — no
+            // borrow of `pending` is held while it is reassigned.
+            pending = match pending {
+                // Contiguous with the run in progress: extend it.
+                Some((first, count)) if first + count == v0 => Some((first, count + 6)),
+                // A gap means a draw was skipped without flushing,
+                // which the flush points above exist to prevent.
+                Some((first, count)) => unreachable!(
+                    "non-contiguous draw run: pending {first}+{count}, next quad at {v0}"
+                ),
+                None => Some((v0, 6)),
+            };
         }
+        flush_run!();
     }
 }
