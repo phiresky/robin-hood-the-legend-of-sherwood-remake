@@ -185,7 +185,8 @@ pub async fn show_buy_blazons(
     let mut keyboard_activation: Option<u32> = None;
 
     while !screen.closed {
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => screen.on_quit(),

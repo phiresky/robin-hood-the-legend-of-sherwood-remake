@@ -343,7 +343,13 @@ impl EngineInner {
                     return false;
                 }
                 if victim.is_human() && !is_human_out_of_order(victim) {
-                    return false;
+                    let is_searchable_tied_npc = self.control.sim_config.enable_unbinding
+                        && victim.is_npc()
+                        && !victim.is_dead()
+                        && victim.element_data().posture == Posture::Tied;
+                    if !is_searchable_tied_npc {
+                        return false;
+                    }
                 }
                 if !check_position {
                     return true;
@@ -630,6 +636,62 @@ impl EngineInner {
                     return true;
                 }
                 square_distance(actor, victim) <= 1600.0
+            }
+
+            // ── Untie (Rust extension) ─────────────────────────
+            // Player-issued only. Uses the same authored action range as Tie,
+            // but accepts every active living tied NPC regardless of camp or
+            // whether a script left it conscious.
+            Command::Untie => {
+                if !actor.is_pc() {
+                    return false;
+                }
+                if !self.can_pc_execute_commands(actor_id, true) {
+                    return false;
+                }
+                let pc = actor
+                    .pc_data()
+                    .expect("Untie validity PC must retain PC data");
+                let profile = assets
+                    .profile_manager
+                    .get_character(pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!("Untie validity PC profile {} is missing", pc.profile_index)
+                    });
+                if !profile.has_contextual_action(crate::profiles::Action::Tie) {
+                    return false;
+                }
+                let Some(victim_id) = interaction_victim_id(element) else {
+                    return false;
+                };
+                let owns_active_release = actor.actor_data().is_some_and(|actor| {
+                    actor.active_ability.kind == Some(crate::movement::AbilityKind::Untie)
+                        && actor.active_ability.target == Some(victim_id)
+                });
+                if !self.control.sim_config.enable_unbinding && !owns_active_release {
+                    return false;
+                }
+                let Some(victim) = self.get_entity(victim_id) else {
+                    return false;
+                };
+                if !victim.is_active() || !victim.is_npc() || !victim.is_human() || victim.is_dead()
+                {
+                    return false;
+                }
+                let target_is_tied = victim.element_data().posture == Posture::Tied;
+                // Untie changes the target at the authored DONE point, but
+                // the reversed Tying animation still owns the actor until
+                // TERMINATED. Keep that exact in-flight interaction valid so
+                // the remaining reversed frames play instead of turning the
+                // successful release into an Impossible sequence.
+                let finishing_successful_release = victim.element_data().posture == Posture::Lying
+                    && actor.actor_data().is_some_and(|actor| {
+                        owns_active_release && actor.active_ability.done_effect_applied
+                    });
+                if !target_is_tied && !finishing_successful_release {
+                    return false;
+                }
+                !check_position || square_distance(actor, victim) <= 1600.0
             }
 
             // ── HitTarget / HandleTarget ────────────────────────

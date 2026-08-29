@@ -959,6 +959,10 @@ pub enum PlayerCommand {
     SetFixHardReactionTimes {
         enabled: bool,
     },
+    /// Toggle the post-port player interaction for releasing tied NPCs.
+    SetUnbindingEnabled {
+        enabled: bool,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
@@ -1014,6 +1018,11 @@ pub enum PlayerCommand {
     BeggarDontTalkStamp {
         beggar_id: EntityId,
     },
+    /// Toggle reusable-cloak mechanics in the authoritative simulation.
+    /// Appended for bitcode compatibility with every pre-cloak command.
+    SetReusableCloaks {
+        enabled: bool,
+    },
 }
 
 /// Deserialize an explicitly present optional value.
@@ -1056,6 +1065,25 @@ mod tests {
                 },
             } if decoded_actor == actor
         ));
+    }
+
+    #[test]
+    fn reusable_cloak_commands_roundtrip_for_replay_and_network() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        for command in [
+            PlayerCommand::LaunchSelfAbility {
+                actor,
+                command: Command::EnterCloak,
+            },
+            PlayerCommand::SetReusableCloaks { enabled: false },
+        ] {
+            let bytes = bitcode::encode(&command);
+            let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode cloak command");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded cloak command"),
+                serde_json::to_value(command).expect("serialize cloak command")
+            );
+        }
     }
 
     #[test]

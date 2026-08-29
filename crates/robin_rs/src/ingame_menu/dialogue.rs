@@ -317,7 +317,8 @@ pub async fn show_dialogue(
         // ── Input ───────────────────────────────────────────────
         let mut advance = false;
 
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
 
             match event {
@@ -653,7 +654,9 @@ impl DialogueModalState {
         }
 
         let mut advance = false;
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        self.transform = transform;
+        for event in events {
             self.input_state.update_from_event(&event, self.transform);
             match event {
                 GameEvent::Quit

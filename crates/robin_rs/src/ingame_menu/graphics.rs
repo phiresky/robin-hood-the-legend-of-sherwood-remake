@@ -25,8 +25,10 @@ use super::resources::{
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
-// Widget ID ranges: resolution 100..102, options 200..204, scaling 400.., ok/cancel 300..301
+// Widget ID ranges: resolution 100..102, widescreen 150, options 200..204,
+// scaling 400.., ok/cancel 300..301.
 const ID_RES_BASE: u32 = 100;
+const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
@@ -106,14 +108,23 @@ pub async fn show_graphics(
         },
     ];
     align_on_first_widget(&mut res_layout, 2);
+    let widescreen_button = super::layout::MenuButton {
+        // Rust extension; shipped string tables predate widescreen support.
+        label: "Adaptive Widescreen".to_string(),
+        enabled: true,
+        x: 30,
+        y: 205,
+        w: field_w,
+        h: field_h,
+    };
 
-    // ── Option toggle buttons stacked from (30,250) ───────────────
+    // ── Option toggle buttons stacked below widescreen policy ─────
     let mut opt_layout = vec![
         super::layout::MenuButton {
             label: resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
             enabled: true,
             x: 30,
-            y: 250,
+            y: 270,
             w: field_w,
             h: field_h,
         },
@@ -194,6 +205,14 @@ pub async fn show_graphics(
             mb.h,
         ));
     }
+    frame.add_widget_absolute(widget_bridge::make_button(
+        ID_ADAPTIVE_WIDESCREEN,
+        &widescreen_button.label,
+        widescreen_button.x,
+        widescreen_button.y,
+        widescreen_button.w,
+        widescreen_button.h,
+    ));
     for (i, mb) in opt_layout.iter().enumerate() {
         frame.add_widget_absolute(widget_bridge::make_button(
             ID_OPT_BASE + i as u32,
@@ -241,7 +260,8 @@ pub async fn show_graphics(
     input_state.seed_mouse_from_window(event_pump, transform);
 
     while !done {
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => done = true,
@@ -331,6 +351,10 @@ pub async fn show_graphics(
                     apply_resolution(&mut working, (id - ID_RES_BASE) as usize);
                     dirty = true;
                 }
+                ID_ADAPTIVE_WIDESCREEN => {
+                    working.adaptive_widescreen = !working.adaptive_widescreen;
+                    dirty = true;
+                }
                 id if (ID_OPT_BASE..ID_OPT_BASE + 5).contains(&id) => {
                     apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
                     dirty = true;
@@ -361,7 +385,7 @@ pub async fn show_graphics(
         }
         if let Some(font) = resources.label_font() {
             render_text_virt(renderer, font, transform, &res_label, 30, 80);
-            render_text_virt(renderer, font, transform, &fx_label, 30, 230);
+            render_text_virt(renderer, font, transform, &fx_label, 30, 250);
             render_text_virt(renderer, font, transform, "Scaling", scale_x, 80);
             if working.scale_mode == TextureScaleMode::RetroArch {
                 render_text_virt(
@@ -386,6 +410,15 @@ pub async fn show_graphics(
                     is_resolution_selected(&working, i as usize),
                 );
             }
+        }
+        if let Some(w) = frame.widget(ID_ADAPTIVE_WIDESCREEN) {
+            widget_bridge::draw_widget_radio(
+                renderer,
+                resources,
+                transform,
+                w,
+                working.adaptive_widescreen,
+            );
         }
         for i in 0..5u32 {
             if let Some(w) = frame.widget(ID_OPT_BASE + i) {
@@ -440,7 +473,8 @@ pub async fn show_graphics(
     if accepted && dirty {
         *config = working;
         let resolution_changed = (config.resolution_x - original.resolution_x).abs() > 0.5
-            || (config.resolution_y - original.resolution_y).abs() > 0.5;
+            || (config.resolution_y - original.resolution_y).abs() > 0.5
+            || config.adaptive_widescreen != original.adaptive_widescreen;
         if config.scale_mode != original.scale_mode {
             renderer.set_scale_mode(config.scale_mode);
         }

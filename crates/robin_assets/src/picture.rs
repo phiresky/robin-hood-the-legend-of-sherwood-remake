@@ -203,6 +203,63 @@ pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
     Ok(())
 }
 
+/// Distributes jxl-rs section decoding across the rayon pool. jxl-rs
+/// calls [`jxl::api::JxlParallelRunner::run`] with an index-addressed task
+/// set (one entry per group/pass section), which maps directly onto a
+/// parallel iterator.
+///
+/// Threading contract: the rayon join parks worker threads with
+/// `atomics.wait` on wasm, so this runner must only be used from a rayon
+/// worker there — never from the browser main thread (which traps on
+/// `atomics.wait`). Native threads have no such restriction.
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+struct RayonJxlRunner;
+
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+impl jxl::api::JxlParallelRunner for RayonJxlRunner {
+    fn run(
+        &mut self,
+        num: usize,
+        fun: &jxl::api::JxlParallelRunnerFun<'_>,
+    ) -> std::result::Result<(), jxl::error::Error> {
+        use rayon::prelude::*;
+        (0..num).into_par_iter().try_for_each(|index| fun(index))
+    }
+}
+
+/// Uninhabited stand-in on single-threaded wasm builds so the shared JXL
+/// decode body type-checks; [`rayon_jxl_runner`] never constructs it there.
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
+enum RayonJxlRunner {}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
+impl jxl::api::JxlParallelRunner for RayonJxlRunner {
+    fn run(
+        &mut self,
+        _num: usize,
+        _fun: &jxl::api::JxlParallelRunnerFun<'_>,
+    ) -> std::result::Result<(), jxl::error::Error> {
+        match *self {}
+    }
+}
+
+/// Resolve the section runner for a JXL decode. `None` means decode
+/// serially: parallelism not requested, or (wasm) the worker pool was never
+/// initialized so rayon has no threads to run on.
+fn rayon_jxl_runner(parallel: bool) -> Option<RayonJxlRunner> {
+    if !parallel {
+        return None;
+    }
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if crate::wasm_threads::pool_threads() == 0 {
+        return None;
+    }
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
+    return None;
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+    Some(RayonJxlRunner)
+}
+
 // ---------------------------------------------------------------------------
 // Picture
 // ---------------------------------------------------------------------------
@@ -374,6 +431,19 @@ impl Picture {
         Self::load_sixteen_from_bytes(bytes)
     }
 
+    /// [`Self::load_terrain_from_bytes`] with rayon-parallel JXL section
+    /// decoding — see [`Self::load_jxl_rgb565_parallel`] for the threading
+    /// contract (on wasm this must only run on a worker, never the browser
+    /// main thread).
+    pub fn load_terrain_from_bytes_parallel(bytes: &[u8]) -> Result<Self> {
+        if is_jxl_signature(bytes) {
+            return Self::load_jxl_rgb565_parallel(bytes);
+        }
+        // The legacy Sixteen format is one bzip2/zlib stream — nothing to
+        // parallelize.
+        Self::load_sixteen_from_bytes(bytes)
+    }
+
     /// Serialize this picture in the on-disk Sixteen format.
     /// Layout: `[u16 width][u16 height][u32 packing][u32 packed_size][data…]`.
     /// Only `Rgb16` pictures are supported (matches the on-disk pixel format).
@@ -447,6 +517,20 @@ impl Picture {
     /// and the converter is careful to write 3-channel JXL) and then the
     /// pixels are collapsed back into the engine's RGB565 representation.
     pub fn load_jxl_rgb565(bytes: &[u8]) -> Result<Self> {
+        Self::load_jxl_rgb565_impl(bytes, false)
+    }
+
+    /// [`Self::load_jxl_rgb565`] with the section decode and the RGB565
+    /// collapse spread across the rayon pool. Threading contract: safe from
+    /// any native thread; on wasm this must only be called from a rayon
+    /// worker (`wasm-threads` builds), never from the browser main thread —
+    /// rayon joins park with `atomics.wait`, which the main thread forbids.
+    /// Falls back to the serial decode when no pool is available.
+    pub fn load_jxl_rgb565_parallel(bytes: &[u8]) -> Result<Self> {
+        Self::load_jxl_rgb565_impl(bytes, true)
+    }
+
+    fn load_jxl_rgb565_impl(bytes: &[u8], parallel: bool) -> Result<Self> {
         use jxl::api::{
             JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
             JxlPixelFormat, ProcessingResult, states,
@@ -498,7 +582,11 @@ impl Picture {
         let stride = w * 3;
         let mut rgb = vec![0u8; stride * h];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgb, h, stride)];
-        match dec_with_frame.process(&mut input, &mut output_bufs, None) {
+        let mut runner = rayon_jxl_runner(parallel);
+        let runner_ref = runner
+            .as_mut()
+            .map(|r| r as &mut dyn jxl::api::JxlParallelRunner);
+        match dec_with_frame.process(&mut input, &mut output_bufs, runner_ref) {
             Ok(ProcessingResult::Complete { .. }) => {}
             Ok(ProcessingResult::NeedsMoreInput { .. }) => {
                 bail!("jxl: decoder requested more input while finishing frame")
@@ -512,12 +600,29 @@ impl Picture {
         // of map decode on wasm (single-threaded, no vectorizer at -Oz).
         let pixel_count = w * h;
         let mut data = vec![0u8; pixel_count * 2];
-        for (dst, src) in data.chunks_exact_mut(2).zip(rgb.chunks_exact(3)) {
-            let r = src[0] as u16;
-            let g = src[1] as u16;
-            let b = src[2] as u16;
-            let px: u16 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
-            dst.copy_from_slice(&px.to_le_bytes());
+        let collapse_row = |dst_row: &mut [u8], src_row: &[u8]| {
+            for (dst, src) in dst_row.chunks_exact_mut(2).zip(src_row.chunks_exact(3)) {
+                let r = src[0] as u16;
+                let g = src[1] as u16;
+                let b = src[2] as u16;
+                let px: u16 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
+                dst.copy_from_slice(&px.to_le_bytes());
+            }
+        };
+        if runner.is_some() {
+            // Row-parallel collapse on the pool (same threading contract as
+            // the section decode above).
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+            {
+                use rayon::prelude::*;
+                data.par_chunks_exact_mut(w * 2)
+                    .zip(rgb.par_chunks_exact(stride))
+                    .for_each(|(dst_row, src_row)| collapse_row(dst_row, src_row));
+            }
+        } else {
+            for (dst_row, src_row) in data.chunks_exact_mut(w * 2).zip(rgb.chunks_exact(stride)) {
+                collapse_row(dst_row, src_row);
+            }
         }
 
         Ok(Self {

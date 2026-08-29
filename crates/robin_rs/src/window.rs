@@ -38,6 +38,7 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::gfx_types::{GameEvent, Keycode};
+use robin_engine::graphic_config::GraphicConfig;
 
 #[cfg(not(target_arch = "wasm32"))]
 const GAME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -247,6 +248,8 @@ pub(crate) enum HostCmd {
 /// channel.  Created on `resumed()` and handed off into the game
 /// future via the closure passed to [`run_with_game`].
 pub struct GameWindow {
+    /// Current logical game-canvas size. Physical swapchain dimensions live
+    /// in [`Self::surface_config`] and may be much larger.
     pub width: u32,
     pub height: u32,
     pub gpu: GpuContext,
@@ -259,9 +262,68 @@ pub struct GameWindow {
     cursor_y: i32,
     logical_w: u32,
     logical_h: u32,
+    logical_resolution_policy: Option<GraphicConfig>,
     last_emitted_cursor: Option<(i32, i32)>,
     events_rx: async_channel::Receiver<HostMsg>,
     cmd_tx: async_channel::Sender<HostCmd>,
+}
+
+/// Aspect-preserving placement of a logical canvas inside a physical surface.
+///
+/// Presentation and pointer conversion must use the exact same geometry or a
+/// cursor near a letterbox edge can disagree with the pixel under it. Keep the
+/// calculation here and share it with the renderer instead of maintaining two
+/// subtly different copies.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PresentationRect {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl PresentationRect {
+    pub(crate) fn aspect_fit(
+        logical_width: u32,
+        logical_height: u32,
+        surface_width: u32,
+        surface_height: u32,
+    ) -> Self {
+        assert!(
+            logical_width > 0,
+            "logical presentation width must be non-zero"
+        );
+        assert!(
+            logical_height > 0,
+            "logical presentation height must be non-zero"
+        );
+        assert!(
+            surface_width > 0,
+            "surface presentation width must be non-zero"
+        );
+        assert!(
+            surface_height > 0,
+            "surface presentation height must be non-zero"
+        );
+
+        let logical_width = logical_width as f32;
+        let logical_height = logical_height as f32;
+        let surface_width = surface_width as f32;
+        let surface_height = surface_height as f32;
+        let logical_aspect = logical_width / logical_height;
+        let surface_aspect = surface_width / surface_height;
+        let (width, height) = if surface_aspect >= logical_aspect {
+            (surface_height * logical_aspect, surface_height)
+        } else {
+            (surface_width, surface_width / logical_aspect)
+        };
+        Self {
+            x: (surface_width - width) * 0.5,
+            y: (surface_height - height) * 0.5,
+            width,
+            height,
+        }
+    }
 }
 
 impl GameWindow {
@@ -328,6 +390,12 @@ impl GameWindow {
                     self.surface_config.height = height.max(1);
                     self.surface
                         .configure(&self.gpu.device, &self.surface_config);
+                    // A minimized native window commonly reports 0x0. Keep
+                    // the last usable logical canvas until it is restored;
+                    // the 1x1 swapchain is only a presentation placeholder.
+                    if width > 0 && height > 0 {
+                        self.recompute_logical_resolution();
+                    }
                     events.push(GameEvent::Resized(width, height));
                 }
                 HostMsg::SurfaceReady { window } => {
@@ -444,44 +512,110 @@ impl GameWindow {
     pub fn set_logical_size(&mut self, w: u32, h: u32) {
         self.logical_w = w.max(1);
         self.logical_h = h.max(1);
+        self.width = self.logical_w;
+        self.height = self.logical_h;
+    }
+
+    /// Install a profile-backed logical-resolution policy and immediately
+    /// fit it to the current physical surface. Calling this after a graphics
+    /// setting change keeps input conversion and rendering on one canvas.
+    pub fn set_logical_resolution_policy(&mut self, config: &GraphicConfig) {
+        self.logical_resolution_policy = Some(config.clone());
+        self.recompute_logical_resolution();
+    }
+
+    /// Current physical swapchain size, independent of the logical game
+    /// canvas returned by [`Self::logical_size`].
+    pub fn surface_size(&self) -> (u32, u32) {
+        (self.surface_config.width, self.surface_config.height)
+    }
+
+    pub fn logical_size(&self) -> (u32, u32) {
+        (self.logical_w, self.logical_h)
+    }
+
+    fn recompute_logical_resolution(&mut self) {
+        let Some(config) = self.logical_resolution_policy.as_ref() else {
+            return;
+        };
+        let (width, height) = config
+            .logical_resolution_for_surface(self.surface_config.width, self.surface_config.height);
+        self.logical_w = u32::from(width);
+        self.logical_h = u32::from(height);
+        self.width = self.logical_w;
+        self.height = self.logical_h;
     }
 
     pub fn window_to_logical(&self, x: i32, y: i32) -> (i32, i32) {
-        let swap_w = self.surface_config.width.max(1) as f32;
-        let swap_h = self.surface_config.height.max(1) as f32;
-        let log_w = self.logical_w as f32;
-        let log_h = self.logical_h as f32;
-        let logical_aspect = log_w / log_h;
-        let swap_aspect = swap_w / swap_h;
-        let (dst_w, dst_h) = if swap_aspect >= logical_aspect {
-            let h = swap_h;
-            (h * logical_aspect, h)
-        } else {
-            let w = swap_w;
-            (w, w / logical_aspect)
-        };
-        let dx = (swap_w - dst_w) * 0.5;
-        let dy = (swap_h - dst_h) * 0.5;
-        let lx = ((x as f32 - dx) / dst_w * log_w) as i32;
-        let ly = ((y as f32 - dy) / dst_h * log_h) as i32;
+        let rect = PresentationRect::aspect_fit(
+            self.logical_w,
+            self.logical_h,
+            self.surface_config.width.max(1),
+            self.surface_config.height.max(1),
+        );
+        let lx = ((x as f32 - rect.x) / rect.width * self.logical_w as f32) as i32;
+        let ly = ((y as f32 - rect.y) / rect.height * self.logical_h as f32) as i32;
         (lx, ly)
     }
 
     fn window_pixel_to_logical_scale(&self) -> (f32, f32) {
-        let swap_w = self.surface_config.width.max(1) as f32;
-        let swap_h = self.surface_config.height.max(1) as f32;
-        let log_w = self.logical_w as f32;
-        let log_h = self.logical_h as f32;
-        let logical_aspect = log_w / log_h;
-        let swap_aspect = swap_w / swap_h;
-        let (dst_w, dst_h) = if swap_aspect >= logical_aspect {
-            let h = swap_h;
-            (h * logical_aspect, h)
-        } else {
-            let w = swap_w;
-            (w, w / logical_aspect)
-        };
-        (log_w / dst_w, log_h / dst_h)
+        let rect = PresentationRect::aspect_fit(
+            self.logical_w,
+            self.logical_h,
+            self.surface_config.width.max(1),
+            self.surface_config.height.max(1),
+        );
+        (
+            self.logical_w as f32 / rect.width,
+            self.logical_h as f32 / rect.height,
+        )
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::PresentationRect;
+
+    fn assert_rect_close(actual: PresentationRect, expected: PresentationRect) {
+        for (actual, expected) in [
+            (actual.x, expected.x),
+            (actual.y, expected.y),
+            (actual.width, expected.width),
+            (actual.height, expected.height),
+        ] {
+            assert!(
+                (actual - expected).abs() < 0.01,
+                "presentation coordinate {actual} differs from {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn aspect_fit_letterboxes_wider_surfaces() {
+        let rect = PresentationRect::aspect_fit(1280, 720, 3440, 1440);
+        assert_rect_close(
+            rect,
+            PresentationRect {
+                x: 440.0,
+                y: 0.0,
+                width: 2560.0,
+                height: 1440.0,
+            },
+        );
+    }
+
+    #[test]
+    fn aspect_fit_letterboxes_taller_surfaces() {
+        let rect = PresentationRect::aspect_fit(1024, 768, 1920, 1080);
+        assert_rect_close(
+            rect,
+            PresentationRect {
+                x: 240.0,
+                y: 0.0,
+                width: 1440.0,
+                height: 1080.0,
+            },
+        );
     }
 }
 
@@ -700,6 +834,7 @@ async fn build_game_window_async(
         cursor_y: 0,
         logical_w,
         logical_h,
+        logical_resolution_policy: None,
         last_emitted_cursor: None,
         events_rx,
         cmd_tx,

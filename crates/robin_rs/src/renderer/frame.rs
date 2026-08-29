@@ -2,7 +2,7 @@
 
 use crate::gfx_types::Rect;
 use crate::gpu_upscale::GpuUpscale;
-use crate::window::{GpuContext, SharedSurface};
+use crate::window::{GpuContext, PresentationRect, SharedSurface};
 
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
@@ -92,55 +92,48 @@ impl FrameState {
         // ── Pass 2: blit RT into swapchain with letterbox ──
         // Compute the largest aspect-correct dst rect that fits in the
         // swapchain. Bars outside the dst are the clear-to-black.
-        let logical_aspect = self.width as f32 / self.height as f32;
-        let swap_aspect = swap_w as f32 / swap_h as f32;
-        let (dst_w, dst_h) = if swap_aspect >= logical_aspect {
-            // Window is wider — bars on the sides.
-            let h = swap_h as f32;
-            let w = h * logical_aspect;
-            (w, h)
-        } else {
-            // Window is taller — bars on top/bottom.
-            let w = swap_w as f32;
-            let h = w / logical_aspect;
-            (w, h)
-        };
-        let dx = ((swap_w as f32 - dst_w) * 0.5) as i32;
-        let dy = ((swap_h as f32 - dst_h) * 0.5) as i32;
-        let dst_w_i = dst_w as i32;
-        let dst_h_i = dst_h as i32;
+        let presentation = PresentationRect::aspect_fit(
+            u32::from(self.width),
+            u32::from(self.height),
+            swap_w,
+            swap_h,
+        );
+        let dx = presentation.x;
+        let dy = presentation.y;
+        let dst_w = presentation.width;
+        let dst_h = presentation.height;
 
         // One-quad vertex buffer for the blit. Build it on a separate
         // small per-frame buffer so it can't collide with the queue's
         // shared vbo offset usage.
         let blit_verts = [
             QuadVertex {
-                pos: [dx as f32, dy as f32],
+                pos: [dx, dy],
                 uv: [0.0, 0.0],
                 tint: [1.0; 4],
             },
             QuadVertex {
-                pos: [(dx + dst_w_i) as f32, dy as f32],
+                pos: [dx + dst_w, dy],
                 uv: [1.0, 0.0],
                 tint: [1.0; 4],
             },
             QuadVertex {
-                pos: [dx as f32, (dy + dst_h_i) as f32],
+                pos: [dx, dy + dst_h],
                 uv: [0.0, 1.0],
                 tint: [1.0; 4],
             },
             QuadVertex {
-                pos: [dx as f32, (dy + dst_h_i) as f32],
+                pos: [dx, dy + dst_h],
                 uv: [0.0, 1.0],
                 tint: [1.0; 4],
             },
             QuadVertex {
-                pos: [(dx + dst_w_i) as f32, dy as f32],
+                pos: [dx + dst_w, dy],
                 uv: [1.0, 0.0],
                 tint: [1.0; 4],
             },
             QuadVertex {
-                pos: [(dx + dst_w_i) as f32, (dy + dst_h_i) as f32],
+                pos: [dx + dst_w, dy + dst_h],
                 uv: [1.0, 1.0],
                 tint: [1.0; 4],
             },
@@ -185,7 +178,7 @@ impl FrameState {
                     &self.render_target_texture,
                     &swap_view,
                     [swap_w, swap_h],
-                    [dx as f32, dy as f32, dst_w, dst_h],
+                    [dx, dy, dst_w, dst_h],
                     shader_frame_count,
                     Some(pipelines.shader_preset.as_str()),
                 )
@@ -256,7 +249,7 @@ impl FrameState {
                 // triangle constrained to the letterbox dst rect via
                 // viewport. Bind groups 0/1 are empty placeholders;
                 // 2 = source texture+sampler, 3 = src/dst uniforms.
-                pass.set_viewport(dx as f32, dy as f32, dst_w, dst_h, 0.0, 1.0);
+                pass.set_viewport(dx, dy, dst_w, dst_h, 0.0, 1.0);
                 pass.set_pipeline(&up.pipeline);
                 pass.set_bind_group(0, &up.empty_bind_group, &[]);
                 pass.set_bind_group(1, &up.empty_bind_group, &[]);
@@ -564,8 +557,13 @@ impl FrameState {
 
     pub(super) fn configure_surface_size(&mut self, gpu: &GpuContext, width: u32, height: u32) {
         if let Some(config) = &mut self.surface_config {
-            config.width = width.max(1);
-            config.height = height.max(1);
+            let width = width.max(1);
+            let height = height.max(1);
+            if config.width == width && config.height == height {
+                return;
+            }
+            config.width = width;
+            config.height = height;
             self.reconfigure_surface(gpu);
         }
     }
@@ -607,7 +605,11 @@ impl FrameState {
         self.alpha_source_texture = texture;
         self.alpha_source_view = view;
         self.alpha_source_bg = bind_group;
-        self.frozen_scene = None;
+        // Keep an existing modal snapshot alive across the resize. It is
+        // sampled with normalized UVs and intentionally scales to the new
+        // logical target, avoiding a black backdrop until gameplay resumes
+        // and redraws at the new dimensions. The gameplay path explicitly
+        // clears the snapshot on its next frame.
     }
 }
 

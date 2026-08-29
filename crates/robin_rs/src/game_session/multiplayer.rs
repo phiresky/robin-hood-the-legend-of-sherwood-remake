@@ -898,6 +898,7 @@ mod tests {
                 &assets,
                 robin_engine::engine::SimulationFrameInput::new(vec![
                     PlayerCommand::SetAmountOfSpeaking { amount: 9 }.into(),
+                    PlayerCommand::SetUnbindingEnabled { enabled: false }.into(),
                 ])
                 .with_hourglass(false),
             )
@@ -930,6 +931,7 @@ mod tests {
 
         assert!(drain.rewrote_sim_state);
         assert_eq!(manager.engine.sim_config().amount_of_speaking, 9);
+        assert!(!manager.engine.sim_config().enable_unbinding);
         assert_eq!(
             drain.admission_events,
             [MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 0 }]

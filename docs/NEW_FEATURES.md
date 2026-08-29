@@ -4,6 +4,36 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
+  to release them, using the rope cursor and the authored tying animation in
+  reverse. Search remains the first contextual action while the NPC carries
+  loot. Untying preserves unconsciousness and concussion so normal recovery
+  remains authoritative, works in Shift queues and replay/multiplayer command
+  streams, and can be disabled under Gameplay to restore shipped behavior.
+
+- **Bounded widescreen and native-resolution presentation.** The three
+  original logical scale presets remain 640x480, 800x600, and 1024x768, while
+  an enabled-by-default Graphics option adapts the logical canvas to window
+  aspect changes. High reaches 1280x720 at 16:9; wider displays are
+  letterboxed, portrait/narrow displays retain 4:3, and every preset is capped
+  inside the 1280x768 gameplay envelope. The physical swapchain remains
+  independent, including HiDPI browser canvases and fullscreen output. Resize
+  propagation updates pointer mapping, camera bounds, minimap, HUD, and modal
+  return paths without changing the three original camera zoom levels. Wider
+  portrait bars expose additional slots, fixed-width border art fills the
+  complete width, and Android uses a cutout-safe immersive content area.
+  Disabling Adaptive Widescreen restores fixed 4:3 parity presentation.
+
+- **Live Sherwood production forecast.** The Sherwood report now includes a
+  compact, toggleable item-production panel built from current map stock and
+  live production-zone membership. Once a mission is selected it shows exact
+  output for that mission's authored duration; before selection it reports an
+  exact one-hour rate rather than guessing a mission. Each item line exposes
+  current stock, five-per-production-point capacity, overflow, worker and
+  specialist inputs, authored speed, and the original game's explicit lack of
+  raw-material consumption. Forecasting and campaign production call the same
+  pure calculation, with boundary tests guarding truncation and saturation.
+
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
@@ -330,14 +360,6 @@ A list of which additional features we have added, which ones we might still wan
     of the current fixed game-loop cadence. Keep simulation at the existing
     fixed timestep, but present/interpolate at display cadence where possible.
 
-- **Widescreen and high resolutions**
-  - Fix the portrait bar being cut off at the bottom.
-  - At high resolution the game should force a minimum scale. Zoomed out too
-    much is kind of cheating and makes the game weird: enemies feel like they
-    cannot see far enough and sounds are localized too small. Basically,
-    1024x768 should be the max a player can see at 1x zoom.
-
-
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.
   Reintroduce only effects that have a visible gameplay hook:
@@ -385,7 +407,6 @@ A list of which additional features we have added, which ones we might still wan
 - Add a method to unhorse horsed soldiers without killing them; no-kill runs
   are annoying with horses.
   - Add an option for Merry Men to knock people out instead of killing them.
-- Production in Sherwood: show how many items will be produced.
 - More combat gestures; only 9 different ones feels too low.
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
@@ -396,9 +417,22 @@ A list of which additional features we have added, which ones we might still wan
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
-- unbind - after you have tied up an enemy you should be able to untie them
 - throw something skill that makes a noise somewhere else so guards run there
-- cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
+- Cloaking (implemented, optional): selected heroes whose sprite profile has
+  the shipped cape rows can put the cloak back on with a rebindable key. The
+  reversed original transition leads to a dedicated stationary Cloaked state;
+  unaware distant hostiles are deceived, while remembered targets, ordinary
+  line-of-sight after a reveal, and close scrutiny see through it. Acting or
+  taking damage reveals the hero. Fresh profiles enable this; migrated
+  profiles preserve original one-way cape behavior until enabled in Gameplay.
+  Original replay construction always forces the feature off. The shipped
+  human visibility routine has no character-specific detector and the unused
+  animal runtime has no shipped mission instances, so the explicit authored
+  detector seam remains disabled with a TODO for a future mod schema instead
+  of assigning invented special senses. `cloak_art_audit` validates both cape
+  rows for every declared PC profile: the full Linux data has 10/10 available
+  and eligible tracks; the Leicester demo has 5/5 available tracks eligible
+  (its CPF also declares five full-game profiles whose RHS files are absent).
 - timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be

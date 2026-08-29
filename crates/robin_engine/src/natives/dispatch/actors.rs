@@ -764,6 +764,11 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
+                let target_memory_handle = u32::try_from(
+                    Self::actor_handle_index(target_h)
+                        .expect("validated Sees target handle must decode as an actor"),
+                )
+                .expect("validated Sees target slot exceeds u32");
 
                 // Read everything we need off the live entity
                 // store for fields that move per-frame (position,
@@ -903,6 +908,15 @@ impl NativeContext<'_, '_> {
                     target_posture: tgt_posture,
                     target_action_state: tgt_action_state,
                     target_is_pc: tgt_is_pc,
+                    cloak_deception_applies: tgt_posture == Posture::Cloaked
+                        && npc_entity.camp().is_hostile_to(target_entity.camp()),
+                    cloak_remembers_target: npc_entity.enemy_ai().is_some_and(|enemy| {
+                        enemy.base.primary_target == target_memory_handle
+                            || enemy.list_them.contains(&target_memory_handle)
+                    }),
+                    // TODO(cloak-authoring): connect this only when an explicit
+                    // modded profile schema supplies detector data.
+                    cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
                     sight_obstacles: sight_obstacle_list,
                     fast_grid: &self.fast_grid,
                     layer: npc_layer,

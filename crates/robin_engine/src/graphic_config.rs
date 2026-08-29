@@ -46,6 +46,15 @@ pub struct GraphicConfig {
     /// already contain ambiance-specific pixels are left untouched.
     #[serde(default)]
     pub apply_fog_to_all_sprites: bool,
+    /// Adapt the logical game canvas to the physical window aspect ratio.
+    ///
+    /// The selected legacy resolution remains the scale reference. The
+    /// adaptive canvas is bounded at 1280x768 so resizing a window never turns display
+    /// resolution into a gameplay advantage (see
+    /// [`GraphicConfig::logical_resolution_for_surface`]). Disabling this
+    /// restores the original fixed 4:3 canvas and presentation letterboxing.
+    #[serde(default = "default_adaptive_widescreen")]
+    pub adaptive_widescreen: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -166,6 +175,10 @@ fn default_shader_preset() -> String {
     String::new()
 }
 
+fn default_adaptive_widescreen() -> bool {
+    true
+}
+
 impl Default for GraphicConfig {
     fn default() -> Self {
         Self {
@@ -180,6 +193,7 @@ impl Default for GraphicConfig {
             scale_mode: TextureScaleMode::default(),
             shader_preset: default_shader_preset(),
             apply_fog_to_all_sprites: true,
+            adaptive_widescreen: true,
         }
     }
 }
@@ -200,6 +214,57 @@ impl GraphicConfig {
     pub fn toggle_fullscreen(&mut self) {
         self.fullscreen = !self.fullscreen;
     }
+
+    /// Return the logical render size for a physical surface.
+    ///
+    /// The three legacy 4:3 resolutions remain the only selectable scale
+    /// references. Widescreen uses the largest rectangle of the physical
+    /// aspect that fits inside an envelope which is one legacy-height tall
+    /// and at most 1280 pixels wide. Consequently High is 1024x768 at 4:3,
+    /// grows to 1280x768 at 5:3, and becomes 1280x720 at 16:9. Ratios
+    /// wider than 16:9 are letterboxed rather than exposing more world.
+    /// Portrait/narrow windows retain the fixed 4:3 canvas.
+    pub fn logical_resolution_for_surface(
+        &self,
+        surface_width: u32,
+        surface_height: u32,
+    ) -> (u16, u16) {
+        assert!(
+            self.resolution_x.is_finite() && (1.0..=u16::MAX as f32).contains(&self.resolution_x),
+            "invalid configured logical width {}",
+            self.resolution_x
+        );
+        assert!(
+            self.resolution_y.is_finite() && (1.0..=u16::MAX as f32).contains(&self.resolution_y),
+            "invalid configured logical height {}",
+            self.resolution_y
+        );
+        let base_width = self.resolution_x.round();
+        let base_height = self.resolution_y.round();
+        if !self.adaptive_widescreen || surface_width == 0 || surface_height == 0 {
+            return (base_width as u16, base_height as u16);
+        }
+
+        const ORIGINAL_ASPECT: f64 = 4.0 / 3.0;
+        const MAX_ASPECT: f64 = 16.0 / 9.0;
+        const MAX_LOGICAL_WIDTH: f64 = 1280.0;
+
+        let surface_aspect = f64::from(surface_width) / f64::from(surface_height);
+        let target_aspect = surface_aspect.clamp(ORIGINAL_ASPECT, MAX_ASPECT);
+        let max_height = f64::from(base_height);
+        let max_width = (max_height * MAX_ASPECT).min(MAX_LOGICAL_WIDTH);
+
+        let (logical_width, logical_height) = if target_aspect <= max_width / max_height {
+            (max_height * target_aspect, max_height)
+        } else {
+            (max_width, max_width / target_aspect)
+        };
+
+        (
+            logical_width.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+            logical_height.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +283,7 @@ mod tests {
         assert!(!cfg.fullscreen);
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);
+        assert!(cfg.adaptive_widescreen);
     }
 
     #[test]
@@ -253,6 +319,39 @@ mod tests {
         assert!(restored.fullscreen);
         assert!(restored.hardware_cursor);
         assert!(restored.apply_fog_to_all_sprites);
+        assert!(restored.adaptive_widescreen);
+    }
+
+    #[test]
+    fn adaptive_high_resolution_is_bounded_at_widescreen() {
+        let cfg = GraphicConfig::default();
+        assert_eq!(cfg.logical_resolution_for_surface(1024, 768), (1024, 768));
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1280, 720));
+        assert_eq!(cfg.logical_resolution_for_surface(3440, 1440), (1280, 720));
+    }
+
+    #[test]
+    fn adaptive_resolution_preserves_legacy_scale_reference() {
+        let mut cfg = GraphicConfig::default();
+        cfg.set_resolution(640.0, 480.0);
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (853, 480));
+        cfg.set_resolution(800.0, 600.0);
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1067, 600));
+    }
+
+    #[test]
+    fn adaptive_resolution_fits_intermediate_aspects_inside_envelope() {
+        let cfg = GraphicConfig::default();
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1200), (1229, 768));
+        assert_eq!(cfg.logical_resolution_for_surface(1280, 720), (1280, 720));
+        assert_eq!(cfg.logical_resolution_for_surface(900, 1200), (1024, 768));
+    }
+
+    #[test]
+    fn disabling_adaptive_resolution_restores_fixed_canvas() {
+        let mut cfg = GraphicConfig::default();
+        cfg.adaptive_widescreen = false;
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1024, 768));
     }
 
     #[test]
@@ -265,6 +364,18 @@ mod tests {
         let restored: GraphicConfig = serde_json::from_value(json).unwrap();
 
         assert!(!restored.apply_fog_to_all_sprites);
+    }
+
+    #[test]
+    fn old_profiles_enable_bounded_widescreen_by_default() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut()
+            .expect("graphics config serializes as an object")
+            .remove("adaptive_widescreen");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert!(restored.adaptive_widescreen);
     }
 
     #[test]

@@ -362,6 +362,60 @@ mod tests {
     use crate::engine::EngineInner;
 
     #[test]
+    fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let id = EntityId::Pc(crate::entity_id::PcId(7));
+        let mut outcomes = ExecuteSideOutcomes::default();
+
+        apply_pc_disguise_exit_side_effect(
+            &mut pc,
+            OrderType::TransitionWaitingCapeWaitingUpright,
+            MotionState::Done,
+            Some(Command::EnterCloak),
+            true,
+            id,
+            &mut outcomes,
+        );
+
+        assert_eq!(pc.posture(), Posture::Cloaked);
+        assert!(outcomes.hidden_titbit_removals.is_empty());
+
+        apply_pc_disguise_exit_side_effect(
+            &mut pc,
+            OrderType::TransitionWaitingCapeWaitingUpright,
+            MotionState::Done,
+            Some(Command::LeaveSpy),
+            true,
+            id,
+            &mut outcomes,
+        );
+        assert_eq!(pc.posture(), Posture::Upright);
+        assert_eq!(outcomes.hidden_titbit_removals, vec![id]);
+
+        outcomes.hidden_titbit_removals.clear();
+        apply_pc_disguise_exit_side_effect(
+            &mut pc,
+            OrderType::TransitionWaitingCapeWaitingUpright,
+            MotionState::Done,
+            Some(Command::EnterCloak),
+            false,
+            id,
+            &mut outcomes,
+        );
+        assert_eq!(pc.posture(), Posture::Upright);
+        assert_eq!(outcomes.hidden_titbit_removals, vec![id]);
+    }
+
+    #[test]
     fn pc_beggar_execute_turns_during_both_transitions_and_idle() {
         assert!(pc_beggar_execute_calls_turn(
             OrderType::TransitionWaitingUprightSimulatingBeggar
@@ -4145,6 +4199,8 @@ fn apply_pc_disguise_exit_side_effect(
     entity: &mut Entity,
     anim_type: OrderType,
     motion: MotionState,
+    command: Option<Command>,
+    reusable_cloaks_enabled: bool,
     entity_id: EntityId,
     side_outcomes: &mut ExecuteSideOutcomes,
 ) {
@@ -4158,11 +4214,20 @@ fn apply_pc_disguise_exit_side_effect(
     ) {
         return;
     }
-    entity.set_posture(Posture::Upright);
+    let entering_reusable_cloak = anim_type == OrderType::TransitionWaitingCapeWaitingUpright
+        && command == Some(Command::EnterCloak)
+        && reusable_cloaks_enabled;
+    entity.set_posture(if entering_reusable_cloak {
+        Posture::Cloaked
+    } else {
+        Posture::Upright
+    });
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = ActionState::Waiting;
     }
-    side_outcomes.hidden_titbit_removals.push(entity_id);
+    if !entering_reusable_cloak {
+        side_outcomes.hidden_titbit_removals.push(entity_id);
+    }
 }
 
 /// Sword parry state transitions mirror the legacy implementation execute arms:
@@ -5358,6 +5423,7 @@ impl EngineInner {
                 )
             });
 
+        let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
         'actor: loop {
             let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
                 panic!("actor {entity_id:?} vanished before generic animation dispatch")
@@ -6087,6 +6153,19 @@ impl EngineInner {
                                     FrameProgression::FrozenFirstFrame,
                                 )
                             } else if owner_is_pc
+                                && anim_type
+                                    == OrderType::TransitionWaitingCapeWaitingUpright
+                                && cur_command == Some(Command::EnterCloak)
+                            {
+                                // The shipped game has no separate cape-entry
+                                // strip. Reusable cloaks deliberately play the
+                                // Original's exit art from its last frame back
+                                // to its first, then settle on WaitingCape.
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::Reversed,
+                                )
+                            } else if owner_is_pc
                                 && matches!(
                                     anim_type,
                                     OrderType::WaitingCape
@@ -6523,6 +6602,8 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
+                            cur_command,
+                            reusable_cloaks_enabled,
                             entity_id,
                             &mut completion_outcomes.execute_sides,
                         );

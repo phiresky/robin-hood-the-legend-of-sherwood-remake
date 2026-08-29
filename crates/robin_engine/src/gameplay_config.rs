@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+const fn enabled_by_default() -> bool {
+    true
+}
+
 /// Gameplay extensions which intentionally differ from the original game.
 #[derive(
     Debug,
@@ -30,6 +34,32 @@ pub struct GameplayConfig {
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default, alias = "control_allied_soldiers")]
     pub control_tactical_units: bool,
+
+    /// Allow a PC with the Tie contextual action to release a tied NPC.
+    ///
+    /// The original shipped an unused `RHCOMMAND_UNTIE` slot but exposed no
+    /// playable interaction. This post-port extension defaults on; disabling
+    /// it restores the original input behavior.
+    #[serde(default = "enabled_by_default")]
+    pub enable_unbinding: bool,
+
+    /// Include the live item-production forecast in the Sherwood report.
+    /// This is presentation-only and may be disabled independently from the
+    /// underlying production simulation.
+    #[serde(default = "default_show_production_forecast")]
+    pub show_production_forecast: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
+}
+
+const fn default_show_production_forecast() -> bool {
+    true
 }
 
 impl Default for GameplayConfig {
@@ -37,6 +67,9 @@ impl Default for GameplayConfig {
         Self {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
+            enable_unbinding: true,
+            show_production_forecast: default_show_production_forecast(),
+            reusable_cloaks: true,
         }
     }
 }
@@ -48,6 +81,7 @@ mod tests {
     #[test]
     fn hard_reaction_time_fix_is_the_default() {
         assert!(GameplayConfig::default().fix_hard_reaction_times);
+        assert!(GameplayConfig::default().show_production_forecast);
     }
 
     #[test]
@@ -55,6 +89,9 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
     }
 
     #[test]
@@ -62,5 +99,22 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str(r#"{"control_allied_soldiers":true}"#)
             .expect("legacy gameplay config");
         assert!(config.control_tactical_units);
+    }
+
+    #[test]
+    fn production_forecast_toggle_round_trips_with_profile_config() {
+        let config = GameplayConfig {
+            show_production_forecast: false,
+            ..GameplayConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.show_production_forecast);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }

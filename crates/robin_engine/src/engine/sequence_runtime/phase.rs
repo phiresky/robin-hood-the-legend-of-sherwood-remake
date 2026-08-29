@@ -1579,6 +1579,7 @@ impl EngineInner {
                             | Command::LeaveBeggar
                             | Command::EnterHelpingClimb
                             | Command::LeaveHelpingClimb
+                            | Command::EnterCloak
                             | Command::LeaveSpy
                             | Command::LeaveTree => {
                                 if cmd == Command::EnterBeggar {
@@ -2202,6 +2203,7 @@ impl EngineInner {
                                 }
                             }
                             Command::TieCmd
+                            | Command::Untie
                             | Command::HealCmd
                             | Command::WhistleCmd
                             | Command::EatCmd

@@ -191,6 +191,27 @@ pub fn pre_decode_background_map(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
 ) -> Result<Option<PreDecodedBackground>, String> {
+    pre_decode_background_map_impl(
+        map_name,
+        ambiance_dir,
+        level_directory,
+        shipping,
+        progress,
+        false,
+    )
+}
+
+/// [`pre_decode_background_map`] with `parallel` selecting rayon-parallel
+/// JXL section decoding (see [`Picture::load_jxl_rgb565_parallel`] for the
+/// threading contract — on wasm, parallel decode must run on a worker).
+fn pre_decode_background_map_impl(
+    map_name: &str,
+    ambiance_dir: &str,
+    level_directory: &str,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
+    parallel: bool,
+) -> Result<Option<PreDecodedBackground>, String> {
     if map_name.is_empty() {
         tracing::warn!("No map name set, skipping background load");
         return Ok(None);
@@ -225,7 +246,12 @@ pub fn pre_decode_background_map(
                     key,
                     bytes.len()
                 );
-                match Picture::load_terrain_from_bytes(bytes) {
+                let load = if parallel {
+                    Picture::load_terrain_from_bytes_parallel
+                } else {
+                    Picture::load_terrain_from_bytes
+                };
+                match load(bytes) {
                     Ok(p) => {
                         picture = Some(p);
                         break;
@@ -343,6 +369,282 @@ pub fn probe_background_map_dims(
         }
     }
     None
+}
+
+/// Background + minimap payloads decoded together off the loading path by
+/// one [`PendingTerrainDecode`] job. Transient decode scratch — deliberately
+/// no serde.
+pub struct DecodedTerrainBitmaps {
+    pub background: Result<Option<PreDecodedBackground>, String>,
+    pub minimap: Option<PreDecodedMinimap>,
+}
+
+/// In-flight decode of the background map + minimap bitmaps.
+///
+/// Started right after the mission header names the map, joined as late as
+/// the caller can afford (interactive missions join right before the GPU
+/// upload, after the renderer exists), so the decode overlaps sprite-bank
+/// install, script parse, engine construction, audio setup, and renderer
+/// bring-up:
+/// - native: a dedicated thread, rayon-parallel JXL section decode;
+/// - wasm with an initialized `wasm-threads` pool: a rayon worker job
+///   (parallel sections across the pool), joined by awaiting a oneshot so
+///   the browser main thread never `atomics.wait`s;
+/// - wasm otherwise: nothing runs at [`Self::start`]; the caller triggers
+///   the synchronous fallback via [`Self::decode_inline_if_pending`] at the
+///   same pre-engine point the old code decoded, preserving the
+///   single-threaded behavior (loading bar included).
+pub enum PendingTerrainDecode {
+    /// Result already in hand (inline fallback decode, or a finished join).
+    Ready(DecodedTerrainBitmaps),
+    /// Single-threaded wasm fallback: nothing started yet. The decode runs
+    /// inline at the same pre-engine point the old synchronous branch used
+    /// (see [`Self::decode_inline_if_pending`]), so the loading bar behaves
+    /// identically on non-cross-origin-isolated pages.
+    #[cfg(target_arch = "wasm32")]
+    Inline {
+        map_name: String,
+        ambiance_dir: String,
+        level_directory: String,
+        shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    Thread(std::thread::JoinHandle<DecodedTerrainBitmaps>),
+    /// Worker-pool job. Carries its own inputs so the probe-failure path
+    /// ([`Self::join_now_or_redecode`]) can redecode inline without blocking
+    /// on the worker.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    Pool {
+        receiver: robin_assets::wasm_threads::PoolReceiver<DecodedTerrainBitmaps>,
+        map_name: String,
+        ambiance_dir: String,
+        level_directory: String,
+        shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    },
+}
+
+fn decode_terrain_bitmaps(
+    map_name: &str,
+    ambiance_dir: &str,
+    level_directory: &str,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
+    parallel: bool,
+) -> DecodedTerrainBitmaps {
+    let background = pre_decode_background_map_impl(
+        map_name,
+        ambiance_dir,
+        level_directory,
+        shipping,
+        progress,
+        parallel,
+    )
+    .map_err(|e| format!("Background map load failed: {e}"));
+    let minimap = pre_decode_minimap(
+        map_name,
+        ambiance_dir,
+        level_directory,
+        shipping,
+        &mut |_| {},
+    );
+    DecodedTerrainBitmaps {
+        background,
+        minimap,
+    }
+}
+
+impl PendingTerrainDecode {
+    /// Start the decode: a dedicated thread on native, a rayon worker job on
+    /// wasm when the `wasm-threads` pool is up, and the [`Self::Inline`]
+    /// marker otherwise (single-threaded wasm decodes later, at the caller's
+    /// pre-engine join point, exactly like the old synchronous branch).
+    pub fn start(
+        map_name: &str,
+        ambiance_dir: &str,
+        level_directory: &str,
+        shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    ) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let map_name = map_name.to_owned();
+            let ambiance_dir = ambiance_dir.to_owned();
+            let level_directory = level_directory.to_owned();
+            let handle = std::thread::Builder::new()
+                .name("terrain-decode".into())
+                .spawn(move || {
+                    decode_terrain_bitmaps(
+                        &map_name,
+                        &ambiance_dir,
+                        &level_directory,
+                        shipping.as_deref(),
+                        &mut |_| {},
+                        true,
+                    )
+                })
+                .expect("failed to spawn terrain decode thread");
+            Self::Thread(handle)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            #[cfg(feature = "wasm-threads")]
+            if robin_assets::wasm_threads::pool_threads() > 0 {
+                let receiver = {
+                    let map_name = map_name.to_owned();
+                    let ambiance_dir = ambiance_dir.to_owned();
+                    let level_directory = level_directory.to_owned();
+                    let shipping = shipping.clone();
+                    robin_assets::wasm_threads::start_on_pool(move || {
+                        // Serial inside the worker: the pool is here to get
+                        // the decode OFF the main thread, not to split it.
+                        // With jxl SIMD the whole map decodes in ~430 ms on
+                        // one worker, while splitting it across the pool
+                        // measured no faster and competes with the VQ chunk
+                        // decode that is saturating those same workers
+                        // during install.
+                        decode_terrain_bitmaps(
+                            &map_name,
+                            &ambiance_dir,
+                            &level_directory,
+                            shipping.as_deref(),
+                            &mut |_| {},
+                            false,
+                        )
+                    })
+                };
+                return Self::Pool {
+                    receiver,
+                    map_name: map_name.to_owned(),
+                    ambiance_dir: ambiance_dir.to_owned(),
+                    level_directory: level_directory.to_owned(),
+                    shipping,
+                };
+            }
+            Self::Inline {
+                map_name: map_name.to_owned(),
+                ambiance_dir: ambiance_dir.to_owned(),
+                level_directory: level_directory.to_owned(),
+                shipping,
+            }
+        }
+    }
+
+    /// Run the single-threaded fallback decode if this is the [`Self::Inline`]
+    /// marker (feeding the loading bar through `sync_progress`); all other
+    /// variants pass through untouched. Callers invoke this at the same
+    /// pre-engine point where the old wasm synchronous decode ran.
+    pub fn decode_inline_if_pending(
+        self,
+        sync_progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
+    ) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = sync_progress;
+            self
+        }
+        #[cfg(target_arch = "wasm32")]
+        match self {
+            Self::Inline {
+                map_name,
+                ambiance_dir,
+                level_directory,
+                shipping,
+            } => Self::Ready(decode_terrain_bitmaps(
+                &map_name,
+                &ambiance_dir,
+                &level_directory,
+                shipping.as_deref(),
+                sync_progress,
+                false,
+            )),
+            other => other,
+        }
+    }
+
+    /// The result if it is already available without waiting, else `self`.
+    pub fn try_take_ready(self) -> Result<DecodedTerrainBitmaps, Self> {
+        match self {
+            Self::Ready(decoded) => Ok(decoded),
+            other => Err(other),
+        }
+    }
+
+    /// Blocking join for callers that never defer (true-headless bootstrap).
+    /// Panics on the pool variant — the browser main thread must never block
+    /// on a worker; pool users join via [`Self::join`].
+    pub fn join_blocking(self) -> DecodedTerrainBitmaps {
+        match self.decode_inline_if_pending(&mut |_| {}) {
+            Self::Ready(decoded) => decoded,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+            Self::Pool { .. } => {
+                unreachable!("pool-backed terrain decode must be joined asynchronously")
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Inline { .. } => {
+                unreachable!("decode_inline_if_pending resolved the inline variant")
+            }
+        }
+    }
+
+    /// Join without blocking the wasm main thread: the native thread join
+    /// still blocks (fine off-browser), the wasm pool variant awaits its
+    /// oneshot, and the inline fallback decodes here serially.
+    pub async fn join(self) -> DecodedTerrainBitmaps {
+        match self.decode_inline_if_pending(&mut |_| {}) {
+            Self::Ready(decoded) => decoded,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+            Self::Pool { receiver, .. } => receiver
+                .await
+                .expect("terrain decode worker dropped its result"),
+            #[cfg(target_arch = "wasm32")]
+            Self::Inline { .. } => {
+                unreachable!("decode_inline_if_pending resolved the inline variant")
+            }
+        }
+    }
+
+    /// Resolve the result *now* on the current thread. Used on the
+    /// probe-failure path (missing/corrupt map), where engine construction
+    /// cannot proceed without the decode outcome: joins where joining is
+    /// legal, and on the wasm pool variant redecodes serially inline — the
+    /// duplicate work only happens for a map that is about to fail the load.
+    pub fn join_now_or_redecode(
+        self,
+        sync_progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
+    ) -> DecodedTerrainBitmaps {
+        match self.decode_inline_if_pending(sync_progress) {
+            Self::Ready(decoded) => decoded,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+            Self::Pool {
+                receiver,
+                map_name,
+                ambiance_dir,
+                level_directory,
+                shipping,
+            } => {
+                // Redecode serially on this thread; the in-flight worker
+                // result is abandoned (its send just fails).
+                drop(receiver);
+                decode_terrain_bitmaps(
+                    &map_name,
+                    &ambiance_dir,
+                    &level_directory,
+                    shipping.as_deref(),
+                    sync_progress,
+                    false,
+                )
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Inline { .. } => {
+                unreachable!("decode_inline_if_pending resolved the inline variant")
+            }
+        }
+    }
 }
 
 /// Upload the decoded background bitmap to the renderer and upload the

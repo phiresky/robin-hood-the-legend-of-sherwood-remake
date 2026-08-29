@@ -1130,10 +1130,14 @@ mod tests {
     }
 
     #[test]
-    fn amount_of_speaking_command_applies_live_and_replays_to_the_same_hash() {
+    fn profile_setting_commands_apply_live_and_replay_to_the_same_hash() {
         let path = unique_replay_path("speaking_command");
         let campaign = crate::campaign::Campaign::default();
-        let command = PlayerCommand::SetAmountOfSpeaking { amount: 9 };
+        let commands = vec![
+            PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+            PlayerCommand::SetUnbindingEnabled { enabled: false },
+            PlayerCommand::SetReusableCloaks { enabled: false },
+        ];
         let mut recorder = ReplayRecorder::new(
             &path,
             "speaking".into(),
@@ -1145,7 +1149,7 @@ mod tests {
         record_tick(
             &mut recorder,
             0,
-            SimulationFrameInput::new(vec![command.clone().into()]),
+            SimulationFrameInput::new(commands.iter().cloned().map(Into::into).collect()),
         );
         drop(recorder);
 
@@ -1154,13 +1158,10 @@ mod tests {
         let assets = crate::engine::LevelAssets::new();
         let mut live_display = crate::engine::HostDisplayState::default();
         let mut live_input = crate::engine::InputState::default();
-        live.apply_local_commands(
-            &mut live_display,
-            &mut live_input,
-            &assets,
-            std::slice::from_ref(&command),
-        );
+        live.apply_local_commands(&mut live_display, &mut live_input, &assets, &commands);
         assert_eq!(live.control.sim_config.amount_of_speaking, 9);
+        assert!(!live.control.sim_config.enable_unbinding);
+        assert!(!live.control.sim_config.reusable_cloaks);
 
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
@@ -1180,6 +1181,8 @@ mod tests {
         );
 
         assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
+        assert!(!replayed.control.sim_config.enable_unbinding);
+        assert!(!replayed.control.sim_config.reusable_cloaks);
         assert_eq!(state_hash(&live), state_hash(&replayed));
         let _ = std::fs::remove_file(path);
     }

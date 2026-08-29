@@ -551,6 +551,11 @@ fn graphics_screen_toggle() {
     assert!(screen.config.apply_fog_to_all_sprites);
     screen.on_toggle(GraphicsOption::FogTintAllSprites);
     assert!(!screen.config.apply_fog_to_all_sprites);
+
+    assert!(screen.config.adaptive_widescreen);
+    screen.on_toggle(GraphicsOption::AdaptiveWidescreen);
+    assert!(!screen.config.adaptive_widescreen);
+    assert!(screen.resolution_changed());
 }
 
 // -- SoundsScreen -------------------------------------------------------

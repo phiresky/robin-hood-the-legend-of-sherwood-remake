@@ -134,12 +134,18 @@ fn input_modifiers(keys: &std::collections::BTreeSet<winit::keyboard::KeyCode>) 
     }
 }
 
-/// Apply only logical resolution changes. Ordinary WM resizes reconfigure the
-/// swapchain but deliberately leave the fixed logical game resolution alone.
+/// Synchronize the physical swapchain and bounded logical game canvas.
+///
+/// `GameWindow::poll_events` applies the active profile's aspect policy before
+/// returning events, so this stage only has to propagate the resulting logical
+/// dimensions through renderer, camera, input, minimap, and HUD ownership.
+/// The comparison also handles a resize consumed by a nested modal on the
+/// preceding frame.
 fn apply_frame_resizes(
     events: &[GameEvent],
     window: &mut GameWindow,
     host: &mut Host,
+    game: &mut Game,
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
     input: &mut MissionInput,
@@ -147,29 +153,38 @@ fn apply_frame_resizes(
     presentation: &mut MissionPresentation,
     frame: &mut MissionFrame,
 ) {
-    for event in events {
-        let GameEvent::Resized(new_w, new_h) = *event else {
-            continue;
-        };
-        presentation.renderer.configure_surface_size(new_w, new_h);
-        if !matches!((new_w, new_h), (640, 480) | (800, 600) | (1024, 768)) {
-            continue;
-        }
-        let w = new_w as f32;
-        let h = new_h as f32;
-        window.set_logical_size(new_w, new_h);
-        host.viewport.set_screen_size(w, h);
-        presentation.renderer.resize(new_w as u16, new_h as u16);
-        input.resize(new_w, new_h, &host.key_config);
-        if host.minimap_corner_size.x > 0.0 {
-            let cmd = PlayerCommand::MinimapResize {
-                base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
-                corner_size: host.minimap_corner_size,
-            };
-            dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
-        }
-        hud.resize(new_w, new_h);
+    if events
+        .iter()
+        .any(|event| matches!(event, GameEvent::Resized(..)))
+    {
+        presentation.renderer.sync_window_size(window);
     }
+
+    let (new_w, new_h) = window.logical_size();
+    let logical_changed = presentation.renderer.screen_width() != new_w as u16
+        || presentation.renderer.screen_height() != new_h as u16
+        || game.width != new_w as u16
+        || game.height != new_h as u16
+        || host.viewport.screen_size.x != new_w as f32
+        || host.viewport.screen_size.y != new_h as f32;
+    if !logical_changed {
+        return;
+    }
+
+    presentation.renderer.sync_window_size(window);
+    let w = new_w as f32;
+    let h = new_h as f32;
+    host.viewport.set_screen_size(w, h);
+    game.set_resolution(new_w as u16, new_h as u16);
+    input.resize(new_w, new_h, &host.key_config);
+    if host.minimap_corner_size.x > 0.0 {
+        let cmd = PlayerCommand::MinimapResize {
+            base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
+            corner_size: host.minimap_corner_size,
+        };
+        dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
+    }
+    hud.resize(new_w, new_h);
 }
 
 /// Poll process events and immediately dispatch HUD controls in the historical
@@ -208,6 +223,18 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
     } else {
         window.poll_events()
     };
+    apply_frame_resizes(
+        &events,
+        window,
+        host,
+        game,
+        manager,
+        assets,
+        input,
+        hud,
+        presentation,
+        frame,
+    );
     input.threaded.feed_events(&events);
 
     let rewind_active = handle_hold_to_rewind(manager, assets, &input.threaded, runtime);
@@ -225,17 +252,6 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
     }
     events.extend(input.threaded.drain_synthetic_events());
 
-    apply_frame_resizes(
-        &events,
-        window,
-        host,
-        manager,
-        assets,
-        input,
-        hud,
-        presentation,
-        frame,
-    );
     if input.threaded.is_ended() {
         return EventHudOutcome::Control(HandlerAction::Exit(GameCode::Quit));
     }
