@@ -81,6 +81,7 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
 impl ApplicationContext {
@@ -112,6 +113,8 @@ impl ApplicationContext {
         let amount_of_speaking = active.sound_config.amount_of_speaking;
         let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
         let enable_unbinding = active.gameplay_config.enable_unbinding;
+        let clean_hands_npc_kills_invalidate =
+            active.gameplay_config.clean_hands_npc_kills_invalidate;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -127,6 +130,7 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -144,6 +148,7 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = existing.amount_of_speaking;
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         *self
             .sim_config
             .lock()
@@ -196,7 +201,14 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, amount_of_speaking, fix_hard_reaction_times, enable_unbinding) = {
+        let (
+            result,
+            difficulty,
+            amount_of_speaking,
+            fix_hard_reaction_times,
+            enable_unbinding,
+            clean_hands_npc_kills_invalidate,
+        ) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -212,6 +224,7 @@ impl ApplicationContext {
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config.fix_hard_reaction_times,
                 active.gameplay_config.enable_unbinding,
+                active.gameplay_config.clean_hands_npc_kills_invalidate,
             )
         };
         self.refresh_profile_derived_state(
@@ -219,6 +232,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
         )?;
         Ok(result)
     }
@@ -233,7 +247,14 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, amount_of_speaking, fix_hard_reaction_times, enable_unbinding) = {
+        let (
+            profile_id,
+            difficulty,
+            amount_of_speaking,
+            fix_hard_reaction_times,
+            enable_unbinding,
+            clean_hands_npc_kills_invalidate,
+        ) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -282,6 +303,8 @@ impl ApplicationContext {
             let amount_of_speaking = active.sound_config.amount_of_speaking;
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
             let enable_unbinding = active.gameplay_config.enable_unbinding;
+            let clean_hands_npc_kills_invalidate =
+                active.gameplay_config.clean_hands_npc_kills_invalidate;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -311,6 +334,7 @@ impl ApplicationContext {
                 amount_of_speaking,
                 fix_hard_reaction_times,
                 enable_unbinding,
+                clean_hands_npc_kills_invalidate,
             )
         };
 
@@ -319,6 +343,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
         )?;
         Ok(profile_id)
     }
@@ -381,6 +406,7 @@ impl ApplicationContext {
                 .active_profile_snapshot()?
                 .gameplay_config
                 .control_tactical_units,
+            gameplay_config: self.active_profile_snapshot()?.gameplay_config,
         })
     }
 
@@ -396,11 +422,13 @@ impl ApplicationContext {
         amount_of_speaking: u16,
         fix_hard_reaction_times: bool,
         enable_unbinding: bool,
+        clean_hands_npc_kills_invalidate: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         *self
             .sim_config
             .lock()
@@ -638,6 +666,16 @@ pub struct HostFrontend {
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
+
+    /// Host-local presentation settings copied from the active profile.
+    /// Deterministic settings are separately mirrored into `SimConfig`.
+    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+
+    /// Host-only eligibility facts consulted only after deterministic mission
+    /// results have been frozen.
+    pub achievement_run_kind: robin_engine::achievement::AchievementRunKind,
+    pub achievement_replay_playback: bool,
+    pub achievement_headless: bool,
 
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
@@ -1041,6 +1079,7 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },
             ..Default::default()

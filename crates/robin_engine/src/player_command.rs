@@ -971,7 +971,6 @@ pub enum PlayerCommand {
     SetUnbindingEnabled {
         enabled: bool,
     },
-
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
     /// handlers that need to emit a UX-feedback voice line when a
@@ -1025,6 +1024,11 @@ pub enum PlayerCommand {
     /// after recording only `make_pc_fast`, but this mutation still occurs.
     BeggarDontTalkStamp {
         beggar_id: EntityId,
+    },
+    /// Toggle deterministic NPC-on-NPC Clean Hands invalidation. Appended to
+    /// preserve every pre-existing bitcode variant index.
+    SetCleanHandsNpcKillsInvalidate {
+        enabled: bool,
     },
 }
 

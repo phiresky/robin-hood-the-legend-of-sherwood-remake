@@ -10,6 +10,8 @@
 
 mod ai;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
+mod achievements;
+pub use achievements::PcExperienceSnapshot;
 mod ale;
 mod animation;
 pub(crate) mod anti_collision;
@@ -878,6 +880,9 @@ impl EngineInner {
         // result; replay/headless/custom/cheat filtering happens later when a
         // caller elects to promote it into campaign/profile history.
         if won {
+            // A terminal script may have moved or spawned actors after the
+            // preceding regular tick scan. Freeze the exact terminal layout.
+            self.refresh_achievement_progress();
             self.mission_domain.achievements.finalize_success();
         }
 

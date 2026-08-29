@@ -2422,6 +2422,7 @@ impl EngineInner {
         let mut think_tick_data: Option<AiPerTickData> = Some(AiPerTickData::stub());
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         let mut reveal_targets: Vec<EntityId> = Vec::new();
+        let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -2924,6 +2925,9 @@ impl EngineInner {
                 // 10x faster detection (200 vs 20).
                 let sharpness = detection_sharpness(view_speed, visibility);
                 let is_visible = sharpness > 0;
+                if is_visible && target.is_pc && viewer.camp.is_hostile_to(Camp::Royalists) {
+                    achievement_observed_pcs.push(target_id);
+                }
                 tracing::trace!(
                     npc = ?npc_id,
                     target = ?target_id,
@@ -3975,6 +3979,13 @@ impl EngineInner {
                         .filter_map(|det| det.element.map(EntityId::index)),
                 );
             }
+        }
+
+        // SoldierSightContext rejected dead, unconscious and tied viewers at
+        // entry. Record exact positive optical samples only after the mutable
+        // NPC-list borrow is released.
+        for pc in achievement_observed_pcs {
+            self.record_achievement_hostile_observation(npc_id, pc);
         }
 
         // HandleDetection reveals newly seen blipped NPCs inline, after the

@@ -3112,6 +3112,29 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         killer_is_pc: bool,
     ) {
+        // The damage element is the authoritative SetLifePoints `whoDunnit`
+        // equivalent. Capture it at the fresh-death boundary, before sequence
+        // cleanup can erase responsibility evidence.
+        let achievement_origin = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fresh death for entity {} has no damage element {:?}",
+                    victim_id.index(),
+                    damage_element
+                )
+            });
+        let crate::sequence::SequenceElementData::Damage { origin, .. } = &achievement_origin.data
+        else {
+            panic!(
+                "fresh death for entity {} references a non-damage element",
+                victim_id.index()
+            );
+        };
+        self.record_achievement_npc_death(victim_id, *origin);
+
         // Throw away unrelated sequence work the victim owns. The active
         // damage sequence (which just had its dying order queued) and Todo
         // commands Original admits while dead remain in the manager FIFO.

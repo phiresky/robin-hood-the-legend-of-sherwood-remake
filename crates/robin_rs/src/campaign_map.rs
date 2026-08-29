@@ -113,6 +113,7 @@ struct CampaignMapItem {
     description: String,
     remaining_lifetime: u32,
     show_blazons: bool,
+    achievement_badges: [crate::achievement_hud::AchievementBadgePresentation; 4],
 }
 
 #[derive(Default)]
@@ -197,6 +198,7 @@ pub(crate) async fn show_campaign_map(
     cursor: Option<ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
     presentation: CampaignPresentationMode,
+    show_achievement_badges: bool,
     lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
     let mut menu_resources = menu_resources;
@@ -212,11 +214,19 @@ pub(crate) async fn show_campaign_map(
             cursor.as_ref(),
             pseudo_debrief_pending,
             presentation,
+            show_achievement_badges,
             lifetime_history,
         )
         .await;
     }
-    let items = campaign_map_items(campaign, profiles, campaign_map, text_resources, shipping);
+    let items = campaign_map_items(
+        campaign,
+        profiles,
+        Some(lifetime_history),
+        campaign_map,
+        text_resources,
+        shipping,
+    );
     if items.is_empty() {
         tracing::warn!("No missions on campaign map — this shouldn't happen");
     }
@@ -276,6 +286,7 @@ pub(crate) async fn show_campaign_map(
                         cursor.as_ref(),
                         pseudo_debrief_pending,
                         CampaignPresentationMode::ProgressTree,
+                        show_achievement_badges,
                         lifetime_history,
                     )
                     .await;
@@ -363,6 +374,9 @@ pub(crate) async fn show_campaign_map(
             menu_resources.as_deref(),
             &input,
             &frame,
+            show_achievement_badges,
+            campaign.achievement_aggregation(profiles),
+            lifetime_history.achievement_aggregation(),
         );
         if let Some(cursor) = &cursor {
             cursor.draw(renderer, transform, &input);
@@ -392,6 +406,7 @@ async fn show_campaign_progress(
     cursor: Option<&ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
     initial_presentation: CampaignPresentationMode,
+    show_achievement_badges: bool,
     lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
     let graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
@@ -525,6 +540,7 @@ async fn show_campaign_progress(
             selected,
             presentation,
             assets,
+            show_achievement_badges,
             lifetime_history.totals(),
         );
         if let Some(cursor) = cursor {
@@ -580,10 +596,10 @@ fn progress_node_rect(
                 .filter(|candidate| candidate.depth == node.depth)
                 .count()
                 .max(1);
-            let y_step = 310 / lane_count as i32;
+            let y_step = 245 / lane_count as i32;
             (
                 30 + node.depth as i32 * x_step,
-                70 + node.lane as i32 * y_step,
+                124 + node.lane as i32 * y_step,
                 112,
                 38,
             )
@@ -592,7 +608,7 @@ fn progress_node_rect(
             let page_index = index % 16;
             let col = page_index % 4;
             let row = page_index / 4;
-            (35 + col as i32 * 150, 72 + row as i32 * 84, 126, 58)
+            (35 + col as i32 * 150, 124 + row as i32 * 64, 126, 58)
         }
         CampaignPresentationMode::ClassicMap => unreachable!(),
     }
@@ -605,6 +621,7 @@ fn render_campaign_progress(
     selected: usize,
     presentation: CampaignPresentationMode,
     assets: &CampaignMapAssets,
+    show_achievement_badges: bool,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
 ) {
     if let Some(background) = assets.background.as_ref() {
@@ -644,7 +661,7 @@ fn render_campaign_progress(
 
     if presentation == CampaignPresentationMode::ProgressTree {
         for (idx, node) in graph.nodes.iter().enumerate() {
-            let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
+            let (x, y, _w, h) = progress_node_rect(graph, presentation, idx);
             for &parent in &node.prerequisite_nodes {
                 let (px, py, pw, ph) = progress_node_rect(graph, presentation, parent);
                 renderer.render_gpu_line(
@@ -701,14 +718,12 @@ fn render_campaign_progress(
             let name: String = node.name.chars().take(max_chars).collect();
             layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
             if node.attempt_count != 0 {
-                layout::render_text_virt(
-                    renderer,
-                    font,
-                    transform,
-                    &format!("{}x  {} badge", node.attempt_count, node.badge_count),
-                    x + 31,
-                    y + 5,
-                );
+                let detail = if show_achievement_badges {
+                    format!("{}x  {} badge", node.attempt_count, node.badge_count)
+                } else {
+                    format!("{}x", node.attempt_count)
+                };
+                layout::render_text_virt(renderer, font, transform, &detail, x + 31, y + 5);
             }
         }
     }
@@ -757,6 +772,24 @@ fn render_campaign_progress(
             315,
             43,
         );
+        if show_achievement_badges {
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Campaign",
+                graph.campaign_achievements,
+                font,
+                58,
+            );
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Lifetime",
+                graph.lifetime_achievements,
+                font,
+                90,
+            );
+        }
         let node = &graph.nodes[selected];
         let action = if node.history_replay {
             "Enter: replay (campaign changes discarded)"
@@ -766,7 +799,17 @@ fn render_campaign_progress(
             "Locked: inspect only"
         };
         layout::render_text_virt(renderer, font, transform, action, 25, 414);
-        layout::render_text_virt(renderer, font, transform, &node.summary(), 25, 437);
+        if show_achievement_badges {
+            render_progress_achievement_badges(renderer, transform, node.badges, Some(font));
+        }
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &node.summary(show_achievement_badges),
+            25,
+            437,
+        );
         if graph.cyclic_prerequisites {
             layout::render_text_virt(
                 renderer,
@@ -780,9 +823,126 @@ fn render_campaign_progress(
     }
 }
 
+fn render_achievement_aggregation_summary(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    scope_label: &str,
+    summary: robin_engine::achievement::AchievementAggregationSummary,
+    font: &NativeFont,
+    y: i32,
+) {
+    layout::render_text_virt(renderer, font, transform, scope_label, 25, y);
+    for (index, presentation) in
+        crate::achievement_hud::achievement_aggregation_presentations(summary)
+            .iter()
+            .enumerate()
+    {
+        let column = index % 2;
+        let row = index / 2;
+        let x = 105 + i32::try_from(column).expect("two achievement columns fit i32") * 255;
+        let item_y = y + i32::try_from(row).expect("two achievement rows fit i32") * 15;
+        draw_achievement_badge_icon(
+            renderer,
+            presentation.badge.id,
+            presentation.progress.earned(),
+            transform.origin_x + x,
+            transform.origin_y + item_y + 1,
+        );
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "{}: {}",
+                presentation.badge.label, presentation.compact_status
+            ),
+            x + 14,
+            item_y,
+        );
+    }
+}
+
+fn render_progress_achievement_badges(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    badges: robin_engine::achievement::AchievementSet,
+    font: Option<&NativeFont>,
+) {
+    let Some(font) = font else {
+        return;
+    };
+    for (index, badge) in crate::achievement_hud::mission_badge_presentations(badges, |_| None)
+        .iter()
+        .enumerate()
+    {
+        let x = 25 + i32::try_from(index).expect("four achievement badges fit i32") * 150;
+        let y = 389;
+        draw_achievement_badge_icon(
+            renderer,
+            badge.id,
+            badge.earned,
+            transform.origin_x + x,
+            transform.origin_y + y + 1,
+        );
+        layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+    }
+}
+
+/// Small code-native fallback icons. Stable badge icon keys remain available
+/// to future asset packs without coupling campaign data to presentation art.
+fn draw_achievement_badge_icon(
+    renderer: &mut Renderer,
+    id: robin_engine::achievement::AchievementId,
+    earned: bool,
+    x: i32,
+    y: i32,
+) {
+    let color = if earned {
+        Renderer::create_color_16(245, 210, 95)
+    } else {
+        Renderer::create_color_16(92, 82, 68)
+    };
+    use robin_engine::achievement::AchievementId;
+    match id {
+        AchievementId::CleanHands => {
+            renderer.draw_rect_outline_screen(x + 3, y + 5, x + 9, y + 12, color);
+            for finger in 0..4 {
+                renderer.draw_line_screen(
+                    x + 2 + finger * 2,
+                    y + 5,
+                    x + 2 + finger * 2,
+                    y + 1 + (finger & 1),
+                    color,
+                );
+            }
+        }
+        AchievementId::Ghost => {
+            renderer.draw_rect_outline_screen(x + 2, y + 3, x + 10, y + 11, color);
+            renderer.draw_line_screen(x + 2, y + 11, x + 4, y + 9, color);
+            renderer.draw_line_screen(x + 4, y + 9, x + 6, y + 11, color);
+            renderer.draw_line_screen(x + 6, y + 11, x + 8, y + 9, color);
+            renderer.render_gpu_rect(x + 4, y + 5, 1, 1, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x + 8, y + 5, 1, 1, 245, 225, 160, 255);
+        }
+        AchievementId::PileOBones => {
+            renderer.draw_line_screen(x + 1, y + 2, x + 11, y + 11, color);
+            renderer.draw_line_screen(x + 11, y + 2, x + 1, y + 11, color);
+            renderer.render_gpu_rect(x, y + 1, 3, 3, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x + 10, y + 10, 3, 3, 245, 225, 160, 255);
+        }
+        AchievementId::AllEnemiesOneBuilding => {
+            renderer.draw_rect_outline_screen(x + 2, y + 5, x + 11, y + 12, color);
+            renderer.draw_line_screen(x + 1, y + 5, x + 6, y + 1, color);
+            renderer.draw_line_screen(x + 6, y + 1, x + 12, y + 5, color);
+            renderer.draw_rect_outline_screen(x + 5, y + 8, x + 8, y + 12, color);
+        }
+    }
+}
+
 fn campaign_map_items(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
+    lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
     campaign_map: &CampaignMapState,
     text_resources: &mut ResourceManager,
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
@@ -820,6 +980,14 @@ fn campaign_map_items(
                 description,
                 remaining_lifetime,
                 show_blazons: mission.requires_blazons(profiles),
+                achievement_badges: crate::achievement_hud::mission_badge_presentations(
+                    crate::campaign_progress::combined_mission_badges(
+                        mission.achievement_badges(),
+                        profile.id,
+                        lifetime,
+                    ),
+                    |_| None,
+                ),
             })
         })
         .collect()
@@ -975,6 +1143,9 @@ fn render_campaign_map(
     resources: Option<&IngameMenuResources>,
     input: &ModalInputState,
     frame: &FrameWnd,
+    show_achievement_badges: bool,
+    campaign_achievements: robin_engine::achievement::AchievementAggregationSummary,
+    lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
 ) {
     if assets.background.is_none() {
         renderer.render_gpu_rect(
@@ -1034,7 +1205,15 @@ fn render_campaign_map(
     if let Some(item) = items.get(selected) {
         draw_selection(renderer, transform, item.loc_idx, &assets.locations);
         render_tooltip(
-            renderer, transform, campaign, profiles, item, assets, resources, input,
+            renderer,
+            transform,
+            campaign,
+            profiles,
+            item,
+            assets,
+            resources,
+            input,
+            show_achievement_badges,
         );
     } else {
         draw_close_button(renderer, transform, assets, frame);
@@ -1043,6 +1222,24 @@ fn render_campaign_map(
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
         layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
+        if show_achievement_badges {
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Campaign",
+                campaign_achievements,
+                font,
+                28,
+            );
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Lifetime",
+                lifetime_achievements,
+                font,
+                60,
+            );
+        }
     }
 }
 
@@ -1056,6 +1253,7 @@ fn render_tooltip(
     assets: &CampaignMapAssets,
     resources: Option<&IngameMenuResources>,
     input: &ModalInputState,
+    show_achievement_badges: bool,
 ) {
     let Some(font) = resources
         .and_then(|r| r.fonts.popup_scroll.as_ref())
@@ -1064,14 +1262,22 @@ fn render_tooltip(
         return;
     };
 
-    let short_desc = ShortMissionDescriptionWindow::new(campaign, profiles, item, input, assets);
+    let short_desc = ShortMissionDescriptionWindow::new(
+        campaign,
+        profiles,
+        item,
+        input,
+        assets,
+        show_achievement_badges,
+    );
+    let tooltip_height = if show_achievement_badges { 156 } else { 100 };
 
     if assets.tooltip_bg.is_none() {
         renderer.render_gpu_rect(
             transform.origin_x + short_desc.x,
             transform.origin_y + short_desc.y,
             220,
-            100,
+            tooltip_height,
             42,
             32,
             18,
@@ -1081,8 +1287,23 @@ fn render_tooltip(
             transform.origin_x + short_desc.x,
             transform.origin_y + short_desc.y,
             transform.origin_x + short_desc.x + 220,
-            transform.origin_y + short_desc.y + 100,
+            transform.origin_y + short_desc.y + tooltip_height,
             Renderer::create_color_16(210, 180, 110),
+        );
+    }
+
+    if show_achievement_badges {
+        // The shipped tooltip bitmap is only 100 pixels tall. Extend it with
+        // a neutral panel for the port's four durable per-mission badges.
+        renderer.render_gpu_rect(
+            transform.origin_x + short_desc.x,
+            transform.origin_y + short_desc.y + 98,
+            220,
+            58,
+            42,
+            32,
+            18,
+            235,
         );
     }
 
@@ -1117,6 +1338,24 @@ fn render_tooltip(
             short_desc.y,
         );
     }
+
+    if show_achievement_badges {
+        for (index, badge) in item.achievement_badges.iter().enumerate() {
+            let column = index % 2;
+            let row = index / 2;
+            let x =
+                short_desc.x + 8 + i32::try_from(column).expect("two badge columns fit i32") * 106;
+            let y = short_desc.y + 104 + i32::try_from(row).expect("two badge rows fit i32") * 24;
+            draw_achievement_badge_icon(
+                renderer,
+                badge.id,
+                badge.earned,
+                transform.origin_x + x,
+                transform.origin_y + y + 1,
+            );
+            layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+        }
+    }
 }
 
 impl ShortMissionDescriptionWindow {
@@ -1126,15 +1365,17 @@ impl ShortMissionDescriptionWindow {
         item: &CampaignMapItem,
         input: &ModalInputState,
         assets: &CampaignMapAssets,
+        show_achievement_badges: bool,
     ) -> Self {
         let mut x = input.virt_x as i32 + 25;
         let mut y = input.virt_y as i32 + 25;
         x = x.clamp(0, MAP_W - 220);
-        y = y.clamp(0, MAP_H - 100);
+        let height = if show_achievement_badges { 156 } else { 100 };
+        y = y.clamp(0, MAP_H - height);
 
         let mut frame = FrameWnd::new(
             "Short mission description",
-            ScreenBBox::from_coords(x as f32, y as f32, (x + 220) as f32, (y + 100) as f32),
+            ScreenBBox::from_coords(x as f32, y as f32, (x + 220) as f32, (y + height) as f32),
             0,
         );
         frame.add_widget_absolute(widget_bridge::make_picture_with_resource(

@@ -522,6 +522,14 @@ impl InteractiveLoadStage {
             window.width as f32,
             window.height as f32,
         );
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = false;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         if let Some(code) = multiplayer_setup_failure_policy.resolve(
             setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await,
@@ -738,6 +746,14 @@ impl HeadlessLoadStage {
         sim_config: engine_api::SimConfig,
     ) -> Result<HeadlessLoadStage, String> {
         let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = true;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
             setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await,
