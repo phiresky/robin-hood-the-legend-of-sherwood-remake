@@ -96,6 +96,12 @@ struct Cli {
     #[arg(long)]
     verify_shipping: Option<PathBuf>,
 
+    /// Sum a mission's blocking download set from a converted shipping tree:
+    /// "<Data dir>:<mission>". Prints the boot manifest size, each dependency
+    /// file, and totals comparable to the schema-v8 browser measurement.
+    #[arg(long)]
+    mission_closure: Vec<String>,
+
     /// Context-mixing prototype (PAQ-lite): binary-decompose tile indices
     /// and code each bit with a logistic mix of order-2/order-1/order-0
     /// adaptive predictors. Exact cost accounting, no bitstream.
@@ -2362,6 +2368,42 @@ fn mix(holder: &FrameHolder, data_dir: &PathBuf, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Blocking-download accounting for one mission of a converted tree.
+fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
+    use robin_assets::shipping_datadir::ShippingDatadir;
+    let manifest_path = data_out.join("datadir.bin");
+    let manifest_bytes = fs::metadata(&manifest_path)?.len();
+    let dd = ShippingDatadir::load_from_file(&manifest_path)?;
+    let mission_ref = dd
+        .missions
+        .get(mission)
+        .ok_or_else(|| anyhow!("mission {mission} not in manifest"))?;
+    let mut total = 0u64;
+    let mut by_bucket: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+    for rel in &mission_ref.files {
+        let size = fs::metadata(data_out.join(rel))
+            .with_context(|| format!("stat {rel}"))?
+            .len();
+        total += size;
+        let bucket = rel.split('/').next().unwrap_or("?").to_string();
+        let e = by_bucket.entry(bucket).or_default();
+        e.0 += 1;
+        e.1 += size;
+    }
+    println!("## mission-closure {mission} in {}", data_out.display());
+    println!("  boot manifest (datadir.bin): {manifest_bytes}");
+    for (bucket, (n, bytes)) in &by_bucket {
+        println!("  {bucket:<10} {n:>3} files  {bytes:>12}");
+    }
+    println!(
+        "  blocking mission files: {} ({} files); boot + mission: {}",
+        total,
+        mission_ref.files.len(),
+        manifest_bytes + total
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let data_dir_s = cli.data_dir.to_str().unwrap();
@@ -2454,6 +2496,12 @@ fn main() -> Result<()> {
     }
     if let Some(dir) = &cli.verify_shipping {
         verify_shipping(&holder, dir)?;
+    }
+    for spec in &cli.mission_closure {
+        let (dir, mission) = spec
+            .rsplit_once(':')
+            .ok_or_else(|| anyhow!("--mission-closure wants <Data dir>:<mission>, got {spec}"))?;
+        mission_closure(std::path::Path::new(dir), mission)?;
     }
     for name in &cli.mix {
         mix(&holder, &cli.data_dir, name)?;
