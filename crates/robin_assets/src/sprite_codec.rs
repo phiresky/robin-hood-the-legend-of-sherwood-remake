@@ -707,7 +707,10 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut coded = false;
+        // Update exclusion: only the levels actually visited (escaped ones
+        // plus the coding level) learn the symbol. Lower levels specialize
+        // to the escape material that actually reaches them, and the update
+        // cost drops from four context touches per tile to ~1.3.
         for (level, ctx) in [
             self.c2.entry(key2).or_default(),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
@@ -717,26 +720,23 @@ impl Model {
         .into_iter()
         .enumerate()
         {
-            if !coded {
-                match ctx.code_for(x, excl, see, level) {
-                    CtxCode::Sym(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, false);
-                        coded = true;
-                    }
-                    CtxCode::Escape(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                    }
-                    CtxCode::Empty => {}
+            match ctx.code_for(x, excl, see, level) {
+                CtxCode::Sym(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, false);
+                    ctx.bump(x, alphabet);
+                    return;
                 }
+                CtxCode::Escape(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, true);
+                    ctx.exclude_into(excl);
+                }
+                CtxCode::Empty => {}
             }
             ctx.bump(x, alphabet);
         }
-        if !coded {
-            enc.encode(x as u32, 1, self.alphabet);
-        }
+        enc.encode(x as u32, 1, self.alphabet);
     }
 
     /// Two-predecessor chain for sprites with two aligned decoded siblings:
@@ -751,7 +751,6 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut coded = false;
         for (level, ctx) in [
             (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
             (0, self.c2.entry(key2).or_default()),
@@ -759,26 +758,23 @@ impl Model {
             (2, &mut self.c1b[(above as usize).min(alphabet as usize)]),
             (3, &mut self.c0),
         ] {
-            if !coded {
-                match ctx.code_for(x, excl, see, level) {
-                    CtxCode::Sym(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, false);
-                        coded = true;
-                    }
-                    CtxCode::Escape(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                    }
-                    CtxCode::Empty => {}
+            match ctx.code_for(x, excl, see, level) {
+                CtxCode::Sym(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, false);
+                    ctx.bump(x, alphabet);
+                    return;
                 }
+                CtxCode::Escape(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, true);
+                    ctx.exclude_into(excl);
+                }
+                CtxCode::Empty => {}
             }
             ctx.bump(x, alphabet);
         }
-        if !coded {
-            enc.encode(x as u32, 1, self.alphabet);
-        }
+        enc.encode(x as u32, 1, self.alphabet);
     }
 
     /// Standalone chain extended with an auxiliary aligned reference:
@@ -792,7 +788,6 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let mut coded = false;
         let skip_aux = aux == EDGE;
         // Aux level first: unlike the cluster experiment, the aligned
         // reference is strong exactly where it exists (43-68% identity), and
@@ -819,26 +814,23 @@ impl Model {
             if skip {
                 continue;
             }
-            if !coded {
-                match ctx.code_for(x, excl, see, level) {
-                    CtxCode::Sym(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, false);
-                        coded = true;
-                    }
-                    CtxCode::Escape(cum, f, t, key) => {
-                        enc.encode(cum, f, t);
-                        see.update(key, true);
-                        ctx.exclude_into(excl);
-                    }
-                    CtxCode::Empty => {}
+            match ctx.code_for(x, excl, see, level) {
+                CtxCode::Sym(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, false);
+                    ctx.bump(x, alphabet);
+                    return;
                 }
+                CtxCode::Escape(cum, f, t, key) => {
+                    enc.encode(cum, f, t);
+                    see.update(key, true);
+                    ctx.exclude_into(excl);
+                }
+                CtxCode::Empty => {}
             }
             ctx.bump(x, alphabet);
         }
-        if !coded {
-            enc.encode(x as u32, 1, self.alphabet);
-        }
+        enc.encode(x as u32, 1, self.alphabet);
     }
 
     /// Decoder mirror of [`Self::encode_sym_aux`].
@@ -850,6 +842,7 @@ impl Model {
         let scratch = &mut self.scratch;
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
+        let mut coded_at: usize = 5;
         let skip_aux = aux == EDGE;
         {
             let chain: [(bool, usize, &Ctx); 5] = [
@@ -871,7 +864,7 @@ impl Model {
                 ),
                 (false, 3, &self.c0),
             ];
-            for (skip, level, ctx) in chain {
+            for (pos, (skip, level, ctx)) in chain.into_iter().enumerate() {
                 if skip {
                     continue;
                 }
@@ -894,6 +887,7 @@ impl Model {
                     dec.commit(cum, c, total);
                     see.update(key, false);
                     decoded = Some(s);
+                    coded_at = pos;
                     break;
                 }
                 let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
@@ -918,6 +912,7 @@ impl Model {
                     cum += c;
                 }
                 debug_assert!(decoded.is_some());
+                coded_at = pos;
                 break;
             }
         }
@@ -933,10 +928,18 @@ impl Model {
         if !skip_aux {
             self.c2aux.entry(key_aux).or_default().bump(x, alphabet);
         }
-        self.c2.entry(key2).or_default().bump(x, alphabet);
-        self.c1[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c1b[(left as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c0.bump(x, alphabet);
+        if coded_at >= 1 {
+            self.c2.entry(key2).or_default().bump(x, alphabet);
+        }
+        if coded_at >= 2 {
+            self.c1[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 3 {
+            self.c1b[(left as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 4 {
+            self.c0.bump(x, alphabet);
+        }
         x
     }
 
@@ -949,6 +952,7 @@ impl Model {
         let scratch = &mut self.scratch;
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
+        let mut coded_at: usize = 5;
         {
             let chain: [(usize, &Ctx); 5] = [
                 (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
@@ -957,7 +961,7 @@ impl Model {
                 (2, &self.c1b[(above as usize).min(self.alphabet as usize)]),
                 (3, &self.c0),
             ];
-            for (level, ctx) in chain {
+            for (pos, (level, ctx)) in chain.into_iter().enumerate() {
                 if excl.is_empty() {
                     if ctx.is_empty() {
                         continue;
@@ -977,6 +981,7 @@ impl Model {
                     dec.commit(cum, c, total);
                     see.update(key, false);
                     decoded = Some(s);
+                    coded_at = pos;
                     break;
                 }
                 let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
@@ -1001,6 +1006,7 @@ impl Model {
                     cum += c;
                 }
                 debug_assert!(decoded.is_some());
+                coded_at = pos;
                 break;
             }
         }
@@ -1014,10 +1020,18 @@ impl Model {
         };
         let alphabet = self.alphabet;
         self.c2pair.entry(key_pair).or_default().bump(x, alphabet);
-        self.c2.entry(key2).or_default().bump(x, alphabet);
-        self.c1[(b1 as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c1b[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c0.bump(x, alphabet);
+        if coded_at >= 1 {
+            self.c2.entry(key2).or_default().bump(x, alphabet);
+        }
+        if coded_at >= 2 {
+            self.c1[(b1 as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 3 {
+            self.c1b[(above as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 4 {
+            self.c0.bump(x, alphabet);
+        }
         x
     }
 
@@ -1029,7 +1043,10 @@ impl Model {
         let see = &mut self.see;
         let mut decoded: Option<u16> = None;
         // Decode over the chain first (contexts stay immutable; exclusions
-        // accumulate in the stamp set), then bump every level.
+        // accumulate in the stamp set), then bump the visited levels
+        // (update exclusion: levels below the coding level never see the
+        // symbol — mirrors encode_sym exactly).
+        let mut coded_at: usize = 4;
         {
             let chain: [&Ctx; 4] = [
                 self.c2.entry(key2).or_default(),
@@ -1060,6 +1077,7 @@ impl Model {
                     dec.commit(cum, c, total);
                     see.update(key, false);
                     decoded = Some(s);
+                    coded_at = level;
                     break;
                 }
                 let (sum, total, key) = ctx.fill_scratch(excl, see, level, scratch);
@@ -1084,6 +1102,7 @@ impl Model {
                     cum += c;
                 }
                 debug_assert!(decoded.is_some());
+                coded_at = level;
                 break;
             }
         }
@@ -1097,9 +1116,15 @@ impl Model {
         };
         let alphabet = self.alphabet;
         self.c2.entry(key2).or_default().bump(x, alphabet);
-        self.c1[(primary as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c1b[(second as usize).min(self.alphabet as usize)].bump(x, alphabet);
-        self.c0.bump(x, alphabet);
+        if coded_at >= 1 {
+            self.c1[(primary as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 2 {
+            self.c1b[(second as usize).min(self.alphabet as usize)].bump(x, alphabet);
+        }
+        if coded_at >= 3 {
+            self.c0.bump(x, alphabet);
+        }
         x
     }
 }
