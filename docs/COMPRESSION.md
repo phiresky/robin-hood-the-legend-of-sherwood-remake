@@ -2142,3 +2142,71 @@ and the gutter share is small because animation groups pack same-size frames.
 Uniform-grid cells are why any gutter exists at all — a shelf packer would
 recover most of that 14% if it ever matters.
 
+### Fullgame numbers (fullgame_linux, full web recipe)
+
+Same binary and schema on both sides; only `--rle-sprite-format` differs.
+
+```
+                                exact            jxl-q70          delta
+rhs/ bucket                96,287,605 B     87,951,100 B    -8,336,505 B  (-8.7%)
+whole Data/               156,931,728 B    148,594,453 B    -8,337,275 B
+H01_Lin_VL blocking set    24,699,643 B     24,192,060 B      -507,583 B  (-2.1%)
+```
+
+The bucket saving lands where the research said it would (~8 MiB); the
+per-mission blocking saving is much smaller because one mission touches only a
+few animation chunks. 5,682 sprites ship lossy across the corpus: 6,144,079 B
+of JXL replacing 59,398,464 B of raw RLE words (zstd'd to ~14.5 MB in the
+exact tree), in 904 images across 60 chunks.
+
+Verify green on the whole tree: 402,303 sprites, 396,621 bit-identical to the
+source bank, 5,682 lossy with structure and keys bit-exact, 29.8 dB
+opaque-pixel PSNR, 17.9% of visible pixels still exactly 565-equal, worst
+chunk 24.1 dB, all 50 dependency lists closure-covered. The quality floor
+demotes 1,546 sprites to exact words and 1,755 more are under 20x20 px.
+
+Native H01 install decode (`--decode-bench`, all 68 blocking files):
+
+```
+                        exact tree      jxl-q70 tree
+VQ blobs (45)              2.50 s          2.80 s
+RLE-JXL chunks (3)            —            0.32 s
+resident RLE rasters          —          3,862,642 B (88 sprites, 21 atlases,
+                                          13% of it gutter)
+```
+
+### Browser install (headless Chrome, threaded wasm, `H01_Lin_VL`)
+
+`node scripts/wasm_mission_install_chrome.mjs <tree>`, the two trees run
+interleaved on a noisy box (load 4.5-8.8), so minimums are the honest
+statistic:
+
+```
+                    runs (s)                  min
+exact       9.0, 11.9, 8.3                    8.3 s
+jxl-q70     11.2, 9.1, 8.7, 8.5               8.5 s
+```
+
+Install time is unchanged within noise: the extra JXL decode (0.32 s native
+for H01's 3 chunks; on the pool it overlaps the fetches) is roughly offset by
+the 507,583 fewer bytes to download. Both trees report the same 72 blocking
+files and reach `activated shipping mission` cleanly.
+
+### Verdict and what is still open
+
+Ship it for web: -8.3 MB off the rhs bucket for no measurable install-time
+cost, at 29.8 dB on visible pixels with keys and structure bit-exact. Native
+keeps `exact` and stays parity-safe.
+
+Open items, in the order they would pay:
+
+- **Resident memory** is the real trade (+2.4x on the sprites it touches;
+  3.86 MB for H01). If wasm heap ever becomes the constraint, the levers are a
+  shelf packer (recovers the ~13% gutter share) and dropping the raster to
+  RGB565-with-holes only for sprites that are actually drawn.
+- **The 24 dB floor is conservative.** It demotes 1,546 fullgame sprites back
+  to exact words; several are the `Z_*` ambient character animations, which are
+  large. A per-sprite quality-vs-size search (encode at q80 when q70 misses the
+  floor, instead of falling all the way back) would recover part of that.
+- **Interface/pak art now gets the same edge extension** but was not measured
+  separately here; the earlier `--pak` numbers predate the smear.
