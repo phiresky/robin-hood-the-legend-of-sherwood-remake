@@ -3442,10 +3442,44 @@ fn is_legacy_retained_terminal_success(
         && game_code == GameCode::LevelSucceeded as i32
 }
 
+/// Stable host identity for campaign attempts synthesized by this replay tool.
+///
+/// Original predates native attempt history, so an archived trace cannot carry
+/// the host nonce which current live sessions attach to terminal commands. Use
+/// the logical recording-family name: chained `-session-NNNN` files belong to
+/// one host run and therefore receive one identity, independent of their disk
+/// location. The domain separator keeps this namespace distinct from future
+/// deterministic tool identities.
+fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u64 {
+    let file_name = trace_path.file_name().unwrap_or_else(|| {
+        panic!(
+            "parity trace path {} has no file name for campaign identity",
+            trace_path.display()
+        )
+    });
+    let file_name = file_name.to_string_lossy();
+    let session_suffix = format!("-session-{session_index:04}");
+    let logical_stem = file_name.strip_suffix(".jsonl.zst").unwrap_or(&file_name);
+    let recording_family = logical_stem
+        .strip_suffix(&session_suffix)
+        .unwrap_or(logical_stem);
+
+    let mut digest = Sha256::new();
+    digest.update(b"robin-original-parity-campaign-run-v1\0");
+    digest.update(recording_family.as_bytes());
+    let digest = digest.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let identity = u64::from_le_bytes(bytes);
+    // Zero is reserved as an invalid durable campaign-history identity.
+    if identity == 0 { u64::MAX } else { identity }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn append_legacy_retained_terminal_success_repair(
     commands: &mut Vec<PlayerCommand>,
     difficulty: robin_engine::player_profile::DifficultyLevel,
+    campaign_run_id: u64,
     schema: u32,
     frame_before: u64,
     frame_after: u64,
@@ -3472,7 +3506,7 @@ fn append_legacy_retained_terminal_success_repair(
         exit_code: GameCode::LevelSucceeded,
         difficulty,
         completed_at_unix_seconds: None,
-        campaign_run_nonce: None,
+        campaign_run_nonce: Some(campaign_run_id),
     });
     commands.push(PlayerCommand::QuitMissionRequested);
     true
@@ -4245,6 +4279,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
     let mut legacy_terminal_success_repair_applied = false;
+    let campaign_run_id = replay_campaign_run_id(&trace_path, header.session_index);
 
     #[cfg(feature = "client")]
     if let Some(port) = http_server {
@@ -4519,6 +4554,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
         append_legacy_retained_terminal_success_repair(
             &mut commands_before_hourglass_resolved,
             header.sim_config.difficulty.into(),
+            campaign_run_id,
             header.schema,
             frame.frame_before,
             frame.frame_after,
@@ -11692,9 +11728,11 @@ mod tests {
     fn retained_terminal_success_repair_is_emitted_exactly_once() {
         let mut commands = Vec::new();
         let mut applied = false;
+        let campaign_run_id = 0x1234_5678_9abc_def0;
         assert!(append_legacy_retained_terminal_success_repair(
             &mut commands,
             robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
             TRACE_SCHEMA_VERSION,
             9_602,
             9_602,
@@ -11705,6 +11743,7 @@ mod tests {
         assert!(!append_legacy_retained_terminal_success_repair(
             &mut commands,
             robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
             TRACE_SCHEMA_VERSION,
             9_602,
             9_602,
@@ -11717,10 +11756,31 @@ mod tests {
             commands[0],
             PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: GameCode::LevelSucceeded,
+                campaign_run_nonce: Some(actual),
                 ..
-            }
+            } if actual == campaign_run_id
         ));
         assert!(matches!(commands[1], PlayerCommand::QuitMissionRequested));
+    }
+
+    #[test]
+    fn replay_campaign_identity_is_stable_across_recording_family_sessions() {
+        let first = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0001.jsonl.zst"),
+            1,
+        );
+        let ninth = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0009.jsonl.zst"),
+            9,
+        );
+        let other = replay_campaign_run_id(
+            Path::new("interactive-session-003-session-0001.jsonl.zst"),
+            1,
+        );
+
+        assert_ne!(first, 0);
+        assert_eq!(first, ninth);
+        assert_ne!(first, other);
     }
 
     #[test]
