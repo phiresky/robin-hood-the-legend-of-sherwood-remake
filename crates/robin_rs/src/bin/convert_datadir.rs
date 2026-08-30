@@ -4748,6 +4748,28 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
 /// given, so leave the existing bytes alone.
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_assets::picture::PixelFormat;
+
+    // RGB16 interface art carries BOTH key colors as literal pixel values:
+    // transparent (bright green) and SHADOW_KEY (pure blue). Neither may be
+    // coded as color — VarDCT ringing bleeds them into visible neighbours,
+    // and a lossy round trip breaks the exact `== SHADOW_KEY` comparisons
+    // the cursor and UI paths run, which renders shadows as raw blue. Carry
+    // both classes in the alpha channel instead (the scheme the RLE sprite
+    // atlases already use, with alpha coded losslessly) and edge-extend the
+    // color underneath.
+    if pic.pixel_format == PixelFormat::Rgb16 && quality.is_some() {
+        let canvas = picture_rgb16_canvas(pic)?;
+        let mut rgba = robin_assets::rle_jxl::canvas_to_rgba(&canvas)?;
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+        let encoded = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)?;
+        verify_keyed_picture_classes(&encoded, &canvas)?;
+        return Ok(encoded);
+    }
 
     let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
     if quality.is_some() {
@@ -4760,6 +4782,58 @@ fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Re
         );
     }
     transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)
+}
+
+/// Decode a just-encoded keyed picture and fail the conversion if any pixel
+/// changed CLASS. Color is lossy by design, but transparent and shadow are
+/// exact comparisons at runtime (`px == SHADOW_KEY` in the cursor and UI
+/// paths), so a class that shifts is silent corruption — a blue cursor
+/// shadow, or a hole where art should be. Cheap next to the encode.
+fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Result<()> {
+    use robin_assets::rle_jxl::class_of;
+
+    let decoded =
+        Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
+    let round_trip = picture_rgb16_canvas(&decoded)?;
+    if round_trip.len() != source.len() {
+        bail!(
+            "keyed interface picture round-tripped {} pixels, expected {}",
+            round_trip.len(),
+            source.len()
+        );
+    }
+    for (index, (&want, &got)) in source.iter().zip(round_trip.iter()).enumerate() {
+        if class_of(want) != class_of(got) {
+            bail!(
+                "keyed interface picture pixel {index} changed class: source {want:#06x} \
+                 decoded {got:#06x} — the alpha channel is not surviving the encode"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Row-major RGB565 words of an `Rgb16` picture, dropping any pitch padding.
+fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
+    let width = pic.width as usize;
+    let height = pic.height as usize;
+    let pitch = if pic.pitch == 0 {
+        width * 2
+    } else {
+        pic.pitch as usize
+    };
+    let mut canvas = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let row = pic
+            .data
+            .get(y * pitch..y * pitch + width * 2)
+            .ok_or_else(|| anyhow!("picture row {y} is short of {width} RGB565 pixels"))?;
+        canvas.extend(
+            row.chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]])),
+        );
+    }
+    Ok(canvas)
 }
 
 /// Opaque RGB (maps); effort 7 — effort 9 did not produce a meaningful size
