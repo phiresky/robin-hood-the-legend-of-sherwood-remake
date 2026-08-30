@@ -800,10 +800,13 @@ pub fn tie_up(human: &mut HumanData, posture: &mut Posture) {
 /// Release a tied-up human. Resets posture to `Lying`.
 /// The entity remains unconscious until concussion heals below wakeup threshold.
 pub fn untie(_human: &mut HumanData, posture: &mut Posture) {
-    if *posture == Posture::Tied && posture.allows_transition_to(Posture::Lying) {
-        *posture = Posture::Lying;
-        // Don't force concussion — let natural healing work.
-    }
+    assert_eq!(*posture, Posture::Tied, "cannot untie an untied entity");
+    assert!(
+        posture.allows_transition_to(Posture::Lying),
+        "Tied posture must allow release to Lying"
+    );
+    *posture = Posture::Lying;
+    // Don't alter unconsciousness or concussion — natural healing owns wakeup.
 }
 
 /// Increment the stuck-under-nets counter without touching posture.
@@ -2767,9 +2770,38 @@ mod tests {
     fn untie_sets_lying() {
         let mut h = make_human();
         h.unconscious = true;
+        h.concussion_of_the_brain = CONCUSSION_WAKEUP_THRESHOLD + 17;
         let mut posture = Posture::Tied;
         untie(&mut h, &mut posture);
         assert_eq!(posture, Posture::Lying);
+        assert!(h.unconscious);
+        assert_eq!(h.concussion_of_the_brain, CONCUSSION_WAKEUP_THRESHOLD + 17);
+    }
+
+    #[test]
+    fn untied_unconscious_human_wakes_through_normal_concussion_healing() {
+        let mut human = make_human();
+        human.unconscious = true;
+        human.concussion_of_the_brain = CONCUSSION_WAKEUP_THRESHOLD;
+        let mut posture = Posture::Tied;
+
+        untie(&mut human, &mut posture);
+        concussion_healing_tick(&mut human, 1, 100, &default_ctx());
+
+        assert_eq!(posture, Posture::Lying);
+        assert!(!human.unconscious);
+        assert_eq!(
+            human.concussion_of_the_brain,
+            CONCUSSION_WAKEUP_THRESHOLD - 1
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot untie an untied entity")]
+    fn untie_rejects_non_tied_posture() {
+        let mut h = make_human();
+        let mut posture = Posture::Lying;
+        untie(&mut h, &mut posture);
     }
 
     // ── Net ────────────────────────────────────────────────────────

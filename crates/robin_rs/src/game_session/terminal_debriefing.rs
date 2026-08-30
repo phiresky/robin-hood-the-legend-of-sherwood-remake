@@ -32,6 +32,16 @@ fn terminal_debriefing_action(
     }
 }
 
+fn mission_completion_clock() -> (Option<i64>, Option<u64>) {
+    let Ok(duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return (None, None);
+    };
+    (
+        i64::try_from(duration.as_secs()).ok(),
+        u64::try_from(duration.as_nanos()).ok(),
+    )
+}
+
 fn debriefing_text_table_id(won: bool, win_table_id: i32, lose_table_id: i32) -> i32 {
     if won { win_table_id } else { lose_table_id }
 }
@@ -66,6 +76,7 @@ pub(super) struct TerminalDebriefingContext<'a> {
 fn terminal_debriefing_page(
     context: &mut TerminalDebriefingContext<'_>,
     won: bool,
+    terminal_mission_id: u32,
 ) -> TerminalDebriefingPage {
     let index = context.manager.engine.mission().victory_defeat_id as usize;
     let kind = engine_player_command::ModalKind::FinalDebriefing {
@@ -97,17 +108,13 @@ fn terminal_debriefing_page(
     let quick_load_key = context.input.translator.get_binding(GameKey::QuickLoad1);
     let restart_snapshot_exists =
         context.ui.restart_allowed && context.callbacks.save_manager.has_restart_save();
-    let mission_id = current_mission_id(
-        context.manager.engine.campaign(),
-        &context.assets.profile_manager,
-    );
     TerminalDebriefingPage {
         kind,
         body,
         mission_length,
         quick_load_key,
         restart_snapshot_exists,
-        mission_id,
+        mission_id: terminal_mission_id,
         won,
     }
 }
@@ -283,6 +290,14 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         return false;
     };
     tracing::info!("Engine tick returned: {:?}", exit_code);
+    // A history replay restores campaign progression while applying terminal
+    // updates. Freeze the loaded mission identity first so the debriefing and
+    // load/restart actions continue to refer to the mission just played.
+    let terminal_mission_id = current_mission_id(
+        context.manager.engine.campaign(),
+        &context.assets.profile_manager,
+    );
+    let (completed_at_unix_seconds, campaign_run_nonce) = mission_completion_clock();
 
     // Campaign/stat updates precede both terminal graphical surfaces, matching
     // RHgame.cpp's mission-end operation handling.
@@ -295,6 +310,8 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
             difficulty,
+            completed_at_unix_seconds,
+            campaign_run_nonce,
         },
     );
 
@@ -307,7 +324,7 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
 
     let won = exit_code == GameCode::LevelSucceeded;
     show_terminal_mission_state(&mut context, popup_title, won).await;
-    let page = terminal_debriefing_page(&mut context, won);
+    let page = terminal_debriefing_page(&mut context, won, terminal_mission_id);
     let outcome = render_terminal_debriefing_and_picker(&mut context, &page).await;
     context
         .frame

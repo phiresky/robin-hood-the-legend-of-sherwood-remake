@@ -417,6 +417,36 @@ pub fn render_hud_text(
     );
     render_ammo_counts_gpu(engine, local_seat, assets, renderer, fonts, shadow);
     render_counter_titbits_gpu(engine, camera, renderer, fonts, shadow);
+    render_sprite_stream_indicator(renderer, fonts);
+}
+
+/// Unobtrusive corner note while the background sprite-streaming tail is
+/// still decoding (browser installs activate the mission once the
+/// mission-start critical set is ready and stream the rest — reinforcement
+/// characters and variants — on the worker pool). The fraction is real
+/// measured work: decoded blob bytes over the deferred tail's total. Hidden
+/// on native builds and once the tail finishes.
+fn render_sprite_stream_indicator(renderer: &mut Renderer, fonts: &HudFonts) {
+    let Some((fraction, chunks_done, chunks_total)) = robin_assets::late_sprites::tail_status()
+    else {
+        return;
+    };
+    let sh = renderer.screen_height() as i32;
+    if sh < 200 {
+        return;
+    }
+    let text = format!(
+        "Streaming sprites {:.0}% ({chunks_done}/{chunks_total})",
+        f64::from(fraction) * 100.0
+    );
+    render_text_with_shadow_gpu(
+        renderer,
+        &fonts.tooltip_font,
+        fonts.shadow_font.as_ref(),
+        &text,
+        8,
+        sh - 176,
+    );
 }
 
 /// Render a transient centered banner message near the bottom of the

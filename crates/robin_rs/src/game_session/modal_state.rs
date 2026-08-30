@@ -23,7 +23,7 @@ use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::DebriefingTextId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE;
-use robin_engine::sherwood_stat::{ScoreInfo, SherwoodStat};
+use robin_engine::sherwood_stat::{ProductionForecastCycle, ScoreInfo, SherwoodStat};
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sound_config::SoundConfig;
 use std::collections::VecDeque;
@@ -791,9 +791,6 @@ pub(super) fn start_active_sherwood_report(
         tracing::warn!("DisplaySherwoodReport: menu resources unavailable — skipped");
         return None;
     };
-    let campaign = engine.campaign();
-
-    let sherwood = SherwoodStat;
     let profile = host
         .application_context
         .active_profile_snapshot()
@@ -803,12 +800,12 @@ pub(super) fn start_active_sherwood_report(
         preserved_lives: profile.preserved_lives as i32,
         play_time_seconds: profile.play_time,
     };
-    let text = sherwood.get_text(
-        &campaign.production_sectors,
-        &campaign.characters,
+    let text = build_sherwood_report_text(
+        engine,
         profiles,
         &score_info,
         &resources.menu_text,
+        profile.gameplay_config.show_production_forecast,
     );
     let kind = engine_player_command::ModalKind::SherwoodReport;
     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
@@ -824,6 +821,49 @@ pub(super) fn start_active_sherwood_report(
     };
 
     Some(ModalBatch::new(VecDeque::from([item])))
+}
+
+fn build_sherwood_report_text(
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+    score_info: &ScoreInfo,
+    menu_text: &crate::ingame_menu::resources::MenuText,
+    show_forecast: bool,
+) -> String {
+    let campaign = engine.campaign();
+    let sherwood = SherwoodStat;
+    if !show_forecast {
+        return sherwood.get_text(
+            &campaign.production_sectors,
+            &campaign.characters,
+            profiles,
+            score_info,
+            menu_text,
+        );
+    }
+
+    let live_sectors = engine.live_production_sectors(profiles);
+    let forecast_cycle =
+        campaign
+            .next_mission_idx
+            .map_or_else(ProductionForecastCycle::default, |mission_idx| {
+                let mission = campaign.missions.get(mission_idx).unwrap_or_else(|| {
+                    panic!("selected production-forecast mission index {mission_idx} is missing")
+                });
+                let mission_profile = mission.profile(profiles);
+                ProductionForecastCycle {
+                    mission_name: Some(mission_profile.mission_name.clone()),
+                    duration_seconds: Some(mission_profile.length),
+                }
+            });
+    sherwood.get_text_with_forecast(
+        &live_sectors,
+        &campaign.characters,
+        profiles,
+        score_info,
+        menu_text,
+        Some(&forecast_cycle),
+    )
 }
 
 pub(super) fn start_active_debriefing_batch(
@@ -1120,8 +1160,6 @@ pub(super) async fn drain_pending_sherwood_stat(
     // `pending_sherwood_report`.
     if host.effects.take_sherwood_report() {
         if let Some(resources) = ctx.menu_resources.as_ref() {
-            let campaign = engine.campaign();
-            let sherwood = SherwoodStat;
             // The Sherwood stat panel pulls score / preserved lives
             // / play time from the active player profile.
             let profile = host
@@ -1135,12 +1173,12 @@ pub(super) async fn drain_pending_sherwood_stat(
                 preserved_lives: profile.preserved_lives as i32,
                 play_time_seconds: profile.play_time,
             };
-            let text = sherwood.get_text(
-                &campaign.production_sectors,
-                &campaign.characters,
+            let text = build_sherwood_report_text(
+                engine,
                 profiles,
                 &score_info,
                 &resources.menu_text,
+                profile.gameplay_config.show_production_forecast,
             );
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    campaign::Campaign, element::EntityId, engine::MissionState, mission_stat::MissionStat,
-    short_briefings::ShortBriefings,
+    achievement::MissionAchievementState, campaign::Campaign, element::EntityId,
+    engine::MissionState, mission_stat::MissionStat, short_briefings::ShortBriefings,
 };
 
 /// Deterministic mission outcome, campaign, objective, and debriefing state.
@@ -22,6 +22,10 @@ pub(crate) struct MissionDomain {
     pub(crate) cheat_used_flags: u32,
     pub(crate) short_briefings: ShortBriefings,
     pub(crate) mission_stat: MissionStat,
+    /// Deterministic live achievement evidence and frozen successful result.
+    /// Native save/replay versions must be bumped when this foundation is
+    /// integrated with the other feature branches.
+    pub(crate) achievements: MissionAchievementState,
     pub(crate) dead_pc: Option<EntityId>,
     pub(crate) campaign: Campaign,
 }
@@ -33,6 +37,7 @@ impl MissionDomain {
             cheat_used_flags: 0,
             short_briefings: ShortBriefings::default(),
             mission_stat: MissionStat::default(),
+            achievements: MissionAchievementState::from_mission_start(),
             dead_pc: None,
             campaign,
         }
@@ -82,6 +87,10 @@ mod tests {
         assert_eq!(mission.short_briefings.count(true), 0);
         assert_eq!(mission.short_briefings.count(false), 0);
         assert_eq!(mission.mission_stat, MissionStat::default());
+        assert_eq!(
+            mission.achievements.tracking_provenance(),
+            crate::achievement::AchievementTrackingProvenance::MissionStart
+        );
         assert!(mission.dead_pc.is_none());
         assert_eq!(
             mission.campaign.production_sectors.as_ptr(),

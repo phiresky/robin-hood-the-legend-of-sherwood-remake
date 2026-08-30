@@ -306,10 +306,13 @@ pub enum AbilityKind {
     /// "terminated" frame both PCs settle back into `Upright` /
     /// `HelpingToClimb` postures and the carrier link is severed.
     ClimbDownFromShoulders,
+    /// A PC with the Tie contextual action releases a tied NPC.
+    /// Drives the existing `Tying` animation in reverse.
+    Untie,
 }
 
 impl AbilityKind {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Carry,
         Self::Drop,
         Self::Tie,
@@ -328,6 +331,7 @@ impl AbilityKind {
         Self::Eat,
         Self::ClimbOnShoulders,
         Self::ClimbDownFromShoulders,
+        Self::Untie,
     ];
 }
 

@@ -69,6 +69,26 @@ impl MenuTransform {
     }
 }
 
+/// Drain window events, synchronize native presentation/logical dimensions,
+/// and return the transform that matches those events' pointer coordinates.
+///
+/// `GameWindow` applies the aspect policy while draining resize messages. Menu
+/// loops must therefore refresh the renderer and their virtual transform before
+/// interpreting events from that drain; doing it a frame later makes clicks
+/// disagree with widgets immediately after a resize.
+pub fn poll_events_with_transform(
+    event_pump: &mut crate::window::GameWindow,
+    renderer: &mut Renderer,
+) -> (Vec<crate::gfx_types::GameEvent>, MenuTransform) {
+    let events = event_pump.poll_events();
+    renderer.sync_window_size(event_pump);
+    let transform = MenuTransform::centered(
+        i32::from(renderer.screen_width()),
+        i32::from(renderer.screen_height()),
+    );
+    (events, transform)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Widget layout
 // ═══════════════════════════════════════════════════════════════════
@@ -216,6 +236,7 @@ pub fn dim_screen(renderer: &mut Renderer) {
 /// path resumes.
 pub fn enter_modal_gpu_phase(renderer: &mut Renderer) {
     renderer.freeze_scene_for_modal();
+    renderer.begin_ui_layer();
 }
 
 /// Blit a background surface into a virtual sub-rect at `(virt_x, virt_y)`

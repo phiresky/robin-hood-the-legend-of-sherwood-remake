@@ -249,7 +249,8 @@ pub async fn show_sounds(
     let mut noisy_tracker = widget_bridge::NoisyTracker::new();
 
     while !done {
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => done = true,

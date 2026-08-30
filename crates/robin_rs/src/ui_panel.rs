@@ -379,6 +379,7 @@ impl PortraitCache {
     /// Reads each portrait resource from the resource manager, converts
     /// to a renderer surface. Missing resources are logged and skipped.
     pub fn load(&mut self, res: &mut ResourceManager, renderer: &mut Renderer) {
+        let mut timer = crate::game_session::PhaseTimer::new("portrait cache load");
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
             let res_id = kind.portrait_resource();
@@ -406,6 +407,7 @@ impl PortraitCache {
             "Portrait cache: {} surfaces loaded",
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
+        timer.step("character portraits");
 
         let (width, height, pixels) =
             decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png"))
@@ -496,6 +498,7 @@ impl PortraitCache {
                     .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
             );
         }
+        timer.step("embedded allied art");
 
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
         for (res_id, field, label) in [
@@ -615,6 +618,8 @@ impl PortraitCache {
             }
         }
 
+        timer.step("scrolls + borders");
+
         // ── Load action button icons (normal + focused + pressed states) ──
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
@@ -695,6 +700,7 @@ impl PortraitCache {
             "Portrait cache: {} action icon sets loaded",
             self.action_surfaces.iter().filter(|s| s.is_some()).count(),
         );
+        timer.step("action icons");
 
         // ── Load fighting sword overlay surfaces (per character) ──
         for kind in CharacterKind::VARIANTS {
@@ -915,6 +921,8 @@ impl PortraitCache {
             }
         }
 
+        timer.step("indicators + blazons + overlays");
+
         // ── Pre-load all per-slot sub-pictures of the requirements-bar
         //    icon tables.  Each resource carries one sub-picture per
         //    character-profile or per-action enum value.  Loading the full
@@ -958,6 +966,8 @@ impl PortraitCache {
                 self.sub_pictures.insert((res_id, sub_id), surface_id);
             }
         }
+        timer.step("requirements tables");
+        timer.total();
     }
 
     /// Install a pre-loaded localized-name map.  Read at render time
@@ -1904,32 +1914,58 @@ pub fn draw_panel(
     // Rendered BEFORE portrait widgets, in absolute screen coordinates.
     // Blit using source surface dimensions to avoid size mismatch issues.
     if let Some(sid) = portraits.border_top_left {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(0, 0, w, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
+    if let Some(sid) = portraits.border_top_right {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(sw - w, 0, sw, h);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
     if let Some(sid) = portraits.border_bottom_left {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(0, sh - h, w, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_right {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
         let dst = bbox(sw - w, sh - h, sw, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
-    // Center border piece — only at 800+ width (disabled at 640).
+    // Center border piece — only at 800+ width (disabled at 640). The
+    // original supplied fixed 800/1024 strips; tile and crop the selected
+    // strip between the corners so adaptive widths never expose a gap.
     if sw > 640
         && let Some(sid) = portraits.border_middle
     {
         let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
-        let bx = renderer.surface_width(portraits.border_bottom_left.unwrap_or(0));
-        let dst = bbox(bx, sh - h, bx + w, sh);
-        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        let h = renderer.surface_height(sid).min(sh);
+        let mut x = renderer
+            .surface_width(portraits.border_bottom_left.unwrap_or(0))
+            .min(sw);
+        let right = sw.saturating_sub(
+            renderer
+                .surface_width(portraits.border_bottom_right.unwrap_or(0))
+                .min(sw),
+        );
+        while x < right && w > 0 {
+            let tile_width = w.min(right - x);
+            let src = bbox(0, 0, tile_width, h);
+            let dst = bbox(x, sh.saturating_sub(h), x + tile_width, sh);
+            blit_to_screen_widget(
+                renderer,
+                sid,
+                Some(&src),
+                Some(&dst),
+                BLIT_SOURCE_TRANSPARENT,
+            );
+            x += tile_width;
+        }
     }
 
     // ── Portrait slots (one per PC in the mission) ──
@@ -3460,6 +3496,7 @@ mod tests {
         assert_eq!(portrait_capacity(640), 5);
         assert_eq!(portrait_capacity(800), 6);
         assert_eq!(portrait_capacity(1024), 8);
+        assert_eq!(portrait_capacity(1280), 10);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! A blocking modal that draws the DEFAULT.RES campaign map and waits
 //! for a location selection.
 
+use crate::campaign_progress::{CampaignProgressGraph, ExhibitGridNavigator, MissionProgressState};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::blazon_set;
 use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
@@ -19,6 +20,7 @@ use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::campaign::Campaign;
 use robin_engine::coordinates::ScreenBBox;
+use robin_engine::gameplay_config::CampaignPresentationMode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::resource_ids;
@@ -194,8 +196,26 @@ pub(crate) async fn show_campaign_map(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     cursor: Option<ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
+    presentation: CampaignPresentationMode,
+    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
     let mut menu_resources = menu_resources;
+    if presentation != CampaignPresentationMode::ClassicMap {
+        let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
+        return show_campaign_progress(
+            window,
+            renderer,
+            game,
+            campaign,
+            profiles,
+            &assets,
+            cursor.as_ref(),
+            pseudo_debrief_pending,
+            presentation,
+            lifetime_history,
+        )
+        .await;
+    }
     let items = campaign_map_items(campaign, profiles, campaign_map, text_resources, shipping);
     if items.is_empty() {
         tracing::warn!("No missions on campaign map — this shouldn't happen");
@@ -221,16 +241,14 @@ pub(crate) async fn show_campaign_map(
             return Ok(CampaignMapChoice::Redisplay);
         }
 
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let (events, transform) = layout::poll_events_with_transform(window, renderer);
         let mut final_choice = None;
 
         let input_enabled = pseudo_debrief_at
             .map(|at| std::time::Instant::now() >= at)
             .unwrap_or(true);
 
-        for event in window.poll_events() {
+        for event in events {
             if !input_enabled {
                 input.update_from_event(&event, transform);
                 continue;
@@ -243,6 +261,24 @@ pub(crate) async fn show_campaign_map(
                 } => {
                     final_choice = Some(CampaignMapChoice::Quit);
                     break;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => {
+                    return show_campaign_progress(
+                        window,
+                        renderer,
+                        game,
+                        campaign,
+                        profiles,
+                        &assets,
+                        cursor.as_ref(),
+                        pseudo_debrief_pending,
+                        CampaignPresentationMode::ProgressTree,
+                        lifetime_history,
+                    )
+                    .await;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
@@ -341,6 +377,405 @@ pub(crate) async fn show_campaign_map(
             && std::time::Instant::now() >= at
         {
             return Ok(CampaignMapChoice::PseudoDebriefTimer);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn show_campaign_progress(
+    window: &mut crate::window::GameWindow,
+    renderer: &mut Renderer,
+    game: &mut crate::game::Game,
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    assets: &CampaignMapAssets,
+    cursor: Option<&ModalCursor<'_>>,
+    pseudo_debrief_pending: bool,
+    initial_presentation: CampaignPresentationMode,
+    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
+) -> Result<CampaignMapChoice, String> {
+    let graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
+    if graph.nodes.is_empty() {
+        tracing::warn!("Campaign history presentation has no non-Sherwood missions");
+        return Ok(CampaignMapChoice::Quit);
+    }
+    let mut presentation = initial_presentation;
+    let mut selected = graph.first_selectable().unwrap_or(0);
+    let mut exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+    let mut input = ModalInputState::new();
+    let pseudo_debrief_at = pseudo_debrief_pending
+        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
+
+    loop {
+        if game.take_campaign_map_redisplay() {
+            return Ok(CampaignMapChoice::Redisplay);
+        }
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let input_enabled = pseudo_debrief_at
+            .map(|at| std::time::Instant::now() >= at)
+            .unwrap_or(true);
+        let mut final_choice = None;
+        for event in window.poll_events() {
+            if !input_enabled {
+                input.update_from_event(&event, transform);
+                continue;
+            }
+            match event {
+                GameEvent::Quit
+                | GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => final_choice = Some(CampaignMapChoice::Quit),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => {
+                    presentation = match presentation {
+                        CampaignPresentationMode::ProgressTree => {
+                            exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+                            CampaignPresentationMode::SherwoodMuseum
+                        }
+                        CampaignPresentationMode::SherwoodMuseum => {
+                            CampaignPresentationMode::ProgressTree
+                        }
+                        CampaignPresentationMode::ClassicMap => unreachable!(),
+                    };
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } => match presentation {
+                    CampaignPresentationMode::ProgressTree => selected = selected.saturating_sub(1),
+                    CampaignPresentationMode::SherwoodMuseum => {
+                        exhibit_grid.navigate(0, -1);
+                        selected = exhibit_grid.selected;
+                    }
+                    CampaignPresentationMode::ClassicMap => unreachable!(),
+                },
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } => match presentation {
+                    CampaignPresentationMode::ProgressTree => {
+                        selected = (selected + 1).min(graph.nodes.len() - 1)
+                    }
+                    CampaignPresentationMode::SherwoodMuseum => {
+                        exhibit_grid.navigate(0, 1);
+                        selected = exhibit_grid.selected;
+                    }
+                    CampaignPresentationMode::ClassicMap => unreachable!(),
+                },
+                GameEvent::KeyDown {
+                    keycode: Keycode::Left,
+                    ..
+                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    exhibit_grid.navigate(-1, 0);
+                    selected = exhibit_grid.selected;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Right,
+                    ..
+                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    exhibit_grid.navigate(1, 0);
+                    selected = exhibit_grid.selected;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
+                    ..
+                } if graph.nodes[selected].selectable => {
+                    final_choice = Some(CampaignMapChoice::SelectMission(
+                        graph.nodes[selected].mission_idx,
+                    ));
+                }
+                GameEvent::MouseMove { x, y, .. } => {
+                    let (vx, vy) = transform.from_screen(x, y);
+                    input.virt_x = vx as f32;
+                    input.virt_y = vy as f32;
+                }
+                GameEvent::MouseDown(x, y, 1, _) => {
+                    let (vx, vy) = transform.from_screen(x, y);
+                    input.virt_x = vx as f32;
+                    input.virt_y = vy as f32;
+                    if let Some(index) = progress_hit_test(&graph, presentation, selected, vx, vy) {
+                        selected = index;
+                        exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+                        if graph.nodes[index].selectable {
+                            final_choice = Some(CampaignMapChoice::SelectMission(
+                                graph.nodes[index].mission_idx,
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            input.update_from_event(&event, transform);
+            if final_choice.is_some() {
+                break;
+            }
+        }
+
+        layout::enter_modal_gpu_phase(renderer);
+        render_campaign_progress(
+            renderer,
+            transform,
+            &graph,
+            selected,
+            presentation,
+            assets,
+            lifetime_history.totals(),
+        );
+        if let Some(cursor) = cursor {
+            cursor.draw(renderer, transform, &input);
+        }
+        renderer.present();
+        crate::window::sleep_ms(16).await;
+
+        if let Some(choice) = final_choice {
+            return Ok(choice);
+        }
+        if let Some(at) = pseudo_debrief_at
+            && std::time::Instant::now() >= at
+        {
+            return Ok(CampaignMapChoice::PseudoDebriefTimer);
+        }
+    }
+}
+
+fn progress_hit_test(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    x: i32,
+    y: i32,
+) -> Option<usize> {
+    graph.nodes.iter().enumerate().find_map(|(idx, _)| {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            return None;
+        }
+        let (rx, ry, rw, rh) = progress_node_rect(graph, presentation, idx);
+        (x >= rx && x < rx + rw && y >= ry && y < ry + rh).then_some(idx)
+    })
+}
+
+fn progress_node_rect(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    index: usize,
+) -> (i32, i32, i32, i32) {
+    match presentation {
+        CampaignPresentationMode::ProgressTree => {
+            let node = &graph.nodes[index];
+            let max_depth = graph.nodes.iter().map(|node| node.depth).max().unwrap_or(0);
+            let x_step = if max_depth == 0 {
+                0
+            } else {
+                480 / max_depth as i32
+            };
+            let lane_count = graph
+                .nodes
+                .iter()
+                .filter(|candidate| candidate.depth == node.depth)
+                .count()
+                .max(1);
+            let y_step = 310 / lane_count as i32;
+            (
+                30 + node.depth as i32 * x_step,
+                70 + node.lane as i32 * y_step,
+                112,
+                38,
+            )
+        }
+        CampaignPresentationMode::SherwoodMuseum => {
+            let page_index = index % 16;
+            let col = page_index % 4;
+            let row = page_index / 4;
+            (35 + col as i32 * 150, 72 + row as i32 * 84, 126, 58)
+        }
+        CampaignPresentationMode::ClassicMap => unreachable!(),
+    }
+}
+
+fn render_campaign_progress(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    selected: usize,
+    presentation: CampaignPresentationMode,
+    assets: &CampaignMapAssets,
+    lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
+) {
+    if let Some(background) = assets.background.as_ref() {
+        layout::draw_background(renderer, transform, background, 0, 0, MAP_W, MAP_H);
+    } else {
+        renderer.render_gpu_rect(
+            transform.origin_x,
+            transform.origin_y,
+            MAP_W,
+            MAP_H,
+            38,
+            31,
+            20,
+            255,
+        );
+    }
+    // The translucent wash leaves the original campaign artwork visible as
+    // the museum/tree room while keeping graph text readable.
+    renderer.render_gpu_rect(
+        transform.origin_x + 10,
+        transform.origin_y + 10,
+        620,
+        455,
+        18,
+        23,
+        25,
+        215,
+    );
+
+    let color_for = |state: MissionProgressState| match state {
+        MissionProgressState::Completed => (40, 105, 62),
+        MissionProgressState::Available => (132, 102, 30),
+        MissionProgressState::Lost => (125, 45, 38),
+        MissionProgressState::Expired => (78, 55, 55),
+        MissionProgressState::Locked => (58, 61, 65),
+    };
+
+    if presentation == CampaignPresentationMode::ProgressTree {
+        for (idx, node) in graph.nodes.iter().enumerate() {
+            let (x, y, _w, h) = progress_node_rect(graph, presentation, idx);
+            for &parent in &node.prerequisite_nodes {
+                let (px, py, pw, ph) = progress_node_rect(graph, presentation, parent);
+                renderer.render_gpu_line(
+                    transform.origin_x + px + pw,
+                    transform.origin_y + py + ph / 2,
+                    transform.origin_x + x,
+                    transform.origin_y + y + h / 2,
+                    155,
+                    137,
+                    91,
+                );
+            }
+        }
+    }
+
+    for (idx, node) in graph.nodes.iter().enumerate() {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            continue;
+        }
+        let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
+        let (r, g, b) = color_for(node.state);
+        renderer.render_gpu_rect(
+            transform.origin_x + x,
+            transform.origin_y + y,
+            w,
+            h,
+            r,
+            g,
+            b,
+            245,
+        );
+        if idx == selected {
+            renderer.draw_rect_outline_screen(
+                transform.origin_x + x - 3,
+                transform.origin_y + y - 3,
+                transform.origin_x + x + w + 3,
+                transform.origin_y + y + h + 3,
+                Renderer::create_color_16(255, 230, 95),
+            );
+        }
+
+        if presentation == CampaignPresentationMode::SherwoodMuseum {
+            let loc_idx = node.location as usize;
+            if let Some(surface) = assets.locations.get(loc_idx).copied().flatten() {
+                layout::draw_background(renderer, transform, &surface, x + 4, y + 4, 22, 22);
+            }
+        }
+        if let Some(font) = assets.font.as_ref() {
+            let max_chars = if presentation == CampaignPresentationMode::SherwoodMuseum {
+                15
+            } else {
+                13
+            };
+            let name: String = node.name.chars().take(max_chars).collect();
+            layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
+            if node.attempt_count != 0 {
+                layout::render_text_virt(
+                    renderer,
+                    font,
+                    transform,
+                    &format!("{}x  {} badge", node.attempt_count, node.badge_count),
+                    x + 31,
+                    y + 5,
+                );
+            }
+        }
+    }
+
+    // Existing flag art marks the selected exhibit in the modal grid.
+    if presentation == CampaignPresentationMode::SherwoodMuseum
+        && let Some(flag) = assets.flag.as_ref()
+    {
+        let (x, y, _, h) = progress_node_rect(graph, presentation, selected);
+        layout::draw_background(renderer, transform, flag, x + 52, y + h + 2, 20, 24);
+    }
+
+    if let Some(font) = assets.font.as_ref() {
+        let title = match presentation {
+            CampaignPresentationMode::ProgressTree => "Campaign Progress Tree".to_owned(),
+            CampaignPresentationMode::SherwoodMuseum => format!(
+                "Sherwood Hall of Deeds - Gallery {}/{}",
+                selected / 16 + 1,
+                (graph.nodes.len() + 15) / 16
+            ),
+            CampaignPresentationMode::ClassicMap => unreachable!(),
+        };
+        layout::render_text_virt(renderer, font, transform, &title, 25, 22);
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "{} / {} missions completed    Tab: switch view    Esc: leave",
+                graph.completed_missions, graph.known_missions
+            ),
+            25,
+            43,
+        );
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "Lifetime: {} attempts / {} wins / {}h {:02}m",
+                lifetime_totals.attempts,
+                lifetime_totals.wins,
+                lifetime_totals.known_duration_seconds / 3600,
+                (lifetime_totals.known_duration_seconds / 60) % 60,
+            ),
+            315,
+            43,
+        );
+        let node = &graph.nodes[selected];
+        let action = if node.history_replay {
+            "Enter: replay (campaign changes discarded)"
+        } else if node.selectable {
+            "Enter: inspect and launch"
+        } else {
+            "Locked: inspect only"
+        };
+        layout::render_text_virt(renderer, font, transform, action, 25, 414);
+        layout::render_text_virt(renderer, font, transform, &node.summary(), 25, 437);
+        if graph.cyclic_prerequisites {
+            layout::render_text_virt(
+                renderer,
+                font,
+                transform,
+                "Warning: cyclic mission prerequisites detected",
+                355,
+                22,
+            );
         }
     }
 }
@@ -607,6 +1042,7 @@ fn render_campaign_map(
 
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
+        layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
     }
 }
 

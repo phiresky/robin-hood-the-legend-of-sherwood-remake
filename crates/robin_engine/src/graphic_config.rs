@@ -41,11 +41,31 @@ pub struct GraphicConfig {
     /// RetroArch `.slangp` preset when `scale_mode == RetroArch`.
     #[serde(default = "default_shader_preset")]
     pub shader_preset: String,
+    /// Post-scaling presentation effect. Kept separate from the upscaler so
+    /// CRT simulation can be combined with any scaling algorithm or disabled
+    /// without changing the selected scaler.
+    #[serde(default)]
+    pub texture_effect: TextureEffect,
+    /// User-tunable controls shared by the bundled upscalers.
+    #[serde(default)]
+    pub upscale_parameters: UpscaleParameters,
+    /// User-tunable controls for the selected presentation effect.
+    #[serde(default)]
+    pub texture_effect_parameters: TextureEffectParameters,
     /// Apply the generated fog/night sprite variant to every Day-based world
     /// sprite that the original game leaves untinted. Animation assets that
     /// already contain ambiance-specific pixels are left untouched.
     #[serde(default)]
     pub apply_fog_to_all_sprites: bool,
+    /// Adapt the logical game canvas to the physical window aspect ratio.
+    ///
+    /// The selected legacy resolution remains the scale reference. The
+    /// adaptive canvas is bounded at 1280x768 so resizing a window never turns display
+    /// resolution into a gameplay advantage (see
+    /// [`GraphicConfig::logical_resolution_for_surface`]). Disabling this
+    /// restores the original fixed 4:3 canvas and presentation letterboxing.
+    #[serde(default = "default_adaptive_widescreen")]
+    pub adaptive_widescreen: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -103,6 +123,22 @@ pub enum TextureScaleMode {
     Scale3x,
     /// GPU-shader xBR level 1 (Hyllian). Same RADV crash.
     XbrLv1,
+    /// Clean-room, free-scale ScaleNX family with a separate artifact-removal
+    /// pass. The integer kernel is selected from the presentation ratio.
+    ScaleNx,
+    /// Clean-room HQx-style edge-aware scaler. This uses the published HQx
+    /// colour-difference model, without incorporating LGPL/GPL source code.
+    Hqx,
+    /// Clean-room free-scale xBRZ-style diagonal edge reconstruction.
+    Xbrz,
+    /// Three-pass super-xBR-style edge reconstruction and de-ringing.
+    SuperXbr,
+    /// Anime4K v4 mode A: restore degraded lines, then upscale.
+    Anime4kA,
+    /// Anime4K v4 mode B: soft restore with stronger ringing suppression.
+    Anime4kB,
+    /// Anime4K v4 mode C: denoising upscale for already-clean artwork.
+    Anime4kC,
     /// User-selected upstream libretro `.slangp` preset.
     RetroArch,
 }
@@ -120,6 +156,13 @@ impl TextureScaleMode {
                 | Self::Scale2x
                 | Self::Scale3x
                 | Self::XbrLv1
+                | Self::ScaleNx
+                | Self::Hqx
+                | Self::Xbrz
+                | Self::SuperXbr
+                | Self::Anime4kA
+                | Self::Anime4kB
+                | Self::Anime4kC
                 | Self::RetroArch
         )
     }
@@ -137,8 +180,29 @@ impl TextureScaleMode {
             Self::Scale2x => "Scale2x",
             Self::Scale3x => "Scale3x",
             Self::XbrLv1 => "xBR lv1",
+            Self::ScaleNx => "ScaleNX",
+            Self::Hqx => "HQx-style",
+            Self::Xbrz => "xBRZ-style",
+            Self::SuperXbr => "Super-xBR-style",
+            Self::Anime4kA => "Anime line A (v4 layout)",
+            Self::Anime4kB => "Anime line B (v4 layout)",
+            Self::Anime4kC => "Anime line C (v4 layout)",
             Self::RetroArch => "RetroArch Shader",
         }
+    }
+
+    /// Bundled modes that use the reusable multi-pass presentation runner.
+    pub fn uses_builtin_chain(self) -> bool {
+        matches!(
+            self,
+            Self::ScaleNx
+                | Self::Hqx
+                | Self::Xbrz
+                | Self::SuperXbr
+                | Self::Anime4kA
+                | Self::Anime4kB
+                | Self::Anime4kC
+        )
     }
 
     /// All modes in UI order (sharp → soft → shader-based).  Scale2x
@@ -154,8 +218,117 @@ impl TextureScaleMode {
         Self::Bicubic,
         Self::Lanczos,
         Self::Cut3,
+        Self::ScaleNx,
+        Self::Hqx,
+        Self::Xbrz,
+        Self::SuperXbr,
+        Self::Anime4kA,
+        Self::Anime4kB,
+        Self::Anime4kC,
         Self::RetroArch,
     ];
+}
+
+/// Presentation-only texture effect applied after scaling and before the
+/// screen-space UI is composited.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextureEffect {
+    #[default]
+    None,
+    /// Lightweight aperture-grille CRT profile, inspired by the controls of
+    /// CRT Guest but implemented independently in WGSL.
+    CrtGuest,
+    /// Higher-cost slot-mask, bloom, curvature and beam profile, inspired by
+    /// the feature set of CRT Royale but implemented independently in WGSL.
+    CrtRoyale,
+}
+
+impl TextureEffect {
+    pub const ALL: &'static [Self] = &[Self::None, Self::CrtGuest, Self::CrtRoyale];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::CrtGuest => "CRT Guest-class",
+            Self::CrtRoyale => "CRT Royale-class",
+        }
+    }
+}
+
+/// Quantized controls avoid platform-specific float serialization while
+/// retaining 101 useful UI positions. Values are percentages in `0..=100`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct UpscaleParameters {
+    pub strength: u8,
+    pub edge_threshold: u8,
+    pub artifact_removal: u8,
+}
+
+impl Default for UpscaleParameters {
+    fn default() -> Self {
+        Self {
+            strength: 70,
+            edge_threshold: 35,
+            artifact_removal: 50,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct TextureEffectParameters {
+    pub scanlines: u8,
+    pub phosphor_mask: u8,
+    pub bloom: u8,
+    pub curvature: u8,
+    pub temporal_flicker: u8,
+}
+
+impl Default for TextureEffectParameters {
+    fn default() -> Self {
+        Self {
+            scanlines: 55,
+            phosphor_mask: 35,
+            bloom: 20,
+            curvature: 8,
+            temporal_flicker: 0,
+        }
+    }
 }
 
 fn default_scale_mode() -> TextureScaleMode {
@@ -164,6 +337,10 @@ fn default_scale_mode() -> TextureScaleMode {
 
 fn default_shader_preset() -> String {
     String::new()
+}
+
+fn default_adaptive_widescreen() -> bool {
+    true
 }
 
 impl Default for GraphicConfig {
@@ -179,7 +356,11 @@ impl Default for GraphicConfig {
             hardware_cursor: true,
             scale_mode: TextureScaleMode::default(),
             shader_preset: default_shader_preset(),
+            texture_effect: TextureEffect::default(),
+            upscale_parameters: UpscaleParameters::default(),
+            texture_effect_parameters: TextureEffectParameters::default(),
             apply_fog_to_all_sprites: true,
+            adaptive_widescreen: true,
         }
     }
 }
@@ -200,6 +381,57 @@ impl GraphicConfig {
     pub fn toggle_fullscreen(&mut self) {
         self.fullscreen = !self.fullscreen;
     }
+
+    /// Return the logical render size for a physical surface.
+    ///
+    /// The three legacy 4:3 resolutions remain the only selectable scale
+    /// references. Widescreen uses the largest rectangle of the physical
+    /// aspect that fits inside an envelope which is one legacy-height tall
+    /// and at most 1280 pixels wide. Consequently High is 1024x768 at 4:3,
+    /// grows to 1280x768 at 5:3, and becomes 1280x720 at 16:9. Ratios
+    /// wider than 16:9 are letterboxed rather than exposing more world.
+    /// Portrait/narrow windows retain the fixed 4:3 canvas.
+    pub fn logical_resolution_for_surface(
+        &self,
+        surface_width: u32,
+        surface_height: u32,
+    ) -> (u16, u16) {
+        assert!(
+            self.resolution_x.is_finite() && (1.0..=u16::MAX as f32).contains(&self.resolution_x),
+            "invalid configured logical width {}",
+            self.resolution_x
+        );
+        assert!(
+            self.resolution_y.is_finite() && (1.0..=u16::MAX as f32).contains(&self.resolution_y),
+            "invalid configured logical height {}",
+            self.resolution_y
+        );
+        let base_width = self.resolution_x.round();
+        let base_height = self.resolution_y.round();
+        if !self.adaptive_widescreen || surface_width == 0 || surface_height == 0 {
+            return (base_width as u16, base_height as u16);
+        }
+
+        const ORIGINAL_ASPECT: f64 = 4.0 / 3.0;
+        const MAX_ASPECT: f64 = 16.0 / 9.0;
+        const MAX_LOGICAL_WIDTH: f64 = 1280.0;
+
+        let surface_aspect = f64::from(surface_width) / f64::from(surface_height);
+        let target_aspect = surface_aspect.clamp(ORIGINAL_ASPECT, MAX_ASPECT);
+        let max_height = f64::from(base_height);
+        let max_width = (max_height * MAX_ASPECT).min(MAX_LOGICAL_WIDTH);
+
+        let (logical_width, logical_height) = if target_aspect <= max_width / max_height {
+            (max_height * target_aspect, max_height)
+        } else {
+            (max_width, max_width / target_aspect)
+        };
+
+        (
+            logical_width.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+            logical_height.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +450,14 @@ mod tests {
         assert!(!cfg.fullscreen);
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);
+        assert!(cfg.adaptive_widescreen);
+        assert_eq!(cfg.scale_mode, TextureScaleMode::Linear);
+        assert_eq!(cfg.texture_effect, TextureEffect::None);
+        assert_eq!(cfg.upscale_parameters, UpscaleParameters::default());
+        assert_eq!(
+            cfg.texture_effect_parameters,
+            TextureEffectParameters::default()
+        );
     }
 
     #[test]
@@ -244,6 +484,10 @@ mod tests {
         cfg.set_resolution(1280.0, 720.0);
         cfg.toggle_fullscreen();
         cfg.apply_fog_to_all_sprites = true;
+        cfg.scale_mode = TextureScaleMode::Anime4kB;
+        cfg.texture_effect = TextureEffect::CrtRoyale;
+        cfg.upscale_parameters.strength = 85;
+        cfg.texture_effect_parameters.temporal_flicker = 20;
 
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: GraphicConfig = serde_json::from_str(&json).unwrap();
@@ -253,6 +497,63 @@ mod tests {
         assert!(restored.fullscreen);
         assert!(restored.hardware_cursor);
         assert!(restored.apply_fog_to_all_sprites);
+        assert!(restored.adaptive_widescreen);
+        assert_eq!(restored.scale_mode, TextureScaleMode::Anime4kB);
+        assert_eq!(restored.texture_effect, TextureEffect::CrtRoyale);
+        assert_eq!(restored.upscale_parameters.strength, 85);
+        assert_eq!(restored.texture_effect_parameters.temporal_flicker, 20);
+    }
+
+    #[test]
+    fn adaptive_high_resolution_is_bounded_at_widescreen() {
+        let cfg = GraphicConfig::default();
+        assert_eq!(cfg.logical_resolution_for_surface(1024, 768), (1024, 768));
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1280, 720));
+        assert_eq!(cfg.logical_resolution_for_surface(3440, 1440), (1280, 720));
+    }
+
+    #[test]
+    fn adaptive_resolution_preserves_legacy_scale_reference() {
+        let mut cfg = GraphicConfig::default();
+        cfg.set_resolution(640.0, 480.0);
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (853, 480));
+        cfg.set_resolution(800.0, 600.0);
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1067, 600));
+    }
+
+    #[test]
+    fn adaptive_resolution_fits_intermediate_aspects_inside_envelope() {
+        let cfg = GraphicConfig::default();
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1200), (1229, 768));
+        assert_eq!(cfg.logical_resolution_for_surface(1280, 720), (1280, 720));
+        assert_eq!(cfg.logical_resolution_for_surface(900, 1200), (1024, 768));
+    }
+
+    #[test]
+    fn disabling_adaptive_resolution_restores_fixed_canvas() {
+        let mut cfg = GraphicConfig::default();
+        cfg.adaptive_widescreen = false;
+        assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1024, 768));
+    }
+
+    #[test]
+    fn profiles_before_presentation_effects_receive_stable_defaults() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        let object = json
+            .as_object_mut()
+            .expect("graphics config serializes as an object");
+        object.remove("texture_effect");
+        object.remove("upscale_parameters");
+        object.remove("texture_effect_parameters");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert_eq!(restored.texture_effect, TextureEffect::None);
+        assert_eq!(restored.upscale_parameters, UpscaleParameters::default());
+        assert_eq!(
+            restored.texture_effect_parameters,
+            TextureEffectParameters::default()
+        );
     }
 
     #[test]
@@ -265,6 +566,18 @@ mod tests {
         let restored: GraphicConfig = serde_json::from_value(json).unwrap();
 
         assert!(!restored.apply_fog_to_all_sprites);
+    }
+
+    #[test]
+    fn old_profiles_enable_bounded_widescreen_by_default() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut()
+            .expect("graphics config serializes as an object")
+            .remove("adaptive_widescreen");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert!(restored.adaptive_widescreen);
     }
 
     #[test]

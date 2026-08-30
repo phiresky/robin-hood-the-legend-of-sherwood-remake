@@ -696,10 +696,10 @@ impl LoadingScreenRenderer {
         self.refresh();
     }
 
-    /// Drain pending window events (especially WM resizes) and snap the window
-    /// to a supported 4:3 resolution.  Must be called periodically during
-    /// long-running mission loads, otherwise resize events pile up in the
-    /// queue and the canvas state goes stale.
+    /// Drain pending window events (especially WM resizes) and synchronize the
+    /// physical surface plus bounded logical canvas. Must be called
+    /// periodically during long-running mission loads, otherwise resize
+    /// events pile up in the queue and the canvas state goes stale.
     pub fn drain_events(&mut self, event_pump: &mut crate::window::GameWindow) {
         // GameWindow.poll_events handles resize internally now (it
         // reconfigures the wgpu surface on Resized), so the
@@ -709,10 +709,12 @@ impl LoadingScreenRenderer {
         // pushing frames until focus returns (`refresh` short-circuits
         // while `window_focused == false`).
         for ev in event_pump.poll_events() {
-            if let GameEvent::WindowFocusChanged(focused) = ev {
-                self.window_focused = focused;
+            match ev {
+                GameEvent::WindowFocusChanged(focused) => self.window_focused = focused,
+                _ => {}
             }
         }
+        self.renderer.sync_window_size(event_pump);
     }
 
     /// Increment progress by `delta` and re-render, clamped to the current
@@ -750,6 +752,10 @@ impl LoadingScreenRenderer {
         self.renderer.begin_gpu_frame_clear();
         self.renderer
             .render_loading_dissolve(&self.loading_dissolve, self.state.sand_threshold());
+
+        // The loading artwork belongs to the effected presentation layer;
+        // progress/version text is UI and must stay legible and sharp.
+        self.renderer.begin_ui_layer();
 
         // Overlay version / demo text
         self.render_version_text(w);

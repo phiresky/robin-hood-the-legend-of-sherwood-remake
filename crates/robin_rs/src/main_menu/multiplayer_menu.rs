@@ -117,11 +117,6 @@ pub(crate) async fn show_multiplayer_menu(
     }
 
     loop {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-
         let rows_len = match &mode {
             MenuMode::Games => games.len(),
             MenuMode::Missions => missions.len(),
@@ -264,7 +259,9 @@ pub(crate) async fn show_multiplayer_menu(
         set_button(&mut frame, ID_BACK, "Back", true);
 
         let mut activated: Option<u32> = None;
-        for event in event_pump.poll_events() {
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit

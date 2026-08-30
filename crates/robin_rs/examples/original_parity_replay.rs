@@ -255,6 +255,11 @@ impl TraceSimConfig {
             difficulty: self.difficulty.into(),
             // Original-parity traces deliberately retain the shipped bug.
             fix_hard_reaction_times: false,
+            // Untying is a post-port extension and stays off in Original traces.
+            enable_unbinding: false,
+            // Reusable cloaks are an opt-in extension and must never alter
+            // original-parity traces.
+            reusable_cloaks: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -7800,12 +7805,13 @@ fn restore_campaign(
     campaign.current_mission_idx = trace.current_mission_index.map(validate_mission_index);
     campaign.next_mission_idx = trace.next_mission_index.map(validate_mission_index);
     campaign.blazon_mission_idx = trace.blazon_mission_index.map(validate_mission_index);
-    campaign.last_played_mission_indices = trace
+    let recent_launches: Vec<usize> = trace
         .last_played_mission_indices
         .iter()
         .copied()
         .map(validate_mission_index)
         .collect();
+    campaign.reconstruct_original_save_history(&recent_launches);
     campaign.last_pseudo_mission_status = match trace.last_pseudo_mission_status {
         0 => MissionStatus::Available,
         1 => MissionStatus::Won,

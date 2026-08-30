@@ -36,6 +36,9 @@
 /.claude
 !/.claude/settings.json
 
+# Local agent worktrees
+/.worktrees
+
 # Sandbox-created empty dotfiles
 /.bash_profile
 /.bashrc
@@ -59,6 +62,7 @@
 
 # Local API credentials
 /concept-maps/.env
+/.env
 
 __pycache__/
 

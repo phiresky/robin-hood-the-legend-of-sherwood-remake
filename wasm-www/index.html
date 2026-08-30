@@ -16,10 +16,15 @@
         #canvas {
             display: block;
             margin: 8px auto;
-            max-width: calc(100vw - 16px);
-            height: auto;
+            width: min(calc(100vw - 16px), calc((100dvh - 16px) * 16 / 9));
+            height: min(calc(100dvh - 16px), calc((100vw - 16px) * 9 / 16));
             background: #000;
             image-rendering: pixelated;
+        }
+        #canvas:fullscreen {
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
         }
         #log {
             max-height: 240px;

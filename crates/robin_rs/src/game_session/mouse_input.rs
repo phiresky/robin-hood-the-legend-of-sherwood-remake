@@ -1473,9 +1473,17 @@ pub(super) async fn handle_pause_menu_events(
                         mut sound_config,
                     )) = profile_settings
                     {
+                        // Replay headers and multiplayer snapshots own the
+                        // active simulation value. A local profile can differ,
+                        // so seed this deterministic option from the mission
+                        // rather than showing a stale local preference.
+                        gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
+                        gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
+                        let simulation_enable_unbinding = gameplay_config.enable_unbinding;
+                        let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1546,23 +1554,38 @@ pub(super) async fn handle_pause_menu_events(
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
+                        if gameplay_config.enable_unbinding != simulation_enable_unbinding {
+                            let cmd = PlayerCommand::SetUnbindingEnabled {
+                                enabled: gameplay_config.enable_unbinding,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.reusable_cloaks != simulation_reusable_cloaks {
+                            let cmd = PlayerCommand::SetReusableCloaks {
+                                enabled: gameplay_config.reusable_cloaks,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
 
-                        let new_resolution = options_outcome
-                            .resolution_changed
-                            .then_some((graphic_config.resolution_x, graphic_config.resolution_y));
+                        let new_resolution = options_outcome.resolution_changed;
 
                         // On resolution change, switch the draw surface,
                         // update input clipping, and resize the engine.
-                        if let Some((w, h)) = new_resolution {
-                            let w_u16 = w.round() as u16;
-                            let h_u16 = h.round() as u16;
-                            event_pump.set_logical_size(w_u16 as u32, h_u16 as u32);
+                        if new_resolution {
+                            event_pump.set_logical_resolution_policy(&graphic_config);
+                            renderer.sync_window_size(event_pump);
+                            let (logical_w, logical_h) = event_pump.logical_size();
+                            let w_u16 = logical_w as u16;
+                            let h_u16 = logical_h as u16;
+                            let w = logical_w as f32;
+                            let h = logical_h as f32;
                             host.viewport.set_screen_size(w, h);
-                            renderer.resize(w_u16, h_u16);
+                            game.set_resolution(w_u16, h_u16);
                             threaded_input.set_clipping(
                                 robin_engine::coordinates::ScreenBBox::from_coords(0.0, 0.0, w, h),
                             );
                             *input_translator = InputTranslator::new(w, h);
+                            input_translator.load_bindings_from_keyconfig(&host.key_config);
                             input_translator.install_hud_dead_zones();
                             if host.minimap_corner_size.x > 0.0 {
                                 let cmd = PlayerCommand::MinimapResize {
@@ -2096,6 +2119,13 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // modal after its 500 ms timer.
         let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
+        let campaign_profile = host
+            .application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| {
+                panic!("campaign presentation requires an active profile: {error}")
+            });
+        let campaign_view_config = campaign_profile.gameplay_config;
 
         let campaign = engine.campaign();
         sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
@@ -2123,6 +2153,8 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             host.shipping.as_deref(),
             cursor,
             pseudo_debrief_pending,
+            campaign_view_config.campaign_presentation,
+            &campaign_profile.campaign_history,
         )
         .await?;
 

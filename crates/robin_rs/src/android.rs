@@ -61,6 +61,7 @@ fn run_android(app: AndroidApp) -> anyhow::Result<i32> {
     // listener without changing other application configuration.
     args.http_server = 0;
     let shipping = load_bundled_shipping_datadir(&app)?;
+    install_bundled_core_overlay()?;
     let (campaign, profiles, application_context) =
         crate::main_entry::rust_init_with_shipping(Some(shipping))?;
 
@@ -190,6 +191,26 @@ fn load_bundled_shipping_datadir(
         .context("install Android shipping datadir")?;
     tracing::info!("Loaded bundled Android shipping datadir from APK assets");
     Ok(datadir)
+}
+
+fn install_bundled_core_overlay() -> anyhow::Result<()> {
+    let manifest_bytes = read_bundled_asset(crate::core_overlay::CORE_OVERLAY_MANIFEST_PATH)
+        .context("read bundled Android core overlay manifest")?;
+    let (manifest, bundle) =
+        crate::core_overlay::load_validated_bundle(&manifest_bytes, read_bundled_asset)
+            .context("validate bundled Android core overlay")?;
+    crate::core_overlay::install_validated_bundle(
+        robin_util::asset_fs::global(),
+        &manifest,
+        bundle,
+    )
+    .context("install bundled Android core overlay")?;
+    tracing::info!(
+        files = manifest.files.len(),
+        shipping_schema = manifest.shipping_datadir_schema,
+        "Mounted validated Android core overlay ahead of shipping content"
+    );
+    Ok(())
 }
 
 pub(crate) fn read_bundled_asset(path: &str) -> anyhow::Result<Vec<u8>> {

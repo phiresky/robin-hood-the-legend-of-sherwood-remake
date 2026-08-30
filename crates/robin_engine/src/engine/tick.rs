@@ -7771,7 +7771,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         };
         matches!(
             entity.element_data().posture,
-            Posture::Spy | Posture::Tree | Posture::AnonymousArcher
+            Posture::Spy | Posture::Cloaked | Posture::Tree | Posture::AnonymousArcher
         )
     }
 

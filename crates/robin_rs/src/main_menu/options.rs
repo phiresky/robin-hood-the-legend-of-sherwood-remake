@@ -14,7 +14,6 @@ use crate::key_config_store::ProfileKeyConfig;
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
-use robin_engine::graphic_config::GraphicConfig;
 
 /// Show the options dialog over the main-menu background.
 ///
@@ -109,13 +108,10 @@ pub(crate) async fn show_main_menu_options(
     )
     .await;
     if outcome.resolution_changed {
-        apply_resolution_to_renderer(renderer, &graphic);
-        event_pump.set_logical_size(
-            renderer.screen_width() as u32,
-            renderer.screen_height() as u32,
-        );
+        event_pump.set_logical_resolution_policy(&graphic);
+        renderer.sync_window_size(event_pump);
     }
-    renderer.set_shader_preset(graphic.shader_preset.clone());
+    renderer.apply_upscale_config(&graphic);
 
     if outcome.changed {
         application_context
@@ -146,14 +142,4 @@ pub(crate) async fn show_main_menu_options(
     }
     // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.
-}
-
-/// Apply a resolution change coming out of the Graphics sub-menu to the
-/// renderer only.  No engine resize here because the main menu has no
-/// active engine; game_session runs the full resize pipeline when it's
-/// in control.
-fn apply_resolution_to_renderer(renderer: &mut Renderer, config: &GraphicConfig) {
-    let new_w = config.resolution_x.round() as u16;
-    let new_h = config.resolution_y.round() as u16;
-    renderer.resize(new_w, new_h);
 }

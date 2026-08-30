@@ -72,17 +72,17 @@ pub(crate) async fn show_credits(
         )
     });
 
-    let screen_w = renderer.screen_width() as i32;
-    let screen_h = renderer.screen_height() as i32;
-    let margin_x = ((screen_w - credit_width) / 2).max(0);
+    let initial_screen_h = renderer.screen_height() as i32;
 
     // Start the offset at `-screen_h` so the roll enters from the
     // bottom of the screen, then increment by 1 per tick while the
     // guard below holds.
-    let mut offset: i32 = -screen_h;
+    let mut offset: i32 = -initial_screen_h;
 
     loop {
-        for event in event_pump.poll_events() {
+        let events = event_pump.poll_events();
+        renderer.sync_window_size(event_pump);
+        for event in events {
             match event {
                 // The original dismisses only on left-click or Escape.
                 // `Quit` is treated as an implicit ESC since the
@@ -99,9 +99,14 @@ pub(crate) async fn show_credits(
             }
         }
 
+        let screen_w = renderer.screen_width() as i32;
+        let screen_h = renderer.screen_height() as i32;
+        let margin_x = ((screen_w - credit_width) / 2).max(0);
+
         // ── Render ──
         // Background: fill with black, then blit the centered texture.
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
         if let Some(bg) = bg_surface {
             let (bw, bh) = bg_dims.unwrap();
             let bx = (screen_w - bw) / 2;
