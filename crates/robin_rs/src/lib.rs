@@ -253,6 +253,8 @@ pub mod ui_screens;
 pub mod video_player;
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 mod web_audio_backend;
+#[cfg(any(test, all(feature = "audio", target_arch = "wasm32")))]
+pub mod web_audio_state;
 pub mod widget;
 pub mod window;
 pub mod zoom_hud;
