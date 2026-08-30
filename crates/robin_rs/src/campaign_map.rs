@@ -382,7 +382,7 @@ pub(crate) async fn show_campaign_map(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
 
         if let Some(choice) = final_choice {
             return Ok(choice);

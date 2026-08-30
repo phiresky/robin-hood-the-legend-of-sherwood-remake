@@ -43,6 +43,7 @@ const OPTION_LABELS: &[&str] = &[
     "All Enemies Stashed Tracker",
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
+    "Touch Camera Gestures",
     "Apple Combat Interrupt",
     "Reliable Wasp Acquisition",
     "Stone Ground Distraction",
@@ -76,6 +77,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show live All Enemies Stashed achievement progress.",
     "Show achievement badges in campaign presentations.",
     "Include achievement details in mission debriefs.",
+    "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
     "Let direct apple hits interrupt active swordfights.",
     "Increase initial wasp acquisition from 50 to 75 world units.",
     "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
@@ -278,7 +280,7 @@ pub async fn show_gameplay(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {
@@ -309,42 +311,43 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         }
         13 => config.show_achievement_badges = !config.show_achievement_badges,
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
-        15 => {
+        15 => config.touch_camera_gestures = !config.touch_camera_gestures,
+        16 => {
             config.item_gameplay.apple_combat_interrupt =
                 !config.item_gameplay.apple_combat_interrupt
         }
-        16 => {
+        17 => {
             config.item_gameplay.wasp_reliable_acquisition =
                 !config.item_gameplay.wasp_reliable_acquisition
         }
-        17 => {
+        18 => {
             config.item_gameplay.stone_ground_distraction =
                 !config.item_gameplay.stone_ground_distraction
         }
-        18 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
-        19 => {
+        19 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        20 => {
             config.item_gameplay.net_selective_immunity =
                 !config.item_gameplay.net_selective_immunity
         }
-        20 => {
+        21 => {
             config.item_gameplay.ale_reliable_distraction =
                 !config.item_gameplay.ale_reliable_distraction
         }
-        21 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
-        22 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
-        23 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
-        24 => {
+        22 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        23 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        24 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
+        25 => {
             config.item_previews.stone_distraction_area =
                 !config.item_previews.stone_distraction_area
         }
-        25 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
-        26 => {
+        26 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        27 => {
             config.item_previews.net_crumple_prediction =
                 !config.item_previews.net_crumple_prediction
         }
-        27 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
-        28 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
-        29 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        28 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        29 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        30 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -369,21 +372,22 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         12 => config.show_all_enemies_one_building_tracker,
         13 => config.show_achievement_badges,
         14 => config.show_achievement_debrief,
-        15 => config.item_gameplay.apple_combat_interrupt,
-        16 => config.item_gameplay.wasp_reliable_acquisition,
-        17 => config.item_gameplay.stone_ground_distraction,
-        18 => config.item_gameplay.stone_longer_range,
-        19 => config.item_gameplay.net_selective_immunity,
-        20 => config.item_gameplay.ale_reliable_distraction,
-        21 => config.noise_distraction_feedback,
-        22 => config.item_previews.apple_effect,
-        23 => config.item_previews.stone_direct_effect,
-        24 => config.item_previews.stone_distraction_area,
-        25 => config.item_previews.net_capture_area,
-        26 => config.item_previews.net_crumple_prediction,
-        27 => config.item_previews.ale_effect,
-        28 => config.item_previews.purse_effect,
-        29 => config.item_previews.wasp_area,
+        15 => config.touch_camera_gestures,
+        16 => config.item_gameplay.apple_combat_interrupt,
+        17 => config.item_gameplay.wasp_reliable_acquisition,
+        18 => config.item_gameplay.stone_ground_distraction,
+        19 => config.item_gameplay.stone_longer_range,
+        20 => config.item_gameplay.net_selective_immunity,
+        21 => config.item_gameplay.ale_reliable_distraction,
+        22 => config.noise_distraction_feedback,
+        23 => config.item_previews.apple_effect,
+        24 => config.item_previews.stone_direct_effect,
+        25 => config.item_previews.stone_distraction_area,
+        26 => config.item_previews.net_capture_area,
+        27 => config.item_previews.net_crumple_prediction,
+        28 => config.item_previews.ale_effect,
+        29 => config.item_previews.purse_effect,
+        30 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -412,6 +416,7 @@ mod tests {
                 "All Enemies Stashed Tracker",
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
+                "Touch Camera Gestures",
                 "Apple Combat Interrupt",
                 "Reliable Wasp Acquisition",
                 "Stone Ground Distraction",
@@ -437,10 +442,12 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
+        assert!(!is_option_selected(&config, 6));
         assert!(is_option_selected(&config, 13));
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
-        assert!(is_option_selected(&config, 29));
+        assert!(is_option_selected(&config, 16));
+        assert!(is_option_selected(&config, 30));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -466,10 +473,43 @@ mod tests {
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
 
-        apply_option_toggle(&mut config, 18);
+        let achievement_settings = (
+            config.clean_hands_npc_kills_invalidate,
+            config.show_detailed_xp,
+            config.show_speedrun_tracker,
+            config.show_clean_hands_tracker,
+            config.show_ghost_tracker,
+            config.show_pile_o_bones_tracker,
+            config.show_all_enemies_one_building_tracker,
+            config.show_achievement_badges,
+            config.show_achievement_debrief,
+        );
+        apply_option_toggle(&mut config, 15);
+        assert!(!config.touch_camera_gestures);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+        assert_eq!(
+            achievement_settings,
+            (
+                config.clean_hands_npc_kills_invalidate,
+                config.show_detailed_xp,
+                config.show_speedrun_tracker,
+                config.show_clean_hands_tracker,
+                config.show_ghost_tracker,
+                config.show_pile_o_bones_tracker,
+                config.show_all_enemies_one_building_tracker,
+                config.show_achievement_badges,
+                config.show_achievement_debrief,
+            )
+        );
+        assert!(!is_option_selected(&config, 15));
+
+        apply_option_toggle(&mut config, 19);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(config.item_gameplay.net_selective_immunity);
-        apply_option_toggle(&mut config, 19);
+        apply_option_toggle(&mut config, 20);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(!config.item_gameplay.net_selective_immunity);
         assert!(config.item_gameplay.ale_reliable_distraction);

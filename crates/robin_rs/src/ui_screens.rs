@@ -1062,10 +1062,11 @@ pub enum GraphicsOption {
     BackgroundAnimations = 3,
     FogTintAllSprites = 4,
     AdaptiveWidescreen = 5,
+    NativeRefreshPresentation = 6,
 }
 
 /// Number of graphics option toggles.
-pub const GRAPHICS_OPTION_COUNT: usize = 6;
+pub const GRAPHICS_OPTION_COUNT: usize = 7;
 
 /// State for the graphics settings screen.
 ///
@@ -1099,6 +1100,7 @@ impl GraphicsScreen {
             config.display_titbits,
             config.apply_fog_to_all_sprites,
             config.adaptive_widescreen,
+            config.native_refresh_presentation,
         ];
         Self {
             config: config.clone(),
@@ -1145,6 +1147,9 @@ impl GraphicsScreen {
             }
             GraphicsOption::AdaptiveWidescreen => {
                 self.config.adaptive_widescreen = self.option_toggles[idx];
+            }
+            GraphicsOption::NativeRefreshPresentation => {
+                self.config.native_refresh_presentation = self.option_toggles[idx];
             }
         }
     }

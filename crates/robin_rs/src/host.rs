@@ -81,6 +81,8 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    touch_camera_gestures: bool,
+    native_refresh_presentation: bool,
     gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
@@ -364,13 +366,15 @@ impl ApplicationContext {
     fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
         let services = self.required_services()?;
         let (key_config, custom_key_config) = self.active_key_configs()?;
-        let gameplay_config = self.active_profile_snapshot()?.gameplay_config;
+        let active_profile = self.active_profile_snapshot()?;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
             key_config,
             custom_key_config,
-            control_tactical_units: gameplay_config.control_tactical_units,
-            gameplay_config,
+            control_tactical_units: active_profile.gameplay_config.control_tactical_units,
+            touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
+            native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
+            gameplay_config: active_profile.gameplay_config,
         })
     }
 
@@ -462,6 +466,17 @@ pub struct ViewportState {
     pub old_zoom_factor: f32,
     pub screen_size: ScreenSize,
     pub level_size: MapSize,
+    touch_motion: TouchCameraMotion,
+}
+
+/// Host-only touch-camera state. Velocities are expressed in screen pixels
+/// per second so momentum feels consistent at every zoom level.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct TouchCameraMotion {
+    transform_active: bool,
+    velocity_x: f32,
+    velocity_y: f32,
+    last_inertia_ms: u32,
 }
 
 impl ViewportState {
@@ -473,6 +488,7 @@ impl ViewportState {
             old_zoom_factor: 1.0,
             screen_size: ScreenSize::new(screen_width, screen_height),
             level_size: MapSize::ZERO,
+            touch_motion: TouchCameraMotion::default(),
         }
     }
 
@@ -537,6 +553,125 @@ impl ViewportState {
             before.y - anchor.y / self.zoom_factor,
         );
         self.clip_view();
+    }
+
+    /// Begin a two-finger camera transform after the gameplay layer has
+    /// decided whether both fingers originated in the world viewport.
+    pub fn begin_touch_transform(&mut self, accepted: bool) {
+        self.touch_motion = TouchCameraMotion {
+            transform_active: accepted,
+            ..TouchCameraMotion::default()
+        };
+    }
+
+    /// Atomically apply centroid translation and pinch scaling. The map point
+    /// beneath the previous centroid remains beneath the current centroid,
+    /// avoiding the order-dependent wobble caused by separate pan/zoom calls.
+    pub fn apply_touch_transform(
+        &mut self,
+        centroid: ScreenPoint,
+        pan: ScreenVec,
+        scale: f32,
+    ) -> bool {
+        if !self.touch_motion.transform_active {
+            return false;
+        }
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !centroid.x.is_finite()
+            || !centroid.y.is_finite()
+            || !pan.x.is_finite()
+            || !pan.y.is_finite()
+        {
+            tracing::warn!(?centroid, ?pan, scale, "ignored non-finite touch transform");
+            return false;
+        }
+
+        let previous_centroid = ScreenPoint::new(centroid.x - pan.x, centroid.y - pan.y);
+        let anchor = self.screen_to_map_unchecked(previous_centroid);
+        self.old_view_position = self.view_position;
+        self.old_zoom_factor = self.zoom_factor;
+        self.zoom_factor = (self.zoom_factor * scale).clamp(0.5, 2.0);
+        self.view_position = MapPoint::new(
+            anchor.x - centroid.x / self.zoom_factor,
+            anchor.y - centroid.y / self.zoom_factor,
+        );
+        self.clip_view();
+        true
+    }
+
+    pub fn end_touch_transform(&mut self, velocity: ScreenVec, cancelled: bool, now_ms: u32) {
+        const MAX_INERTIA_SPEED: f32 = 5_000.0;
+
+        if !self.touch_motion.transform_active {
+            self.touch_motion = TouchCameraMotion::default();
+            return;
+        }
+        self.touch_motion.transform_active = false;
+        if cancelled || !velocity.x.is_finite() || !velocity.y.is_finite() {
+            self.touch_motion.velocity_x = 0.0;
+            self.touch_motion.velocity_y = 0.0;
+        } else {
+            self.touch_motion.velocity_x = velocity.x;
+            self.touch_motion.velocity_y = velocity.y;
+            let speed = velocity.x.hypot(velocity.y);
+            if speed > MAX_INERTIA_SPEED {
+                let scale = MAX_INERTIA_SPEED / speed;
+                self.touch_motion.velocity_x *= scale;
+                self.touch_motion.velocity_y *= scale;
+            }
+        }
+        self.touch_motion.last_inertia_ms = now_ms;
+    }
+
+    pub fn cancel_touch_motion(&mut self) {
+        self.touch_motion = TouchCameraMotion::default();
+    }
+
+    /// Advance hard-clamped pan inertia using wall time. Returns whether the
+    /// camera moved, allowing future display-rate render loops to skip static
+    /// recomposition without coupling momentum to the 25 Hz simulation.
+    pub fn advance_touch_inertia(&mut self, now_ms: u32) -> bool {
+        const DECAY_PER_SECOND: f32 = 6.5;
+        const STOP_SPEED: f32 = 18.0;
+        const MAX_STEP_SECONDS: f32 = 0.050;
+
+        if self.touch_motion.transform_active {
+            self.touch_motion.last_inertia_ms = now_ms;
+            return false;
+        }
+        let speed = self
+            .touch_motion
+            .velocity_x
+            .hypot(self.touch_motion.velocity_y);
+        if speed < STOP_SPEED {
+            self.touch_motion.velocity_x = 0.0;
+            self.touch_motion.velocity_y = 0.0;
+            self.touch_motion.last_inertia_ms = now_ms;
+            return false;
+        }
+        let elapsed = now_ms.wrapping_sub(self.touch_motion.last_inertia_ms) as f32 / 1000.0;
+        let dt = elapsed.min(MAX_STEP_SECONDS);
+        self.touch_motion.last_inertia_ms = now_ms;
+        if dt <= 0.0 {
+            return false;
+        }
+
+        let before = self.view_position;
+        self.scroll_by(ScreenVec::new(
+            -self.touch_motion.velocity_x * dt,
+            -self.touch_motion.velocity_y * dt,
+        ));
+        if (self.view_position.x - before.x).abs() < f32::EPSILON {
+            self.touch_motion.velocity_x = 0.0;
+        }
+        if (self.view_position.y - before.y).abs() < f32::EPSILON {
+            self.touch_motion.velocity_y = 0.0;
+        }
+        let decay = (-DECAY_PER_SECOND * dt).exp();
+        self.touch_motion.velocity_x *= decay;
+        self.touch_motion.velocity_y *= decay;
+        self.view_position != before
     }
 
     pub fn screen_to_map(&self, screen_pt: ScreenPoint) -> Option<MapPoint> {
@@ -645,6 +780,20 @@ pub struct HostFrontend {
 
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
+
+    /// Active profile's touch-camera gesture setting. Host-local because
+    /// camera pan/zoom/inertia never enters deterministic simulation state.
+    pub touch_camera_gestures: bool,
+
+    /// Opt-in display-rate re-presentation. Host-local and intentionally
+    /// absent from deterministic save/replay state.
+    pub native_refresh_presentation: bool,
+
+    /// Last positive duration of a display-rate presentation sample, in
+    /// microseconds. The fixed-step presentation scheduler uses this host-only
+    /// observation to avoid beginning a vsync wait that would cross the
+    /// simulation deadline. Zero means no blocking sample has been observed.
+    pub native_refresh_present_cost_us: u64,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -1056,6 +1205,8 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                touch_camera_gestures: snapshot.touch_camera_gestures,
+                native_refresh_presentation: snapshot.native_refresh_presentation,
                 gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },
@@ -1408,6 +1559,97 @@ impl Host {
             data.frame_sizes.clone(),
             data.per_frame_offsets.clone(),
         );
+    }
+}
+
+#[cfg(test)]
+mod viewport_touch_tests {
+    use super::*;
+
+    fn close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn combined_touch_transform_preserves_anchor() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(500.0, 400.0);
+        let previous_centroid = ScreenPoint::new(300.0, 250.0);
+        let anchor = viewport.screen_to_map_unchecked(previous_centroid);
+
+        viewport.begin_touch_transform(true);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(340.0, 270.0),
+            ScreenVec::new(40.0, 20.0),
+            1.5,
+        );
+
+        close(viewport.zoom_factor, 1.5);
+        let transformed_anchor = viewport.screen_to_map_unchecked(ScreenPoint::new(340.0, 270.0));
+        close(transformed_anchor.x, anchor.x);
+        close(transformed_anchor.y, anchor.y);
+    }
+
+    #[test]
+    fn rejected_touch_transform_does_not_move_camera() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(500.0, 400.0);
+        viewport.begin_touch_transform(false);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(400.0, 300.0),
+            ScreenVec::new(50.0, 20.0),
+            1.2,
+        );
+        assert_eq!(viewport.view_position, MapPoint::new(500.0, 400.0));
+        assert_eq!(viewport.zoom_factor, 1.0);
+    }
+
+    #[test]
+    fn touch_zoom_and_inertia_hard_clamp_to_map() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(1200.0, 900.0);
+        viewport.begin_touch_transform(true);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(0.0, 0.0),
+            ScreenVec::new(1000.0, 1000.0),
+            0.01,
+        );
+        assert_eq!(viewport.zoom_factor, 0.5);
+        assert_eq!(viewport.view_position, MapPoint::ZERO);
+
+        viewport.end_touch_transform(ScreenVec::new(2000.0, 1200.0), false, 100);
+        assert!(!viewport.advance_touch_inertia(116));
+        assert_eq!(viewport.view_position, MapPoint::ZERO);
+        assert!(!viewport.advance_touch_inertia(132));
+    }
+
+    #[test]
+    fn cancelling_transform_disables_momentum() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(1000.0, 1000.0);
+        viewport.begin_touch_transform(true);
+        viewport.end_touch_transform(ScreenVec::new(1000.0, 0.0), true, 100);
+        assert!(!viewport.advance_touch_inertia(150));
+        assert_eq!(viewport.view_position, MapPoint::new(1000.0, 1000.0));
+    }
+
+    #[test]
+    fn touch_inertia_clamps_implausible_release_velocity() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(1000.0, 1000.0);
+        viewport.begin_touch_transform(true);
+        viewport.end_touch_transform(ScreenVec::new(1_000_000.0, 0.0), false, 100);
+
+        assert!(viewport.advance_touch_inertia(116));
+        close(viewport.view_position.x, 920.0);
+        close(viewport.view_position.y, 1000.0);
     }
 }
 

@@ -240,6 +240,11 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
 
+    /// Enable world-camera pan, pinch zoom, and inertial motion for touch
+    /// input. Tap and drag emulation remains available when this is off.
+    #[serde(default = "default_touch_camera_gestures")]
+    pub touch_camera_gestures: bool,
+
     /// Include the live item-production forecast in the Sherwood report.
     /// This is presentation-only and may be disabled independently from the
     /// underlying production simulation.
@@ -303,6 +308,10 @@ pub struct GameplayConfig {
     pub show_achievement_debrief: bool,
 }
 
+const fn default_touch_camera_gestures() -> bool {
+    true
+}
+
 const fn default_show_production_forecast() -> bool {
     true
 }
@@ -313,6 +322,7 @@ impl Default for GameplayConfig {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
             enable_unbinding: true,
+            touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
             item_gameplay: ItemGameplayConfig::default(),
@@ -342,6 +352,7 @@ impl GameplayConfig {
             fix_hard_reaction_times: false,
             control_tactical_units: false,
             enable_unbinding: true,
+            touch_camera_gestures: true,
             show_production_forecast: true,
             reusable_cloaks: false,
             item_gameplay: ItemGameplayConfig::classic(),
@@ -377,6 +388,7 @@ mod tests {
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
+        assert!(config.touch_camera_gestures);
         assert!(!config.clean_hands_npc_kills_invalidate);
         assert!(!config.show_detailed_xp);
         assert!(!config.show_achievement_badges);
@@ -386,6 +398,7 @@ mod tests {
         assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
         assert_eq!(config.item_previews, ItemPreviewConfig::classic());
         assert!(!config.noise_distraction_feedback);
+        assert!(config.touch_camera_gestures);
         assert_eq!(
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree

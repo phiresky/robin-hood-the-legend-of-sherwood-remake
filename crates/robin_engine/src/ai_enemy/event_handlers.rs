@@ -3805,7 +3805,24 @@ mod tests {
             ai.base.current_substate,
             Substate::WonderingAppleSauceInTheVisor
         );
-        assert!(ai.base.outbox.actor.quit_swordfight);
+        let state_change = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .rev()
+            .find_map(|work| match work {
+                crate::ai::AiOwnerWork::StateChange(notification) => Some(notification),
+                _ => None,
+            })
+            .expect("apple interrupt queues the Wondering state boundary");
+        let interrupt_prefix = state_change
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("apple interrupt applies its actor calls before SetState");
+        assert!(interrupt_prefix.halt);
+        assert!(interrupt_prefix.quit_swordfight);
         assert!(ai.base.outbox.actor.slowly_open_eyes);
         assert_eq!(ai.base.when_does_timer_ring, 110);
     }
