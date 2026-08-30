@@ -7,7 +7,7 @@ Android packaging. The Rust side exports `android_main` from the
 `../../../binaries/datadirs/demo-leicester/v3-lossless.rhdata.zst`.
 The engine-owned, retail-content-free `../assets/core-datadir/` is a separate
 Gradle asset root. `validateCoreOverlay` verifies its exact 32-file hashed
-inventory against shipping-datadir schema 13 before every APK build.
+inventory against shipping-datadir schema 14 before every APK build.
 
 Build the shared library from the repo root:
 

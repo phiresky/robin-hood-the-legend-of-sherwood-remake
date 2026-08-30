@@ -206,7 +206,7 @@ Leicester demo shipping datadir is bundled under `android/assets/Data/`:
 Android reads selected payloads directly through `AAssetManager`.
 The retail-content-free `assets/core-datadir/` is packaged separately into
 every APK. Its canonical manifest pins the 13 font/config files and 19 engine
-UI PNGs (size plus SHA-256) to shipping-datadir schema 13; Gradle checks the
+UI PNGs (size plus SHA-256) to shipping-datadir schema 14; Gradle checks the
 source inventory, and Android validates and mounts it ahead of shipping and
 mission bundles before UI initialization. Packaged desktop startup validates
 the same manifest and exact loose-file inventory before registering the
