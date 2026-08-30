@@ -588,6 +588,17 @@ impl Engine {
         });
         let sprite = &entity.element_data().sprite;
         let position = sprite.position_iface.v48_serialized_state();
+        // Original's runtime frontier has the current mpointSprite projection
+        // for ordinary entities. In Rust a map move invalidates the derived
+        // cache without overwriting its raw serialized slot, which can still
+        // hold the previous top-left. Targets are intentionally different:
+        // their authored action point can differ from the visible sprite
+        // anchor, so preserve their exact cached value.
+        let current_sprite = if entity.is_fx_target() {
+            crate::coordinates::SpriteTopLeft::new(position.sprite.x, position.sprite.y)
+        } else {
+            entity.cxx_position_sprite()
+        };
         let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
         let point2 = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
         let point3 =
@@ -683,7 +694,11 @@ impl Engine {
                 let index = assets.static_sight_obstacles[..handle]
                     .iter()
                     .filter(|candidate| candidate.is_projection_area())
-                    .count();
+                    .count()
+                    // Original inserts its synthetic default-ground
+                    // projection area at ordinal zero before authored
+                    // obstacles. Rust represents that ground implicitly.
+                    + 1;
                 if !obstacle.is_projection_area() {
                     panic!(
                         "parity position on layer {} references non-projection obstacle {handle}",
@@ -743,7 +758,7 @@ impl Engine {
                 json!({
                 "world": point3(position.position.x, position.position.y, position.position.z),
                 "map": point2(position.map.x, position.map.y),
-                "sprite": point2(position.sprite.x, position.sprite.y),
+                "sprite": point2(current_sprite.x, current_sprite.y),
                 "old_world": point3(position.old_position.x, position.old_position.y, position.old_position.z),
                 "old_map": point2(position.old_map.x, position.old_map.y),
                 "old_sprite": point2(position.old_sprite.x, position.old_sprite.y),
@@ -5282,6 +5297,112 @@ mod tests {
         assert_eq!(state.chorus_timer, 23);
         assert!(state.force_check);
         assert!(state.men_to_blazon_conversion);
+    }
+
+    fn parity_position_sprite(state: &serde_json::Value) -> (u32, u32) {
+        (
+            state["position"]["sprite"]["x"]["bits"]
+                .as_u64()
+                .expect("sprite x bits") as u32,
+            state["position"]["sprite"]["y"]["bits"]
+                .as_u64()
+                .expect("sprite y bits") as u32,
+        )
+    }
+
+    #[test]
+    fn parity_runtime_projects_current_sprite_top_left_for_ordinary_entities() {
+        let mut inner = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::Fx,
+            ..Default::default()
+        };
+        element.sprite.center = crate::coordinates::SpriteAnchor::new(150.0, 150.0);
+        element
+            .sprite
+            .position_iface
+            .set_cached_sprite_position(crate::coordinates::MapPoint::new(1688.0, 150.0));
+        element.set_position_map(crate::coordinates::MapPoint::new(1836.2246, 301.3214));
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element,
+            fx: Default::default(),
+        }));
+
+        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+
+        assert_eq!(
+            parity_position_sprite(&state),
+            (1686.0_f32.to_bits(), 151.0_f32.to_bits())
+        );
+    }
+
+    #[test]
+    fn parity_runtime_preserves_target_cached_sprite_anchor() {
+        let mut inner = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        };
+        element.sprite.center = crate::coordinates::SpriteAnchor::new(30.0, 140.0);
+        element
+            .sprite
+            .position_iface
+            .set_cached_sprite_position(crate::coordinates::MapPoint::new(2791.0, 171.0));
+        element.set_position_map_preserving_3d(crate::coordinates::MapPoint::new(2823.0, 312.0));
+        let id = inner.add_entity(crate::element::Entity::Target(
+            crate::element::ElementTarget {
+                element,
+                fx: Default::default(),
+                target: Default::default(),
+            },
+        ));
+
+        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+
+        assert_eq!(
+            parity_position_sprite(&state),
+            (2791.0_f32.to_bits(), 171.0_f32.to_bits())
+        );
+    }
+
+    #[test]
+    fn parity_runtime_projection_ordinal_includes_original_default_ground_slot() {
+        use crate::sight_obstacle::{SIGHTOBSTACLE_PROJECTION_AREA, SightObstacle};
+
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![
+            SightObstacle::new_default(10),
+            SightObstacle::new(11, SIGHTOBSTACLE_PROJECTION_AREA),
+            SightObstacle::new_default(12),
+            SightObstacle::new(13, SIGHTOBSTACLE_PROJECTION_AREA),
+        ]);
+
+        for (handle, expected_ordinal) in [(1_u16, 1_u64), (3, 2)] {
+            let mut inner = EngineInner::new();
+            let mut element = crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            };
+            element.set_layer(0);
+            element.set_obstacle_index(
+                crate::position_interface::ObstacleHandle::new(handle),
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 0.0,
+                    bz: 0.0,
+                    dz: 0.0,
+                }),
+            );
+            let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+                element,
+                fx: Default::default(),
+            }));
+
+            let state = Engine { inner }.parity_entity_runtime_state(id, &assets);
+            assert_eq!(
+                state["position"]["obstacle"],
+                serde_json::json!({ "kind": "projection", "index": expected_ordinal })
+            );
+        }
     }
 
     #[test]
