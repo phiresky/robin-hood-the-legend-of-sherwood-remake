@@ -159,7 +159,7 @@ pub(crate) fn record_test_sword_damage_observation(
     });
 }
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
-use crate::element::{ActionState, Camp, Entity, EntityId, EyeStatus, Posture};
+use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
 
 /// Original's RECEIVE_HIT_DAMAGE sends EVENT_GOTHIT only through the NPC
@@ -390,6 +390,21 @@ impl EngineInner {
                 return;
             }
         };
+        if let Some(attacker_id) = attacker_id {
+            let attacker = self.expect_entity(attacker_id, "sword-damage diplomacy attacker");
+            let victim = self.expect_entity(victim_id, "sword-damage diplomacy victim");
+            if !self.mission_domain.diplomacy.actors_may_damage(
+                attacker.camp(),
+                attacker.is_pc(),
+                victim.camp(),
+                victim.is_pc(),
+            ) {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(damage_element.0, damage_element.1);
+                return;
+            }
+        }
 
         // Ladder/wall victims are *not* short-circuited here: the
         // protection rolls happen first and only the hit-reaction
@@ -447,6 +462,7 @@ impl EngineInner {
                 atk,
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = is_rank_soldier(atk, &assets.profile_manager);
             let def_to_atk = direction_to(&self.world.entities, victim_id, attacker);
@@ -942,10 +958,7 @@ impl EngineInner {
             .unwrap_or(false);
         let victim_is_lacklandist =
             match self.expect_entity(victim_id, "sword-damage hero-speech victim") {
-                Entity::Soldier(s) => s
-                    .soldier
-                    .cached_camp
-                    .is_hostile_to(crate::element::Camp::Royalists),
+                Entity::Soldier(s) => self.is_hostile_to_player_camp(s.soldier.cached_camp),
                 _ => false,
             };
 
@@ -1914,6 +1927,21 @@ impl EngineInner {
         // an attached scroll suppresses the concussion primitive, but still
         // authors the falling-hit order (RHelementactorhuman.cpp:1745-1791;
         // rhelementactorcivilian.cpp:901-909).
+        if let Some(attacker_id) = attacker_id {
+            let attacker = self.expect_entity(attacker_id, "hit-damage diplomacy attacker");
+            let victim = self.expect_entity(victim_id, "hit-damage diplomacy victim");
+            if !self.mission_domain.diplomacy.actors_may_damage(
+                attacker.camp(),
+                attacker.is_pc(),
+                victim.camp(),
+                victim.is_pc(),
+            ) {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(damage_element.0, damage_element.1);
+                return;
+            }
+        }
         let victim = self.expect_entity(victim_id, "apply_hit_damage victim");
         let ctx = concussion_ctx_full(
             victim,
@@ -1953,7 +1981,8 @@ impl EngineInner {
                 let same_camp_soldier = {
                     let attacker = self.expect_entity(atk_id, "apply_hit_damage attacker");
                     let victim = self.expect_entity(victim_id, "apply_hit_damage victim");
-                    matches!(attacker, Entity::Soldier(_)) && attacker.camp() == victim.camp()
+                    matches!(attacker, Entity::Soldier(_))
+                        && self.camps_are_allied(attacker.camp(), victim.camp())
                 };
                 if same_camp_soldier {
                     let ai = self
@@ -3112,6 +3141,10 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         killer_is_pc: bool,
     ) {
+        let victim_soldier_camp = self
+            .get_entity(victim_id)
+            .filter(|entity| entity.is_soldier())
+            .map(Entity::camp);
         // The damage element is the authoritative SetLifePoints `whoDunnit`
         // equivalent. Capture it at the fresh-death boundary, before sequence
         // cleanup can erase responsibility evidence.
@@ -3134,7 +3167,6 @@ impl EngineInner {
             );
         };
         self.record_achievement_npc_death(victim_id, *origin);
-
         // Throw away unrelated sequence work the victim owns. The active
         // damage sequence (which just had its dying order queued) and Todo
         // commands Original admits while dead remain in the manager FIFO.
@@ -3272,10 +3304,15 @@ impl EngineInner {
         // Mission-stat bump for Royalist soldier deaths.
         let bump_killed_allied = self
             .get_entity(victim_id)
-            .map(|e| e.is_soldier() && e.camp() == Camp::Royalists)
+            .map(|e| e.is_soldier() && self.is_player_aligned_camp(e.camp()))
             .unwrap_or(false);
         if bump_killed_allied {
             self.mission_domain.mission_stat.add_killed_allied();
+        }
+        if let Some(camp) = victim_soldier_camp {
+            self.mission_domain
+                .mission_stat
+                .record_soldier_death(camp, killer_is_pc);
         }
 
         // Campaign score bump for Lacklandist soldier deaths during
@@ -3298,7 +3335,7 @@ impl EngineInner {
             .unwrap_or(false);
         let bump_lacklandist_score = self
             .get_entity(victim_id)
-            .map(|e| e.is_soldier() && e.camp().is_hostile_to(Camp::Royalists))
+            .map(|e| e.is_soldier() && self.is_hostile_to_player_camp(e.camp()))
             .unwrap_or(false);
         if bump_lacklandist_score && !projectile_death {
             self.add_campaign_value(

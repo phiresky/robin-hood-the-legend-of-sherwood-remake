@@ -270,6 +270,10 @@ impl TraceSimConfig {
             // Item rebalances and their extra cue are post-port extensions.
             item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
             noise_distraction_feedback: false,
+            // Original traces use the two-camp distinct-ID rules, including
+            // Royalist/Lacklandist NPC combat.
+            diplomacy: false,
+            npc_faction_wars: true,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -12764,6 +12768,8 @@ mod tests {
         assert!(config.bypass_fog_sprites_crash);
         assert_eq!(config.amount_of_speaking, 2);
         assert!(config.synchronous_pathfinding);
+        assert!(!config.diplomacy);
+        assert!(config.npc_faction_wars);
     }
 
     fn minimal_frame_json() -> serde_json::Value {

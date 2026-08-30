@@ -225,10 +225,10 @@ impl EngineInner {
             let entity = self.world.entities.get(npc_id)?;
             let include = match entity {
                 Entity::Civilian(_) => true,
-                Entity::Soldier(s) => s
-                    .soldier
-                    .cached_camp
-                    .is_hostile_to(crate::element_kinds::Camp::Royalists),
+                Entity::Soldier(s) => self.camps_are_hostile(
+                    s.soldier.cached_camp,
+                    crate::element_kinds::Camp::Royalists,
+                ),
                 _ => false,
             };
             if !include {
@@ -1996,7 +1996,8 @@ impl EngineInner {
                 .entities
                 .get(target_id)
                 .filter(|entity| {
-                    matches!(entity, Entity::Soldier(_)) && entity.camp() == caller_camp
+                    matches!(entity, Entity::Soldier(_))
+                        && self.camps_are_allied(entity.camp(), caller_camp)
                 })
                 .and_then(Entity::enemy_ai)
                 .is_some_and(|enemy| {

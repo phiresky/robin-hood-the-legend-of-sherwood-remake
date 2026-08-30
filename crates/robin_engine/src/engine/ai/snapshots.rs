@@ -848,7 +848,7 @@ impl EngineInner {
             let has_formation = soldier_profile.formation;
             let fighting_ability = {
                 let base = soldier_profile.fighting;
-                if s.soldier.cached_camp.is_hostile_to(Camp::Royalists) {
+                if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
                     let diff = self.control.sim_config.difficulty;
                     diff.rules().enemy_fighting(base, 100)
                 } else {

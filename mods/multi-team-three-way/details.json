@@ -9,6 +9,6 @@
     "Hackable",
     "Test"
   ],
-  "description": "Three mutually hostile soldier allegiances in a compact arena.",
+  "description": "Diplomacy test arena: allegiances 2 and 3 are allied, 3 and 4 are neutral, and all unspecified pairs remain hostile.",
   "hackable_missions": ["MultiTeamThreeWay"]
 }

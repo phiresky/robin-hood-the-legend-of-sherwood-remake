@@ -357,6 +357,7 @@ impl EngineInner {
         std::sync::Arc::new(AiEntityViews {
             entities,
             building_authorizations,
+            diplomacy: self.mission_domain.diplomacy.clone(),
         })
     }
 
@@ -774,7 +775,7 @@ impl EngineInner {
                 else {
                     return None;
                 };
-                if soldier.soldier.cached_camp != my_camp
+                if !self.camps_are_allied(soldier.soldier.cached_camp, my_camp)
                     || !soldier.element.active
                     || soldier.npc.life_points <= 0
                     || !soldier.human.unconscious
@@ -1057,6 +1058,7 @@ impl EngineInner {
             // empty-target case.
             tick.friend_swap_candidates = build_friend_swap_candidates(
                 &self.world.entities,
+                &self.mission_domain.diplomacy,
                 doors,
                 &self.orders.sequence_manager,
                 npc_id,
@@ -1227,7 +1229,7 @@ impl EngineInner {
                 let Some(Entity::Soldier(s)) = self.world.entities.get(attacker_id) else {
                     continue;
                 };
-                if s.soldier.cached_camp != my_camp
+                if !self.camps_are_allied(s.soldier.cached_camp, my_camp)
                     || !s.element.active
                     || s.human.unconscious
                     || s.npc.life_points <= 0
@@ -1243,6 +1245,7 @@ impl EngineInner {
         // Friend-swap candidates for ReconsiderEnemyApproach.
         tick.friend_swap_candidates = build_friend_swap_candidates(
             &self.world.entities,
+            &self.mission_domain.diplomacy,
             doors,
             &self.orders.sequence_manager,
             npc_id,
@@ -1343,7 +1346,7 @@ impl EngineInner {
             // CreateListOfSoldiersYouCanAlert retains everyone of the allowed
             // rank, while GetNearestFighter rejects dead, unconscious, and
             // inactive candidates.
-            if s.soldier.cached_camp != my_camp {
+            if !self.camps_are_allied(s.soldier.cached_camp, my_camp) {
                 continue;
             }
             let able_to_fight = crate::element::Human::is_able_to_fight(s);
@@ -1587,7 +1590,7 @@ impl EngineInner {
             let has_formation = soldier_profile.formation;
             let fighting_ability = {
                 let base = soldier_profile.fighting;
-                if s.soldier.cached_camp.is_hostile_to(Camp::Royalists) {
+                if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
                     let diff = self.control.sim_config.difficulty;
                     diff.rules().enemy_fighting(base, 100)
                 } else {
@@ -1650,7 +1653,7 @@ impl EngineInner {
             let opponent_handles: Vec<u32> =
                 s.human.opponents.iter().map(|id| id.index()).collect();
             let number_of_opponents = opponent_handles.len().min(u16::MAX as usize) as u16;
-            let is_friendly = s.soldier.cached_camp == my_camp;
+            let is_friendly = self.camps_are_allied(s.soldier.cached_camp, my_camp);
             Some(FighterSnapshot {
                 handle,
                 position: Position {
@@ -1777,7 +1780,7 @@ impl EngineInner {
                 position,
                 raw_position,
                 direction: pc.element.direction() as u16,
-                is_friendly: pc.pc.cached_camp == my_camp,
+                is_friendly: self.camps_are_allied(pc.pc.cached_camp, my_camp),
                 is_swordfighting: !pc.human.opponents.is_empty(),
                 is_able_to_fight,
                 is_tied: pc.element.posture == Posture::Tied,
@@ -1954,7 +1957,7 @@ impl EngineInner {
             };
             let handle = id.index();
             let world = entity.element_data().position();
-            let same_camp = entity.camp() == my_camp;
+            let same_camp = self.camps_are_allied(entity.camp(), my_camp);
             if handle == me_ai.base.me || !same_camp || opponents.is_empty() {
                 continue;
             }
@@ -2031,7 +2034,7 @@ impl EngineInner {
                 able_to_fight,
                 dead: entity.is_dead(),
                 unconscious: human.unconscious,
-                friend: entity.camp() == member_camp,
+                friend: self.camps_are_allied(entity.camp(), member_camp),
                 in_building: self.entity_data_in_building_sector(element),
                 obstacle: element.obstacle_index(),
             }

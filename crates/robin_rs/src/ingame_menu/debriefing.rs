@@ -901,6 +901,7 @@ mod tests {
                 "Little John".into(),
                 None,
             )],
+            factions: Default::default(),
         };
         let text = format_mission_stat_text(&stat, 3725, &menu_text);
         // Money section (both lines present).

@@ -4,7 +4,9 @@
 //! soldiers killed/surviving, peasants recruited, score, and which PCs joined
 //! the gang during the mission.
 
-use crate::pc_status::SpecialPeasantName;
+use std::collections::BTreeMap;
+
+use crate::{element::Camp, pc_status::SpecialPeasantName};
 use serde::{Deserialize, Serialize};
 
 // ── Mission resource IDs ────────────────────────────────────────────────────
@@ -52,6 +54,31 @@ impl PcStatName {
 
 // ── MissionStat ─────────────────────────────────────────────────────────────
 
+/// Lossless per-allegiance soldier history for diplomacy-aware missions.
+///
+/// The legacy aggregate counters remain populated for campaign/debriefing
+/// compatibility. This table preserves which faction each soldier belonged to
+/// and whether a player character caused the death, including neutral and
+/// allied casualties.
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct FactionMissionStat {
+    pub encountered_soldiers: u32,
+    pub living_soldiers_at_end: u32,
+    pub soldier_deaths: u32,
+    pub player_caused_soldier_deaths: u32,
+}
+
 /// Per-mission debriefing statistics.
 #[derive(
     Debug,
@@ -89,6 +116,10 @@ pub struct MissionStat {
     /// `PROP_NAME` override that's resolved through `MenuTextLookup`
     /// at debriefing render time.
     pub pc_names: Vec<PcStatName>,
+    /// Deterministically ordered, lossless soldier history keyed by mission
+    /// allegiance ID. Missing in legacy saves and therefore defaults empty.
+    #[serde(default)]
+    pub factions: BTreeMap<u16, FactionMissionStat>,
 }
 
 impl MissionStat {
@@ -105,6 +136,43 @@ impl MissionStat {
     /// Increment the killed-allied counter.
     pub fn add_killed_allied(&mut self) {
         self.killed_allied_count += 1;
+    }
+
+    pub fn record_soldier_encounter(&mut self, camp: Camp) {
+        let allegiance = camp.allegiance_id().unwrap_or_else(|| {
+            panic!("cannot record soldier encounter for invalid allegiance {camp:?}")
+        });
+        self.factions
+            .entry(allegiance)
+            .or_default()
+            .encountered_soldiers += 1;
+    }
+
+    pub fn record_soldier_death(&mut self, camp: Camp, caused_by_player: bool) {
+        let allegiance = camp.allegiance_id().unwrap_or_else(|| {
+            panic!("cannot record soldier death for invalid allegiance {camp:?}")
+        });
+        let faction = self.factions.entry(allegiance).or_default();
+        faction.soldier_deaths += 1;
+        if caused_by_player {
+            faction.player_caused_soldier_deaths += 1;
+        }
+    }
+
+    pub fn reset_faction_living_counts(&mut self) {
+        for faction in self.factions.values_mut() {
+            faction.living_soldiers_at_end = 0;
+        }
+    }
+
+    pub fn set_faction_living_soldiers_at_end(&mut self, camp: Camp, count: u32) {
+        let allegiance = camp.allegiance_id().unwrap_or_else(|| {
+            panic!("cannot record living soldier for invalid allegiance {camp:?}")
+        });
+        self.factions
+            .entry(allegiance)
+            .or_default()
+            .living_soldiers_at_end = count;
     }
 
     /// Add a new peasant to the recruited count.
@@ -190,6 +258,7 @@ mod tests {
             killed_allied_count: 1,
             added_score: 42,
             pc_names: vec![PcStatName::new("Robin".into(), None)],
+            factions: Default::default(),
         };
         stat.reset();
         assert_eq!(stat, MissionStat::default());
@@ -288,6 +357,7 @@ mod tests {
                 "Maid Marian".into(),
                 Some(SpecialPeasantName::A),
             )],
+            factions: Default::default(),
         };
         let json = serde_json::to_string(&stat).unwrap();
         let deser: MissionStat = serde_json::from_str(&json).unwrap();
@@ -298,5 +368,25 @@ mod tests {
     fn resource_constants() {
         assert_eq!(RHID_DEFAULT_MISSION_PICTURE, 10001);
         assert_eq!(RHID_HA, 10002);
+    }
+
+    #[test]
+    fn faction_stats_preserve_allegiance_and_player_responsibility() {
+        let mut stat = MissionStat::default();
+        let neutral = Camp::Custom(7);
+        stat.record_soldier_encounter(neutral);
+        stat.record_soldier_encounter(neutral);
+        stat.record_soldier_death(neutral, true);
+        stat.set_faction_living_soldiers_at_end(neutral, 1);
+
+        assert_eq!(
+            stat.factions.get(&7),
+            Some(&FactionMissionStat {
+                encountered_soldiers: 2,
+                living_soldiers_at_end: 1,
+                soldier_deaths: 1,
+                player_caused_soldier_deaths: 1,
+            })
+        );
     }
 }

@@ -695,8 +695,9 @@ impl Camp {
         }
     }
 
-    /// Custom missions currently use the simple diplomacy rule that every
-    /// distinct valid allegiance is hostile to every other allegiance.
+    /// Legacy fallback for tests and data migration that have no mission
+    /// state. Runtime systems must query `DiplomacyState`/`EngineInner` so
+    /// authored and changed relationships are observed.
     pub fn is_hostile_to(self, other: Self) -> bool {
         match (self.allegiance_id(), other.allegiance_id()) {
             (Some(left), Some(right)) => left != right,
@@ -711,6 +712,8 @@ impl Camp {
         }
     }
 
+    /// Legacy two-camp fallback. Runtime systems must use the mission's
+    /// explicit player coalition through `DiplomacyState`/`EngineInner`.
     pub fn is_player_aligned(self) -> bool {
         self == Self::Royalists
     }

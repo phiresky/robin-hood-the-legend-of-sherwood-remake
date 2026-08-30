@@ -529,7 +529,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   multiplayer capture from becoming authoritative transition input.
 /// - **v65** (2026-08-30, timed missions and runtime ambience): adds authored
 ///   timer/ambience configuration and exact in-progress mission runtime state.
-pub const SAVE_FORMAT_VERSION: u32 = 65;
+/// - **v66** (2026-08-30, mission diplomacy): adds the authoritative
+///   relationship matrix, player coalition, policy switches, per-faction
+///   mission statistics, and full-fidelity attempt-history evidence.
+pub const SAVE_FORMAT_VERSION: u32 = 66;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -863,8 +866,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_timed_ambience_runtime() {
-        assert_eq!(SAVE_FORMAT_VERSION, 65);
+    fn save_format_version_includes_diplomacy_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 66);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

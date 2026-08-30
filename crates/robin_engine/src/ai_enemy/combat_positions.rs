@@ -3021,7 +3021,7 @@ impl EnemyAi {
         // animations.
         let primary_is_friend = ctx
             .entity_view(self.base.primary_target)
-            .map(|v| v.camp == ctx.camp)
+            .map(|v| ctx.is_allied_with(v.camp))
             .unwrap_or_else(|| {
                 tracing::warn!(
                     handle = self.base.me,

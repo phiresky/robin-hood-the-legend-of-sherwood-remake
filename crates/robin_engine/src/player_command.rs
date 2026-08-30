@@ -984,6 +984,20 @@ pub enum PlayerCommand {
     SetSherwoodTrading {
         enabled: bool,
     },
+    /// Toggle authored/runtime relationship overrides at an authoritative
+    /// frame boundary. Disabling restores distinct-ID hostility.
+    SetDiplomacyEnabled {
+        enabled: bool,
+    },
+    SetNpcFactionWars {
+        enabled: bool,
+    },
+    /// Symmetrically change one relationship at runtime.
+    SetDiplomacyRelationship {
+        first: u16,
+        second: u16,
+        relationship: crate::diplomacy::Relationship,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
@@ -1119,6 +1133,28 @@ where
 mod tests {
     use super::*;
     use crate::element::EntityIdKind;
+
+    #[test]
+    fn diplomacy_command_roundtrips_through_replay_codecs() {
+        let command = PlayerCommand::SetDiplomacyRelationship {
+            first: 9,
+            second: 2,
+            relationship: crate::diplomacy::Relationship::Neutral,
+        };
+        let json = serde_json::to_string(&command).expect("serialize diplomacy command");
+        let decoded_json: PlayerCommand =
+            serde_json::from_str(&json).expect("deserialize diplomacy command");
+        let bytes = bitcode::encode(&decoded_json);
+        let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode diplomacy command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SetDiplomacyRelationship {
+                first: 9,
+                second: 2,
+                relationship: crate::diplomacy::Relationship::Neutral,
+            }
+        ));
+    }
 
     #[test]
     fn queued_quick_action_is_non_recursive_and_native_bitcode_roundtrips() {

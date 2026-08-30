@@ -54,6 +54,12 @@ pub struct SimConfig {
     /// on the side-effect stream.
     #[serde(default)]
     pub noise_distraction_feedback: bool,
+    /// Apply mission-authored diplomacy instead of the legacy distinct-ID
+    /// hostility rule. Serialized because it affects simulation outcomes.
+    #[serde(default)]
+    pub diplomacy: bool,
+    #[serde(default = "default_enabled")]
+    pub npc_faction_wars: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -80,7 +86,7 @@ pub struct SimConfig {
     pub enable_dynamic_ambience: bool,
 }
 
-fn default_enabled() -> bool {
+const fn default_enabled() -> bool {
     true
 }
 
@@ -97,6 +103,8 @@ impl SimConfig {
             reusable_cloaks: true,
             item_gameplay: ItemGameplayConfig::classic(),
             noise_distraction_feedback: true,
+            diplomacy: true,
+            npc_faction_wars: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -248,6 +256,7 @@ mod tests {
         );
         assert!(SimConfig::default().noise_distraction_feedback);
         assert!(SimConfig::default().sherwood_trading);
+        assert!(SimConfig::default().diplomacy);
     }
 
     #[test]
@@ -295,5 +304,16 @@ mod tests {
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.sherwood_trading);
+    }
+
+    #[test]
+    fn old_sim_state_preserves_legacy_diplomacy_behavior() {
+        let mut serialized = serde_json::to_value(SimConfig::default()).unwrap();
+        let object = serialized.as_object_mut().unwrap();
+        object.remove("diplomacy");
+        object.remove("npc_faction_wars");
+        let config: SimConfig = serde_json::from_value(serialized).unwrap();
+        assert!(!config.diplomacy);
+        assert!(config.npc_faction_wars);
     }
 }

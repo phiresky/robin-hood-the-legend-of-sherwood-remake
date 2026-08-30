@@ -174,6 +174,35 @@ mod tests {
         );
         assert_eq!(target.x, 65_500.0);
     }
+
+    #[test]
+    fn authoritative_soldier_camps_override_legacy_presence_flags() {
+        let mut global = AiGlobalState::default();
+        global.there_are_royalist_soldiers = true;
+        global.there_are_lacklandist_soldiers = true;
+        global.soldier_camps.extend([
+            crate::element::Camp::Royalists,
+            crate::element::Camp::Lacklandists,
+        ]);
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&crate::diplomacy::DiplomacyDefinition {
+                player_coalition: vec![0],
+                relationships: vec![crate::diplomacy::DiplomacyRule {
+                    first: 0,
+                    second: 1,
+                    relationship: crate::diplomacy::Relationship::Neutral,
+                }],
+            }),
+        )
+        .unwrap();
+
+        assert!(!global.npcs_can_be_enemies(&diplomacy));
+        global.soldier_camps.clear();
+        assert!(!global.npcs_can_be_enemies(&diplomacy));
+        assert!(global.npcs_can_be_enemies(&crate::diplomacy::DiplomacyState::default()));
+    }
 }
 
 /// Per-frame entity state passed into `think()` by the engine.
@@ -436,6 +465,28 @@ pub struct AiContext {
 }
 
 impl AiContext {
+    pub fn player_relationship(&self) -> crate::diplomacy::Relationship {
+        self.entity_views
+            .diplomacy
+            .relationship_to_player(self.camp)
+    }
+
+    pub fn is_player_aligned(&self) -> bool {
+        self.entity_views.diplomacy.is_player_aligned(self.camp)
+    }
+
+    pub fn is_hostile_to_player(&self) -> bool {
+        self.player_relationship() == crate::diplomacy::Relationship::Hostile
+    }
+
+    pub fn is_allied_with(&self, camp: crate::element::Camp) -> bool {
+        self.entity_views.diplomacy.is_allied(self.camp, camp)
+    }
+
+    pub fn is_hostile_with(&self, camp: crate::element::Camp) -> bool {
+        self.entity_views.diplomacy.is_hostile(self.camp, camp)
+    }
+
     pub(crate) fn hiking_waypoint_sector(
         &self,
         path_index: usize,
@@ -1604,13 +1655,26 @@ impl Default for AiGlobalState {
 }
 
 impl AiGlobalState {
-    pub fn npcs_can_be_enemies(&self) -> bool {
-        self.soldier_camps.iter().enumerate().any(|(index, camp)| {
-            self.soldier_camps
-                .iter()
-                .skip(index + 1)
-                .any(|other| camp.is_hostile_to(*other))
-        }) || (self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers)
+    pub fn npcs_can_be_enemies(&self, diplomacy: &crate::diplomacy::DiplomacyState) -> bool {
+        if !diplomacy.npc_faction_wars() {
+            return false;
+        }
+        if !self.soldier_camps.is_empty() {
+            return self.soldier_camps.iter().enumerate().any(|(index, camp)| {
+                self.soldier_camps
+                    .iter()
+                    .skip(index + 1)
+                    .any(|other| diplomacy.is_hostile(*camp, *other))
+            });
+        }
+        // Old snapshots predate `soldier_camps`; retain their two-flag
+        // fallback only when the authoritative set is genuinely absent.
+        self.there_are_royalist_soldiers
+            && self.there_are_lacklandist_soldiers
+            && diplomacy.is_hostile(
+                crate::element::Camp::Royalists,
+                crate::element::Camp::Lacklandists,
+            )
     }
 
     pub fn overall_villain_alert(&self) -> AlertLevel {

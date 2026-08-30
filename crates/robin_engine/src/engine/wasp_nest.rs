@@ -21,7 +21,9 @@
 use super::{EngineInner, LevelAssets};
 use crate::bow_shot::{self, NUMBER_OF_WASPS};
 use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
-use crate::element::{Animation, Camp, Entity, EntityId, ObjectType};
+#[cfg(test)]
+use crate::element::Camp;
+use crate::element::{Animation, Entity, EntityId, ObjectType};
 
 /// Buzz FX id played at the nest position each frame while wasps are
 /// in the air.
@@ -417,7 +419,7 @@ impl EngineInner {
                 Some(e) => e,
                 None => continue,
             };
-            if !entity.is_active() || !entity.camp().is_hostile_to(Camp::Royalists) {
+            if !entity.is_active() || !self.is_hostile_to_player_camp(entity.camp()) {
                 continue;
             }
             // Exclude already-swordfighting soldiers and existing

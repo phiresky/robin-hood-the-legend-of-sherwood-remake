@@ -91,6 +91,7 @@ impl NativeFn {
             | GetSoundSourceIndex
             | GetBuildingIndex
             | GetWayIndex => ScriptCore,
+            GetActorAllegiance | GetDiplomacyRelationship | SetDiplomacyRelationship => ScriptCore,
 
             ThisActor
             | GetNumberOfActorsInEngine

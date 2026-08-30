@@ -202,7 +202,7 @@ impl EnemyAi {
         self.base.outbox.actor.set_unfocus();
 
         // Royalists just return to duty.
-        if ctx.camp == crate::element::Camp::Royalists {
+        if ctx.is_player_aligned() {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }

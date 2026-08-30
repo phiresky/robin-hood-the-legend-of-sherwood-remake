@@ -2386,6 +2386,7 @@ impl Engine {
                 "killed_allied_count": stat.killed_allied_count,
                 "added_score": stat.added_score,
                 "pc_names": pc_names,
+                "factions": stat.factions,
             },
             "user_locked": self.inner.players.user_locked,
             "selection_before_user_lock": self.inner.players.selection_before_user_lock

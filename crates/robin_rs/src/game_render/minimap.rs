@@ -126,10 +126,13 @@ pub(crate) fn render_minimap(
         if mm.is_element_highlighted(id.index()) {
             continue;
         }
-        let info = match engine.minimap_dot_info(id, assets) {
+        let mut info = match engine.minimap_dot_info(id, assets) {
             Some(i) => i,
             None => continue,
         };
+        if !host.diplomacy_visuals {
+            info.camp = info.legacy_camp;
+        }
         if !info.is_active {
             continue;
         }

@@ -795,6 +795,7 @@ impl EngineInner {
             if enabled {
                 super::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
                     &mut self.world.entities,
+                    &self.mission_domain.diplomacy,
                     pc_id,
                     self.control.sim_config.difficulty,
                 );

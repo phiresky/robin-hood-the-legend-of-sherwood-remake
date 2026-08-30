@@ -78,7 +78,9 @@ use handle_codec::ScriptHandleKind;
 // clients/processes — required for rollback multiplayer determinism.
 use crate::ai::{AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
-use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
+#[cfg(test)]
+use crate::element::Camp;
+use crate::element::{ActionState, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
 use crate::gate::Door;
 use crate::interp::{
