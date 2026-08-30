@@ -618,16 +618,29 @@ impl Engine {
         };
         let sector = |handle: Option<crate::position_interface::SectorHandle>| {
             handle.map_or(Value::Null, |handle| {
-                let sector = self
-                    .inner
-                    .world
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(handle.get() as usize)
-                    .unwrap_or_else(|| {
-                        panic!("parity position references missing sector {handle}")
-                    });
+                let level = &self.inner.world.fast_grid.level;
+                let arena_index = handle.arena_index().map_or_else(
+                    || {
+                        let public = crate::sector::SectorNumber::new(i16::from(handle));
+                        level.sector_number_map.get(&public).copied().unwrap_or_else(|| {
+                            panic!(
+                                "parity position for {id:?} references missing public sector {handle}"
+                            )
+                        })
+                    },
+                    usize::from,
+                );
+                let sector = level.sectors.get(arena_index).unwrap_or_else(|| {
+                    panic!(
+                        "parity position for {id:?} references missing sector arena index {arena_index} (public {handle})"
+                    )
+                });
+                assert_eq!(
+                    u16::from(sector.sector_number),
+                    handle.get(),
+                    "parity position for {id:?} sector arena index {arena_index} has public number {}, expected {handle}",
+                    sector.sector_number.get(),
+                );
                 json!(sector.sector_number.get())
             })
         };
