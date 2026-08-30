@@ -1387,6 +1387,16 @@ mod tests {
                 "Rescued outlaw".into(),
                 Some(crate::pc_status::SpecialPeasantName::B),
             )],
+            factions: [(
+                7,
+                crate::mission_stat::FactionMissionStat {
+                    encountered_soldiers: 11,
+                    living_soldiers_at_end: 9,
+                    soldier_deaths: 2,
+                    player_caused_soldier_deaths: 1,
+                },
+            )]
+            .into(),
         };
         let frozen = MissionAttemptStats::from_native(&original);
 
@@ -1399,7 +1409,8 @@ mod tests {
         assert_eq!(frozen.killed_peasants, Some(original.killed_peasant_count));
         assert_eq!(frozen.killed_allies, Some(original.killed_allied_count));
         assert_eq!(frozen.added_score, Some(original.added_score));
-        assert_eq!(frozen.recruited_characters, Some(original.pc_names));
+        assert_eq!(frozen.recruited_characters, Some(original.pc_names.clone()));
+        assert_eq!(frozen.factions, Some(original.factions));
         assert!(frozen.is_complete());
     }
 

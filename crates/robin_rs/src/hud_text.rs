@@ -13,7 +13,7 @@ use crate::ui_panel::{
 };
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::element::{Camp, Entity, EntityId};
+use robin_engine::element::{Entity, EntityId};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles;

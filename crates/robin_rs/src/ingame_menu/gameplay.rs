@@ -451,9 +451,7 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
             config.enable_dynamic_ambience = !config.enable_dynamic_ambience
         }
         DIPLOMACY_OPTION_INDEX => config.diplomacy = !config.diplomacy,
-        NPC_FACTION_WARS_OPTION_INDEX => {
-            config.npc_faction_wars = !config.npc_faction_wars
-        }
+        NPC_FACTION_WARS_OPTION_INDEX => config.npc_faction_wars = !config.npc_faction_wars,
         _ => {}
     }
 }
@@ -550,6 +548,8 @@ mod tests {
                 "Detailed Save Metadata",
                 "Authored Mission Timers",
                 "Dynamic Ambience Gameplay",
+                "Mission Diplomacy",
+                "NPC Faction Wars",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());

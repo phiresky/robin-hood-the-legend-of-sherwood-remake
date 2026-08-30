@@ -546,7 +546,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-32 game wire,
+  relay-over-WebSocket transport with the protocol-33 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native

@@ -86,10 +86,6 @@ pub struct SimConfig {
     pub enable_dynamic_ambience: bool,
 }
 
-fn default_enabled() -> bool {
-    true
-}
-
 const fn default_enabled() -> bool {
     true
 }

@@ -497,15 +497,15 @@ pub(crate) fn reconcile_entities(
                     diplomacy.actors_may_fight(npc_camp, false, *camp, *is_pc)
                 })
             });
-            if enemy.base.primary_target != 0
-                && !actors_by_handle
-                    .get(&enemy.base.primary_target)
+            if enemy.base.primary_target.is_some_and(|target| {
+                !actors_by_handle
+                    .get(&target.get())
                     .is_some_and(|(camp, is_pc)| {
                         diplomacy.actors_may_fight(npc_camp, false, *camp, *is_pc)
                     })
-            {
-                enemy.base.primary_target = 0;
-                enemy.base.outbox.actor.set_focus(0);
+            }) {
+                enemy.base.primary_target = None;
+                enemy.base.outbox.actor.set_unfocus();
             }
         }
     }
