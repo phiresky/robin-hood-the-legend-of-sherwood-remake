@@ -1076,6 +1076,7 @@ mod tests {
             mission_id: "custom".to_owned(),
             mission_seed: 19,
             sim_config,
+            speech_timing_locale: Some("en-US".to_owned()),
             host_nickname: "host".to_owned(),
         };
 
@@ -1103,6 +1104,7 @@ mod tests {
             mission_id: "invalid".to_owned(),
             mission_seed: 1,
             sim_config,
+            speech_timing_locale: None,
             host_nickname: "host".to_owned(),
         };
 
