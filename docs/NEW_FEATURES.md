@@ -492,7 +492,12 @@ A list of which additional features we have added, which ones we might still wan
   rejects them even if UI filtering is bypassed. Sherwood campaign UI remains
   non-pausing, but only host-authored campaign commands can mutate simulation
   state. Client modal choices remain visible host proposals; only the host can
-  publish the decision that closes a shared modal.
+  publish the decision that closes a shared modal. Replacement missions
+  consume a one-shot continuation containing the same session id,
+  authenticated owner/seat roster, expected player count, and pinned relay
+  route. Durable browser identities and process-held native client identities
+  therefore reclaim the same seats without nickname authority or a stale-relay
+  reconnect race.
 
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
