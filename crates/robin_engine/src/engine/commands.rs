@@ -1272,8 +1272,17 @@ impl EngineInner {
             ApplyQuitMissionUpdates {
                 exit_code,
                 difficulty,
+                completed_at_unix_seconds,
+                campaign_run_nonce,
             } => {
-                self.apply_quit_mission_updates(sim, assets, *exit_code, *difficulty);
+                self.apply_quit_mission_updates(
+                    sim,
+                    assets,
+                    *exit_code,
+                    *difficulty,
+                    *completed_at_unix_seconds,
+                    *campaign_run_nonce,
+                );
             }
             QuitMissionRequested => {
                 // The flag to set depends on whether the mission is

@@ -3278,11 +3278,8 @@ impl EngineInner {
             .get_entity(victim_id)
             .map(|e| e.is_soldier() && e.camp().is_hostile_to(Camp::Royalists))
             .unwrap_or(false);
-        if bump_lacklandist_score
-            && !projectile_death
-            && let Some(campaign) = Some(&mut self.mission_domain.campaign)
-        {
-            campaign.add_value(
+        if bump_lacklandist_score && !projectile_death {
+            self.add_campaign_value(
                 crate::campaign::CampaignValue::Score,
                 SCORE_SOLDIER_KILLED_DURING_FIGHT,
             );

@@ -96,6 +96,8 @@ pub enum SnapshotRestoreError {
     WorldInvariantViolation { detail: String },
     #[error("snapshot order invariant failed: {detail}")]
     OrderInvariantViolation { detail: String },
+    #[error("snapshot campaign-history invariant failed: {detail}")]
+    CampaignHistoryInvariantViolation { detail: String },
     #[error("snapshot level attachment failed: {detail}")]
     AttachmentFailure { detail: String },
 }
@@ -3771,6 +3773,12 @@ impl Engine {
             .orders
             .validate_invariants()
             .map_err(|detail| SnapshotRestoreError::OrderInvariantViolation { detail })?;
+        saved
+            .inner
+            .mission_domain
+            .campaign
+            .validate_history_schema()
+            .map_err(|detail| SnapshotRestoreError::CampaignHistoryInvariantViolation { detail })?;
         Ok(())
     }
 }

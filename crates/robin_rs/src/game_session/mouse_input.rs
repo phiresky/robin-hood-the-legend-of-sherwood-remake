@@ -2119,6 +2119,13 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // modal after its 500 ms timer.
         let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
+        let campaign_profile = host
+            .application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| {
+                panic!("campaign presentation requires an active profile: {error}")
+            });
+        let campaign_view_config = campaign_profile.gameplay_config;
 
         let campaign = engine.campaign();
         sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
@@ -2146,6 +2153,8 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             host.shipping.as_deref(),
             cursor,
             pseudo_debrief_pending,
+            campaign_view_config.campaign_presentation,
+            &campaign_profile.campaign_history,
         )
         .await?;
 

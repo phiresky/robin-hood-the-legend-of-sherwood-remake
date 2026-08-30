@@ -9,6 +9,7 @@
 #![deny(unused_must_use)]
 
 pub mod abilities;
+pub mod achievement;
 pub mod actor_state;
 pub mod ai;
 pub mod ai_detectable_filter;
@@ -21,6 +22,7 @@ pub mod alert_colors;
 pub mod bitcode_adapters;
 pub mod bow_shot;
 pub mod campaign;
+pub mod campaign_history;
 pub mod change;
 pub mod character_kind;
 pub mod cloak;

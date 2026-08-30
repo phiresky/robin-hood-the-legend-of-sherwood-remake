@@ -33,6 +33,7 @@ const OPTION_LABELS: &[&str] = &[
     "Allow Untying NPCs",
     "Sherwood Production Forecast",
     "Reusable Cloaks",
+    "Campaign Presentation",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -182,6 +183,16 @@ pub async fn show_gameplay(
                 );
             }
         }
+        if let Some(font) = resources.label_font() {
+            render_text_virt(
+                renderer,
+                font,
+                transform,
+                working.campaign_presentation.label(),
+                315,
+                opt_layout[5].y + 7,
+            );
+        }
 
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
@@ -213,6 +224,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         2 => config.enable_unbinding = !config.enable_unbinding,
         3 => config.show_production_forecast = !config.show_production_forecast,
         4 => config.reusable_cloaks = !config.reusable_cloaks,
+        5 => config.campaign_presentation = config.campaign_presentation.next(),
         _ => {}
     }
 }
@@ -224,6 +236,10 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         2 => config.enable_unbinding,
         3 => config.show_production_forecast,
         4 => config.reusable_cloaks,
+        5 => {
+            config.campaign_presentation
+                != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
+        }
         _ => false,
     }
 }
@@ -233,7 +249,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_forecast_row_preserves_tactical_control_mapping() {
+    fn gameplay_rows_preserve_independent_setting_mappings() {
         assert_eq!(
             OPTION_LABELS,
             [
@@ -242,6 +258,7 @@ mod tests {
                 "Allow Untying NPCs",
                 "Sherwood Production Forecast",
                 "Reusable Cloaks",
+                "Campaign Presentation",
             ]
         );
 
@@ -250,6 +267,7 @@ mod tests {
         assert!(is_option_selected(&config, 2));
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
+        assert!(is_option_selected(&config, 5));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -268,5 +286,11 @@ mod tests {
         assert!(config.enable_unbinding);
         assert!(!config.show_production_forecast);
         assert!(!config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 5);
+        assert_eq!(
+            config.campaign_presentation,
+            robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
+        );
     }
 }

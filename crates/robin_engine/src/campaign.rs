@@ -9,6 +9,14 @@
 use enum_map::{Enum, EnumMap, enum_map};
 use serde::{Deserialize, Serialize};
 
+use crate::achievement::{
+    AchievementHistoryUpdate, AchievementId, AchievementRunContext, AchievementSet,
+    AchievementUnlockPolicy, MissionAchievementResults,
+};
+use crate::campaign_history::{
+    CampaignHistoryTotals, MissionAchievementAttestationError, MissionAttempt, MissionAttemptKey,
+    MissionAttemptKind, MissionAttemptOutcome,
+};
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus, SkillName};
 use crate::player_profile::DifficultyLevel;
@@ -204,6 +212,145 @@ impl crate::bitcode_adapters::NativeBitcode for CampaignValues {
 
 crate::bitcode_adapters::impl_native_bitcode!(CampaignValues);
 
+/// Finite campaign-map state restored after completed-mission practice.
+///
+/// Restart serialization cannot embed `Campaign` recursively, so this owns
+/// every progression/reward field explicitly and deliberately excludes the
+/// transient restart/practice checkpoints themselves.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct CampaignPracticeReturn {
+    values: CampaignValues,
+    ares: i8,
+    missions: Vec<Mission>,
+    accessible_mission_indices: Vec<usize>,
+    pending_accessible_mission_indices: Vec<usize>,
+    last_mission_idx: Option<usize>,
+    current_mission_idx: Option<usize>,
+    next_mission_idx: Option<usize>,
+    blazon_mission_idx: Option<usize>,
+    last_pseudo_mission_status: MissionStatus,
+    last_pseudo_mission_id: u32,
+    mission_attempt_sequence: u64,
+    campaign_history_run_id: Option<u64>,
+    characters: Vec<PcDescription>,
+    gang_indices: Vec<usize>,
+    reservist_indices: Vec<usize>,
+    mission_team_indices: Vec<usize>,
+    peasant_names: Vec<String>,
+    reservists_are_back: bool,
+    collected_relics: Vec<u32>,
+    production_sectors: Vec<crate::sector_production::SectorProduction>,
+}
+
+impl CampaignPracticeReturn {
+    fn capture(campaign: &Campaign) -> Self {
+        Self {
+            values: campaign.values.clone(),
+            ares: campaign.ares,
+            missions: campaign.missions.clone(),
+            accessible_mission_indices: campaign.accessible_mission_indices.clone(),
+            pending_accessible_mission_indices: campaign.pending_accessible_mission_indices.clone(),
+            last_mission_idx: campaign.last_mission_idx,
+            current_mission_idx: campaign.current_mission_idx,
+            next_mission_idx: campaign.next_mission_idx,
+            blazon_mission_idx: campaign.blazon_mission_idx,
+            last_pseudo_mission_status: campaign.last_pseudo_mission_status,
+            last_pseudo_mission_id: campaign.last_pseudo_mission_id,
+            mission_attempt_sequence: campaign.mission_attempt_sequence,
+            campaign_history_run_id: campaign.campaign_history_run_id,
+            characters: campaign.characters.clone(),
+            gang_indices: campaign.gang_indices.clone(),
+            reservist_indices: campaign.reservist_indices.clone(),
+            mission_team_indices: campaign.mission_team_indices.clone(),
+            peasant_names: campaign.peasant_names.clone(),
+            reservists_are_back: campaign.reservists_are_back,
+            collected_relics: campaign.collected_relics.clone(),
+            production_sectors: campaign.production_sectors.clone(),
+        }
+    }
+
+    fn restore(self, campaign: &mut Campaign) {
+        campaign.values = self.values;
+        campaign.ares = self.ares;
+        campaign.missions = self.missions;
+        campaign.accessible_mission_indices = self.accessible_mission_indices;
+        campaign.pending_accessible_mission_indices = self.pending_accessible_mission_indices;
+        campaign.last_mission_idx = self.last_mission_idx;
+        campaign.current_mission_idx = self.current_mission_idx;
+        campaign.next_mission_idx = self.next_mission_idx;
+        campaign.blazon_mission_idx = self.blazon_mission_idx;
+        campaign.last_pseudo_mission_status = self.last_pseudo_mission_status;
+        campaign.last_pseudo_mission_id = self.last_pseudo_mission_id;
+        campaign.mission_attempt_sequence = self.mission_attempt_sequence;
+        campaign.campaign_history_run_id = self.campaign_history_run_id;
+        campaign.history_replay_mission_idx = None;
+        campaign.practice_return_snapshot = None;
+        campaign.characters = self.characters;
+        campaign.gang_indices = self.gang_indices;
+        campaign.reservist_indices = self.reservist_indices;
+        campaign.mission_team_indices = self.mission_team_indices;
+        campaign.peasant_names = self.peasant_names;
+        campaign.reservists_are_back = self.reservists_are_back;
+        campaign.collected_relics = self.collected_relics;
+        campaign.production_sectors = self.production_sectors;
+        campaign.pre_mission_snapshot = None;
+        campaign.pre_mission_rng_seed = None;
+        campaign.pre_mission_sim_config = None;
+        campaign.pre_mission_was_preselected = false;
+    }
+}
+
+fn validate_attempt_history_storage(
+    missions: &[Mission],
+    mission_attempt_sequence: u64,
+    campaign_history_run_id: Option<u64>,
+) -> Result<(), String> {
+    let mut sequences = std::collections::BTreeSet::new();
+    let mut maximum_sequence = 0;
+    let mut has_native_attempt = false;
+    for (mission_index, mission) in missions.iter().enumerate() {
+        mission.attempt_history().validate_schema().map_err(|version| {
+            format!(
+                "campaign mission {mission_index} has invalid or unsupported history schema {version}"
+            )
+        })?;
+        for attempt in mission.attempt_history().attempts() {
+            if !sequences.insert(attempt.sequence()) {
+                return Err(format!(
+                    "campaign attempt sequence {} is duplicated",
+                    attempt.sequence()
+                ));
+            }
+            maximum_sequence = maximum_sequence.max(attempt.sequence());
+            has_native_attempt |=
+                attempt.source() == crate::campaign_history::MissionAttemptSource::Native;
+        }
+    }
+    if maximum_sequence != mission_attempt_sequence {
+        return Err(format!(
+            "campaign attempt sequence counter {mission_attempt_sequence} does not match maximum stored sequence {maximum_sequence}"
+        ));
+    }
+    if u64::try_from(sequences.len()).ok() != Some(maximum_sequence) {
+        return Err(format!(
+            "campaign attempt sequence has gaps: {} stored record(s), maximum sequence {maximum_sequence}",
+            sequences.len()
+        ));
+    }
+    if has_native_attempt && campaign_history_run_id.is_none() {
+        return Err("native campaign history has no run identity".to_string());
+    }
+    Ok(())
+}
+
 #[derive(
     Debug,
     Clone,
@@ -228,10 +375,24 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
     pub current_mission_idx: Option<usize>,
     pub next_mission_idx: Option<usize>,
     pub blazon_mission_idx: Option<usize>,
-    pub last_played_mission_indices: Vec<usize>,
-
     pub last_pseudo_mission_status: MissionStatus,
     pub last_pseudo_mission_id: u32,
+
+    /// Monotonic identifier for immutable attempt records in this campaign.
+    pub mission_attempt_sequence: u64,
+    /// Stable source identity used when promoting attempts into the active
+    /// player's lifetime archive. Assigned by the first native terminal
+    /// command and preserved by saves/replays.
+    pub campaign_history_run_id: Option<u64>,
+    /// A completed mission selected from history.  While set, terminal
+    /// progression is restored from the normal pre-mission checkpoint and
+    /// only the new immutable attempt is retained.
+    pub history_replay_mission_idx: Option<usize>,
+    /// Exact campaign progression/reward state from immediately before a
+    /// completed mission was selected for practice. Kept separately from the
+    /// normal restart image: restart relaunches practice, while terminal
+    /// completion returns here.
+    pub practice_return_snapshot: Option<CampaignPracticeReturn>,
 
     // ── Characters / gang ──
     pub characters: Vec<PcDescription>,
@@ -290,9 +451,12 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             current_mission_idx,
             next_mission_idx,
             blazon_mission_idx,
-            last_played_mission_indices,
             last_pseudo_mission_status,
             last_pseudo_mission_id,
+            mission_attempt_sequence,
+            campaign_history_run_id,
+            history_replay_mission_idx,
+            practice_return_snapshot,
             characters,
             gang_indices,
             reservist_indices,
@@ -316,9 +480,12 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
             current_mission_idx,
             next_mission_idx,
             blazon_mission_idx,
-            last_played_mission_indices,
             last_pseudo_mission_status,
             last_pseudo_mission_id,
+            mission_attempt_sequence,
+            campaign_history_run_id,
+            history_replay_mission_idx,
+            practice_return_snapshot,
             characters,
             gang_indices,
             reservist_indices,
@@ -361,9 +528,12 @@ impl Default for Campaign {
             current_mission_idx: None,
             next_mission_idx: None,
             blazon_mission_idx: None,
-            last_played_mission_indices: Vec::new(),
             last_pseudo_mission_status: MissionStatus::Available,
             last_pseudo_mission_id: 0,
+            mission_attempt_sequence: 0,
+            campaign_history_run_id: None,
+            history_replay_mission_idx: None,
+            practice_return_snapshot: None,
             characters: Vec::new(),
             gang_indices: Vec::new(),
             reservist_indices: Vec::new(),
@@ -450,6 +620,273 @@ pub fn calculate_warcrime_recruitment(
 }
 
 impl Campaign {
+    pub fn earned_achievements(&self) -> AchievementSet {
+        self.missions
+            .iter()
+            .fold(AchievementSet::empty(), |mut earned, mission| {
+                earned.union_with(mission.attempt_history().eligible_badges());
+                earned
+            })
+    }
+
+    pub fn mission_attempts(
+        &self,
+        mission_index: usize,
+    ) -> Option<&[crate::campaign_history::MissionAttempt]> {
+        self.missions
+            .get(mission_index)
+            .map(|mission| mission.attempt_history().attempts())
+    }
+
+    pub fn history_totals(&self) -> CampaignHistoryTotals {
+        let mut totals = CampaignHistoryTotals::default();
+        for attempt in self
+            .missions
+            .iter()
+            .flat_map(|mission| mission.attempt_history().attempts())
+        {
+            totals.include(attempt);
+        }
+        totals
+    }
+
+    pub fn latest_mission_attempt(&self) -> Option<&crate::campaign_history::MissionAttempt> {
+        self.missions
+            .iter()
+            .filter_map(|mission| mission.attempt_history().latest())
+            .max_by_key(|attempt| attempt.sequence())
+    }
+
+    pub fn latest_mission_attempt_key(&self) -> Option<MissionAttemptKey> {
+        let campaign_run_id = self.campaign_history_run_id?;
+        self.latest_mission_attempt()
+            .map(|attempt| attempt.key(campaign_run_id))
+    }
+
+    /// Attach the host eligibility decision to one exact frozen attempt.
+    /// Identical repeats are idempotent; stale, foreign, or conflicting keys
+    /// are rejected. This is the canonical awarded-badge mutation path.
+    pub fn attest_mission_achievement_attempt(
+        &mut self,
+        key: MissionAttemptKey,
+        policy: AchievementUnlockPolicy,
+        context: AchievementRunContext,
+    ) -> Result<AchievementHistoryUpdate, MissionAchievementAttestationError> {
+        let expected_run_id = self
+            .campaign_history_run_id
+            .ok_or(MissionAchievementAttestationError::CampaignHasNoRunId)?;
+        if key.campaign_run_id != expected_run_id {
+            return Err(MissionAchievementAttestationError::CampaignRunMismatch {
+                expected: expected_run_id,
+                actual: key.campaign_run_id,
+            });
+        }
+
+        let previously_earned = self.earned_achievements();
+        for mission_index in 0..self.missions.len() {
+            let attestation = self.missions[mission_index]
+                .attempt_history
+                .attest_achievements(key.sequence, policy, context)?;
+            if let Some(attestation) = attestation {
+                let mission_badges = self.missions[mission_index].achievement_badges();
+                let now_earned = self.earned_achievements();
+                return Ok(AchievementHistoryUpdate {
+                    blockers: attestation.decision().blockers,
+                    newly_earned: now_earned.difference(previously_earned),
+                    mission_badges,
+                });
+            }
+        }
+        Err(MissionAchievementAttestationError::AttemptNotFound(key))
+    }
+
+    pub const fn history_replay_mission(&self) -> Option<usize> {
+        self.history_replay_mission_idx
+    }
+
+    pub const fn history_run_id(&self) -> Option<u64> {
+        self.campaign_history_run_id
+    }
+
+    /// Reject unsupported or internally inconsistent native history at every
+    /// save/replay/network adoption boundary.
+    pub fn validate_history_schema(&self) -> Result<(), String> {
+        validate_attempt_history_storage(
+            &self.missions,
+            self.mission_attempt_sequence,
+            self.campaign_history_run_id,
+        )?;
+        match (
+            self.history_replay_mission_idx,
+            self.practice_return_snapshot.as_ref(),
+        ) {
+            (None, None) => {}
+            (Some(mission_index), Some(return_snapshot)) => {
+                if mission_index >= self.missions.len() {
+                    return Err(format!(
+                        "history replay mission index {mission_index} is outside campaign mission count {}",
+                        self.missions.len()
+                    ));
+                }
+                validate_attempt_history_storage(
+                    &return_snapshot.missions,
+                    return_snapshot.mission_attempt_sequence,
+                    return_snapshot.campaign_history_run_id,
+                )
+                .map_err(|error| format!("invalid practice return history: {error}"))?;
+            }
+            (Some(_), None) => {
+                return Err("history replay is missing its practice return snapshot".to_string());
+            }
+            (None, Some(_)) => {
+                return Err(
+                    "campaign has a practice return snapshot without a history replay".to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Build the only supported incomplete history: evidence reconstructed
+    /// while adopting a save written by the Original C++ game.
+    ///
+    /// Completed statuses outside the serialized recent-launch list retain
+    /// their known aggregate outcome. Recent launches retain their exact
+    /// order but an unknown outcome, because the C++ list did not serialize
+    /// the result of each individual launch.
+    pub fn reconstruct_original_save_history(&mut self, recent_launches: &[usize]) {
+        assert_eq!(
+            self.mission_attempt_sequence, 0,
+            "Original save history reconstruction requires an empty sequence"
+        );
+        assert!(
+            self.missions
+                .iter()
+                .all(|mission| mission.attempt_history().attempts().is_empty()),
+            "Original save history reconstruction requires empty mission histories"
+        );
+        assert!(
+            recent_launches.len() <= 3,
+            "Original save retained at most three recent mission launches"
+        );
+        for &mission_index in recent_launches {
+            assert!(
+                mission_index < self.missions.len(),
+                "Original save recent mission index {mission_index} is out of range"
+            );
+        }
+
+        for mission_index in 0..self.missions.len() {
+            if recent_launches.contains(&mission_index) {
+                continue;
+            }
+            let outcome = match self.missions[mission_index].status {
+                MissionStatus::Won => Some(MissionAttemptOutcome::Won),
+                MissionStatus::Lost => Some(MissionAttemptOutcome::Lost),
+                MissionStatus::Available => None,
+            };
+            if let Some(outcome) = outcome {
+                self.append_original_save_attempt(mission_index, outcome);
+            }
+        }
+        for &mission_index in recent_launches {
+            self.append_original_save_attempt(mission_index, MissionAttemptOutcome::Unknown);
+        }
+    }
+
+    fn append_original_save_attempt(
+        &mut self,
+        mission_index: usize,
+        outcome: MissionAttemptOutcome,
+    ) {
+        self.mission_attempt_sequence = self
+            .mission_attempt_sequence
+            .checked_add(1)
+            .expect("campaign attempt sequence overflow during Original save import");
+        self.missions[mission_index]
+            .attempt_history
+            .append(MissionAttempt::original_save_import(
+                self.mission_attempt_sequence,
+                outcome,
+            ));
+    }
+
+    /// Append one native record. History replay restores the exact campaign
+    /// state from before practice selection, preserving only the immutable
+    /// attempt and any eligibility attestation attached to that attempt.
+    pub fn record_mission_attempt(
+        &mut self,
+        mission_index: usize,
+        outcome: MissionAttemptOutcome,
+        completed_at_unix_seconds: Option<i64>,
+        campaign_run_nonce: Option<u64>,
+        duration_seconds: u32,
+        config: crate::engine::SimConfig,
+        stat: &crate::mission_stat::MissionStat,
+        achievements: Option<MissionAchievementResults>,
+    ) {
+        let mission_count = self.missions.len();
+        assert!(
+            mission_index < mission_count,
+            "cannot record attempt for mission index {mission_index}; campaign has {mission_count} missions"
+        );
+        let campaign_run_id = self
+            .campaign_history_run_id
+            .or(campaign_run_nonce)
+            .expect("native campaign attempt requires a host-provided campaign run identity");
+        let kind = if self.history_replay_mission_idx == Some(mission_index) {
+            MissionAttemptKind::HistoryReplay
+        } else {
+            MissionAttemptKind::Campaign
+        };
+
+        if kind == MissionAttemptKind::HistoryReplay {
+            let return_snapshot = self
+                .practice_return_snapshot
+                .take()
+                .expect("history replay finished without its required pre-selection state");
+            return_snapshot.restore(self);
+        } else {
+            assert!(
+                self.practice_return_snapshot.is_none(),
+                "ordinary campaign attempt retained a stray practice return state"
+            );
+        }
+        self.campaign_history_run_id = Some(campaign_run_id);
+
+        self.mission_attempt_sequence = self
+            .mission_attempt_sequence
+            .checked_add(1)
+            .expect("campaign attempt sequence overflow");
+        let attempt = MissionAttempt::native(
+            self.mission_attempt_sequence,
+            outcome,
+            kind,
+            completed_at_unix_seconds,
+            duration_seconds,
+            config,
+            stat,
+            achievements,
+        );
+        self.missions[mission_index].attempt_history.append(attempt);
+    }
+
+    pub fn mission_achievement_badges(&self, mission_index: usize) -> Option<AchievementSet> {
+        self.missions
+            .get(mission_index)
+            .map(Mission::achievement_badges)
+    }
+
+    pub fn mission_best_achievement_result(
+        &self,
+        mission_index: usize,
+        achievement: AchievementId,
+    ) -> Option<crate::achievement::AchievementEvaluation> {
+        self.missions
+            .get(mission_index)
+            .and_then(|mission| mission.best_achievement_result(achievement))
+    }
+
     /// Create a new campaign from loaded profiles.
     pub fn from_profiles(profiles: &ProfileManager, difficulty: DifficultyLevel) -> Campaign {
         let mut campaign = Campaign {
@@ -606,30 +1043,28 @@ impl Campaign {
         self.values[name] -= amount;
     }
 
-    /// Award experience to a PC's skill and pay the campaign-score
-    /// bonus whenever the call crosses a 100-XP boundary (capacity
-    /// increase).
+    /// Award experience to a PC's skill and report whether capacity changed.
     ///
-    /// Strict inequality is used (capacity changed at all), matching
-    /// the original behaviour.
+    /// The engine caller applies the corresponding score through its live
+    /// mission-value path so the campaign total and immutable attempt
+    /// statistics advance together.
+    #[must_use]
     pub fn add_pc_experience(
         &mut self,
         profile_idx: usize,
         skill: crate::pc_status::SkillName,
         xp: u32,
-    ) {
-        let Some(desc) = self.characters.get_mut(profile_idx) else {
-            return;
-        };
+    ) -> bool {
+        let character_count = self.characters.len();
+        let desc = self.characters.get_mut(profile_idx).unwrap_or_else(|| {
+            panic!(
+                "PC experience references missing campaign character {profile_idx}; campaign has {character_count} characters"
+            )
+        });
         let prev_capacity = desc.status.human_status.skill(skill).capacity;
         desc.status.human_status.add_experience(skill, xp);
         let new_capacity = desc.status.human_status.skill(skill).capacity;
-        if new_capacity != prev_capacity {
-            self.add_value(
-                CampaignValue::Score,
-                crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
-            );
-        }
+        new_capacity != prev_capacity
     }
 
     // ── ARES ──
@@ -1454,14 +1889,6 @@ impl Campaign {
             );
         }
 
-        // Memorize last 3 played missions
-        if current != sherwood_idx {
-            self.last_played_mission_indices.push(current);
-            if self.last_played_mission_indices.len() > 3 {
-                self.last_played_mission_indices.remove(0);
-            }
-        }
-
         current
     }
 
@@ -1475,10 +1902,33 @@ impl Campaign {
             .or(self.next_mission_idx)
             .expect("select_next_mission: no mission specified");
 
-        debug_assert!(
-            self.accessible_mission_indices.contains(&target_idx),
-            "select_next_mission: mission not in accessible list"
+        assert!(
+            target_idx < self.missions.len(),
+            "select_next_mission: mission index {target_idx} out of range"
         );
+        if !self.accessible_mission_indices.contains(&target_idx) {
+            let replayable = self.missions[target_idx].attempt_history.has_success()
+                || self.missions[target_idx].status == MissionStatus::Won;
+            assert!(
+                replayable,
+                "select_next_mission: locked mission {target_idx} is neither accessible nor completed"
+            );
+            assert_ne!(
+                target_idx,
+                self.get_sherwood_mission_idx(),
+                "select_next_mission: Sherwood cannot be launched as a history replay"
+            );
+            assert!(
+                self.history_replay_mission_idx.is_none()
+                    && self.practice_return_snapshot.is_none(),
+                "select_next_mission: nested history replay selection is invalid"
+            );
+            self.practice_return_snapshot = Some(CampaignPracticeReturn::capture(self));
+            self.history_replay_mission_idx = Some(target_idx);
+            self.next_mission_idx = Some(target_idx);
+            self.add_all_to_mission_team();
+            return;
+        }
 
         let indices = self.accessible_mission_indices.clone();
         let mut removal_pos = None;
@@ -1948,6 +2398,10 @@ impl Campaign {
         self.pre_mission_rng_seed = None;
         self.pre_mission_sim_config = None;
         self.pre_mission_was_preselected = false;
+        self.mission_attempt_sequence = 0;
+        self.campaign_history_run_id = None;
+        self.history_replay_mission_idx = None;
+        self.practice_return_snapshot = None;
 
         // Reset values, set initial ransom
         self.values = enum_map! { _ => 0 }.into();
@@ -1999,7 +2453,6 @@ impl Campaign {
         self.reservist_indices.clear();
         self.collected_relics.clear();
         self.peasant_names.clear();
-        self.last_played_mission_indices.clear();
     }
 
     /// Rebuild the gang from a PC specification string (e.g. "RJMT").
@@ -2376,7 +2829,7 @@ impl Campaign {
 
     /// Remove recently played missions to avoid repetition.
     fn filter_by_repetition(&mut self, candidates: &mut Vec<usize>) {
-        for &last_idx in self.last_played_mission_indices.iter().rev() {
+        for last_idx in self.recent_campaign_mission_indices().into_iter().rev() {
             if candidates.len() <= 1 {
                 break;
             }
@@ -2385,6 +2838,32 @@ impl Campaign {
                 candidates.remove(pos);
             }
         }
+    }
+
+    /// The Original game serialized a separate three-entry launch list. A
+    /// native campaign derives the same selection input from canonical
+    /// campaign attempts, avoiding a second compatibility/history lane.
+    fn recent_campaign_mission_indices(&self) -> Vec<usize> {
+        let mut played: Vec<(u64, usize)> = self
+            .missions
+            .iter()
+            .enumerate()
+            .flat_map(|(mission_index, mission)| {
+                mission
+                    .attempt_history()
+                    .attempts()
+                    .iter()
+                    .filter(|attempt| attempt.kind() == MissionAttemptKind::Campaign)
+                    .map(move |attempt| (attempt.sequence(), mission_index))
+            })
+            .collect();
+        played.sort_unstable_by_key(|&(sequence, _)| sequence);
+        let keep_from = played.len().saturating_sub(3);
+        played
+            .into_iter()
+            .skip(keep_from)
+            .map(|(_, mission_index)| mission_index)
+            .collect()
     }
 
     /// For same-location missions, keep highest priority only.
@@ -2541,6 +3020,40 @@ impl Campaign {
 mod tests {
     use super::*;
 
+    fn achievement_results(
+        id: AchievementId,
+        evaluation: crate::achievement::AchievementEvaluation,
+    ) -> MissionAchievementResults {
+        let mut state = crate::achievement::MissionAchievementState::from_mission_start();
+        state.record_evaluation(id, evaluation).unwrap();
+        *state.finalize_success()
+    }
+
+    fn record_and_attest_achievement_attempt(
+        campaign: &mut Campaign,
+        results: MissionAchievementResults,
+        context: AchievementRunContext,
+    ) -> AchievementHistoryUpdate {
+        campaign.current_mission_idx = Some(0);
+        campaign.record_mission_attempt(
+            0,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xcafe),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(results),
+        );
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                context,
+            )
+            .unwrap()
+    }
+
     #[test]
     fn restart_snapshot_is_finite_and_native_bitcode_roundtrips() {
         let mut campaign = Campaign::default();
@@ -2553,6 +3066,320 @@ mod tests {
         assert!(restored.restore_snapshot());
         assert_eq!(restored.get_value(CampaignValue::Score), 17);
         assert!(restored.pre_mission_snapshot.is_none());
+    }
+
+    #[test]
+    fn eligible_replay_upgrades_per_mission_best_and_global_unlock() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let context = AchievementRunContext::default();
+
+        let failed = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::CleanHands,
+                crate::achievement::AchievementEvaluation::Failed,
+            ),
+            context,
+        );
+        assert!(failed.newly_earned.is_empty());
+        assert_eq!(
+            campaign.mission_best_achievement_result(0, AchievementId::CleanHands),
+            Some(crate::achievement::AchievementEvaluation::Failed)
+        );
+
+        let earned = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::CleanHands,
+                crate::achievement::AchievementEvaluation::Earned,
+            ),
+            context,
+        );
+        assert!(earned.newly_earned.contains(AchievementId::CleanHands));
+        assert!(earned.mission_badges.contains(AchievementId::CleanHands));
+        assert!(
+            campaign
+                .earned_achievements()
+                .contains(AchievementId::CleanHands)
+        );
+        assert_eq!(campaign.mission_attempts(0).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn achievement_attestation_rejects_foreign_stale_and_conflicting_keys() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        campaign.current_mission_idx = Some(0);
+        campaign.record_mission_attempt(
+            0,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xcafe),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(achievement_results(
+                AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            )),
+        );
+        let key = campaign.latest_mission_attempt_key().unwrap();
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                crate::campaign_history::MissionAttemptKey {
+                    campaign_run_id: key.campaign_run_id + 1,
+                    sequence: key.sequence,
+                },
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::CampaignRunMismatch { .. })
+        ));
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                crate::campaign_history::MissionAttemptKey {
+                    campaign_run_id: key.campaign_run_id,
+                    sequence: key.sequence + 1,
+                },
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::AttemptNotFound(_))
+        ));
+        campaign
+            .attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        let duplicate = campaign
+            .attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        assert!(duplicate.newly_earned.is_empty());
+        assert!(matches!(
+            campaign.attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy {
+                    enabled: false,
+                    ..AchievementUnlockPolicy::default()
+                },
+                AchievementRunContext::default(),
+            ),
+            Err(MissionAchievementAttestationError::ConflictingAttestation { .. })
+        ));
+    }
+
+    #[test]
+    fn original_save_history_retains_recent_order_without_fabricating_evidence() {
+        let mut campaign = Campaign::default();
+        let mut won = Mission::new();
+        won.status = MissionStatus::Won;
+        campaign.missions.push(won);
+        let mut lost = Mission::new();
+        lost.status = MissionStatus::Lost;
+        campaign.missions.push(lost);
+        campaign.missions.push(Mission::new());
+
+        campaign.reconstruct_original_save_history(&[2, 1, 2]);
+
+        assert_eq!(campaign.recent_campaign_mission_indices(), vec![2, 1, 2]);
+        assert_eq!(campaign.history_totals().attempts, 4);
+        assert_eq!(campaign.history_totals().wins, 1);
+        assert_eq!(campaign.history_totals().unknown_outcomes, 3);
+        for attempt in campaign
+            .missions
+            .iter()
+            .flat_map(|mission| mission.attempt_history().attempts())
+        {
+            assert_eq!(
+                attempt.source(),
+                crate::campaign_history::MissionAttemptSource::OriginalSaveImport
+            );
+            assert!(attempt.stats().is_empty());
+            assert_eq!(attempt.rules(), None);
+            assert_eq!(attempt.achievements(), None);
+        }
+        campaign.validate_history_schema().unwrap();
+    }
+
+    #[test]
+    fn history_replay_restores_full_preselection_state_and_keeps_attempt_badges() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let mut completed = Mission::new();
+        completed.status = MissionStatus::Won;
+        completed.age = 4;
+        campaign.missions.push(completed);
+        campaign.missions.push(Mission::new());
+        campaign.current_mission_idx = Some(0);
+        campaign.last_mission_idx = Some(2);
+        campaign.next_mission_idx = Some(2);
+        campaign.blazon_mission_idx = Some(2);
+        campaign.accessible_mission_indices = vec![2];
+        campaign.pending_accessible_mission_indices = vec![0];
+        campaign.set_value(CampaignValue::Score, 17);
+        campaign.set_value(CampaignValue::Ransom, 321);
+        campaign.set_value(CampaignValue::Custom1, 44);
+        campaign.ares = 6;
+        let mut robin = PcDescription::default();
+        robin.character_profile_idx = Some(CharacterProfileIdx(3));
+        robin.status.num_ales = 1;
+        robin.status.num_arrows = 2;
+        robin.status.num_apples = 3;
+        robin.status.num_rations = 4;
+        robin.status.num_stones = 5;
+        robin.status.num_wasp_nests = 6;
+        robin.status.num_nets = 7;
+        robin.status.num_plants = 8;
+        robin.status.num_purses = 9;
+        robin.status.human_status.hand_to_hand.experience = 77;
+        campaign.characters.push(robin);
+        campaign.gang_indices = vec![0];
+        campaign.reservist_indices = vec![0];
+        campaign.mission_team_indices = vec![0];
+        campaign.peasant_names = vec!["Alys".into()];
+        campaign.collected_relics = vec![11, 22];
+        campaign.production_sectors[0].amount = 13;
+
+        let expected_values = bitcode::encode(&campaign.values);
+        let expected_character = campaign.characters[0].status.clone();
+        let expected_production = bitcode::encode(&campaign.production_sectors);
+
+        campaign.select_next_mission(Some(1), &ProfileManager::new());
+        assert_eq!(campaign.history_replay_mission(), Some(1));
+        campaign.validate_history_schema().unwrap();
+        let json_practice = serde_json::to_string(&campaign)
+            .expect("practice return state must serialize into a native save");
+        campaign = serde_json::from_str(&json_practice)
+            .expect("practice return state must deserialize from a native save");
+        let encoded_practice = bitcode::encode(&campaign);
+        campaign = bitcode::decode(&encoded_practice)
+            .expect("practice return state must survive native snapshot serialization");
+        campaign.snapshot_with_simulation(7, crate::engine::SimConfig::default());
+        campaign.current_mission_idx = Some(1);
+        campaign.next_mission_idx = None;
+        campaign.last_mission_idx = Some(0);
+        campaign.blazon_mission_idx = None;
+        campaign.accessible_mission_indices.clear();
+        campaign.pending_accessible_mission_indices.clear();
+        campaign.ares = 9;
+        campaign.missions[1].status = MissionStatus::Lost;
+        campaign.missions[1].age = 99;
+        campaign.set_value(CampaignValue::Score, 9_999);
+        campaign.set_value(CampaignValue::Ransom, 0);
+        campaign.characters[0].status = crate::pc_status::PcStatus::default();
+        campaign.gang_indices.clear();
+        campaign.reservist_indices.clear();
+        campaign.mission_team_indices.clear();
+        campaign.peasant_names.clear();
+        campaign.collected_relics.clear();
+        campaign.production_sectors[0].amount = 0;
+
+        let mut stat = crate::mission_stat::MissionStat::default();
+        stat.added_score = 123;
+        let results = achievement_results(
+            AchievementId::Ghost,
+            crate::achievement::AchievementEvaluation::Earned,
+        );
+        campaign.record_mission_attempt(
+            1,
+            crate::campaign_history::MissionAttemptOutcome::Won,
+            Some(123_456),
+            Some(987_654),
+            80,
+            crate::engine::SimConfig::default(),
+            &stat,
+            Some(results),
+        );
+
+        assert_eq!(campaign.current_mission_idx, Some(0));
+        assert_eq!(campaign.last_mission_idx, Some(2));
+        assert_eq!(campaign.next_mission_idx, Some(2));
+        assert_eq!(campaign.blazon_mission_idx, Some(2));
+        assert_eq!(campaign.history_replay_mission(), None);
+        assert!(campaign.practice_return_snapshot.is_none());
+        assert!(campaign.pre_mission_snapshot.is_none());
+        assert_eq!(campaign.pre_mission_rng_seed, None);
+        assert_eq!(campaign.pre_mission_sim_config, None);
+        assert!(!campaign.pre_mission_was_preselected);
+        assert_eq!(bitcode::encode(&campaign.values), expected_values);
+        assert_eq!(campaign.ares, 6);
+        assert_eq!(campaign.accessible_mission_indices, vec![2]);
+        assert_eq!(campaign.pending_accessible_mission_indices, vec![0]);
+        assert_eq!(campaign.missions[1].status, MissionStatus::Won);
+        assert_eq!(campaign.missions[1].age, 4);
+        assert_eq!(campaign.characters[0].status, expected_character);
+        assert_eq!(campaign.gang_indices, vec![0]);
+        assert_eq!(campaign.reservist_indices, vec![0]);
+        assert_eq!(campaign.mission_team_indices, vec![0]);
+        assert_eq!(campaign.peasant_names, vec!["Alys"]);
+        assert_eq!(campaign.collected_relics, vec![11, 22]);
+        assert_eq!(
+            bitcode::encode(&campaign.production_sectors),
+            expected_production
+        );
+        let attempts = campaign.missions[1].attempt_history().attempts();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(
+            attempts[0].kind(),
+            crate::campaign_history::MissionAttemptKind::HistoryReplay
+        );
+        assert_eq!(attempts[0].stats().added_score, Some(123));
+        let key = campaign.latest_mission_attempt_key().unwrap();
+        campaign
+            .attest_mission_achievement_attempt(
+                key,
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+            )
+            .unwrap();
+        assert!(
+            campaign
+                .mission_achievement_badges(1)
+                .unwrap()
+                .contains(AchievementId::Ghost)
+        );
+        campaign.validate_history_schema().unwrap();
+    }
+
+    #[test]
+    fn replay_playback_result_does_not_mutate_history() {
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission::new());
+        let update = record_and_attest_achievement_attempt(
+            &mut campaign,
+            achievement_results(
+                AchievementId::Ghost,
+                crate::achievement::AchievementEvaluation::Earned,
+            ),
+            AchievementRunContext {
+                replay_playback: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(!update.persisted());
+        assert!(update.newly_earned.is_empty());
+        assert!(campaign.earned_achievements().is_empty());
+        let attempt = campaign.mission_attempts(0).unwrap().last().unwrap();
+        assert!(
+            attempt.achievements().is_some(),
+            "raw result remains auditable"
+        );
+        assert!(
+            attempt
+                .achievement_attestation()
+                .unwrap()
+                .decision()
+                .blockers
+                .contains(crate::achievement::AchievementUnlockBlockers::REPLAY_PLAYBACK)
+        );
     }
 
     fn profile_manager_with_robin_party() -> ProfileManager {

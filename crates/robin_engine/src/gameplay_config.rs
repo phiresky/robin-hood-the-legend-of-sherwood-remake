@@ -6,6 +6,49 @@ const fn enabled_by_default() -> bool {
     true
 }
 
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum CampaignPresentationMode {
+    ClassicMap = 0,
+    ProgressTree = 1,
+    SherwoodMuseum = 2,
+}
+
+impl CampaignPresentationMode {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ClassicMap => Self::ProgressTree,
+            Self::ProgressTree => Self::SherwoodMuseum,
+            Self::SherwoodMuseum => Self::ClassicMap,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicMap => "Classic map",
+            Self::ProgressTree => "Progress tree",
+            Self::SherwoodMuseum => "Sherwood museum",
+        }
+    }
+}
+
+impl Default for CampaignPresentationMode {
+    fn default() -> Self {
+        Self::ProgressTree
+    }
+}
+
 /// Gameplay extensions which intentionally differ from the original game.
 #[derive(
     Debug,
@@ -56,6 +99,12 @@ pub struct GameplayConfig {
     /// `Default` value below and opt into the extension.
     #[serde(default)]
     pub reusable_cloaks: bool,
+
+    /// Campaign-selection presentation. This affects visuals only; complete
+    /// attempt details and completed-mission practice remain available in all
+    /// modes.
+    #[serde(default)]
+    pub campaign_presentation: CampaignPresentationMode,
 }
 
 const fn default_show_production_forecast() -> bool {
@@ -70,6 +119,7 @@ impl Default for GameplayConfig {
             enable_unbinding: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
+            campaign_presentation: CampaignPresentationMode::ProgressTree,
         }
     }
 }
@@ -92,6 +142,10 @@ mod tests {
         assert!(config.enable_unbinding);
         assert!(config.show_production_forecast);
         assert!(!config.reusable_cloaks);
+        assert_eq!(
+            config.campaign_presentation,
+            super::CampaignPresentationMode::ProgressTree
+        );
     }
 
     #[test]
