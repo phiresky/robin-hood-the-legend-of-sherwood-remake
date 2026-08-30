@@ -1518,7 +1518,6 @@ pub enum CrossNpcAction {
     SetLeftCombatNeighbour {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -1528,7 +1527,6 @@ pub enum CrossNpcAction {
     SetRightCombatNeighbour {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -1539,7 +1537,6 @@ pub enum CrossNpcAction {
     SetArcherBehindMe {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -1550,7 +1547,6 @@ pub enum CrossNpcAction {
     SetShieldBearerBeforeMe {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -1567,13 +1563,11 @@ pub enum CrossNpcAction {
     UpdateLeftCombatNeighbour {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
         old_left: Option<AiEntityHandle>,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -1583,13 +1577,11 @@ pub enum CrossNpcAction {
     UpdateRightCombatNeighbour {
         target: NpcHandle,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
         old_right: Option<AiEntityHandle>,
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -2298,7 +2290,6 @@ pub struct DoorCombatInfo {
     /// Original `SendBeforeDoorToFight` explicitly permits a null adversary.
     /// Slot zero is a live human, so only `None` represents that null pointer.
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -2310,7 +2301,7 @@ mod nullable_stimulus_reference_tests {
     use super::*;
 
     #[test]
-    fn legacy_door_adversary_zero_decodes_as_null() {
+    fn current_door_adversary_rejects_legacy_bare_zero() {
         let mut value = serde_json::to_value(DoorCombatInfo {
             delay: 1,
             goal: Position::default(),
@@ -2319,8 +2310,7 @@ mod nullable_stimulus_reference_tests {
         })
         .unwrap();
         value["adversary"] = serde_json::json!(0);
-        let info: DoorCombatInfo = serde_json::from_value(value).unwrap();
-        assert_eq!(info.adversary, None);
+        assert!(serde_json::from_value::<DoorCombatInfo>(value).is_err());
     }
 
     #[test]
@@ -2452,7 +2442,6 @@ pub struct Stimulus {
     /// Optional Original stimulus owner pointer. This is independent of the
     /// actor currently processing the stimulus and is initialized to NULL.
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -2627,7 +2616,6 @@ pub struct ReconnaissanceReport {
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]

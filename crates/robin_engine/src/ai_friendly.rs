@@ -2774,7 +2774,7 @@ mod tests {
     fn review_running_to_soldier_requires_the_live_antagonist_view() {
         let sim = crate::sim_rng::test_context();
         let mut ai = FriendlyAi::new(1);
-        ai.base.antagonist = 42;
+        ai.base.antagonist = Some(AiEntityHandle::new(42));
         ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
         ai.think_expected_event(
             &sim,
@@ -3205,11 +3205,11 @@ mod tests {
                 path_last_waypoint_index: 0,
                 path_forward_movement: true,
                 patrol_hiking_path_index: None,
-                interesting_object: 0,
+                interesting_object: None,
                 report_type: crate::ai::ReportType::Nothing,
                 report_seek_position: enemy_pos,
                 report_seen_bodies: Vec::new(),
-                report_charly: 0,
+                report_charly: None,
             },
         );
         let ctx = AiContext {
@@ -3556,11 +3556,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: crate::ai::ReportType::Nothing,
             report_seek_position: pos,
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -3728,7 +3728,7 @@ mod tests {
             );
             assert!(ok, "alert_soldier must succeed when at least one candidate");
             // Antagonist must be the same-layer one despite being farther.
-            assert_eq!(ai.base.antagonist, 20);
+            assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(20)));
         });
     }
 
@@ -3794,7 +3794,7 @@ mod tests {
             None,
             None,
         ));
-        assert_eq!(ai.base.antagonist, 130);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(130)));
     }
 
     #[test]
@@ -3872,7 +3872,7 @@ mod tests {
         // owner from the gate-snapped planning position would choose 20;
         // dropping the nonzero Z component while retaining raw X would choose
         // 30. Original's literal raw 3D operation must instead choose 10.
-        assert_eq!(ai.base.antagonist, 10);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(10)));
     }
 
     #[test]
@@ -4154,7 +4154,7 @@ mod tests {
         use crate::ai_entity_view::AiEntityViewMap;
         use crate::element::Camp;
         let mut ai = FriendlyAi::new(1);
-        ai.base.antagonist = 42;
+        ai.base.antagonist = Some(AiEntityHandle::new(42));
 
         let mut views = AiEntityViewMap::new();
         views.insert(

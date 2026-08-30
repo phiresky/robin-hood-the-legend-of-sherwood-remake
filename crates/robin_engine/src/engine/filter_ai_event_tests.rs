@@ -4385,7 +4385,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         soldier.npc.view_radius = 400;
         let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
         ai.base.me = opponent.index();
-        ai.base.primary_target = stunned.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(stunned.index()));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         // An unrelated deferred detection event must not be stolen by the
@@ -6396,8 +6396,8 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
         .expect("detection RNG owner has Enemy AI");
-    owner_ai.base.primary_target = entering_primary.index();
-    owner_ai.missed_pc = entering_primary.index();
+    owner_ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
+    owner_ai.missed_pc = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;
     owner_ai
         .base
@@ -6693,7 +6693,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.base.primary_target = target_raw;
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_raw));
         ai.set_state(
             crate::ai::AiState::Attacking,
             crate::ai::Substate::AttackingSwordfight,
@@ -6728,7 +6728,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.base.primary_target = 0;
+        ai.base.primary_target = None;
         ai.set_state(
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,
@@ -6766,7 +6766,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
             .unwrap()
             .friendly_ai_mut()
             .unwrap();
-        ai.base.primary_target = target.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
         ai.set_state(
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,

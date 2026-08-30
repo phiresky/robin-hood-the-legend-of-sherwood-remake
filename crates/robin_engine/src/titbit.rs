@@ -381,59 +381,6 @@ impl ElementHandle {
     pub const INVALID: Option<Self> = None;
 }
 
-pub(crate) fn deserialize_optional_element_handle<'de, D>(
-    deserializer: D,
-) -> Result<Option<ElementHandle>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Raw(u32),
-        Optional(Option<u32>),
-    }
-
-    let raw = match Wire::deserialize(deserializer)? {
-        Wire::Raw(raw) => Some(raw),
-        Wire::Optional(raw) => raw,
-    };
-    Ok(raw.filter(|&raw| raw != u32::MAX).map(ElementHandle))
-}
-
-pub(crate) fn deserialize_optional_titbit_id<'de, D>(
-    deserializer: D,
-) -> Result<Option<TitbitId>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Raw(u32),
-        Optional(Option<u32>),
-    }
-
-    let raw = match Wire::deserialize(deserializer)? {
-        Wire::Raw(raw) => Some(raw),
-        Wire::Optional(raw) => raw,
-    };
-    Ok(raw.and_then(TitbitId::new))
-}
-
-pub(crate) fn deserialize_optional_titbit_ids<'de, D>(
-    deserializer: D,
-) -> Result<Vec<Option<TitbitId>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let values = Vec::<Option<u32>>::deserialize(deserializer)?;
-    Ok(values
-        .into_iter()
-        .map(|raw| raw.and_then(TitbitId::new))
-        .collect())
-}
-
 // ---------------------------------------------------------------------------
 // TitbitInfo — one floating indicator
 // ---------------------------------------------------------------------------
@@ -457,10 +404,8 @@ pub struct TitbitInfo {
     pub frame_count: u16,
 
     /// Entity this titbit is attached to / draws info from.
-    #[serde(default, deserialize_with = "deserialize_optional_element_handle")]
     pub element_supplier: Option<ElementHandle>,
     /// PC actor that manages this titbit (quick-action chain).
-    #[serde(default, deserialize_with = "deserialize_optional_element_handle")]
     pub element_manager: Option<ElementHandle>,
 
     pub layer: u16,
@@ -1491,28 +1436,27 @@ mod tests {
     }
 
     #[test]
-    fn legacy_serde_element_sentinels_migrate_to_none() {
+    fn current_serde_preserves_slot_zero_and_explicit_absence() {
         let mut mgr = TitbitManager::new();
         mgr.add_titbit(
             pt3(10.0, 20.0, 5.0),
             1,
             TitbitKind::Emoticon,
-            ElementHandle(7),
+            ElementHandle(0),
             0,
-            ElementHandle(8),
+            ElementHandle::INVALID,
             false,
             INVALID_ID,
             true,
             Some(20.0),
             Some(1),
         );
-        let mut encoded = serde_json::to_value(&mgr).unwrap();
-        let titbit = encoded["titbits"][0].as_object_mut().unwrap();
-        titbit.insert("element_supplier".into(), serde_json::json!(u32::MAX));
-        titbit.insert("element_manager".into(), serde_json::json!(u32::MAX));
-
+        let encoded = serde_json::to_value(&mgr).unwrap();
         let restored: TitbitManager = serde_json::from_value(encoded).unwrap();
-        assert_eq!(restored.titbits()[0].element_supplier, None);
+        assert_eq!(
+            restored.titbits()[0].element_supplier,
+            Some(ElementHandle(0))
+        );
         assert_eq!(restored.titbits()[0].element_manager, None);
     }
 

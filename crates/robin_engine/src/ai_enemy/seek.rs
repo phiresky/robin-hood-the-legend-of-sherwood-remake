@@ -1970,11 +1970,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -1996,7 +1996,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -2005,11 +2005,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -2037,7 +2037,7 @@ mod tests {
         ai.base.macro_in_progress = true;
         ai.base.macro_command_offset = 23;
         ai.base.number_of_remaining_macro_bytes = 0;
-        ai.base.checkpoint_charly = 96;
+        ai.base.checkpoint_charly = Some(AiEntityHandle::new(96));
 
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(96, charly_view());
@@ -2075,7 +2075,7 @@ mod tests {
         ai.soldier_profile_rank = ProfileRank::Soldier;
         ai.base.current_state = AiState::Default;
         ai.base.current_substate = Substate::DefaultLookingForCharly;
-        ai.base.checkpoint_charly = 96;
+        ai.base.checkpoint_charly = Some(AiEntityHandle::new(96));
 
         let mut charly = charly_view();
         charly.has_patrol_path = true;
@@ -2132,7 +2132,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(40);
         ai.company_number = 0;
-        ai.base.antagonist = 99;
+        ai.base.antagonist = Some(AiEntityHandle::new(99));
         let center = Position {
             x: 10.0,
             y: 20.0,
@@ -2201,7 +2201,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(44);
         ai.company_number = 0;
-        ai.base.antagonist = 7;
+        ai.base.antagonist = Some(AiEntityHandle::new(7));
         ai.seek_flags = SeekFlags::REPORT_OFFICER_AFTER;
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
@@ -2322,7 +2322,7 @@ mod tests {
         let mut ai = EnemyAi::new(43);
         ai.company_number = 0;
         // Force the AlertOfficer arm independently of the random answer.
-        ai.base.antagonist = 99;
+        ai.base.antagonist = Some(AiEntityHandle::new(99));
         let center = Position {
             x: 60.0,
             y: 90.0,
@@ -2645,7 +2645,7 @@ mod tests {
         // away identifying the beggar. Original's retained pointer makes the
         // resumed SeekNextPoint clear that intervening lock again.
         global.seek_points[0].locked = true;
-        ai.beggar_to_examine = 0;
+        ai.beggar_to_examine = None;
         ai.my_seek_points.push(1);
 
         ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());

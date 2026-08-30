@@ -5088,11 +5088,17 @@ mod tests {
             MapPoint::new(64.0, 64.0),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&[projection]),
         );
-        assert_eq!(legacy_unknown.layer, 2);
+        assert_eq!(
+            legacy_unknown.layer,
+            crate::position_interface::Layer::new(2)
+        );
         assert_eq!(legacy_unknown.sector.map(u16::from), Some(22));
 
         let exact_ground = grid.resolve_projectile_ground_landing(MapPoint::new(64.0, 64.0));
-        assert_eq!(exact_ground.layer, 0);
+        assert_eq!(
+            exact_ground.layer,
+            Some(crate::position_interface::Layer::ZERO)
+        );
         assert_eq!(exact_ground.sector, None);
         assert_eq!(exact_ground.obstacle_index, None);
     }

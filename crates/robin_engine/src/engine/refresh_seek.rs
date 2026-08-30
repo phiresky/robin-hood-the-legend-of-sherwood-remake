@@ -1486,10 +1486,8 @@ mod tests {
                 .flat_map(|sequence| &sequence.elements)
                 .any(|element| matches!(
                     element.data,
-                    SequenceElementData::Movement {
-                        gate_id: Some(crate::gate::DoorIndex::new(7).expect("valid door index")),
-                        ..
-                    }
+                    SequenceElementData::Movement { gate_id: Some(door), .. }
+                        if door.get() == 7
                 )),
             "live point Seek must fall back to the reconstructed gate graph"
         );

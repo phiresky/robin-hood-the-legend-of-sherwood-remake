@@ -98,7 +98,7 @@ impl IntoOptionalAiHandle for Option<AiEntityHandle> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct TaggedAiEntityHandle {
     entity: u32,
 }
@@ -121,27 +121,18 @@ where
     }
 }
 
-/// Decode both the tagged current representation and pre-migration raw JSON,
-/// where bare zero represented `NULL`. Only the tagged representation may
-/// encode a live entity in arena slot zero.
+/// Decode the tagged current representation. Historical Rust JSON is not
+/// accepted here: schema-version gates reject it before runtime state is
+/// decoded, while Original C++ pointer sentinels are handled exclusively by
+/// `legacy_save`.
 pub(crate) fn deserialize_optional_ai_handle<'de, D>(
     deserializer: D,
 ) -> Result<Option<AiEntityHandle>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum WireHandle {
-        Tagged { entity: u32 },
-        Legacy(u32),
-    }
-
-    Ok(match Option::<WireHandle>::deserialize(deserializer)? {
-        Some(WireHandle::Tagged { entity }) => Some(AiEntityHandle::new(entity)),
-        Some(WireHandle::Legacy(0)) | None => None,
-        Some(WireHandle::Legacy(raw)) => Some(AiEntityHandle::new(raw)),
-    })
+    Ok(Option::<TaggedAiEntityHandle>::deserialize(deserializer)?
+        .map(|tagged| AiEntityHandle::new(tagged.entity)))
 }
 
 #[cfg(test)]
@@ -151,7 +142,6 @@ mod optional_ai_handle_serde_tests {
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct Fixture {
         #[serde(
-            default,
             serialize_with = "serialize_optional_ai_handle",
             deserialize_with = "deserialize_optional_ai_handle"
         )]
@@ -159,15 +149,18 @@ mod optional_ai_handle_serde_tests {
     }
 
     #[test]
-    fn legacy_bare_zero_decodes_as_null() {
-        let fixture: Fixture = serde_json::from_str(r#"{"handle":0}"#).unwrap();
-        assert_eq!(fixture.handle, None);
+    fn current_schema_rejects_legacy_bare_zero() {
+        assert!(serde_json::from_str::<Fixture>(r#"{"handle":0}"#).is_err());
     }
 
     #[test]
-    fn legacy_bare_nonzero_decodes_as_live_handle() {
-        let fixture: Fixture = serde_json::from_str(r#"{"handle":17}"#).unwrap();
-        assert_eq!(fixture.handle, Some(AiEntityHandle::new(17)));
+    fn current_schema_rejects_legacy_bare_nonzero() {
+        assert!(serde_json::from_str::<Fixture>(r#"{"handle":17}"#).is_err());
+    }
+
+    #[test]
+    fn current_schema_requires_the_nullable_handle_field() {
+        assert!(serde_json::from_str::<Fixture>(r#"{}"#).is_err());
     }
 
     #[test]

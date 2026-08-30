@@ -1896,10 +1896,6 @@ impl PcAmmoData {
     bitcode::Decode,
 )]
 pub struct PcPortraitQuickIconState {
-    #[serde(
-        default,
-        deserialize_with = "crate::titbit::deserialize_optional_titbit_id"
-    )]
     pub titbit_id: Option<crate::titbit::TitbitId>,
     pub running: bool,
 }
@@ -2024,10 +2020,6 @@ pub struct PcData {
     pub quick_action_special_counts: Vec<u16>,
     pub quick_action_buttons: Vec<u16>,
     pub quick_action_interactors: Vec<Option<EntityId>>,
-    #[serde(
-        default,
-        deserialize_with = "crate::titbit::deserialize_optional_titbit_ids"
-    )]
     pub titbits: Vec<Option<crate::titbit::TitbitId>>,
     pub portrait: PcPortraitState,
 
@@ -3237,10 +3229,6 @@ pub struct ProjectileData {
     /// pointer identity into their stimulus position.
     #[serde(default)]
     pub trajectory_origin_sector_index: Option<crate::fast_find_grid::SectorIndex>,
-    #[serde(
-        default,
-        deserialize_with = "crate::position_interface::deserialize_optional_layer"
-    )]
     pub trajectory_origin_layer: Option<crate::position_interface::Layer>,
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
@@ -3401,10 +3389,6 @@ pub struct PurseData {
     /// On a coin: layer the coin should snap to on landing.  Stored
     /// at spawn so `HitObstacle` can re-key the coin onto its goal
     /// layer. On a purse: `None` because the field is not applicable.
-    #[serde(
-        default,
-        deserialize_with = "crate::position_interface::deserialize_optional_layer"
-    )]
     pub layer_goal: Option<crate::position_interface::Layer>,
     /// On a coin: sector the coin should snap to on landing (None
     /// when the scatter target wasn't resolved against a known

@@ -1331,6 +1331,7 @@ fn spawn_arrow_creates_flying_projectile_with_trajectory() {
         target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 0.0,
@@ -1380,6 +1381,7 @@ fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
             time: 2,
         }],
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1522,6 +1524,7 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
         target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1583,6 +1586,7 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             time: 1,
         }],
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1609,6 +1613,7 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             time: 1,
         }],
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -1685,6 +1690,7 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
             time: 1,
         }],
         damage: 30,
+        layer: 0,
         lands_in_hole: false,
         initial_velocity: WorldVec3D {
             x: 1.0,
@@ -3262,7 +3268,7 @@ fn raised_dry_terminal_obstacle_ignores_projected_global_hole() {
     let (_, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
         trajectory_into_material_test_wall(vec![], &water_zones);
 
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
     assert!(terminal_impact);
     assert!(
         !terminal_lands_in_hole,
@@ -3293,7 +3299,7 @@ fn terminal_obstacle_hole_extends_through_exact_local_polygon() {
     let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
         trajectory_into_material_test_wall(vec![local_hole.clone()], &water_zones);
 
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
     assert!(terminal_impact);
     assert!(terminal_lands_in_hole);
     assert!(
@@ -3374,7 +3380,7 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     );
 
     assert!(!trajectory.is_empty());
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
 }
 
 #[test]
@@ -4498,7 +4504,7 @@ fn purse_and_coin_constructors_defer_their_virtual_primer_to_engine_owner() {
     let end = WorldPoint3D::new(200.0, 0.0, 0.0);
     for entity in [
         spawn_purse(thrower, start, end, 0, None),
-        spawn_coin(None, start, end, 0, 0, None, APEX_BEGGAR_COIN, None),
+        spawn_coin(None, start, end, 0, None, None, APEX_BEGGAR_COIN, None),
     ] {
         let Entity::Projectile(projectile) = entity else {
             unreachable!()

@@ -316,68 +316,6 @@ impl std::fmt::Display for Layer {
     }
 }
 
-/// Serde migration for runtime layers that were previously stored as a raw
-/// `u16`. Current JSON uses `null` for absence; historical snapshots used
-/// `65535`. Native bitcode snapshots are schema-versioned and round-trip the
-/// typed `Option` directly.
-pub(crate) fn deserialize_optional_layer<'de, D>(deserializer: D) -> Result<Option<Layer>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Raw(u16),
-        Optional(Option<u16>),
-    }
-
-    let raw = match Wire::deserialize(deserializer)? {
-        Wire::Raw(raw) => Some(raw),
-        Wire::Optional(raw) => raw,
-    };
-    Ok(raw.and_then(Layer::new))
-}
-
-pub(crate) fn deserialize_optional_pathfinder<'de, D>(
-    deserializer: D,
-) -> Result<Option<PathfinderIndex>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Raw(u16),
-        Optional(Option<u16>),
-    }
-
-    let raw = match Wire::deserialize(deserializer)? {
-        Wire::Raw(raw) => Some(raw),
-        Wire::Optional(raw) => raw,
-    };
-    Ok(raw.and_then(PathfinderIndex::new))
-}
-
-pub(crate) fn deserialize_optional_door<'de, D>(
-    deserializer: D,
-) -> Result<Option<crate::gate::DoorIndex>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Raw(u32),
-        Optional(Option<u32>),
-    }
-
-    let raw = match Wire::deserialize(deserializer)? {
-        Wire::Raw(raw) => Some(raw),
-        Wire::Optional(raw) => raw,
-    };
-    Ok(raw.and_then(crate::gate::DoorIndex::new))
-}
-
 /// Index into the loaded pathfinder/move-box table. `0xffff` means
 /// "unconfigured" in Original constructors and at binary boundaries.
 #[derive(
@@ -609,18 +547,9 @@ impl std::hash::Hash for SectorHandle {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum SectorHandleSerde {
-    Legacy(nonmax::NonMaxU16),
-    Exact {
-        public: nonmax::NonMaxU16,
-        arena: crate::fast_find_grid::SectorIndex,
-    },
-    Number {
-        number: crate::sector::SectorNumber,
-        #[serde(default)]
-        arena: Option<crate::fast_find_grid::SectorIndex>,
-    },
+struct SectorHandleSerde {
+    number: crate::sector::SectorNumber,
+    arena: Option<crate::fast_find_grid::SectorIndex>,
 }
 
 impl Serialize for SectorHandle {
@@ -629,7 +558,7 @@ impl Serialize for SectorHandle {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            SectorHandleSerde::Number {
+            SectorHandleSerde {
                 number: self.public,
                 arena: self.arena,
             }
@@ -646,19 +575,10 @@ impl<'de> Deserialize<'de> for SectorHandle {
         D: serde::Deserializer<'de>,
     {
         if deserializer.is_human_readable() {
-            Ok(match SectorHandleSerde::deserialize(deserializer)? {
-                SectorHandleSerde::Legacy(public) => Self {
-                    public: crate::sector::SectorNumber::new(public.get() as i16),
-                    arena: None,
-                },
-                SectorHandleSerde::Exact { public, arena } => Self {
-                    public: crate::sector::SectorNumber::new(public.get() as i16),
-                    arena: Some(arena),
-                },
-                SectorHandleSerde::Number { number, arena } => Self {
-                    public: number,
-                    arena,
-                },
+            let SectorHandleSerde { number, arena } = SectorHandleSerde::deserialize(deserializer)?;
+            Ok(Self {
+                public: number,
+                arena,
             })
         } else {
             let (public, arena) =
@@ -844,9 +764,7 @@ pub struct PositionInterface {
     directional_tolerance: bool,
 
     // -- Pathfinder indices --
-    #[serde(default, deserialize_with = "deserialize_optional_pathfinder")]
     pathfinder_index: Option<PathfinderIndex>,
-    #[serde(default, deserialize_with = "deserialize_optional_pathfinder")]
     pathfinder_index_alternate: Option<PathfinderIndex>,
 
     // -- Move boxes --
@@ -870,19 +788,15 @@ pub struct PositionInterface {
     saved_old_posture: crate::element::Posture,
 
     // -- Layer & sector --
-    #[serde(default, deserialize_with = "deserialize_optional_layer")]
     layer: Option<Layer>,
     sector: Option<SectorHandle>,
     /// Exact `FastFindGrid::level.sectors` arena identity paired with
     /// `sector`.  `SectorHandle` retains the compact/public sector number,
     /// which is not sufficient to distinguish overlapping sector objects.
-    #[serde(default)]
     sector_index: Option<SectorIndex>,
-    #[serde(default, deserialize_with = "deserialize_optional_layer")]
     layer_goal: Option<Layer>,
     sector_goal: Option<SectorHandle>,
     /// Arena identity paired with `sector_goal`.
-    #[serde(default)]
     sector_goal_index: Option<SectorIndex>,
 
     // -- Obstacle / plane --
@@ -890,7 +804,6 @@ pub struct PositionInterface {
     plane: Option<PlaneZCoeffs>,
 
     // -- Door --
-    #[serde(default, deserialize_with = "deserialize_optional_door")]
     door: Option<DoorHandle>,
     door_direction: bool,
 
@@ -2504,24 +2417,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sector_handle_roundtrips_legacy_and_exact_forms_across_serde_formats() {
-        let legacy = SectorHandle::new(23).unwrap();
-        let exact = legacy.with_arena_index(crate::fast_find_grid::SectorIndex::new(41).unwrap());
+    fn sector_handle_roundtrips_current_signed_exact_schema() {
+        let number_only = SectorHandle::new(23).unwrap();
+        let exact =
+            number_only.with_arena_index(crate::fast_find_grid::SectorIndex::new(41).unwrap());
+        let out_of_map = SectorHandle::from_number(crate::sector::SectorNumber::new(-1));
 
-        assert_eq!(serde_json::to_string(&legacy).unwrap(), "23");
+        assert_eq!(
+            serde_json::to_string(&number_only).unwrap(),
+            r#"{"number":23,"arena":null}"#
+        );
         assert_eq!(
             serde_json::to_string(&exact).unwrap(),
-            r#"{"public":23,"arena":41}"#
+            r#"{"number":23,"arena":41}"#
         );
-        let legacy_from_json: SectorHandle = serde_json::from_str("23").unwrap();
+        assert_eq!(
+            serde_json::to_string(&out_of_map).unwrap(),
+            r#"{"number":-1,"arena":null}"#
+        );
+        let number_only_from_json: SectorHandle =
+            serde_json::from_str(r#"{"number":23,"arena":null}"#).unwrap();
         let exact_from_json: SectorHandle =
-            serde_json::from_str(r#"{"public":23,"arena":41}"#).unwrap();
-        assert_eq!(legacy_from_json.get(), legacy.get());
-        assert_eq!(legacy_from_json.arena_index(), None);
+            serde_json::from_str(r#"{"number":23,"arena":41}"#).unwrap();
+        assert_eq!(number_only_from_json.number(), number_only.number());
+        assert_eq!(number_only_from_json.arena_index(), None);
         assert_eq!(exact_from_json.get(), exact.get());
         assert_eq!(exact_from_json.arena_index(), exact.arena_index());
+        assert!(serde_json::from_str::<SectorHandle>("23").is_err());
+        assert!(serde_json::from_str::<SectorHandle>(r#"{"public":23,"arena":41}"#).is_err());
+        assert!(serde_json::from_str::<SectorHandle>(r#"{"number":23}"#).is_err());
 
-        let values = vec![legacy, exact];
+        let values = vec![number_only, exact, out_of_map];
         let bytes = bitcode::encode(&values);
         let restored: Vec<SectorHandle> =
             bitcode::decode(&bytes).expect("decode mixed sector handles");
@@ -3031,7 +2957,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_serde_sentinels_migrate_to_typed_absence() {
+    fn current_serde_rejects_legacy_spatial_sentinels() {
         let mut encoded = serde_json::to_value(PositionInterface::new()).unwrap();
         let object = encoded.as_object_mut().unwrap();
         object.insert("pathfinder_index".into(), serde_json::json!(u16::MAX));
@@ -3040,12 +2966,7 @@ mod tests {
         object.insert("layer_goal".into(), serde_json::json!(3));
         object.insert("door".into(), serde_json::json!(u32::MAX));
 
-        let restored: PositionInterface = serde_json::from_value(encoded).unwrap();
-        assert_eq!(restored.pathfinder_index, None);
-        assert_eq!(restored.pathfinder_index_alternate, PathfinderIndex::new(7));
-        assert_eq!(restored.optional_layer(), None);
-        assert_eq!(restored.optional_layer_goal(), Layer::new(3));
-        assert_eq!(restored.get_door(), None);
+        assert!(serde_json::from_value::<PositionInterface>(encoded).is_err());
     }
 
     #[test]
@@ -3084,7 +3005,7 @@ mod tests {
     }
 
     #[test]
-    fn sector_indices_roundtrip_and_default_from_legacy_serde() {
+    fn sector_indices_roundtrip_and_are_required_by_current_serde() {
         let mut pi = PositionInterface::new();
         pi.set_sector_topology(SectorHandle::new(18), SectorIndex::new(41));
         pi.set_goal_sector_topology(SectorHandle::new(19), SectorIndex::new(57));
@@ -3101,15 +3022,7 @@ mod tests {
         let object = legacy.as_object_mut().unwrap();
         object.remove("sector_index");
         object.remove("sector_goal_index");
-        let restored_legacy: PositionInterface = serde_json::from_value(legacy).unwrap();
-        assert_eq!(
-            restored_legacy.get_sector_topology(),
-            (SectorHandle::new(18), None)
-        );
-        assert_eq!(
-            restored_legacy.get_goal_sector_topology(),
-            (SectorHandle::new(19), None)
-        );
+        assert!(serde_json::from_value::<PositionInterface>(legacy).is_err());
     }
 
     #[test]

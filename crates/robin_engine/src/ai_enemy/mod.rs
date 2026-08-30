@@ -5312,11 +5312,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: ReportType::Nothing,
             report_seek_position: pos,
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -5333,7 +5333,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -5342,11 +5342,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -5540,7 +5540,7 @@ mod tests {
 
     fn charly_heading_to_officer() -> EnemyAi {
         let mut ai = EnemyAi::new(1);
-        ai.base.antagonist = 2;
+        ai.base.antagonist = Some(AiEntityHandle::new(2));
         ai.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
         ai
     }
@@ -5829,7 +5829,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: false,
             script_locked: false,
@@ -5838,11 +5838,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -6051,7 +6051,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
-        assert_eq!(ai.base.antagonist, 0);
+        assert_eq!(ai.base.antagonist, None);
     }
 
     #[test]
@@ -6458,13 +6458,13 @@ mod tests {
     #[test]
     fn reinitialize_them_list_does_not_preserve_unseen_primary_target() {
         let mut ai = EnemyAi::new(1);
-        ai.base.primary_target = 2;
+        ai.base.primary_target = Some(AiEntityHandle::new(2));
         ai.list_them = vec![2, 3];
 
         ai.reinitialize_them_list(&AiContext::default(), &AiPerTickData::stub());
 
         assert!(ai.list_them.is_empty());
-        assert_eq!(ai.base.primary_target, 2);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
     }
 
     #[test]
@@ -7087,7 +7087,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Wondering);
         assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
-        assert_eq!(ai.base.interesting_object, ale);
+        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(ale)));
         assert_eq!(ai.return_to_patrol_point, here);
         assert_eq!(ai.base.last_goto_destination, ale_position);
     }
@@ -7199,8 +7199,8 @@ mod tests {
         let mut ai = EnemyAi::new(223);
         ai.base.current_state = AiState::Wondering;
         ai.base.current_substate = Substate::WonderingWatching;
-        ai.left_combat_neighbour = 225;
-        ai.right_combat_neighbour = 227;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(225));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(227));
 
         ai.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7210,19 +7210,19 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.left_combat_neighbour, 0);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, None);
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(
             matches!(
                 ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
                 [
                     CrossNpcAction::SetRightCombatNeighbour {
                         target: 225,
-                        neighbour: 0,
+                        neighbour: None,
                     },
                     CrossNpcAction::SetLeftCombatNeighbour {
                         target: 227,
-                        neighbour: 0,
+                        neighbour: None,
                     },
                 ]
             ),
@@ -7237,7 +7237,7 @@ mod tests {
         archer.is_archer_unit = true;
         archer.base.current_state = AiState::Attacking;
         archer.base.current_substate = Substate::AttackingBowShooting;
-        archer.shield_bearer_before_me = 58;
+        archer.shield_bearer_before_me = Some(AiEntityHandle::new(58));
 
         archer.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7247,13 +7247,13 @@ mod tests {
         );
 
         assert_eq!(archer.base.current_state, AiState::Default);
-        assert_eq!(archer.shield_bearer_before_me, 0);
+        assert_eq!(archer.shield_bearer_before_me, None);
         let reciprocal = std::mem::take(&mut archer.base.outbox.reentrant.cross_npc_actions);
         assert!(matches!(
             reciprocal.as_slice(),
             [CrossNpcAction::SetArcherBehindMe {
                 target: 58,
-                archer: 0
+                archer: None
             }]
         ));
 
@@ -7263,15 +7263,15 @@ mod tests {
         let mut bearer = EnemyAi::new(58);
         bearer.base.current_state = AiState::Attacking;
         bearer.base.current_substate = Substate::AttackingProtectingWithShield;
-        bearer.base.primary_target = 101;
-        bearer.archer_behind_me = 64;
+        bearer.base.primary_target = Some(AiEntityHandle::new(101));
+        bearer.archer_behind_me = Some(AiEntityHandle::new(64));
         for action in reciprocal {
             if let CrossNpcAction::SetArcherBehindMe { target, archer } = action {
                 assert_eq!(target, bearer.base.me);
                 bearer.archer_behind_me = archer;
             }
         }
-        assert_eq!(bearer.archer_behind_me, 0);
+        assert_eq!(bearer.archer_behind_me, None);
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
@@ -7309,7 +7309,7 @@ mod tests {
         let mut bearer = EnemyAi::new(58);
         bearer.base.current_state = AiState::Attacking;
         bearer.base.current_substate = Substate::AttackingProtectingWithShield;
-        bearer.archer_behind_me = 64;
+        bearer.archer_behind_me = Some(AiEntityHandle::new(64));
 
         bearer.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7319,12 +7319,12 @@ mod tests {
         );
 
         assert_eq!(bearer.base.current_state, AiState::Default);
-        assert_eq!(bearer.archer_behind_me, 0);
+        assert_eq!(bearer.archer_behind_me, None);
         assert!(matches!(
             bearer.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [CrossNpcAction::SetShieldBearerBeforeMe {
                 target: 64,
-                shield_bearer: 0,
+                shield_bearer: None,
             }]
         ));
     }
@@ -7419,7 +7419,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -7428,11 +7428,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -7500,7 +7500,7 @@ mod tests {
 
         let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
-        assert_eq!(ai.base.primary_target, 2);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
@@ -8103,7 +8103,7 @@ mod tests {
         let stimulus = Stimulus::new(StimulusType::EventDone);
         let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
-        assert_eq!(ai.base.detected_body, 3);
+        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(3)));
         assert_eq!(
             ai.base.current_substate,
             Substate::WonderingApproachingToLoot
@@ -8149,8 +8149,8 @@ mod tests {
 
         ai.run_to_examine_body(2, &ctx, &AiPerTickData::stub(), None);
 
-        assert_eq!(ai.base.detected_body, 2);
-        assert_eq!(ai.base.interesting_object, 77);
+        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(2)));
+        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(77)));
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingNet);
     }
@@ -8250,7 +8250,7 @@ mod tests {
         let tick = AiPerTickData::stub();
         assert_eq!(
             ai.get_new_primary_target(PrimaryTargetFlags::empty(), &ctx, &tick),
-            0
+            None
         );
     }
 
@@ -8259,23 +8259,23 @@ mod tests {
         let mut ai = EnemyAi::new(74);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingPhalanx;
-        ai.left_combat_neighbour = 75;
-        ai.right_combat_neighbour = 72;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(75));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(72));
 
         ai.set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
 
-        assert_eq!(ai.left_combat_neighbour, 0);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, None);
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(matches!(
             ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [
                 CrossNpcAction::SetRightCombatNeighbour {
                     target: 75,
-                    neighbour: 0
+                    neighbour: None
                 },
                 CrossNpcAction::SetLeftCombatNeighbour {
                     target: 72,
-                    neighbour: 0
+                    neighbour: None
                 }
             ]
         ));
@@ -8286,26 +8286,26 @@ mod tests {
         let mut ai = EnemyAi::new(73);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingOverviewLookLeft;
-        ai.left_combat_neighbour = 72;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(72));
 
         ai.set_state(AiState::Attacking, Substate::AttackingRunningToPhalanx);
 
-        assert_eq!(ai.left_combat_neighbour, 72);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, Some(AiEntityHandle::new(72)));
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }
 
     #[test]
     fn running_to_phalanx_preserves_existing_neighbours_null_primary_target() {
         let mut ai = EnemyAi::new(78);
-        ai.right_combat_neighbour = 70;
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
         ai.list_them = vec![170];
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
             handle: 70,
             is_soldier: true,
-            primary_target: 0,
+            primary_target: None,
             ..FighterSnapshot::default()
         });
         tick.fighter_registry.push(FighterSnapshot {
@@ -8315,14 +8315,14 @@ mod tests {
             ..FighterSnapshot::default()
         });
 
-        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(0));
+        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(None));
     }
 
     #[test]
     fn running_to_phalanx_uses_right_soldier_after_non_soldier_left_neighbour() {
         let mut ai = EnemyAi::new(78);
-        ai.left_combat_neighbour = 169;
-        ai.right_combat_neighbour = 70;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(169));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
@@ -8333,11 +8333,14 @@ mod tests {
         tick.fighter_registry.push(FighterSnapshot {
             handle: 70,
             is_soldier: true,
-            primary_target: 170,
+            primary_target: Some(AiEntityHandle::new(170)),
             ..FighterSnapshot::default()
         });
 
-        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(170));
+        assert_eq!(
+            ai.phalanx_neighbour_primary_target(&tick),
+            Some(Some(AiEntityHandle::new(170)))
+        );
     }
 
     #[test]
@@ -8369,7 +8372,7 @@ mod tests {
             &tick,
         );
 
-        assert_eq!(target, 199);
+        assert_eq!(target, Some(AiEntityHandle::new(199)));
     }
 
     #[test]
@@ -8405,7 +8408,7 @@ mod tests {
                 &ctx,
                 &tick,
             ),
-            169
+            Some(AiEntityHandle::new(169))
         );
     }
 
@@ -8462,7 +8465,7 @@ mod tests {
         ];
 
         assert!(ai.is_too_proud_to_attack(&ctx, &tick, None));
-        assert_eq!(ai.base.primary_target, 107);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(107)));
     }
 
     #[test]
@@ -8523,7 +8526,7 @@ mod tests {
         ];
 
         assert!(!ai.is_too_proud_to_attack(&ctx, &tick, None));
-        assert_eq!(ai.base.primary_target, 320);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(320)));
     }
 
     #[test]
@@ -8586,7 +8589,7 @@ mod tests {
         let live_decision_multiplicity = std::collections::BTreeMap::from([(171, 1), (174, 0)]);
         let _ = ai.is_too_proud_to_attack(&ctx, &tick, Some(&live_decision_multiplicity));
 
-        assert_eq!(ai.base.primary_target, 174);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(174)));
     }
 
     fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {
@@ -8632,7 +8635,7 @@ mod tests {
         let mut ai = EnemyAi::new(111);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.primary_target = 84;
+        ai.base.primary_target = Some(AiEntityHandle::new(84));
         ai.list_them = vec![84, 171];
 
         let mut primary = soldier_view(test_position(1_519.443_7, 309.084_5));
@@ -8664,7 +8667,7 @@ mod tests {
         );
 
         assert_eq!(ai.list_them, vec![84]);
-        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(171)));
     }
 
     #[test]
@@ -8675,7 +8678,7 @@ mod tests {
         ai.base.current_substate = Substate::AttackingObserve;
         // A preceding queued Think selected another primary target before
         // this falling-edge OUTOFVIEW was delivered.
-        ai.base.primary_target = 84;
+        ai.base.primary_target = Some(AiEntityHandle::new(84));
         ai.list_them = vec![171];
 
         let forecast_position = test_position(1_226.175_4, 315.871_6);
@@ -8690,7 +8693,7 @@ mod tests {
         };
 
         let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 171;
+        tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(171));
         tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
             forecast_position,
             4,
@@ -8707,7 +8710,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(171)));
         assert_eq!(ai.base.seek_position, forecast_position);
     }
 }

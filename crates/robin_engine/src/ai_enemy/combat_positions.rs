@@ -4612,8 +4612,8 @@ mod tests {
             is_friendly: true,
             is_shield_bearer: true,
             current_substate: Substate::AttackingProtectingWithShield as u32,
-            left_combat_neighbour: 130,
-            right_combat_neighbour: 129,
+            left_combat_neighbour: Some(AiEntityHandle::new(130)),
+            right_combat_neighbour: Some(AiEntityHandle::new(129)),
             position: Position {
                 x: 1322.0,
                 y: 2276.0,
@@ -4634,7 +4634,7 @@ mod tests {
                 is_friendly: true,
                 is_shield_bearer: true,
                 current_substate: Substate::AttackingRunningToPhalanx as u32,
-                left_combat_neighbour: 133,
+                left_combat_neighbour: Some(AiEntityHandle::new(133)),
                 shield_bearer_direction: 8,
                 position: Position {
                     x: 1307.0,
@@ -4661,8 +4661,8 @@ mod tests {
                 is_friendly: true,
                 is_shield_bearer: true,
                 current_substate: Substate::AttackingPhalanx as u32,
-                left_combat_neighbour: 130,
-                right_combat_neighbour: 129,
+                left_combat_neighbour: Some(AiEntityHandle::new(130)),
+                right_combat_neighbour: Some(AiEntityHandle::new(129)),
                 position: Position {
                     x: 1337.8904,
                     y: 2213.9985,
@@ -4683,7 +4683,7 @@ mod tests {
                 is_friendly: true,
                 is_shield_bearer: true,
                 current_substate: Substate::AttackingPhalanx as u32,
-                right_combat_neighbour: 133,
+                right_combat_neighbour: Some(AiEntityHandle::new(133)),
                 position: Position {
                     x: 1359.2433,
                     y: 2211.426,
@@ -4715,7 +4715,7 @@ mod tests {
         // With no grid fixture both slots are authorized, so this focused
         // control chooses the closer right slot. Crucially it is derived from
         // co160's future seek anchor, not its raw body or door endpoint.
-        assert_eq!((left, right), (129, 0));
+        assert_eq!((left, right), (Some(AiEntityHandle::new(129)), None));
         assert_eq!(slot.x.to_bits(), 1285.3472_f32.to_bits());
         assert_eq!(slot.y.to_bits(), 2209.295_f32.to_bits());
     }
@@ -4780,7 +4780,10 @@ mod tests {
             ..AiContext::default()
         };
 
-        assert_eq!(ai.propose_left_and_right_neighbour(&ctx, &tick), (0, 178));
+        assert_eq!(
+            ai.propose_left_and_right_neighbour(&ctx, &tick),
+            (None, Some(AiEntityHandle::new(178)))
+        );
     }
 
     #[test]
@@ -4837,7 +4840,10 @@ mod tests {
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.extend([soldier_55, soldier_64]);
 
-        assert_eq!(ai.propose_left_and_right_neighbour(&ctx, &tick), (55, 0));
+        assert_eq!(
+            ai.propose_left_and_right_neighbour(&ctx, &tick),
+            (Some(AiEntityHandle::new(55)), None)
+        );
     }
 
     #[test]
@@ -5006,7 +5012,7 @@ mod tests {
             is_able_to_fight: false,
             is_archer_unit: true,
             ai_state: AiState::Seeking,
-            shield_bearer_before_me: 0,
+            shield_bearer_before_me: None,
             is_tower_guard: false,
             ..FighterSnapshot::default()
         };
@@ -5059,10 +5065,10 @@ mod tests {
         let mut ai = EnemyAi::new(81);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingPhalanx;
-        ai.archer_behind_me = 86;
+        ai.archer_behind_me = Some(AiEntityHandle::new(86));
         ai.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
 
-        assert_eq!(ai.archer_behind_me, 0);
+        assert_eq!(ai.archer_behind_me, None);
         assert!(
             ai.base
                 .outbox
@@ -5073,7 +5079,7 @@ mod tests {
                     action,
                     CrossNpcAction::SetShieldBearerBeforeMe {
                         target: 86,
-                        shield_bearer: 0
+                        shield_bearer: None
                     }
                 ))
         );
@@ -5088,7 +5094,7 @@ mod tests {
             is_shield_bearer: true,
             ai_state: AiState::Attacking,
             current_substate: Substate::AttackingPhalanx as u32,
-            archer_behind_me: 86,
+            archer_behind_me: Some(AiEntityHandle::new(86)),
             ..FighterSnapshot::default()
         });
         tick.fighter_registry.push(FighterSnapshot {
@@ -5098,7 +5104,7 @@ mod tests {
             is_friendly: true,
             is_archer_unit: true,
             ai_state: AiState::Attacking,
-            shield_bearer_before_me: 81,
+            shield_bearer_before_me: Some(AiEntityHandle::new(81)),
             ..FighterSnapshot::default()
         });
         let ctx = AiContext {
@@ -5492,7 +5498,7 @@ mod tests {
             ..FighterSnapshot::default()
         };
         let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 252;
+        tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(252));
         tick.primary_target_live_position = Some(live_pc);
 
         assert!(!is_facing_swordfight_target(
@@ -5529,7 +5535,7 @@ mod tests {
             ..FighterSnapshot::default()
         };
         let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 152;
+        tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(152));
         tick.primary_target_live_position = Some(position(1031.0, 2089.0));
         let resolved = swordfight_facing_target_position(&refreshed_primary, &tick, |target| {
             assert_eq!(target, refreshed_primary.handle);
@@ -5658,7 +5664,7 @@ mod tests {
             handle: 182,
             position: owner_position,
             raw_position: owner_position,
-            principal_opponent: TARGET,
+            principal_opponent: Some(AiEntityHandle::new(TARGET)),
             is_friendly: true,
             sword_range_default: 50,
             sword_range_maximal: 50,
@@ -5676,7 +5682,7 @@ mod tests {
         let mut ai = EnemyAi::new(182);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.primary_target = TARGET;
+        ai.base.primary_target = Some(AiEntityHandle::new(TARGET));
         ai.sword_range = 50;
         ai.reconsider_swordfight(
             &SimulationContext::with_seed(seed),
@@ -5740,11 +5746,11 @@ mod tests {
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
             handle: OWNER,
-            principal_opponent: TARGET,
+            principal_opponent: Some(AiEntityHandle::new(TARGET)),
             is_friendly: true,
             ..FighterSnapshot::default()
         });
-        tick.primary_target_snapshot_handle = TARGET;
+        tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(TARGET));
         tick.primary_target_is_pc = true;
         tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
             position(0.0, 100.0),
@@ -5754,7 +5760,7 @@ mod tests {
         let mut ai = EnemyAi::new(OWNER);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.primary_target = TARGET;
+        ai.base.primary_target = Some(AiEntityHandle::new(TARGET));
         ai.company_number = company_number;
         (ai, ctx, tick)
     }
@@ -5831,7 +5837,10 @@ mod tests {
         const OLD_TARGET: u32 = 20;
         const NEW_PRINCIPAL: u32 = 22;
         let (mut ai, mut ctx, mut tick) = lost_enemy_reconsider_fixture(0);
-        debug_assert_eq!(ai.base.primary_target, OLD_TARGET);
+        debug_assert_eq!(
+            ai.base.primary_target,
+            Some(AiEntityHandle::new(OLD_TARGET))
+        );
 
         let old_view = ctx.entity_view(OLD_TARGET).unwrap().clone();
         let mut new_view = old_view.clone();
@@ -5841,7 +5850,7 @@ mod tests {
         views.insert(NEW_PRINCIPAL, new_view);
         ctx.entity_views = crate::ai_entity_view::shared_entity_views(views);
 
-        tick.fighter_registry[0].principal_opponent = NEW_PRINCIPAL;
+        tick.fighter_registry[0].principal_opponent = Some(AiEntityHandle::new(NEW_PRINCIPAL));
         let refreshed_forecast = position(500.0, 600.0);
         tick.enemy_detectable_forecasts.push((
             NEW_PRINCIPAL,
@@ -5858,7 +5867,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(ai.missed_pc, NEW_PRINCIPAL);
+        assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(NEW_PRINCIPAL)));
         assert_eq!(ai.seek_center, refreshed_forecast);
         assert_ne!(ai.seek_center, position(0.0, 100.0));
     }

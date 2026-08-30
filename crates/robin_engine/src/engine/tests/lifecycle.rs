@@ -6103,7 +6103,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
     assert_eq!(
         victim_ai.primary_target,
-        attacker.index(),
+        Some(crate::ai::AiEntityHandle::new(attacker.index())),
         "the victim's EventGotHit handler must observe the attacker at the owner boundary"
     );
 

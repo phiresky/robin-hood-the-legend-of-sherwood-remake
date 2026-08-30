@@ -357,7 +357,7 @@ impl EnemyAi {
 
 #[cfg(test)]
 mod tests {
-    use crate::ai::{AiContext, Position};
+    use crate::ai::{AiContext, AiEntityHandle, Position};
     use crate::ai_enemy::{EnemyAi, FighterSnapshot, archer};
     use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
     use crate::element::{ActionState, ActorPc, Entity};

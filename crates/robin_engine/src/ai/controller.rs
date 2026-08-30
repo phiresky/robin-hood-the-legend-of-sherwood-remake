@@ -353,31 +353,26 @@ pub struct AiController {
 
     // -- Targets & relationships --
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub primary_target: Option<AiEntityHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub friend_in_trouble: Option<AiEntityHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub detected_body: Option<AiEntityHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub interesting_object: Option<AiEntityHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -401,7 +396,6 @@ pub struct AiController {
     // -- Group behaviour --
     pub is_master: bool,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -468,7 +462,6 @@ pub struct AiController {
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -476,13 +469,11 @@ pub struct AiController {
 
     // -- Charly (friend-check) --
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
     pub checkpoint_charly: Option<AiEntityHandle>,
     #[serde(
-        default,
         serialize_with = "serialize_optional_ai_handle",
         deserialize_with = "deserialize_optional_ai_handle"
     )]
@@ -6152,7 +6143,7 @@ mod tests {
 
         let mut ai = AiController::new(17);
         let report = ReconnaissanceReport {
-            charly: 91,
+            charly: Some(AiEntityHandle::new(91)),
             ..Default::default()
         };
 
@@ -6277,13 +6268,13 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::UpdateLeftCombatNeighbour {
                 target: 17,
-                old_left: 0,
-                new_left: 23,
+                old_left: None,
+                new_left: Some(AiEntityHandle::new(23)),
             },
             CrossNpcAction::UpdateRightCombatNeighbour {
                 target: 17,
-                old_right: 0,
-                new_right: 29,
+                old_right: None,
+                new_right: Some(AiEntityHandle::new(29)),
             },
         ]);
 
@@ -6294,15 +6285,15 @@ mod tests {
             [
                 CrossNpcAction::UpdateLeftCombatNeighbour {
                     target: 17,
-                    old_left: 0,
-                    new_left: 23,
+                    old_left: None,
+                    new_left: Some(new_left),
                 },
                 CrossNpcAction::UpdateRightCombatNeighbour {
                     target: 17,
-                    old_right: 0,
-                    new_right: 29,
+                    old_right: None,
+                    new_right: Some(new_right),
                 }
-            ]
+            ] if new_left.get() == 23 && new_right.get() == 29
         ));
         assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
     }
@@ -6313,11 +6304,11 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::SetLeftCombatNeighbour {
                 target: 23,
-                neighbour: 0,
+                neighbour: None,
             },
             CrossNpcAction::SetRightCombatNeighbour {
                 target: 29,
-                neighbour: 0,
+                neighbour: None,
             },
         ]);
 
@@ -6329,11 +6320,11 @@ mod tests {
             [
                 CrossNpcAction::SetLeftCombatNeighbour {
                     target: 23,
-                    neighbour: 0,
+                    neighbour: None,
                 },
                 CrossNpcAction::SetRightCombatNeighbour {
                     target: 29,
-                    neighbour: 0,
+                    neighbour: None,
                 }
             ]
         ));
@@ -6349,11 +6340,11 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::SetShieldBearerBeforeMe {
                 target: 86,
-                shield_bearer: 0,
+                shield_bearer: None,
             },
             CrossNpcAction::SetArcherBehindMe {
                 target: 81,
-                archer: 0,
+                archer: None,
             },
         ]);
 
@@ -6365,11 +6356,11 @@ mod tests {
             [
                 CrossNpcAction::SetShieldBearerBeforeMe {
                     target: 86,
-                    shield_bearer: 0,
+                    shield_bearer: None,
                 },
                 CrossNpcAction::SetArcherBehindMe {
                     target: 81,
-                    archer: 0,
+                    archer: None,
                 }
             ]
         ));

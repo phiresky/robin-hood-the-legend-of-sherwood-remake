@@ -8559,7 +8559,7 @@ mod tests {
         );
         assert_eq!(manager.titbits().len(), if running { 2 } else { 1 });
         let titbit = &manager.titbits()[0];
-        assert_eq!(titbit.id, 0);
+        assert_eq!(titbit.id, crate::titbit::TitbitId::new(0).unwrap());
         assert_eq!(titbit.kind, crate::titbit::TitbitKind::QuickAction);
         assert_eq!(titbit.phase, phase as u16);
         assert_eq!(

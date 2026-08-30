@@ -3208,11 +3208,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -3602,7 +3602,7 @@ mod tests {
             available.base.current_substate,
             Substate::SeekingCharlySentToOfficer
         );
-        assert_eq!(available.base.antagonist, 42);
+        assert_eq!(available.base.antagonist, Some(AiEntityHandle::new(42)));
         assert!(available.reported_to_officer);
 
         let mut busy = EnemyAi::new(2);
@@ -3623,7 +3623,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
         ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.base.antagonist = 90;
+        ai.base.antagonist = Some(AiEntityHandle::new(90));
         ai.set_state(AiState::Seeking, Substate::SeekingGroupCalledByOfficer);
         ai.base.outbox.reentrant.owner_work.clear();
 
@@ -3639,9 +3639,14 @@ mod tests {
             ..AiContext::default()
         };
 
-        ai.event_sees_charly_standard_procedure(&sim, 42, &ctx, &AiPerTickData::stub());
+        ai.event_sees_charly_standard_procedure(
+            &sim,
+            AiEntityHandle::new(42),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
 
-        assert_eq!(ai.base.friend_in_trouble, 0);
+        assert_eq!(ai.base.friend_in_trouble, None);
         assert!(matches!(
             ai.base.outbox.reentrant.owner_work.as_slice(),
             [
@@ -3653,7 +3658,7 @@ mod tests {
                 }),
                 AiOwnerWork::ResumeSendCharlyAfterSpeech { charly: 42 }
             ] if effects.unalert_near_charly_seekers
-                == Some(CharlySeekerTarget::Npc(42))
+                == Some(CharlySeekerTarget::Npc(AiEntityHandle::new(42)))
         ));
     }
 
@@ -3662,7 +3667,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(89);
         ai.set_state(AiState::Default, Substate::DefaultLookingSidewardsForCharly);
-        ai.base.synchronize_charly = 96;
+        ai.base.synchronize_charly = Some(AiEntityHandle::new(96));
         ai.base.synchronize_index = 3;
         ai.base.macro_in_progress = true;
         ai.base.macro_command = vec![MacroOpcode::Wait as u8, 100, 0];
@@ -3690,7 +3695,12 @@ mod tests {
             ..AiContext::default()
         };
 
-        ai.event_sees_charly_standard_procedure(&sim, 96, &ctx, &AiPerTickData::stub());
+        ai.event_sees_charly_standard_procedure(
+            &sim,
+            AiEntityHandle::new(96),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
 
         assert_eq!(ai.base.current_substate, Substate::DefaultSynchronizing);
         assert_eq!(ai.base.macro_command_offset, 0);
@@ -3795,7 +3805,7 @@ mod tests {
 
         assert_eq!(
             ai.base.outbox.actor.enter_swordfight,
-            Some(EnterSwordfightRequest::Direct(2)),
+            Some(EnterSwordfightRequest::Direct(AiEntityHandle::new(2))),
             "Original calls EnterSwordFight directly from EVENT_GOTHIT"
         );
     }
@@ -4017,7 +4027,10 @@ mod tests {
                     _ => None,
                 })
         });
-        assert_eq!(engage, Some(EnterSwordfightRequest::Engage(2)));
+        assert_eq!(
+            engage,
+            Some(EnterSwordfightRequest::Engage(AiEntityHandle::new(2)))
+        );
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
     }
@@ -4069,7 +4082,7 @@ mod tests {
                 ai.base.current_substate,
                 Substate::WonderingMoneyReactiontime
             );
-            assert_eq!(ai.base.interesting_object, 2);
+            assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(2)));
         }
 
         let mut ai = EnemyAi::new(1);
@@ -4079,7 +4092,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-        assert_eq!(ai.base.interesting_object, 0);
+        assert_eq!(ai.base.interesting_object, None);
     }
 
     #[test]
@@ -4105,7 +4118,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Wondering);
         assert_eq!(ai.base.current_substate, Substate::WonderingAleReactiontime);
-        assert_eq!(ai.base.interesting_object, 2);
+        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(2)));
         assert_eq!(ai.base.seek_position, ale_position);
 
         let mut ai = EnemyAi::new(1);
@@ -4115,7 +4128,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-        assert_eq!(ai.base.interesting_object, 0);
+        assert_eq!(ai.base.interesting_object, None);
     }
 
     #[test]
@@ -4158,7 +4171,7 @@ mod tests {
         let mut ai = EnemyAi::new(1);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
-        ai.beggar_to_examine = 17;
+        ai.beggar_to_examine = Some(AiEntityHandle::new(17));
 
         let mut beggar_view = object_view(ObjectType::None);
         beggar_view.kind = EntityKind::Civilian;
@@ -4202,7 +4215,7 @@ mod tests {
             let mut ai = EnemyAi::new(1);
             ai.base.current_state = AiState::Attacking;
             ai.base.current_substate = substate;
-            ai.base.primary_target = 12;
+            ai.base.primary_target = Some(AiEntityHandle::new(12));
             // The original trainer gate is exclusively on the sender.
             ai.combat_trainer = true;
 
@@ -4216,7 +4229,11 @@ mod tests {
                 None,
             );
 
-            assert_eq!(ai.base.primary_target, 77, "substate {substate:?}");
+            assert_eq!(
+                ai.base.primary_target,
+                Some(AiEntityHandle::new(77)),
+                "substate {substate:?}"
+            );
             // begin_swordfight raises Engage before its SetState suspends
             // the actor-outbox prefix into the queued state-change owner
             // work; read the request from either place.
@@ -4236,7 +4253,7 @@ mod tests {
             });
             assert_eq!(
                 engage,
-                Some(EnterSwordfightRequest::Engage(77)),
+                Some(EnterSwordfightRequest::Engage(AiEntityHandle::new(77))),
                 "substate {substate:?}"
             );
             assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
@@ -4250,7 +4267,7 @@ mod tests {
         let mut ai = EnemyAi::new(1);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToEnemy;
-        ai.base.primary_target = 12;
+        ai.base.primary_target = Some(AiEntityHandle::new(12));
 
         let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
         ai.think_unexpected_event(
@@ -4262,7 +4279,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(ai.base.primary_target, 12);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(12)));
         assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
     }
@@ -4379,7 +4396,7 @@ mod tests {
         assert!(ai.base.macro_in_progress);
         assert!(ai.base.macro_timer_is_running);
         assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
-        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(91)));
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(
             ai.base.current_substate,
@@ -4396,7 +4413,7 @@ mod tests {
         ai.soldier_profile_rank = ProfileRank::Soldier;
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingRunningToOfficer;
-        ai.base.antagonist = 78;
+        ai.base.antagonist = Some(AiEntityHandle::new(78));
 
         let mut civilian = object_view(ObjectType::None);
         civilian.kind = EntityKind::Civilian;
@@ -4417,7 +4434,7 @@ mod tests {
         );
 
         assert!(!accepted);
-        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(91)));
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingRunningToOfficer);
     }
@@ -4519,7 +4536,7 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingApproachToObserve;
-        ai.base.primary_target = 183;
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
         ai.base.ai_log.push(LogLine {
             line_type: LogLineType::BattleDecision,
             info: Decision::Observe as u16,
@@ -4579,8 +4596,8 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = 183;
-        ai.base.last_synced_focus_target = Some(183);
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
+        ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
         ai.base.timer_is_running = true;
         ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
         ai.base.when_does_timer_ring = 8_133;
@@ -4629,7 +4646,10 @@ mod tests {
         );
         assert_eq!(ai.base.seek_position, target_position);
         assert_eq!(ai.base.last_goto_destination, wait_position);
-        assert_eq!(ai.base.last_synced_focus_target, Some(183));
+        assert_eq!(
+            ai.base.last_synced_focus_target,
+            Some(AiEntityHandle::new(183))
+        );
         assert!(!ai.base.couldnt_reachpoint);
         assert!(ai.base.outbox.actor.orders.is_empty());
         let Some(crate::ai::AiOwnerWork::ActorEffects(roof_effects)) =
@@ -4650,7 +4670,7 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-        ai.base.primary_target = 183;
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
         ai.base.list_us = vec![64, 79];
 
         ai.think_unexpected_event(
@@ -4680,7 +4700,7 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = 183;
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
         ai.base.list_us = vec![64, 79];
         ai.base.timer_is_running = true;
         ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
@@ -4716,7 +4736,7 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = 183;
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
         ai.base.list_us = vec![64, 79];
         ai.base.ai_log.push(LogLine {
             line_type: LogLineType::BattleDecision,
@@ -4755,8 +4775,8 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = 183;
-        ai.base.last_synced_focus_target = Some(183);
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
+        ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
         ai.base.timer_is_running = true;
         ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
         ai.base.when_does_timer_ring = 7_968;
@@ -4798,7 +4818,10 @@ mod tests {
         assert_eq!(ai.base.when_does_timer_ring, 7_988);
         assert!(ai.base.timer_is_running);
         assert!(ai.base.couldnt_reachpoint);
-        assert_eq!(ai.base.last_synced_focus_target, Some(183));
+        assert_eq!(
+            ai.base.last_synced_focus_target,
+            Some(AiEntityHandle::new(183))
+        );
 
         ai.think_unexpected_event(
             &sim,
@@ -4825,7 +4848,7 @@ mod tests {
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-        ai.base.primary_target = 183;
+        ai.base.primary_target = Some(AiEntityHandle::new(183));
         ai.base.list_us = vec![64, 79];
         let ctx = AiContext {
             frame: 8_104,
@@ -4894,7 +4917,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(ai.base.detected_body, 207);
+        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(207)));
         assert_eq!(ai.base.seek_position, alternate_position);
         assert_eq!(ai.base.current_substate, Substate::SeekingBody);
         assert!(ai.my_seek_points.is_empty());
@@ -4952,7 +4975,8 @@ mod tests {
 
         assert!(ai.examine_other_bodies(&ctx, &AiPerTickData::stub()));
         assert_eq!(
-            ai.base.detected_body, 208,
+            ai.base.detected_body,
+            Some(AiEntityHandle::new(208)),
             "the recovered civilian must be pruned, not examined"
         );
         assert_eq!(ai.base.seek_position, down_position);
@@ -5073,12 +5097,12 @@ mod tests {
         // leaves the noise at z=0 even though the producing PC recorded its
         // own elevation (36) on RHnoise.
         let noise = Noise {
-            origin: Position {
+            origin: NoiseOrigin::from_position(Position {
                 x: f32::from_bits(0x428b_1027),
                 y: f32::from_bits(0x43af_c940),
                 sector: crate::position_interface::SectorHandle::new(0),
                 level: 0,
-            },
+            }),
             noise_type: NoiseType::ZingZing,
             volume: 200,
             elevation: 36,
@@ -5142,7 +5166,7 @@ mod tests {
         let mut ai = EnemyAi::new(178);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
-        ai.base.primary_target = 0;
+        ai.base.primary_target = None;
         // Keep the stale avenger center far from the live position so a
         // regression cannot accidentally pick the same seek points.
         ai.base.seek_position = Position {

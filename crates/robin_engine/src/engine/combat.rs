@@ -2734,7 +2734,7 @@ mod tests {
                 .unwrap()
                 .base
                 .primary_target,
-            shooter.index(),
+            Some(crate::ai::AiEntityHandle::new(shooter.index())),
             "the arrow reaction must run now, not remain queued for the target's later slot"
         );
         let queued = &engine

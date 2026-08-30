@@ -85,7 +85,7 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
     let mut ai = EnemyAi::new(90);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingAleReactiontime;
-    ai.base.interesting_object = 321;
+    ai.base.interesting_object = Some(AiEntityHandle::new(321));
     ai.base.seek_position = Position {
         x: 632.4453,
         y: 1835.14,
@@ -104,7 +104,7 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
-    assert_eq!(ai.base.object_of_desire, 321);
+    assert_eq!(ai.base.object_of_desire, Some(AiEntityHandle::new(321)));
     assert_eq!(ai.base.seek_position.x, 632.4453);
     assert_eq!(ai.base.seek_position.y, 1835.14);
     assert!(
@@ -126,7 +126,7 @@ fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
     let mut ai = EnemyAi::new(90);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingTakingMoney;
-    ai.base.interesting_object = 130;
+    ai.base.interesting_object = Some(AiEntityHandle::new(130));
     ai.other_seen_money = vec![131, 132];
 
     let mut farther = pc_view(crate::element::Posture::Upright);
@@ -164,7 +164,7 @@ fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
         ai.base.current_substate,
         Substate::WonderingMoneyReactiontime
     );
-    assert_eq!(ai.base.interesting_object, 132);
+    assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(132)));
     assert_eq!(ai.other_seen_money, vec![131]);
     assert_eq!(ai.base.when_does_timer_ring, 9_248);
 }
@@ -174,7 +174,7 @@ fn taking_projectile_derived_coin_preserves_typed_interaction_target() {
     let mut ai = EnemyAi::new(90);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingApproachingMoney;
-    ai.base.interesting_object = 134;
+    ai.base.interesting_object = Some(AiEntityHandle::new(134));
 
     let mut coin = pc_view(crate::element::Posture::Upright);
     coin.kind = crate::ai_entity_view::EntityKind::Projectile;
@@ -268,7 +268,7 @@ fn approaching_money_timer_with_visible_rival_runs_instead_of_taking() {
     let mut ai = EnemyAi::new(90);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingApproachingMoney;
-    ai.base.interesting_object = 134;
+    ai.base.interesting_object = Some(AiEntityHandle::new(134));
     let ctx = money_race_context();
     let mut tick = AiPerTickData::stub();
     let mut rival = alert_candidate(
@@ -319,7 +319,7 @@ fn approaching_money_timer_without_visible_rival_only_rearms_poll() {
     let mut ai = EnemyAi::new(90);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingApproachingMoney;
-    ai.base.interesting_object = 134;
+    ai.base.interesting_object = Some(AiEntityHandle::new(134));
     let ctx = money_race_context();
 
     ai.think_expected_event(
@@ -344,7 +344,7 @@ fn brawl_approach_fixture(friend_state: AiState, friend_x: f32) -> (EnemyAi, AiC
     let mut ai = EnemyAi::new(88);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingBrawlApproaching;
-    ai.base.friend_in_trouble = 90;
+    ai.base.friend_in_trouble = Some(AiEntityHandle::new(90));
     ai.money_fight_enemies = vec![90, 91];
 
     let mut owner = soldier_view_with_substate(88, Substate::WonderingBrawlApproaching);
@@ -445,7 +445,7 @@ fn brawl_reach_sleeping_friend_removes_target_and_queues_done() {
     );
 
     assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
-    assert_eq!(ai.base.friend_in_trouble, 0);
+    assert_eq!(ai.base.friend_in_trouble, None);
     assert_eq!(ai.money_fight_enemies, vec![91]);
     assert_eq!(ai.base.outbox.reentrant.self_stimuli.len(), 1);
     assert_eq!(
@@ -458,7 +458,7 @@ fn brawl_reach_sleeping_friend_removes_target_and_queues_done() {
 #[test]
 fn brawl_reach_missing_friend_returns_to_duty_without_hit() {
     let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 20.0);
-    ai.base.friend_in_trouble = 0;
+    ai.base.friend_in_trouble = None;
     ai.wondering_brawl_approaching(
         &crate::sim_rng::test_context(),
         StimulusType::EventReachPoint,
@@ -569,7 +569,7 @@ fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer()
     let mut ai = EnemyAi::new(195);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingSoldierReturnToOfficer;
-    ai.base.antagonist = 85;
+    ai.base.antagonist = Some(AiEntityHandle::new(85));
     ai.officers_position = Position {
         x: 1_503.635_1,
         y: 1_097.013_8,
@@ -660,7 +660,7 @@ fn send_charly_speech_completion_faces_live_friend_before_waiting() {
     let mut ai = EnemyAi::new(93);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingSendCharlyToOfficer;
-    ai.base.friend_in_trouble = 94;
+    ai.base.friend_in_trouble = Some(AiEntityHandle::new(94));
 
     let mut friend = soldier_view_with_substate(94, Substate::SeekingCharlySentToOfficer);
     friend.position = Position {
@@ -712,7 +712,7 @@ fn send_charly_speech_completion_without_live_friend_still_waits() {
     let mut ai = EnemyAi::new(93);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingSendCharlyToOfficer;
-    ai.base.friend_in_trouble = 94;
+    ai.base.friend_in_trouble = Some(AiEntityHandle::new(94));
     let ctx = AiContext {
         frame: 12_391,
         direction: 12,
@@ -993,7 +993,7 @@ fn avenger_roof_timeout_seeks_from_live_owner_position() {
     let mut ai = EnemyAi::new(149);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
-    ai.base.primary_target = 0;
+    ai.base.primary_target = None;
     ai.base.seek_position = Position {
         x: 241.0,
         y: 862.0,
@@ -1053,7 +1053,7 @@ fn avenger_roof_timeout_refaces_detected_target_and_rearms_thirty_ticks() {
     let mut ai = EnemyAi::new(236);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
-    ai.base.primary_target = 295;
+    ai.base.primary_target = Some(AiEntityHandle::new(295));
 
     // Keep the target visibly in front of the actor at direction 6 so
     // detection succeeds.  The inline `Face(element)` overload would
@@ -1160,7 +1160,7 @@ fn officer_wait_for_instructed_group_waits_for_approaching_charly() {
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedGroup;
         ai.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
-        ai.base.my_reconnaissance_report.charly = 148;
+        ai.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(148));
 
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(148, soldier_view_with_substate(148, charly_substate));
@@ -1302,7 +1302,7 @@ fn approaching_new_enemy_close_gate_uses_literal_positions() {
     let mut ai = EnemyAi::new(58);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
-    ai.base.primary_target = 103;
+    ai.base.primary_target = Some(AiEntityHandle::new(103));
 
     let mut tick = AiPerTickData::stub();
     tick.fighter_registry
@@ -1329,7 +1329,7 @@ fn approaching_new_enemy_close_gate_uses_literal_positions() {
         y: 100.0,
         ..Position::default()
     });
-    tick.primary_target_snapshot_handle = 103;
+    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(103));
     tick.primary_target_live_position = Some(Position {
         x: 110.0,
         y: 110.0,
@@ -1353,7 +1353,10 @@ fn approaching_new_enemy_close_gate_uses_literal_positions() {
     );
 
     assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-    assert_eq!(ai.base.outbox.actor.set_principal, Some(103));
+    assert_eq!(
+        ai.base.outbox.actor.set_principal,
+        Some(AiEntityHandle::new(103))
+    );
 }
 
 #[test]
@@ -1363,7 +1366,7 @@ fn approaching_new_enemy_requires_primary_target_snapshot() {
     let mut ai = EnemyAi::new(58);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
-    ai.base.primary_target = 103;
+    ai.base.primary_target = Some(AiEntityHandle::new(103));
 
     ai.think_expected_event(
         &sim,
@@ -1382,7 +1385,7 @@ fn approaching_new_enemy_rejects_stale_primary_target_geometry() {
     let mut ai = EnemyAi::new(58);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
-    ai.base.primary_target = 103;
+    ai.base.primary_target = Some(AiEntityHandle::new(103));
 
     let mut tick = AiPerTickData::stub();
     tick.fighter_registry
@@ -1390,7 +1393,7 @@ fn approaching_new_enemy_rejects_stale_primary_target_geometry() {
             handle: 103,
             ..crate::ai_enemy::FighterSnapshot::default()
         });
-    tick.primary_target_snapshot_handle = 102;
+    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(102));
 
     ai.think_expected_event(
         &sim,
@@ -1408,7 +1411,7 @@ fn bow_running_behind_shield_faces_target_with_its_elevation() {
     let mut ai = EnemyAi::new(74);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
-    ai.base.primary_target = 170;
+    ai.base.primary_target = Some(AiEntityHandle::new(170));
 
     let mut target = pc_view(crate::element::Posture::Upright);
     target.position = Position {
@@ -1474,7 +1477,7 @@ fn shield_reestablish_uses_raw_door_passing_target_position() {
     ));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingProtectingWithShield;
-    ai.base.primary_target = 174;
+    ai.base.primary_target = Some(AiEntityHandle::new(174));
 
     let mut tick = AiPerTickData::stub();
     tick.fighter_registry
@@ -1574,7 +1577,7 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
     ));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingPhalanx;
-    ai.base.primary_target = 46;
+    ai.base.primary_target = Some(AiEntityHandle::new(46));
 
     let raw_target = Position {
         x: 1_137.708_7,
@@ -1630,7 +1633,7 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
     let mut ai = EnemyAi::new(1);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedSoldier;
-    ai.base.antagonist = 2;
+    ai.base.antagonist = Some(AiEntityHandle::new(2));
     ai.missed_soldier_timer = 11;
 
     let mut tick = AiPerTickData::stub();
@@ -1646,7 +1649,7 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         is_able_to_fight: true,
         is_dead: false,
         knocked_out_in_money_fight: false,
-        primary_target: 0,
+        primary_target: None,
         pride: 0,
         is_able_to_help: true,
         script_locked: false,
@@ -1655,11 +1658,11 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         report_type: ReportType::Nothing,
         report_seek_position: Position::default(),
         report_seen_bodies: Vec::new(),
-        report_charly: 0,
+        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
-        antagonist: 1,
-        detected_body: 0,
+        antagonist: Some(AiEntityHandle::new(1)),
+        detected_body: None,
         blood_alcohol: 0,
         duty_flag: false,
         is_tower_guard: false,
@@ -1779,7 +1782,7 @@ fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
             AiState::Seeking,
             Substate::SeekingSeekpointApproachingBeggar,
         );
-        ai.beggar_to_examine = 17;
+        ai.beggar_to_examine = Some(AiEntityHandle::new(17));
         ai.beggar_is_npc = false;
         ai.is_archer_unit = archer;
 
@@ -1843,7 +1846,7 @@ fn identified_npc_beggar_shows_face_then_identifies_himself() {
         Substate::SeekingSeekpointIdentifyingBeggar1,
     );
     ai.base.outbox = crate::ai::AiOutbox::default();
-    ai.beggar_to_examine = 70;
+    ai.beggar_to_examine = Some(AiEntityHandle::new(70));
     // A save can resume directly in IdentifyingBeggar1 without ever
     // populating this transient compatibility cache.
     ai.beggar_is_npc = false;
@@ -1874,10 +1877,13 @@ fn identified_npc_beggar_shows_face_then_identifies_himself() {
             _ => None,
         })
         .expect("beggar response must precede the identifying-2 SetState callback");
-    assert_eq!(prefix.launch_on_target, vec![(70, Command::BeggarShowFace)]);
+    assert_eq!(
+        prefix.launch_on_target,
+        vec![(AiEntityHandle::new(70), Command::BeggarShowFace)]
+    );
     assert_eq!(
         prefix.say_on_target,
-        vec![(70, Remark::CivBeggarIdentifiesHimself)]
+        vec![(AiEntityHandle::new(70), Remark::CivBeggarIdentifiesHimself)]
     );
     assert_eq!(
         ai.base.current_substate,
@@ -1896,7 +1902,7 @@ fn identified_disguised_pc_uses_live_type_despite_stale_npc_cache() {
         Substate::SeekingSeekpointIdentifyingBeggar1,
     );
     ai.base.outbox = crate::ai::AiOutbox::default();
-    ai.beggar_to_examine = 70;
+    ai.beggar_to_examine = Some(AiEntityHandle::new(70));
     ai.beggar_is_npc = true;
     ai.is_archer_unit = true;
     let mut views = crate::ai_entity_view::AiEntityViewMap::new();
@@ -1918,9 +1924,12 @@ fn identified_disguised_pc_uses_live_type_despite_stale_npc_cache() {
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert_eq!(ai.base.current_substate, Substate::AttackingBowShooting);
-    assert_eq!(ai.base.primary_target, 70);
+    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(70)));
     assert_eq!(ai.list_them, vec![70]);
-    assert_eq!(ai.base.outbox.actor.shoot_target, Some(70));
+    assert_eq!(
+        ai.base.outbox.actor.shoot_target,
+        Some(AiEntityHandle::new(70))
+    );
 }
 
 #[test]
@@ -2046,7 +2055,7 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
     ai.set_state(AiState::Seeking, Substate::SeekingRunningToOfficer);
-    ai.base.antagonist = 2;
+    ai.base.antagonist = Some(AiEntityHandle::new(2));
     let mut tick = AiPerTickData::stub();
     tick.camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
         handle: 2,
@@ -2060,7 +2069,7 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         is_able_to_fight: true,
         is_dead: false,
         knocked_out_in_money_fight: false,
-        primary_target: 0,
+        primary_target: None,
         pride: 0,
         is_able_to_help: true,
         script_locked: false,
@@ -2069,11 +2078,11 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         report_type: ReportType::Nothing,
         report_seek_position: Position::default(),
         report_seen_bodies: Vec::new(),
-        report_charly: 0,
+        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
-        antagonist: 0,
-        detected_body: 0,
+        antagonist: None,
+        detected_body: None,
         blood_alcohol: 0,
         duty_flag: false,
         is_tower_guard: false,
@@ -2125,7 +2134,7 @@ fn running_to_officer_tracks_rejected_civilian_alert_antagonist() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
     ai.set_state(AiState::Seeking, Substate::SeekingRunningToOfficer);
-    ai.base.antagonist = 2;
+    ai.base.antagonist = Some(AiEntityHandle::new(2));
     ai.gather_position = Position {
         x: 964.0,
         y: 2695.0,
@@ -2240,7 +2249,7 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         is_able_to_fight: true,
         is_dead: false,
         knocked_out_in_money_fight: false,
-        primary_target: 0,
+        primary_target: None,
         pride: 0,
         is_able_to_help: true,
         script_locked: false,
@@ -2249,11 +2258,11 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         report_type: ReportType::Nothing,
         report_seek_position: Position::default(),
         report_seen_bodies: Vec::new(),
-        report_charly: 0,
+        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
-        antagonist: 0,
-        detected_body: 0,
+        antagonist: None,
+        detected_body: None,
         blood_alcohol: 0,
         duty_flag: false,
         is_tower_guard: false,
@@ -2277,7 +2286,7 @@ fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
     let mut ai = EnemyAi::new(185);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBodyReactiontime;
-    ai.base.detected_body = 179;
+    ai.base.detected_body = Some(AiEntityHandle::new(179));
     ai.soldier_profile_rank = ProfileRank::Officer;
     ai.soldier_profile_initiative = 0;
 
@@ -2368,7 +2377,7 @@ fn officer_body_reaction_examines_body_within_stretched_threshold() {
     let mut ai = EnemyAi::new(185);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBodyReactiontime;
-    ai.base.detected_body = 179;
+    ai.base.detected_body = Some(AiEntityHandle::new(179));
     ai.soldier_profile_rank = ProfileRank::Officer;
     ai.soldier_profile_initiative = 0;
 
@@ -2403,11 +2412,11 @@ fn officer_body_reaction_examines_body_within_stretched_threshold() {
     assert_eq!(ai.base.current_substate, Substate::SeekingBody);
     assert_eq!(ai.base.seek_position, destination);
     assert!(
-        ai.base.outbox.actor.focus == Some(179)
+        ai.base.outbox.actor.focus == Some(AiEntityHandle::new(179))
             || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
                 matches!(work, AiOwnerWork::StateChange(change)
                 if change.actor_effects_before_callback.as_ref().is_some_and(
-                    |effects| effects.focus == Some(179)
+                    |effects| effects.focus == Some(AiEntityHandle::new(179))
                 ))
             })
     );
@@ -2427,7 +2436,7 @@ fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
     let mut ai = EnemyAi::new(94);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingApproachingSleepingEnemy;
-    ai.base.primary_target = 41;
+    ai.base.primary_target = Some(AiEntityHandle::new(41));
 
     let mut target = pc_view(crate::element::Posture::Upright);
     target.position = target_live;
@@ -2444,7 +2453,7 @@ fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
     };
     let mut tick = AiPerTickData::stub();
     tick.owner_live_position = Some(Position::default());
-    tick.primary_target_snapshot_handle = 41;
+    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(41));
     tick.primary_target_live_position = Some(target_live);
 
     ai.think_expected_event(
@@ -2512,7 +2521,7 @@ fn run_reactiontime_turning(
     let mut ai = EnemyAi::new(155);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontimeTurning;
-    ai.base.primary_target = 345;
+    ai.base.primary_target = Some(AiEntityHandle::new(345));
 
     let mut target = pc_view(crate::element::Posture::Upright);
     target.position = target_forecast;
@@ -2632,7 +2641,7 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
     let mut ai = EnemyAi::new(89);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingSoldierGetInstructedByOfficer;
-    ai.base.antagonist = 91;
+    ai.base.antagonist = Some(AiEntityHandle::new(91));
 
     let alert_point = Position {
         x: 2100.0,
@@ -2657,7 +2666,7 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         is_able_to_fight: true,
         is_dead: false,
         knocked_out_in_money_fight: false,
-        primary_target: 0,
+        primary_target: None,
         pride: 0,
         is_able_to_help: true,
         script_locked: false,
@@ -2666,11 +2675,11 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         report_type: ReportType::Nothing,
         report_seek_position: Position::default(),
         report_seen_bodies: Vec::new(),
-        report_charly: 0,
+        report_charly: None,
         alert_soldiers_point: alert_point,
         patrol_chief: None,
-        antagonist: 89,
-        detected_body: 97,
+        antagonist: Some(AiEntityHandle::new(89)),
+        detected_body: Some(AiEntityHandle::new(97)),
         blood_alcohol: 0,
         duty_flag: false,
         is_tower_guard: false,
@@ -2749,7 +2758,7 @@ fn seeking_body_reach_rejects_a_body_outside_the_live_sixty_unit_gate() {
     let mut ai = EnemyAi::new(61);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBody;
-    ai.base.detected_body = 170;
+    ai.base.detected_body = Some(AiEntityHandle::new(170));
 
     let mut owner = pc_view(crate::element::Posture::Upright);
     owner.detection_position_world = crate::coordinates::WorldPoint3D::new(413.38, 1850.28, 150.0);
@@ -2813,7 +2822,7 @@ fn seeking_body_reach_does_not_turn_toward_a_nearby_dead_body() {
     let mut ai = EnemyAi::new(61);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBody;
-    ai.base.detected_body = 170;
+    ai.base.detected_body = Some(AiEntityHandle::new(170));
     ai.base.seek_position = Position {
         x: 120.0,
         y: 100.0,
@@ -2865,7 +2874,7 @@ fn seeking_body_reach_returns_to_duty_when_the_nearby_body_recovered() {
     let mut ai = EnemyAi::new(61);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBody;
-    ai.base.detected_body = 63;
+    ai.base.detected_body = Some(AiEntityHandle::new(63));
 
     let mut owner = pc_view(crate::element::Posture::Upright);
     owner.detection_position_world =
@@ -3161,7 +3170,7 @@ fn civilian_report_does_not_fabricate_enemy_data_when_sender_is_missing() {
     stimulus.info = StimulusInfo::Hint(Hint {
         seek_point: Position::default(),
         seek_flags: 0,
-        who_tells_me: 42,
+        who_tells_me: AiEntityHandle::new(42),
     });
     ai.think_expected_event(
         &sim,
@@ -3177,7 +3186,7 @@ fn civilian_report_does_not_fabricate_enemy_data_when_sender_is_missing() {
 fn charly_defence_completion_relays_talk_to_officer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(55);
-    ai.base.antagonist = 90;
+    ai.base.antagonist = Some(AiEntityHandle::new(90));
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
 
@@ -3278,7 +3287,7 @@ fn group_called_by_officer_moves_before_single_state_transition() {
     let mut ai = EnemyAi::new(53);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingGroupCalledByOfficer;
-    ai.base.antagonist = 60;
+    ai.base.antagonist = Some(AiEntityHandle::new(60));
     ai.attentive = true;
     ai.will_be_attentive = true;
     ai.gather_position_instructed = true;
@@ -3465,7 +3474,7 @@ fn officer_ignores_missed_patrol_member_when_deciding_to_follow_nearby_steps() {
 #[test]
 fn charly_lecture_ignores_unrelated_stimulus() {
     let mut ai = EnemyAi::new(55);
-    ai.base.antagonist = 90;
+    ai.base.antagonist = Some(AiEntityHandle::new(90));
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
 
@@ -3495,7 +3504,7 @@ fn looting_requires_the_owner_entity_view() {
 #[should_panic(expected = "called soldier 55 requires officer 90 in the camp snapshot")]
 fn called_soldier_requires_the_officer_snapshot() {
     let mut ai = EnemyAi::new(55);
-    ai.base.antagonist = 90;
+    ai.base.antagonist = Some(AiEntityHandle::new(90));
     ai.seeking_soldier_called_by_officer(
         StimulusType::EventTimer,
         &AiContext::default(),
@@ -3544,7 +3553,7 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
     let mut ai = EnemyAi::new(150);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
-    ai.base.primary_target = 282;
+    ai.base.primary_target = Some(AiEntityHandle::new(282));
 
     let mut target_view = pc_view(crate::element::Posture::Upright);
     target_view.position = target;
@@ -3659,7 +3668,7 @@ fn advancing_shield_requires_live_primary_target_view() {
     let mut ai = EnemyAi::new(150);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
-    ai.base.primary_target = 282;
+    ai.base.primary_target = Some(AiEntityHandle::new(282));
 
     // A combat-registry snapshot cannot substitute for the live RHElement
     // position used by Original's Position(mpPrimaryTarget).

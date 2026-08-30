@@ -19,7 +19,7 @@ fn phalanx_them_list_snapshot_follows_inactive_linked_member() {
         .get_entity_mut(chief)
         .and_then(Entity::enemy_ai_mut)
         .unwrap();
-    chief_ai.right_combat_neighbour = linked.index();
+    chief_ai.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(linked.index()));
 
     let Entity::Soldier(linked_soldier) = engine.get_entity_mut(linked).unwrap() else {
         unreachable!()
@@ -62,7 +62,7 @@ fn primary_target_tracking_precedes_view_refresh() {
             .enemy_mut()
             .expect("test soldier has enemy AI");
         ai.base.me = soldier_id.index();
-        ai.base.primary_target = pc_id.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(pc_id.index()));
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingReactiontime;
     }
@@ -818,12 +818,12 @@ fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
     pc_entity.pc.life_points = 100;
     pc_entity.actor.last_noise_volume = 200;
     pc_entity.actor.produced_noise = Some(crate::ai::Noise {
-        origin: crate::ai::Position {
+        origin: crate::ai::NoiseOrigin::from_position(crate::ai::Position {
             x: 55.0,
             y: 0.0,
             sector: None,
             level: 0,
-        },
+        }),
         noise_type: crate::ai::NoiseType::TapTapTap,
         volume: 200,
         elevation: 0,
@@ -1747,7 +1747,7 @@ fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
     soldier.element.set_direction_instantly(5);
     soldier.npc.alerted = true;
     let ai = soldier.npc.ai_brain.base_mut().unwrap();
-    ai.primary_target = target.index();
+    ai.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
     ai.script_locked = true;
     ai.timer_is_running = true;
     ai.when_does_timer_ring = 0;
@@ -2046,7 +2046,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
             .expect("face civilian has AI");
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingCivilianGiveAlertingReportToSoldierPoint;
-        ai.antagonist = target.index();
+        ai.antagonist = Some(crate::ai::AiEntityHandle::new(target.index()));
         if let Some(stimulus) = queue {
             ai.stimulus_queue.push(stimulus);
         } else {
@@ -2683,7 +2683,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
                 level: 0,
             },
             seek_flags: 0,
-            who_tells_me: source_id.index(),
+            who_tells_me: crate::ai::AiEntityHandle::new(source_id.index()),
         };
         engine
             .get_entity_mut(source_id)
@@ -2760,7 +2760,7 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
     {
         let receiver = engine.get_entity_mut(receiver_id).unwrap();
         receiver.npc_data_mut().unwrap().eye_status = EyeStatus::Stare;
-        assert_eq!(receiver.enemy_ai().unwrap().base.interesting_object, 0);
+        assert_eq!(receiver.enemy_ai().unwrap().base.interesting_object, None);
     }
 
     let mut assets = LevelAssets::new();
@@ -3051,7 +3051,7 @@ fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
         let minion = engine.get_entity_mut(minion_id).unwrap();
         let ai = minion.ai_controller_mut().unwrap();
         ai.patrol_chief = Some(chief_id);
-        ai.primary_target = 0;
+        ai.primary_target = None;
     }
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -3312,7 +3312,10 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         owner.base.current_substate,
         Substate::WonderingApproachingToLoot
     );
-    assert_eq!(owner.base.detected_body, victim_near.index());
+    assert_eq!(
+        owner.base.detected_body,
+        Some(crate::ai::AiEntityHandle::new(victim_near.index()))
+    );
 }
 
 #[test]
@@ -4433,7 +4436,10 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         (AiState::Default, Substate::DefaultOnPost)
     );
     assert!(ai.base.outbox.detection.stimuli.is_empty());
-    assert_eq!(ai.base.last_stimulus_actor, Some(body_id.index()));
+    assert_eq!(
+        ai.base.last_stimulus_actor,
+        Some(crate::ai::AiEntityHandle::new(body_id.index()))
+    );
     assert_eq!(
         ai.base
             .stimulus_queue
@@ -4466,10 +4472,10 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
             })
             .collect::<Vec<_>>(),
         vec![
-            first_visible_id.index(),
-            lost_id.index(),
-            last_visible_id.index(),
-            body_id.index(),
+            crate::ai::AiEntityHandle::new(first_visible_id.index()),
+            crate::ai::AiEntityHandle::new(lost_id.index()),
+            crate::ai::AiEntityHandle::new(last_visible_id.index()),
+            crate::ai::AiEntityHandle::new(body_id.index()),
         ]
     );
     assert_eq!(
@@ -4478,7 +4484,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
             .last()
             .expect("Object event closes the retained detection FIFO")
             .info,
-        StimulusInfo::Object(object_id.index()),
+        StimulusInfo::Object(crate::ai::AiEntityHandle::new(object_id.index())),
         "EVENT_SEES_OBJECT must retain an object payload, not impersonate a human"
     );
     assert_eq!(
@@ -5123,7 +5129,10 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
         .expect("queued replay observer retains enemy AI after replay");
     assert!(ai.base.stimulus_queue.is_empty());
     assert_eq!(ai.base.current_state, AiState::Attacking);
-    assert_eq!(ai.base.primary_target, rising_id.index());
+    assert_eq!(
+        ai.base.primary_target,
+        Some(crate::ai::AiEntityHandle::new(rising_id.index()))
+    );
     assert_eq!(
         ai.list_them,
         vec![rising_id.index(), already_seen_id.index()],
@@ -5184,7 +5193,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     ai.base.me = soldier_id.index();
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingObserve;
-    ai.base.primary_target = lost_pc_id.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(lost_pc_id.index()));
     ai.base.seek_position = Position {
         x: -200.0,
         y: 0.0,
@@ -5262,7 +5271,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
         .expect("out-of-view soldier retains enemy AI");
     assert_eq!(
         ai.base.detected_body,
-        body_id.index(),
+        Some(crate::ai::AiEntityHandle::new(body_id.index())),
         "OUTOFVIEW must enter Seeking before the later BODY stimulus is handled"
     );
     assert_eq!(ai.base.current_state, AiState::Seeking);
@@ -5387,12 +5396,13 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);
         assert_eq!(
-            ai.base.primary_target, expected_order[0],
+            ai.base.primary_target,
+            Some(crate::ai::AiEntityHandle::new(expected_order[0])),
             "the first detectable's VIEW must win even when a later target is nearer"
         );
         assert_eq!(
             ai.base.last_stimulus_actor,
-            Some(expected_order[1]),
+            Some(crate::ai::AiEntityHandle::new(expected_order[1])),
             "the second VIEW must run through its own complete Think boundary"
         );
         (ai.list_them.clone(), latches, expected_order)
@@ -5482,7 +5492,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingJustWatching;
     ai.current_task_priority = task_priority::SEEKING;
-    ai.base.primary_target = old_target_id.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(old_target_id.index()));
     ai.base.seek_position = crate::ai::Position {
         x: -200.0,
         y: 0.0,
@@ -5516,8 +5526,8 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
             ai.forced_next_battle_decision,
         ),
         (
-            viewed_target_id.index(),
-            Some(viewed_target_id.index()),
+            Some(crate::ai::AiEntityHandle::new(viewed_target_id.index())),
+            Some(crate::ai::AiEntityHandle::new(viewed_target_id.index())),
             AiState::Attacking,
             Substate::AttackingSwordfight,
             Decision::Fight,
@@ -5595,7 +5605,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
             ai.base.current_substate = Substate::DefaultOnPost;
             ai.base.current_music_alert_status = crate::ai::AlertLevel::Green;
             ai.current_task_priority = task_priority::NONE;
-            ai.base.primary_target = 0;
+            ai.base.primary_target = None;
             soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
             soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
                 element: Some(target_id),
@@ -5685,7 +5695,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         (
             latch,
             ai.base.current_state,
-            ai.base.primary_target == target_id.index(),
+            ai.base.primary_target == Some(crate::ai::AiEntityHandle::new(target_id.index())),
         )
     }
 
@@ -5839,7 +5849,10 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         .expect("Royalist multi-edge observer retains enemy AI");
     assert!(ai.base.outbox.detection.stimuli.is_empty());
     assert_eq!(ai.base.current_state, AiState::Default);
-    assert_eq!(ai.base.last_stimulus_actor, Some(last_visible_id.index()));
+    assert_eq!(
+        ai.base.last_stimulus_actor,
+        Some(crate::ai::AiEntityHandle::new(last_visible_id.index()))
+    );
     assert_eq!(
         ai.base
             .stimulus_queue
@@ -5852,9 +5865,18 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
             })
             .collect::<Vec<_>>(),
         vec![
-            (StimulusType::EventView, first_visible_id.index()),
-            (StimulusType::EventOutOfView, lost_id.index()),
-            (StimulusType::EventView, last_visible_id.index()),
+            (
+                StimulusType::EventView,
+                crate::ai::AiEntityHandle::new(first_visible_id.index()),
+            ),
+            (
+                StimulusType::EventOutOfView,
+                crate::ai::AiEntityHandle::new(lost_id.index()),
+            ),
+            (
+                StimulusType::EventView,
+                crate::ai::AiEntityHandle::new(last_visible_id.index()),
+            ),
         ],
         "Royalist HandleDetection must retain interleaved edges in detectable-list order"
     );
@@ -6067,7 +6089,9 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
             .filter(|stimulus| stimulus.stimulus_type == StimulusType::EventView)
             .map(|stimulus| stimulus.info)
             .collect::<Vec<_>>(),
-        vec![StimulusInfo::Human(pc_id.index())]
+        vec![StimulusInfo::Human(crate::ai::AiEntityHandle::new(
+            pc_id.index()
+        ))]
     );
 }
 
@@ -6260,9 +6284,15 @@ fn lacklandist_mixed_pc_soldier_enemy_fifo_follows_detectable_order() {
             })
             .collect::<Vec<_>>();
         let expected = if pc_first {
-            vec![pc_id.index(), royalist_id.index()]
+            vec![
+                crate::ai::AiEntityHandle::new(pc_id.index()),
+                crate::ai::AiEntityHandle::new(royalist_id.index()),
+            ]
         } else {
-            vec![royalist_id.index(), pc_id.index()]
+            vec![
+                crate::ai::AiEntityHandle::new(royalist_id.index()),
+                crate::ai::AiEntityHandle::new(pc_id.index()),
+            ]
         };
         assert_eq!(
             actual, expected,
@@ -6291,7 +6321,10 @@ fn mixed_enemy_fifo_survives_detectable_mutation_between_entries() {
             .stimulus_queue
             .remove(0);
         assert_eq!(first.stimulus_type, StimulusType::EventView);
-        assert_eq!(first.info, StimulusInfo::Human(pc_id.index()));
+        assert_eq!(
+            first.info,
+            StimulusInfo::Human(crate::ai::AiEntityHandle::new(pc_id.index()))
+        );
 
         let observer = engine
             .get_entity_mut(observer_id)
@@ -6314,7 +6347,7 @@ fn mixed_enemy_fifo_survives_detectable_mutation_between_entries() {
         .expect("mixed-fifo observer retains EnemyAi after replay");
     assert_eq!(
         ai.base.last_stimulus_actor,
-        Some(royalist_id.index()),
+        Some(crate::ai::AiEntityHandle::new(royalist_id.index())),
         "later mixed VIEW must already be queued before an earlier Think can mutate detectables"
     );
 }
@@ -6468,7 +6501,7 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
     use crate::ai::{AlertLevel, StimulusInfo, StimulusType};
     use crate::element::Entity;
 
-    fn observed_targets(frame: u32) -> Vec<u32> {
+    fn observed_targets(frame: u32) -> Vec<crate::ai::AiEntityHandle> {
         let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
         engine.control.frame_counter = frame;
         let Entity::Soldier(observer) = engine
@@ -6503,9 +6536,12 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
             })
             .collect::<Vec<_>>();
         let expected = if frame == 3 {
-            vec![pc_id.index()]
+            vec![crate::ai::AiEntityHandle::new(pc_id.index())]
         } else {
-            vec![pc_id.index(), royalist_id.index()]
+            vec![
+                crate::ai::AiEntityHandle::new(pc_id.index()),
+                crate::ai::AiEntityHandle::new(royalist_id.index()),
+            ]
         };
         assert_eq!(targets, expected);
         targets
@@ -6618,7 +6654,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         let expected = if matches!(blocker, Blocker::GuardedPc) {
             Vec::new()
         } else {
-            vec![pc_id.index()]
+            vec![crate::ai::AiEntityHandle::new(pc_id.index())]
         };
         assert_eq!(
             out_of_view_targets, expected,
@@ -6866,7 +6902,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
         .collect::<Vec<_>>();
     assert_eq!(
         view_targets,
-        vec![pc_id.index()],
+        vec![crate::ai::AiEntityHandle::new(pc_id.index())],
         "the door pointer passes the PC blip gate, but must not fabricate a same-building handle that reveals the rear soldier"
     );
 }
@@ -6924,7 +6960,8 @@ fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
     assert!(
         ai.stimulus_queue.iter().any(|stimulus| {
             stimulus.stimulus_type == StimulusType::EventView
-                && stimulus.info == StimulusInfo::Human(pc_id.index())
+                && stimulus.info
+                    == StimulusInfo::Human(crate::ai::AiEntityHandle::new(pc_id.index()))
         }),
         "the live beggar transition must replace the snapshotted resting disguise"
     );
@@ -7017,7 +7054,7 @@ fn lacklandist_enemy_optics_keeps_but_cannot_see_hollow_man() {
     assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
     assert_eq!(
         ai.stimulus_queue[0].info,
-        StimulusInfo::Human(royalist_id.index())
+        StimulusInfo::Human(crate::ai::AiEntityHandle::new(royalist_id.index()))
     );
 }
 
@@ -7101,7 +7138,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
     assert_eq!(
         ai.stimulus_queue[0].info,
-        StimulusInfo::Human(pc_id.index())
+        StimulusInfo::Human(crate::ai::AiEntityHandle::new(pc_id.index()))
     );
     // The PC stands 80 units east of the civilian's eye point (beyond both
     // the very-close and halfcircle radii), so the committed sharpness is

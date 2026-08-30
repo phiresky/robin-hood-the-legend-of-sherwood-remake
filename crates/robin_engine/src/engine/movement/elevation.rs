@@ -1021,7 +1021,7 @@ mod tests {
 
         assert_eq!(
             engine.find_plane_obstacle_at(&assets, 0, MapPoint::new(50.0, 50.0)),
-            Some(1),
+            crate::sight_obstacle::SightObstacleIndex::new(1),
             "Original visits every containing plane sector and leaves the last authored one selected"
         );
         assert_eq!(
@@ -1031,7 +1031,7 @@ mod tests {
                 MapPoint::new(60.0, 60.0),
                 MapPoint::new(50.0, 50.0),
             ),
-            Some(1),
+            crate::sight_obstacle::SightObstacleIndex::new(1),
             "the asymmetric second emergency uses the same authored-sector ordering"
         );
     }
@@ -1078,7 +1078,7 @@ mod tests {
                 MapPoint::new(70.0, 10.0),
                 MapPoint::new(10.0, 10.0),
             ),
-            Some(0),
+            crate::sight_obstacle::SightObstacleIndex::new(0),
         );
     }
 

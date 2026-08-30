@@ -4370,7 +4370,7 @@ mod tests {
                 .unwrap();
             ai.set_ai_state(crate::ai::AiState::Attacking);
             ai.current_substate = crate::ai::Substate::AttackingSwordfight;
-            ai.primary_target = victim.index();
+            ai.primary_target = Some(crate::ai::AiEntityHandle::new(victim.index()));
         }
         engine
             .get_entity_mut(victim)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
     ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
@@ -1690,7 +1691,7 @@ fn make_enemy_strike_pair(
         };
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.base.primary_target = target.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
         ai.hth_weapon_id = 1;
         ai.pending_sword_strike_consideration = pending_consideration;
     }
@@ -1754,7 +1755,7 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         let mut ai = crate::ai_enemy::EnemyAi::new(owner.index());
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.base.primary_target = opponent.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(opponent.index()));
         ai.hth_weapon_id = 1;
         ai.pending_sword_strike_consideration = authorize_strike;
         pc.pc.ai = Some(Box::new(crate::element::AiActorData {
@@ -2446,7 +2447,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             );
             assert_eq!(
                 ai.base.stimulus_queue[0].info,
-                crate::ai::StimulusInfo::Human(attacker.index()),
+                crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(attacker.index())),
                 "queued EVENT_SWORDSTRIKE must retain the attacking human"
             );
         }
@@ -9260,7 +9261,9 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
         .base
         .outbox
         .actor
-        .enter_swordfight = Some(EnterSwordfightRequest::Rebalance(replacement_handle));
+        .enter_swordfight = Some(EnterSwordfightRequest::Rebalance(AiEntityHandle::new(
+        replacement_handle,
+    )));
 
     engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
 
@@ -9280,7 +9283,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
     };
     assert_eq!(
         soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
-        replacement_handle,
+        Some(AiEntityHandle::new(replacement_handle)),
         "successful rebalance must promote the AI primary target"
     );
     assert!(
@@ -9339,9 +9342,10 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
         unreachable!()
     };
     let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
-    ai.base.primary_target = old_primary_handle;
-    ai.base.outbox.actor.enter_swordfight =
-        Some(EnterSwordfightRequest::Rebalance(replacement_handle));
+    ai.base.primary_target = Some(AiEntityHandle::new(old_primary_handle));
+    ai.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::Rebalance(
+        AiEntityHandle::new(replacement_handle),
+    ));
 
     engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
 
@@ -9351,7 +9355,7 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
     assert_eq!(soldier.human.opponents, vec![old_primary]);
     assert_eq!(
         soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
-        old_primary_handle,
+        Some(AiEntityHandle::new(old_primary_handle)),
         "failed EnterSwordFight must preserve the old AI primary target"
     );
 }
@@ -9439,7 +9443,9 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
         .base
         .outbox
         .actor
-        .enter_swordfight = Some(EnterSwordfightRequest::Direct(attacker_handle));
+        .enter_swordfight = Some(EnterSwordfightRequest::Direct(AiEntityHandle::new(
+        attacker_handle,
+    )));
 
     engine.drain_pending_for_npc(&sim, victim, &LevelAssets::default());
 

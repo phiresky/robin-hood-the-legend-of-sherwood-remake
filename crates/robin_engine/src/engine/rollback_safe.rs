@@ -5167,7 +5167,10 @@ mod tests {
         );
         assert_eq!(state["titbits"][0]["layer"], 4);
         assert_eq!(state["titbits"][0]["blinking"], true);
-        assert_eq!(state["titbits"][0]["id"], id);
+        assert_eq!(
+            state["titbits"][0]["id"],
+            id.expect("titbit allocation succeeds").get()
+        );
         assert!(state["titbits"][0]["element_supplier"].is_null());
         assert!(state["titbits"][0]["element_manager"].is_null());
         assert_eq!(

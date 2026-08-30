@@ -1086,7 +1086,7 @@ fn start_macro_mixed_success_fizzle_preserves_failed_slot_and_skips_tetris() {
             .titbit_manager
             .titbits()
             .iter()
-            .any(|titbit| titbit.id == u32::from(succeeded_titbit))
+            .any(|titbit| titbit.id == succeeded_titbit)
     );
     assert!(
         engine
@@ -1094,7 +1094,7 @@ fn start_macro_mixed_success_fizzle_preserves_failed_slot_and_skips_tetris() {
             .titbit_manager
             .titbits()
             .iter()
-            .any(|titbit| titbit.id == u32::from(failed_titbit))
+            .any(|titbit| titbit.id == failed_titbit)
     );
 
     // Blink starts on Original's visible phase and flips after one phase.

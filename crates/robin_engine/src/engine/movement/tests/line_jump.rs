@@ -722,8 +722,11 @@ mod suite {
 
         let entity = engine.get_entity(owner).unwrap();
         assert_eq!(
-            entity.element_data().obstacle_index().map(u16::from),
-            Some(0)
+            entity
+                .element_data()
+                .obstacle_index()
+                .map(crate::sight_obstacle::SightObstacleIndex::get),
+            Some(0_u32)
         );
         let pi = entity.position_iface();
         assert!(

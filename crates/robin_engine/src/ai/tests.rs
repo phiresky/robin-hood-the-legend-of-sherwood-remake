@@ -657,7 +657,7 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
         ai.current_substate,
         Substate::DefaultLookingSidewardsForCharly
     );
-    assert_eq!(ai.checkpoint_charly, 2);
+    assert_eq!(ai.checkpoint_charly, Some(AiEntityHandle::new(2)));
     assert_eq!(ai.macro_command_offset, 17);
     assert_eq!(ai.number_of_remaining_macro_bytes, 3);
     assert!(!ai.macro_timer_is_running);
@@ -1422,12 +1422,12 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
         z: 400.001,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 1135.0,
             y: 1843.0,
             sector: None,
             level: 0,
-        },
+        }),
         noise_type: NoiseType::Drawbridge,
         volume: 274,
         elevation: 220,
@@ -1442,7 +1442,10 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
     assert_eq!(normalized_orders[0].explicit_direction, Some(6));
 
     let mut ground_level_control = AiController::new(1);
-    ground_level_control.face_position_3d_with_ctx(noise.origin, &ctx);
+    ground_level_control.face_position_3d_with_ctx(
+        noise.origin.position().expect("test noise has a layer"),
+        &ctx,
+    );
     let ground_level_orders = ground_level_control.take_pending_orders();
     assert_eq!(ground_level_orders.len(), 1);
     assert_eq!(ground_level_orders[0].explicit_direction, Some(1));
@@ -1469,12 +1472,12 @@ fn face_null_sentinel_noise_origin_preserves_original_ground_projection() {
         z: 480.001_04,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 341.819_34,
             y: 716.628_85,
             sector: None,
             level: u16::MAX,
-        },
+        }),
         noise_type: NoiseType::Zonk,
         volume: 1,
         elevation: 480,
@@ -1509,12 +1512,12 @@ fn face_null_sentinel_noise_origin_ignores_separate_impact_elevation() {
         z: 150.001,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 1_092.945_9,
             y: 2_107.296_1,
             sector: None,
             level: u16::MAX,
-        },
+        }),
         noise_type: NoiseType::Zonk,
         volume: 7,
         elevation: 175,

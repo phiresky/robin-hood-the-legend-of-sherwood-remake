@@ -1504,7 +1504,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(saved.layer.get(), u16::MAX);
+        assert_eq!(saved.layer, None);
         assert_eq!(saved.sector.map(u16::from), Some(42));
         assert_eq!(saved.sector_index, SectorIndex::new(1));
         assert_eq!(saved.sector_goal.map(u16::from), Some(7));
