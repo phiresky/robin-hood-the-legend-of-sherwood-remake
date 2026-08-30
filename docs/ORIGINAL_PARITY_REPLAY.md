@@ -746,7 +746,7 @@ ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
 Build once, then use the first-divergence run for iteration:
 
 ```sh
-cargo build --example original_parity_replay
+cargo build -p robin_parity --example original_parity_replay
 TRACE_JSONL=/path/to/schema11-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
@@ -884,10 +884,14 @@ find "$PGO_DATA" -type f -delete
 rmdir "$PGO_DATA"
 ```
 
-To watch that same authoritative replay, add `--visual`. The window freezes on
-the first divergence while the normal logical mismatch report is printed:
+The default `robin_parity` build is CPU-only: it does not compile the game
+client, renderer, window, audio device, multiplayer transport, video decoder,
+updater, gamepad, or shader-preset stack. To watch the same authoritative
+replay, build the opt-in client feature and add `--visual`. The window freezes
+on the first divergence while the normal logical mismatch report is printed:
 
 ```sh
+cargo build -p robin_parity --example original_parity_replay --features client
 TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
@@ -902,6 +906,7 @@ GPU window stays hidden unless `--visual` is also present; flattened
 corpus-relative names avoid collisions between profiles:
 
 ```sh
+cargo build -p robin_parity --release --example original_parity_replay --features client
 TRACE_JSONL=/path/to/parity-save-replays/traces/Profile/Savegame_000-session-0001.jsonl.zst
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   target/release/examples/original_parity_replay \
