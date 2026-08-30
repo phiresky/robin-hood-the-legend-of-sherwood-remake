@@ -2,6 +2,39 @@
 
 use super::*;
 
+/// Match `RHSightObstacle::InitializeFrom*LevelFile`: Original builds both
+/// planes from the authored winding, then reverses both when the top normal
+/// points down. Plane height is independent of winding, but the resulting
+/// zero-valued coefficients retain different IEEE-754 signs. Those signs
+/// propagate into movement increments and projectile forecasts.
+fn orient_sight_obstacle_planes_like_original(top: &mut [[f32; 3]; 3], bottom: &mut [[f32; 3]; 3]) {
+    let normalized_z = |points: &[[f32; 3]; 3]| {
+        let [origin, a, b] = *points;
+        let ux = a[0] - origin[0];
+        let uy = a[1] - origin[1];
+        let uz = a[2] - origin[2];
+        let vx = b[0] - origin[0];
+        let vy = b[1] - origin[1];
+        let vz = b[2] - origin[2];
+        let nx = uy * vz - vy * uz;
+        let ny = uz * vx - vz * ux;
+        let nz = ux * vy - vx * uy;
+        let norm = (nx * nx + ny * ny + nz * nz).sqrt();
+        nz / norm
+    };
+
+    let top_points_down = normalized_z(top) < 0.0;
+    let bottom_points_down = normalized_z(bottom) < 0.0;
+    assert_eq!(
+        top_points_down, bottom_points_down,
+        "sight-obstacle top and bottom planes have inconsistent winding"
+    );
+    if top_points_down {
+        top.swap(1, 2);
+        bottom.swap(1, 2);
+    }
+}
+
 impl EngineInner {
     pub(super) fn begin_mission_level_stage(&mut self) {
         self.scripts.globals.clear();
@@ -494,8 +527,6 @@ impl EngineInner {
                         .collect();
                 // Capture vertices 0/1/2 as (point3, point1, point2) and
                 // seed the top/bottom planes from (point1, point2, point3).
-                // Orientation flip is skipped because `compute_plane_z` is
-                // symmetric in point order.
                 if obs.obstacle_points.len() >= 3 {
                     let p0 = &obs.obstacle_points[0];
                     let p1 = &obs.obstacle_points[1];
@@ -510,6 +541,10 @@ impl EngineInner {
                         [p2.x, p2.y, p2.z_bottom],
                         [p0.x, p0.y, p0.z_bottom],
                     ];
+                    orient_sight_obstacle_planes_like_original(
+                        &mut obs.top_plane_points,
+                        &mut obs.bottom_plane_points,
+                    );
                 }
                 obs.rebuild_geometry();
                 obs
@@ -1061,5 +1096,44 @@ impl EngineInner {
             registered_polygons,
             "Registered source-associated LINE_SOUND material polygons"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::orient_sight_obstacle_planes_like_original;
+    use crate::position_interface::PlaneZCoeffs;
+
+    #[test]
+    fn downward_flat_sight_plane_preserves_original_signed_zero_increment() {
+        // S01_Not_VL projection obstacle 81, on which interactive Soldier146
+        // starts moving at frame 416. Its authored winding points down.
+        let mut top = [
+            [1048.2462, 1518.7815, 100.00101],
+            [1080.4686, 1539.0594, 100.00101],
+            [1222.9685, 1457.3927, 100.00101],
+        ];
+        let mut bottom = [
+            [top[0][0], top[0][1], 0.001],
+            [top[1][0], top[1][1], 0.001],
+            [top[2][0], top[2][1], 0.001],
+        ];
+
+        let authored = PlaneZCoeffs::from_plane_points(&top);
+        assert_eq!(authored.bz.to_bits(), 0);
+
+        orient_sight_obstacle_planes_like_original(&mut top, &mut bottom);
+
+        let oriented = PlaneZCoeffs::from_plane_points(&top);
+        assert_eq!(oriented.az.to_bits(), 0);
+        assert_eq!(oriented.bz.to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(
+            oriented
+                .compute_z_increment(-0.9346988, 0.35544068)
+                .to_bits(),
+            (-0.0_f32).to_bits()
+        );
+        assert_eq!(top[1][0].to_bits(), 1222.9685_f32.to_bits());
+        assert_eq!(bottom[1][0].to_bits(), 1222.9685_f32.to_bits());
     }
 }
