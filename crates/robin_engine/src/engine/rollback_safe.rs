@@ -4077,17 +4077,38 @@ impl ParityReplaySetup<'_> {
     /// cache with the current bank frame while refreshing visible entities.
     /// Rust rendering is read-only, so the parity runner applies that legacy
     /// side effect explicitly after comparing each recorded frame.
-    pub fn refresh_sprite_dimension_cache(&mut self, assets: &LevelAssets) {
+    pub fn refresh_sprite_dimension_cache(
+        &mut self,
+        assets: &LevelAssets,
+        legacy_missing_presentation_view: bool,
+    ) {
         let Some(frames) = assets.pixel_opacity.as_ref() else {
             return;
         };
         let camera = &self.engine.inner.feedback.cutscene_camera;
         let screen = EngineInner::director_camera_view_size();
+        // Schema-16 parity traces serialize the simulation camera, but not
+        // Original's draw-time viewport/camera.  The latter can be one map
+        // unit past the reconstructed edge by the time Refresh calls
+        // RHSprite::IsOnScreen (interactive session 003 is an attested
+        // example).  Keep the compatibility envelope narrow: it admits only
+        // sprites touching that unrecorded one-unit presentation boundary,
+        // rather than guessing a capture resolution or refreshing every
+        // off-screen sprite.
+        // TODO: Remove this compatibility envelope once traces carry the
+        // capture viewport and per-Draw camera position.
+        let presentation_edge_slop = if legacy_missing_presentation_view {
+            1.0
+        } else {
+            0.0
+        };
         let view = crate::sprite::BBox::from_coords(
-            camera.view_position.x,
-            camera.view_position.y,
-            camera.view_position.x + screen.x / camera.zoom_factor,
-            camera.view_position.y + (screen.y - super::PANNEL_HEIGHT) / camera.zoom_factor,
+            camera.view_position.x - presentation_edge_slop,
+            camera.view_position.y - presentation_edge_slop,
+            camera.view_position.x + screen.x / camera.zoom_factor + presentation_edge_slop,
+            camera.view_position.y
+                + (screen.y - super::PANNEL_HEIGHT) / camera.zoom_factor
+                + presentation_edge_slop,
         );
         let updates = self
             .engine
@@ -5554,7 +5575,7 @@ mod tests {
         let before_refresh = engine.parity_entity_runtime_state(id, &assets);
         engine
             .parity_replay_setup()
-            .refresh_sprite_dimension_cache(&assets);
+            .refresh_sprite_dimension_cache(&assets, true);
         let after_refresh = engine.parity_entity_runtime_state(id, &assets);
 
         assert_eq!(before_refresh["sprite"]["width"], 44);
@@ -5563,6 +5584,100 @@ mod tests {
         assert_eq!(after_refresh["sprite"]["width"], 48);
         assert_eq!(after_refresh["sprite"]["height"], 19);
         assert_eq!(after_refresh["sprite"]["masked"], false);
+    }
+
+    #[test]
+    fn schema16_presentation_refresh_admits_only_missing_draw_view_edge() {
+        struct Frames;
+        impl crate::engine::PixelOpacityLookup for Frames {
+            fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+                (bank_id == 73).then_some((24, 55))
+            }
+
+            fn is_pixel_opaque(
+                &self,
+                _bank_id: u32,
+                _x: u16,
+                _y: u16,
+                _blue_pixels_are_in: bool,
+            ) -> bool {
+                false
+            }
+        }
+
+        let mut inner = EngineInner::new();
+        let mut sprite = crate::sprite::Sprite {
+            current_width: 20,
+            current_height: 53,
+            current_row: 0,
+            current_frame: 0,
+            ..Default::default()
+        };
+        // The reconstructed schema-16 view ends at x=1024. Original's
+        // unrecorded Draw-time view attests that a sprite beginning at x=1025
+        // was refreshed; anything farther away must remain culled.
+        sprite.center = crate::coordinates::SpriteAnchor::new(-1025.0, -20.0);
+        sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![73],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            ..Default::default()
+        }]);
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: true,
+                sprite,
+                ..Default::default()
+            },
+            fx: Default::default(),
+        }));
+        let assets = LevelAssets {
+            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            ..LevelAssets::new()
+        };
+        let mut engine = Engine { inner };
+        let gameplay_position = engine.inner.world.entities[id]
+            .as_ref()
+            .expect("test entity must remain occupied")
+            .element_data()
+            .position_map();
+
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, false);
+        let without_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(without_legacy_edge["sprite"]["width"], 20);
+        assert_eq!(without_legacy_edge["sprite"]["height"], 53);
+
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, true);
+        let with_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(with_legacy_edge["sprite"]["width"], 24);
+        assert_eq!(with_legacy_edge["sprite"]["height"], 55);
+        assert_eq!(
+            engine.inner.world.entities[id]
+                .as_ref()
+                .expect("test entity must remain occupied")
+                .element_data()
+                .position_map(),
+            gameplay_position,
+            "presentation compatibility must not mutate gameplay position"
+        );
+
+        let sprite = engine.inner.world.entities[id]
+            .as_mut()
+            .expect("test entity must remain occupied")
+            .sprite_mut();
+        sprite.current_width = 20;
+        sprite.current_height = 53;
+        sprite.center = crate::coordinates::SpriteAnchor::new(-1026.0, -20.0);
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, true);
+        let beyond_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(beyond_legacy_edge["sprite"]["width"], 20);
+        assert_eq!(beyond_legacy_edge["sprite"]["height"], 53);
     }
 
     #[test]

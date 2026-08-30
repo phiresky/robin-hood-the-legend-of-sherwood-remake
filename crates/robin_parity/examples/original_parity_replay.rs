@@ -3675,7 +3675,10 @@ fn append_legacy_retained_terminal_success_repair(
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
     engine
         .parity_replay_setup()
-        .refresh_sprite_dimension_cache(assets);
+        // Schema 16 omits the capture viewport and per-Draw camera position.
+        // Keep its presentation-only edge compatibility isolated here; a
+        // future schema carrying that provenance must pass `false` instead.
+        .refresh_sprite_dimension_cache(assets, true);
     engine
         .advance_frame(
             assets,
