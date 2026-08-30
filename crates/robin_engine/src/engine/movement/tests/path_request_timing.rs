@@ -51,6 +51,10 @@ mod suite {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -6.0, -4.0, 6.0, 4.0,
             ));
+        element.sprite.position_iface.set_pathfinder_index(
+            crate::position_interface::PathfinderIndex::new(0)
+                .expect("zero is a valid test pathfinder index"),
+        );
         element.set_position_map(source);
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
             element,
