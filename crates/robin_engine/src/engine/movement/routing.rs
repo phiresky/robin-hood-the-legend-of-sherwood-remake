@@ -1425,7 +1425,10 @@ mod exact_ai_goto_source_tests {
         let owner = engine.add_entity(Entity::Soldier(soldier));
         let position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
         position.set_sector_topology(Some(raw_sector), Some(raw_index));
-        position.set_door(DoorHandle(0), true);
+        position.set_door(
+            DoorHandle::new(0).expect("zero is a valid door index"),
+            true,
+        );
 
         let mut intent =
             crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 180.0, 200.0);

@@ -5377,7 +5377,7 @@ mod tests {
             SightObstacle::new(13, SIGHTOBSTACLE_PROJECTION_AREA),
         ]);
 
-        for (handle, expected_ordinal) in [(1_u16, 1_u64), (3, 2)] {
+        for (handle, expected_ordinal) in [(1_u32, 1_u64), (3, 2)] {
             let mut inner = EngineInner::new();
             let mut element = crate::element::ElementData {
                 kind: crate::element::ElementKind::Fx,

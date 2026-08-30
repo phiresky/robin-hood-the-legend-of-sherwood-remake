@@ -77,7 +77,7 @@ mod suite {
         };
         *pass_destination = source;
         *pass_layer = 1;
-        *gate_id = Some(crate::gate::DoorIndex(114));
+        *gate_id = Some(crate::gate::DoorIndex::new(114).expect("114 is a valid test door index"));
 
         let mut route_assert = SequenceElement::new_movement(
             2,
