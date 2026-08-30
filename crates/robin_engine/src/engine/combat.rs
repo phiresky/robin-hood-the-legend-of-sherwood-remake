@@ -3388,21 +3388,23 @@ impl EngineInner {
             None => return, // Only PCs get XP
         };
 
-        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
-            // The PC AddExperience path also awards a
-            // `PC_ADDITIONAL_CAPACITY_POINTS` campaign-score bonus
-            // whenever the call crosses a 100-XP boundary.
-            campaign.add_pc_experience(
-                usize::from(profile_idx),
-                crate::pc_status::SkillName::Bow,
-                bow_shot::BOW_KILL_EXPERIENCE_POINTS,
-            );
-            tracing::debug!(
-                shooter = ?shooter_id,
-                xp = bow_shot::BOW_KILL_EXPERIENCE_POINTS,
-                "Bow kill XP awarded"
+        let capacity_increased = self.mission_domain.campaign.add_pc_experience(
+            usize::from(profile_idx),
+            crate::pc_status::SkillName::Bow,
+            bow_shot::BOW_KILL_EXPERIENCE_POINTS,
+        );
+        if capacity_increased {
+            self.add_campaign_value(
+                crate::campaign::CampaignValue::Score,
+                crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
             );
         }
+        tracing::debug!(
+            shooter = ?shooter_id,
+            xp = bow_shot::BOW_KILL_EXPERIENCE_POINTS,
+            capacity_increased,
+            "Bow kill XP awarded"
+        );
     }
 
     /// Advance one pre-existing projectile at its creation-order position in

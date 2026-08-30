@@ -37,6 +37,11 @@ impl ProfileKeyConfig {
             custom: preset,
         }
     }
+
+    fn ensure_current_bindings(&mut self) {
+        self.active.ensure_reusable_cloak_binding();
+        self.custom.ensure_reusable_cloak_binding();
+    }
 }
 
 /// Per-profile key-binding store, keyed by `PlayerProfile::id`.
@@ -63,6 +68,9 @@ impl KeyConfigStore {
             let data = fs::read_to_string(&path)?;
             let mut store: KeyConfigStore = serde_json::from_str(&data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            for config in store.configs.values_mut() {
+                config.ensure_current_bindings();
+            }
             store.save_directory = directory.to_owned();
             Ok(store)
         } else {
@@ -80,9 +88,12 @@ impl KeyConfigStore {
 
     /// Look up — or insert a default — the entry for `profile_id`.
     pub fn entry_or_default(&mut self, profile_id: u32) -> &mut ProfileKeyConfig {
-        self.configs
+        let config = self
+            .configs
             .entry(profile_id)
-            .or_insert_with(ProfileKeyConfig::fresh)
+            .or_insert_with(ProfileKeyConfig::fresh);
+        config.ensure_current_bindings();
+        config
     }
 
     /// Read-only lookup; returns `None` if the profile has no entry.
@@ -199,6 +210,22 @@ mod tests {
         assert_eq!(
             entry.active.get_binding("Crouch").unwrap().secondary_key,
             Some(KeyCode::ShiftRight)
+        );
+        assert_eq!(
+            entry
+                .active
+                .get_binding("ToggleCloak")
+                .expect("legacy active config gains cloak action")
+                .primary_key,
+            Some(KeyCode::KeyV)
+        );
+        assert_eq!(
+            entry
+                .custom
+                .get_binding("ToggleCloak")
+                .expect("legacy custom config gains cloak action")
+                .primary_key,
+            Some(KeyCode::KeyV)
         );
         assert_eq!(entry.custom.key_type, 2);
     }

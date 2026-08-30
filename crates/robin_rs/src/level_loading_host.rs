@@ -494,13 +494,20 @@ impl PendingTerrainDecode {
                     let level_directory = level_directory.to_owned();
                     let shipping = shipping.clone();
                     robin_assets::wasm_threads::start_on_pool(move || {
+                        // Serial inside the worker: the pool is here to get
+                        // the decode OFF the main thread, not to split it.
+                        // With jxl SIMD the whole map decodes in ~430 ms on
+                        // one worker, while splitting it across the pool
+                        // measured no faster and competes with the VQ chunk
+                        // decode that is saturating those same workers
+                        // during install.
                         decode_terrain_bitmaps(
                             &map_name,
                             &ambiance_dir,
                             &level_directory,
                             shipping.as_deref(),
                             &mut |_| {},
-                            true,
+                            false,
                         )
                     })
                 };

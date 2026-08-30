@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "shippingDatadirSchema": 14,
+  "files": [
+    {
+      "path": "Data/Interface/Fonts/Debrief.bfn",
+      "size": 37988,
+      "sha256": "b558b72255cfd3d3d04ae5c4fa0752203cd7e212090bed3c2a35dad364d6ec81"
+    },
+    {
+      "path": "Data/Interface/Fonts/EditFields.bfn",
+      "size": 28280,
+      "sha256": "c36ee1d147df2b3c242667bd63ff6ec9ffff00e5786afaab5efe9c0c725b3833"
+    },
+    {
+      "path": "Data/Interface/Fonts/InfoScroll.bfn",
+      "size": 10669,
+      "sha256": "bd48088be36accfaf5d31767985c0753519f423f85428914e244e4dab8ba5729"
+    },
+    {
+      "path": "Data/Interface/Fonts/MenuButtonDisabled.bfn",
+      "size": 24061,
+      "sha256": "4f8527e3bccc773ecf95a11820127a607444f8ccb041de324b8dbb56d4e107f6"
+    },
+    {
+      "path": "Data/Interface/Fonts/MenuButtonEnabled.bfn",
+      "size": 27867,
+      "sha256": "7989b04c47d3c26b482acd21d242809fd0f4cfb205291d455e0f2af9d6739886"
+    },
+    {
+      "path": "Data/Interface/Fonts/Scroll.bfn",
+      "size": 36932,
+      "sha256": "0ac9a4823eb4321bce6813fac1957e6300110ec24b49b70a66503235e0a3e89c"
+    },
+    {
+      "path": "Data/Interface/Fonts/ShortBriefingActive.bfn",
+      "size": 4259,
+      "sha256": "ee785634b1a63dfe806c81b6740521b67619a11d752239814e8b55e7ff0dff2b"
+    },
+    {
+      "path": "Data/Interface/Fonts/ShortBriefingInactive.bfn",
+      "size": 4327,
+      "sha256": "bff304834fd0eadbb360fb71b6fb02a8d71e61ad7b4958697c56721066db9bf7"
+    },
+    {
+      "path": "Data/Interface/Fonts/Title.bfn",
+      "size": 56059,
+      "sha256": "1dc494ca1abcbef75b152e4c5524ef71060c87752c4e13368943ab3367f40c01"
+    },
+    {
+      "path": "Data/Interface/Fonts/arial.ttf",
+      "size": 143300,
+      "sha256": "ca6714459a58eca52ff85d9b36bf8fcc4713a936a39877d5746f09634877cceb"
+    },
+    {
+      "path": "Data/Interface/Fonts/dialog.fnt",
+      "size": 36058,
+      "sha256": "7e56c2abce8cf7a215b15afa73a5be88f2e7263805088f55fbbe6a3f79c3dc29"
+    },
+    {
+      "path": "Data/Interface/Fonts/manager.cfg",
+      "size": 653,
+      "sha256": "002ac9ce359915f9057ac9a4621c7828fea0ddeebce3a67f7217aaee0d4e4479"
+    },
+    {
+      "path": "Data/Interface/Fonts/tooltips.bfn",
+      "size": 18024,
+      "sha256": "b3b15b35e254c0a97f057ccbd4898f6e4f5b33e50e174384c275ff463d5410f4"
+    },
+    {
+      "path": "Data/Interface/UI/allied_formation_box.png",
+      "size": 3202,
+      "sha256": "14dc7a07460f3c75d602fa1b26328bdd789b985b2de4c0968a382e6b432ee621"
+    },
+    {
+      "path": "Data/Interface/UI/allied_formation_flank.png",
+      "size": 2599,
+      "sha256": "708f92219907f429cffecbb2fcac8649518aba94f95312bc183a36f0c1311d85"
+    },
+    {
+      "path": "Data/Interface/UI/allied_formation_line.png",
+      "size": 2662,
+      "sha256": "bd4549a37c7afb9e610d8a11ccd525d8db2894397aa60da1cce121742df1e444"
+    },
+    {
+      "path": "Data/Interface/UI/allied_formation_staggered.png",
+      "size": 3052,
+      "sha256": "0955a0154b4f3a7dfe1628b70490a8258b07e4aa266de8db0393d76cfb9bc0d5"
+    },
+    {
+      "path": "Data/Interface/UI/allied_patrol_off.png",
+      "size": 2863,
+      "sha256": "99fa40c344c40611d295fc1339d012b9ad12a094f961da9990bfb72a1457b82d"
+    },
+    {
+      "path": "Data/Interface/UI/allied_patrol_on.png",
+      "size": 2278,
+      "sha256": "cdf1298713144a3d0d5b7cf63be5ea5b30feba8c8209d1fcf06669ceeebbe680"
+    },
+    {
+      "path": "Data/Interface/UI/allied_pin_pinned.png",
+      "size": 1629,
+      "sha256": "a13c6f7cadd614de3b93716f4df963696d41036d78db89ade037bbc7c11f2876"
+    },
+    {
+      "path": "Data/Interface/UI/allied_pin_unpinned.png",
+      "size": 1666,
+      "sha256": "435eb16ea1af11c39bd3ce3146918e36883845427443bddc281184387c701322"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_background.png",
+      "size": 25369,
+      "sha256": "0d9f4348e9ed8499f667f190ac16becfdd3fe089569188ba1c65dad5718b5bf3"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_foreground.png",
+      "size": 5279,
+      "sha256": "65fb0cc941b5f67444d8c58a0ae4181ac03765d8596d7ed850763508d95cecd9"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_generic.png",
+      "size": 9537,
+      "sha256": "cb6e7bb6988d02a77bd5e3dfb024d17f32abdc6b0a953134f87b4cee4bcf073a"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_guisbourne.png",
+      "size": 10578,
+      "sha256": "e5e694580e5bc147bb05544e76b1a61377a3857b80e0ee270dbe91d961e9a0bd"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_longchamp.png",
+      "size": 10984,
+      "sha256": "983ecbaa7e9e201dea82831f1ae0e9eb56a2d6020192a78cdbf94cfc389b2461"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_prince_john.png",
+      "size": 11112,
+      "sha256": "2d6bfb01264d150053ded95932fd2dc168936b52e3459d37b01ddcfefbd20580"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_scathlock.png",
+      "size": 10220,
+      "sha256": "e2c159c363503581f6e5300eda0d97fe98652000a6cb453105313f8ca9c2e6ab"
+    },
+    {
+      "path": "Data/Interface/UI/allied_portrait_sheriff.png",
+      "size": 10609,
+      "sha256": "d53ec09ee1a3c4b3567c39f68ffaf9617d1b1d161a57f3ee1e09364a15c4eace"
+    },
+    {
+      "path": "Data/Interface/UI/allied_stance_aggressive.png",
+      "size": 3018,
+      "sha256": "36fd4e39ad45af3c9bbc32ead6859529cdd3ea169e83c93ae051e797067f7d16"
+    },
+    {
+      "path": "Data/Interface/UI/allied_stance_defensive.png",
+      "size": 2421,
+      "sha256": "46b5e114457dcadc59b91560338ebb32ff38dfd582780339d5f9d0b50caf63e0"
+    },
+    {
+      "path": "Data/Interface/UI/allied_stance_hold.png",
+      "size": 2168,
+      "sha256": "c9d946722c32e7b70780903d0dc3a2a49209802dc981733fc32a8b22ac4abbee"
+    }
+  ]
+}

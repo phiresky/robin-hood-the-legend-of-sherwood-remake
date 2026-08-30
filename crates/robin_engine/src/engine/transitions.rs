@@ -570,7 +570,7 @@ fn get_transition_flags_pc(ctx: &TransitionCtx) -> (EX, CP, EA) {
             };
             (EX::MUST_BE_WAITING, change, EA::empty())
         }
-        EnterHelpingClimb | EnterBeggar | EnterListen => {
+        EnterHelpingClimb | EnterBeggar | EnterListen | EnterCloak => {
             (EX::MUST_BE_WAITING, CP::MUST_BE_UPRIGHT, EA::empty())
         }
         LeaveHelpingClimb => (
@@ -1646,6 +1646,16 @@ fn make_posture_transition_pc(
                 );
                 true
             }
+            Posture::Cloaked => {
+                push_anim_order_no_dir(
+                    engine,
+                    seq_id,
+                    elem_idx,
+                    OrderType::TransitionWaitingCapeWaitingUpright,
+                );
+                set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                true
+            }
             Posture::AnonymousArcher => {
                 if !flags.contains(CP::CAN_BE_ANONYMOUS_ARCHER) {
                     push_anim_order_no_dir(
@@ -2110,7 +2120,15 @@ impl EngineInner {
             return false;
         };
 
-        let (exit_flags, change_flags, enter_flags) = get_transition_flags(&ctx);
+        let (exit_flags, mut change_flags, enter_flags) = get_transition_flags(&ctx);
+        // The reusable cape has only a stationary idle row. Any actor action
+        // other than waiting or the cloak transition itself first plays the
+        // shipped cape-to-upright strip and reveals the wearer. This includes
+        // damage and hostile interactions whose Original transition flags are
+        // deliberately empty.
+        if actor_posture == Posture::Cloaked && crate::cloak::command_breaks_cloak(ctx.command) {
+            change_flags |= CP::MUST_BE_UPRIGHT;
+        }
 
         if !dispatch_make_action_transition(self, sim, assets, seq_id, elem_idx, owner, exit_flags)
         {

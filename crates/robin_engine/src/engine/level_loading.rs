@@ -6015,10 +6015,53 @@ impl EngineInner {
     /// amount from engine bonuses and occupants from script-zone
     /// membership.  Invoked at mission start.
     pub(crate) fn harvest_production_sector_state(&mut self, assets: &LevelAssets) {
+        let live_sectors = self.live_production_sectors(&assets.profile_manager);
+        let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
+            return;
+        };
+        assert_eq!(
+            campaign.production_sectors.len(),
+            live_sectors.len(),
+            "live Sherwood production snapshot changed the sector count"
+        );
+        for (sector, live) in campaign
+            .production_sectors
+            .iter_mut()
+            .zip(live_sectors.into_iter())
+        {
+            assert_eq!(
+                sector.prod_type, live.prod_type,
+                "live Sherwood production snapshot changed sector ordering"
+            );
+            sector.amount = live.amount;
+            sector.occupants = live.occupants;
+
+            // Clear `production_points` after the per-sector capture so
+            // the next Sherwood load's script Initialize callbacks
+            // (which re-run the `AddProductionPoint` opcodes)
+            // doesn't accumulate duplicate points across visits — without
+            // this, `plan_bonus_spawns` iterates more points than exist
+            // in the level and raises `max_amount_reached` prematurely
+            // while spawning duplicate-position bonuses.
+            sector.production_points.clear();
+            sector.script_zone = None;
+        }
+    }
+
+    /// Return a read-only, current-frame view of Sherwood production state.
+    ///
+    /// Campaign sectors retain the allocation captured at the previous exit;
+    /// the live script-zone membership and item entities are authoritative
+    /// while the player is walking around Sherwood. Both the forecast panel
+    /// and exit harvesting call this routine so moving a worker or collecting
+    /// an item cannot leave the UI and committed campaign state disagreeing.
+    pub(crate) fn live_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
         // Build a (production_type → occupants Vec) map by walking every
         // script zone that carries a production type.  Capturing occupants
-        // here keeps the borrow of `campaign` short (we only update it
-        // after all engine reads are done).
+        // here keeps the campaign view immutable.
         let mut per_sector_occupants: std::collections::HashMap<
             crate::sector_production::Type,
             Vec<crate::sector_production::Occupant>,
@@ -6049,10 +6092,7 @@ impl EngineInner {
                 let profile_idx = pc.pc.profile_index;
 
                 if train_bow_filter {
-                    let Some(_campaign) = Some(&self.mission_domain.campaign) else {
-                        continue;
-                    };
-                    let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
+                    let Some(profile) = profiles.get_character(profile_idx) else {
                         panic!(
                             "TRAIN_BOW occupant profile {profile_idx} missing from ProfileManager"
                         );
@@ -6063,9 +6103,7 @@ impl EngineInner {
                 }
 
                 // Find the PcDescription index (position in campaign.characters).
-                let Some(campaign) = Some(&self.mission_domain.campaign) else {
-                    continue;
-                };
+                let campaign = &self.mission_domain.campaign;
                 let Some(pc_description_idx) = campaign
                     .characters
                     .iter()
@@ -6090,16 +6128,11 @@ impl EngineInner {
             }
         }
 
-        // Now that engine reads are done, write into the campaign sectors:
-        // amount harvest (from entities) + occupants (from zones above).
-        let entities_snapshot = &self.world.entities;
-        let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
-            return;
-        };
-        for sector in &mut campaign.production_sectors {
+        let mut sectors = self.mission_domain.campaign.production_sectors.clone();
+        for sector in &mut sectors {
             // Bonus-amount branch runs for MAKE_* / any sector with an
             // associated action; no-op for TRAIN/HEAL/RELIC.
-            sector.get_amount_from_current_mission(entities_snapshot);
+            sector.get_amount_from_current_mission(&self.world.entities);
 
             // Replace occupants with the fresh snapshot: sectors
             // whose type has no zone in the new map (or whose zone
@@ -6116,17 +6149,8 @@ impl EngineInner {
             if let Some(new_occupants) = per_sector_occupants.get(&sector.prod_type) {
                 sector.occupants = new_occupants.clone();
             }
-
-            // Clear `production_points` after the per-sector capture so
-            // the next Sherwood load's script Initialize callbacks
-            // (which re-run the `AddProductionPoint` opcodes)
-            // doesn't accumulate duplicate points across visits — without
-            // this, `plan_bonus_spawns` iterates more points than exist
-            // in the level and raises `max_amount_reached` prematurely
-            // while spawning duplicate-position bonuses.
-            sector.production_points.clear();
-            sector.script_zone = None;
         }
+        sectors
     }
 
     /// Apply stored production-sector state to the live Sherwood engine:

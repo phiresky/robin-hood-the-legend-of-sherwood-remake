@@ -372,29 +372,59 @@ impl crate::game::GameCallbacks for RustCallbacks {
         campaign: &Campaign,
         profiles: &engine_profiles::ProfileManager,
     ) {
-        let mission_secs = self.get_current_playing_time(campaign);
-        self.application_context
+        let mission_secs = if campaign.latest_mission_attempt().is_some_and(|attempt| {
+            attempt.kind() == robin_engine::campaign_history::MissionAttemptKind::HistoryReplay
+        }) {
+            0
+        } else {
+            self.get_current_playing_time(campaign)
+        };
+        let persistence = self
+            .application_context
             .with_player_profiles_mut(|manager| {
-                let profile = manager
-                    .get_active_mut()
-                    .expect("ApplicationContext lost its required active player profile");
-                profile.score = campaign.get_value(engine_campaign::CampaignValue::Score) as u32;
-                profile.ransom = campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
-                profile.progression = campaign.get_progression(profiles);
-                profile.play_time += mission_secs;
+                let added = {
+                    let profile = manager
+                        .get_active_mut()
+                        .expect("ApplicationContext lost its required active player profile");
+                    profile.score =
+                        campaign.get_value(engine_campaign::CampaignValue::Score) as u32;
+                    profile.ransom =
+                        campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
+                    profile.progression = campaign.get_progression(profiles);
+                    profile.play_time += mission_secs;
+                    let achievements_before = profile.earned_achievements();
+                    let added = profile
+                        .promote_campaign_history(campaign, profiles)
+                        .unwrap_or_else(|error| {
+                            panic!("cannot promote campaign attempt into profile history: {error}")
+                        });
+                    let _newly_earned = profile
+                        .earned_achievements()
+                        .difference(achievements_before);
 
-                let dead = campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;
-                let alive =
-                    campaign.get_value(engine_campaign::CampaignValue::LivingSoldiers) as u32;
-                profile.preserved_lives = if dead != 0 || alive != 0 {
-                    (100.0 * alive as f32 / (dead + alive) as f32) as u32
-                } else {
-                    0
+                    let dead =
+                        campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;
+                    let alive =
+                        campaign.get_value(engine_campaign::CampaignValue::LivingSoldiers) as u32;
+                    profile.preserved_lives = if dead != 0 || alive != 0 {
+                        (100.0 * alive as f32 / (dead + alive) as f32) as u32
+                    } else {
+                        0
+                    };
+                    added
                 };
-            })
-            .unwrap_or_else(|error| {
-                panic!("profile synchronization lost its ApplicationContext: {error}")
+                if added != 0 {
+                    manager.save()?;
+                }
+                Ok::<(), std::io::Error>(())
             });
+        match persistence {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => panic!("cannot persist promoted campaign history: {error}"),
+            Err(error) => {
+                panic!("profile synchronization lost its ApplicationContext: {error}")
+            }
+        }
     }
     fn save_game_file_exists(&self) -> bool {
         self.save_manager

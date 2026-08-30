@@ -2036,3 +2036,323 @@ engine-affecting step (bank install, scripts, `Engine::new` inputs, spellforge
 startup, audio, campaign clock, peasant-name generation) is unchanged, so
 replay determinism is preserved; an existing 790-frame replay plays back
 cleanly on the new binary.
+## Lazy character-chunk streaming: activate before the decode tail (2026-08-29)
+
+The browser install no longer waits for every VQ sprite chunk before
+activating the mission. Chunks are partitioned at install time
+(`SpriteDeferral` in `crates/robin_rs/src/shipping_mission.rs`):
+
+- **Critical (blocks activation)**: everything referenced by entities
+  present at mission start — the mission team, the level's authored
+  soldiers/civilians/PCs-to-rescue, all mission-core chunks (targets,
+  patches, animations, objects, Blip00), plus any family-hub chunk a
+  critical chunk names as a coding base (`base_rhs`/`base2_rhs`
+  promotion runs to a fixpoint, so hub-before-variant ordering is
+  preserved).
+- **Deferred (streams after activation)**: reinforcement-only gang
+  characters — uninstanced non-VIP gang profiles whose RHS is not also
+  needed by the team or the level. Unknown/ambiguous chunks default to
+  critical, so a misjudgment can only delay activation, never a
+  start-visible sprite.
+
+After `install_mission`, a `spawn_local` driver streams the deferred
+chunks on the same rayon worker pool (strict dependency dispatch on a
+sparse `Arc`-shared row clone) and publishes each decoded grid through
+the new `robin_assets::late_sprites` registry: every not-yet-decoded VQ
+row in the live `FrameHolder` holds a shared `OnceLock` cell
+(`PackedSprite::late_grid`), so grids appear to rendering and mouse
+hit-testing in place, with no frame-holder republish. A draw that races
+a pending grid degrades safely: `ensure_sprite_cached`/
+`ensure_outline_cached` skip (and crucially do not cache) the sprite
+with a `skipped draw: sprite pixels still streaming` debug line, the
+`uncompress_frame*` family paints transparent instead of panicking, and
+`is_pixel_opaque` reports transparent. Determinism is untouched — the
+simulation never reads pixel data; the only pixel consumers are the
+renderer and host-side mouse focus, whose *results* are recorded into
+the replay command stream. Post-activation decode failures warn and
+leave those sprites skipped; a superseding mission install invalidates
+the tail via a registry epoch. Serial (non-cross-origin-isolated) and
+native installs keep the old fully-blocking behavior. Mission restarts
+reuse the registry cells, so a finished tail survives re-entry.
+
+The loading bar is now work-weighted instead of files-counted: fetch
+progress by bytes received (bodies read through `ReadableStream`
+readers with `Content-Length` learned from the parallel headers; totals
+reconciled to actual body sizes), decode progress by critical VQ blob
+bytes materialized (weight 6.0 per byte vs. one network byte), combined
+into one monotonic fraction (`InstallWorkModel`, reported as n/100 work
+units through the existing `MissionLoadProgress` interface, with a
+150 ms ticker so the bar moves during long bodies). After activation,
+the deferred tail reports honest blob-byte progress as a small
+"Streaming sprites N% (done/total)" HUD line (`hud_text.rs`,
+`late_sprites::tail_status`) until it completes.
+
+No shipping formats changed: same magics, no converter changes,
+`shipping_datadir.rs` untouched — the partition and driver reuse the
+existing `VqDecodeScheduler` entry points.
+
+### What actually defers, measured
+
+The deferrable set is exactly the payload `required_dependencies` pulls
+in *beyond* the mission itself: the reinforcement candidate pool. In the
+fullgame CPF only three of the ten character profiles are non-VIP —
+`MerryManA/B/C` (`datadirs/fullgame_linux/Data/Configuration/profile.json`)
+— and reinforcement selection can only instantiate uninstanced non-VIP
+gang members, so those three (plus the object/projectile RHS their
+actions enable) are the entire candidate set. Everything else is
+critical.
+
+Consequently the size of the win scales with how many Merry Men are
+recruited-but-not-taken on the mission, and it is exactly zero for a
+context-free launch: `Campaign::reset` seeds only Robin into the gang,
+so a `?mission=`/`--mission` launch (what the headless-Chrome harness
+drives) has an empty reinforcement pool, fetches no reinforcement RHS,
+and therefore has nothing to defer. Browser measurements on that path
+are a no-regression check, not a speed-up demo:
+
+```
+                       pkg-base (main)          pkg-after (this change)
+H01_Lin_VL       26.2 / 12.6 / 17.7 s      11.7 / 17.7 / 15.9 s
+                        median 17.7 s             median 15.9 s
+Tac01_FoA_MP                   17.9 s             9.0 / 9.3 s
+Sherwood                        6.1 s                    4.8 s
+```
+
+(headless Chrome, SwiftShader, loopback COOP/COEP server, `ship_web_v13`
+datadir; time from `wasm_boot` to "activated shipping mission", which on
+these launches equals time to "Recording replay"). H01 runs were
+interleaved base/after to share load conditions. The run-to-run spread
+(11.7-26.2 s for the same binary) dwarfs any difference between the
+columns: this machine runs many concurrent agent builds, and the
+measurement is dominated by CPU/IO contention rather than by the
+install. That is the expected result — with an empty reinforcement pool
+the partition is a no-op and both binaries execute the same schedule —
+so these runs are a no-regression check only. No deferred-tail line, no
+`skipped draw` line, and no missing-sprite artifacts appeared on any
+run.
+
+The partition rules themselves are unit-tested in `shipping_mission.rs`
+(`SpriteDeferral` compiles on every target; only the streaming driver is
+browser-only): only uninstanced non-VIP gang members outside the mission
+team are deferrable, coding bases named by critical chunks are promoted
+transitively (including `base2` star-2 hubs), level-start characters are
+pulled back into the critical set along with their hub chains, and
+Sherwood/saved-world launches defer nothing at all.
+
+## Shipped: lossy-JXL RLE sprite atlases, web only (schema v14, 2026-08-30)
+
+Productionizes the 2026-08-29 "the RLE/patch bucket — lossy JXL WINS here"
+follow-up as `convert_datadir --rle-sprite-format {exact,jxl-q70,jxl-q80}`,
+wired into `scripts/build_web_shipping_datadir.sh`. Default is `exact`:
+native shipping stays byte-preserving, because these sprites composite into
+RGB565 framebuffers that parity traces screenshot.
+
+Two things about the shipped format differ from the research prototype, and
+both made it smaller and simpler.
+
+### The class map is the alpha channel, not a sidecar
+
+The probe carried a zstd'd 2-bit class map beside each image to keep run
+extents and the keyed pixels exact. Shipping instead puts the class in the
+JXL's own alpha channel — 0 transparent, 128 shadow, 255 opaque — coded
+losslessly with `cjxl --alpha_distance=0` while the color channels stay
+lossy VarDCT. One RGBA image per atlas, no sidecar, no second entropy stage.
+
+Alpha is a class MARKER, never a blend factor. Nothing composites the stored
+RGB at partial opacity: materialization turns the decoded image straight into
+the RGB565 canvas with raw `SHADOW_KEY` in the shadow pixels, so the
+ambience-dependent shadow substitution still happens per draw exactly where it
+always did (`decompress_rle_arno_law`'s mapping), and hit-testing still keys
+off `SHADOW_KEY` / `TRANSPARENT_COLOR_16`.
+
+Exactness is enforced twice, and loudly: the converter decodes every encode it
+produces and fails the conversion if any pixel changed class, and
+`--verify-shipping` re-checks per sprite against the source bank. A stray
+alpha value that is not one of the three markers is a hard decode error
+rather than a nearest-match guess. Requantized visible pixels are also
+key-dodged (low green bit flipped) so a lossy color can never land on a key
+value and silently become transparent.
+
+### Invisible pixels are edge-extended, not black-filled
+
+The key colors must never be coded literally — the transparent key `0x07C0`
+is bright green and the shadow key `0x001F` blue, so VarDCT ringing would
+bleed them into neighbouring visible pixels. But the obvious fix, writing
+`(0,0,0,0)` (what `Picture::to_rgba8888` does for the interface path), still
+drags edge pixels dark. Every invisible pixel now takes the color of its
+nearest opaque neighbour (4-connected BFS, radius 8, alpha untouched), which
+gives the DCT a smooth continuation across the sprite boundary and across
+atlas cell gutters. The same smear was applied to the interface/pak keyed
+JXL path, which had the black-fill bleed too.
+
+### No repacking: the decoded atlas IS the sprite
+
+The prototype rebuilt packed RLE run/literal words at load time. That is pure
+busywork: nothing downstream draws from runs — all four `frame_holder`
+consumers (the ArnoLaw blit, both shadow-extraction blits, and the
+`is_pixel_opaque` hit test) decompress to a full RGB565 canvas anyway. So one
+atlas decodes into one shared canvas and each sprite keeps a window into it
+(`SpriteRaster { atlas, stride, x, y }`); the consumers gained a raster branch
+that is a strided copy with the identical per-pixel mapping.
+
+Dropping the run format also dropped a class: the prototype's fourth
+"in-run literal carrying the transparent key" class exists only to reproduce
+run bytes. Its canvas value is `TRANSPARENT_COLOR_16`, which is precisely what
+all four consumers already produce for it, so three classes suffice.
+
+### Demo numbers (demo_leicester_ecoste, full web recipe)
+
+`rhs/` bucket, same binary and schema, only the flag differs:
+
+```
+--rle-sprite-format exact      17,966,211 B
+--rle-sprite-format jxl-q70    17,305,957 B   (-660,254 B, -3.7% of the bucket)
+  prototype mask design        17,367,733 B   (alpha is 61,776 B smaller)
+```
+
+The bucket total is dominated by VQ character chunks (16.1 MB of blobs); the
+RLE part itself goes 1.30 MB (zstd'd exact words) -> 637,057 B of JXL, i.e.
+**0.49x**, for 288 lossy sprites. Verify is green: 64,770 sprites bit-identical
+to the source bank, 288 RLE sprites lossy with structure and keys bit-exact,
+28.1 dB opaque-pixel PSNR, worst chunk 24.2 dB, dependency closure covered.
+
+### Quality gating
+
+q70's worst cases are small dithered pickup/effect sprites, exactly as the
+research predicted — the first demo verify failed on `RELIC_Ampulla` at
+21.8 dB. The converter now scores every encode and keeps exact words below a
+24 dB per-sprite floor: a member under the floor is ejected from its atlas and
+the group re-packed (it retries individually first), which also guarantees the
+per-chunk floor `--verify-shipping` enforces. On the demo that demotes 105
+sprites; 250 more are skipped for being under 20x20 px, and 1 loses on size.
+
+### Resident memory: the honest cost
+
+A canvas is 2 B/px whether or not it is mostly transparent, while packed RLE
+words cost nothing for transparent runs. Demo, all chunks materialized:
+
+```
+decoded atlases (288 sprites, 29 atlases)   11,162,802 B
+  of which sprite pixels                     9,571,256 B
+  of which atlas gutter waste                1,591,546 B  (14%)
+packed RLE words they replace                 4,720,222 B
+```
+
+So the shipped bytes shrink ~2x while resident bytes grow ~2.4x. That is the
+trade to watch on wasm; it is bounded per mission (chunks are mission-scoped),
+and the gutter share is small because animation groups pack same-size frames.
+Uniform-grid cells are why any gutter exists at all — a shelf packer would
+recover most of that 14% if it ever matters.
+
+### Fullgame numbers (fullgame_linux, full web recipe)
+
+Same binary and schema on both sides; only `--rle-sprite-format` differs.
+
+```
+                                exact            jxl-q70          delta
+rhs/ bucket                96,287,605 B     87,951,100 B    -8,336,505 B  (-8.7%)
+whole Data/               156,931,728 B    148,594,453 B    -8,337,275 B
+H01_Lin_VL blocking set    24,699,643 B     24,192,060 B      -507,583 B  (-2.1%)
+```
+
+The bucket saving lands where the research said it would (~8 MiB); the
+per-mission blocking saving is much smaller because one mission touches only a
+few animation chunks. 5,682 sprites ship lossy across the corpus: 6,144,079 B
+of JXL replacing 59,398,464 B of raw RLE words (zstd'd to ~14.5 MB in the
+exact tree), in 904 images across 60 chunks.
+
+Verify green on the whole tree: 402,303 sprites, 396,621 bit-identical to the
+source bank, 5,682 lossy with structure and keys bit-exact, 29.8 dB
+opaque-pixel PSNR, 17.9% of visible pixels still exactly 565-equal, worst
+chunk 24.1 dB, all 50 dependency lists closure-covered. The quality floor
+demotes 1,546 sprites to exact words and 1,755 more are under 20x20 px.
+
+Native H01 install decode (`--decode-bench`, all 68 blocking files):
+
+```
+                        exact tree      jxl-q70 tree
+VQ blobs (45)              2.50 s          2.80 s
+RLE-JXL chunks (3)            —            0.32 s
+resident RLE rasters          —          3,862,642 B (88 sprites, 21 atlases,
+                                          13% of it gutter)
+```
+
+### Browser install (headless Chrome, threaded wasm, `H01_Lin_VL`)
+
+`node scripts/wasm_mission_install_chrome.mjs <tree>`, the two trees run
+interleaved on a noisy box (load 4.5-8.8), so minimums are the honest
+statistic:
+
+```
+                    runs (s)                  min
+exact       9.0, 11.9, 8.3                    8.3 s
+jxl-q70     11.2, 9.1, 8.7, 8.5               8.5 s
+```
+
+Install time is unchanged within noise: the extra JXL decode (0.32 s native
+for H01's 3 chunks; on the pool it overlaps the fetches) is roughly offset by
+the 507,583 fewer bytes to download. Both trees report the same 72 blocking
+files and reach `activated shipping mission` cleanly.
+
+### Verdict and what is still open
+
+Ship it for web: -8.3 MB off the rhs bucket for no measurable install-time
+cost, at 29.8 dB on visible pixels with keys and structure bit-exact. Native
+keeps `exact` and stays parity-safe.
+
+Open items, in the order they would pay:
+
+- **Resident memory** is the real trade (+2.4x on the sprites it touches;
+  3.86 MB for H01). If wasm heap ever becomes the constraint, the levers are a
+  shelf packer (recovers the ~13% gutter share) and dropping the raster to
+  RGB565-with-holes only for sprites that are actually drawn.
+- **The 24 dB floor is conservative.** It demotes 1,546 fullgame sprites back
+  to exact words; several are the `Z_*` ambient character animations, which are
+  large. A per-sprite quality-vs-size search (encode at q80 when q70 misses the
+  floor, instead of falling all the way back) would recover part of that.
+- **Interface/pak art now gets the same edge extension** but was not measured
+  separately here; the earlier `--pak` numbers predate the smear.
+
+## Campaign close-out: 71.6 s -> 9.3 s, 41.7 MB -> 36.7 MB (2026-08-30)
+
+Everything from the two-day campaign, integrated and measured on one
+build and one conversion (canonical `scripts/build_web_shipping_datadir.sh`
+recipe): schema v14 chunks (RHDDNA14/RHMISN08), all JXL at q70 including
+minimaps and the RLE patch bucket, 48 kbit/s music from the lossless
+remasters, logical audio bundles, merged terrain payloads, wasm threads
+with a fully streamed install, deferred character-chunk streaming,
+overlapped session setup, jxl-rs SIMD, and GPU atlas sprite rendering.
+
+Fresh-profile headless Chrome, loopback COOP/COEP server, `H01_Lin_VL`:
+
+```
+                              v8 base    v10 (day 1)  v11        final
+navigation -> in-game         (untimed)  71.6 s       23.5 s     9.3 s
+  wasm VQ decode              —          61.7 s       12.3 s     (in the 8.1 s install)
+  mission bootstrap           —          6.7 s        6.7 s      1.29 s
+wasm gzip                     4,633,216  5,921,549    4,862,157  5,081,695
+boot datadir                  9,352,150  9,324,395    7,893,113  7,161,383
+blocking mission files       26,142,522 24,857,987   25,272,333 24,192,060
+total through first mission  41,659,633 41,699,607   39,623,279 36,727,000
+```
+
+The wasm carries threads, atomics, the rayon worker snippets and SIMD
+jxl/zstd at opt-level 3, and is still smaller than the v10 build.
+Startup audio no longer appears in the blocking set: sounds ship as 51
+logical bundles plus 16 standalone tracks (was 2,046 files), and the
+catalog prefetches in the background from first playback.
+
+Fullgame buckets: rhs 87,951,100 (193.7 MB in the v8 era, 2.2x),
+audio 26,771,451, terrain 17,222,400, missions 9,484,742.
+
+Verification: 223 chunks (133 VQ blobs, 60 RLE-JXL chunks / 904 JXL
+images), 402,303 sprites, 1,101,554,622 pixels — 396,621 bit-identical
+to the source bank; the 5,682 lossy RLE sprites verify structurally with
+keys and class bit-exact at 29.8 dB opaque PSNR, worst chunk 24.1 dB
+against a 24 dB conversion-time floor that demotes failures back to
+exact words. Sprite rendering is byte-identical: eight full-map captures
+across three missions and four frames, 0 differing pixels.
+
+Remaining bootstrap spans (browser): terrain decode join 426 ms,
+frontend assembly 695 ms, level load 447 ms. Headless SwiftShader
+inflates engine bring-up; a real GPU should land under 9 s.

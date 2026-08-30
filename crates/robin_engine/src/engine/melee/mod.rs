@@ -396,6 +396,7 @@ fn compute_belt_point(entity: &crate::element::Entity) -> crate::coordinates::Wo
     let z_offset = match posture {
         Posture::Upright
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::LeaningOut
         | Posture::Leisure
         | Posture::Siesta

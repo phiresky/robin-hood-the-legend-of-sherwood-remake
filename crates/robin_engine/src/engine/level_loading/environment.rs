@@ -6,6 +6,8 @@ impl EngineInner {
     pub(super) fn begin_mission_level_stage(&mut self) {
         self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
+        self.mission_domain.achievements =
+            crate::achievement::MissionAchievementState::from_mission_start();
         self.mission_domain.short_briefings.clear();
     }
 

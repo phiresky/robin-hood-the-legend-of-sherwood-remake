@@ -66,7 +66,7 @@ impl Default for LegacyCampaignLimits {
             production_occupants: 4096,
             collected_relics: 4096,
             peasant_names: 65535,
-            last_played_missions: 4096,
+            last_played_missions: 3,
             wide_string_code_units: 4096,
         }
     }
@@ -286,6 +286,12 @@ impl LegacyCampaign {
         let mission_count = missions.len();
         let character_count = characters.len();
 
+        if self.last_played_missions.len() > 3 {
+            return Err(LegacyCampaignMappingError::TooManyRecentMissions {
+                count: self.last_played_missions.len(),
+            });
+        }
+
         let accessible_mission_indices =
             map_required_mission_links(&self.accessible_missions, mission_count, "accessible")?;
         let pending_accessible_mission_indices = map_required_mission_links(
@@ -307,7 +313,7 @@ impl LegacyCampaign {
             .map(|(index, sector)| sector.to_rust(character_count, index))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let campaign = Campaign {
+        let mut campaign = Campaign {
             values: enum_map! {
                 CampaignValue::Amulets => self.values[0],
                 CampaignValue::Ransom => self.values[1],
@@ -362,12 +368,15 @@ impl LegacyCampaign {
                 mission_count,
                 "blazon_mission",
             )?,
-            last_played_mission_indices,
             last_pseudo_mission_status: map_mission_status(
                 self.last_pseudo_mission_status,
                 "last_pseudo_mission_status",
             )?,
             last_pseudo_mission_id: self.last_pseudo_mission_id,
+            mission_attempt_sequence: 0,
+            campaign_history_run_id: None,
+            history_replay_mission_idx: None,
+            practice_return_snapshot: None,
             characters,
             gang_indices,
             reservist_indices,
@@ -381,6 +390,7 @@ impl LegacyCampaign {
             pre_mission_sim_config: None,
             pre_mission_was_preselected: false,
         };
+        campaign.reconstruct_original_save_history(&last_played_mission_indices);
 
         let profile = &profiles.missions[header_profile_index];
         Ok(LegacyCampaignBootstrap {
@@ -438,6 +448,7 @@ impl LegacyMission {
             status: map_mission_status(self.status, format!("missions[{mission_index}].status"))?,
             profile_idx: Some(profile_idx as u32),
             ares_state_override: None,
+            attempt_history: crate::campaign_history::MissionAttemptHistory::default(),
         })
     }
 }
@@ -706,6 +717,8 @@ pub enum LegacyCampaignMappingError {
         value: u32,
         expected: &'static str,
     },
+    #[error("Original campaign has {count} recent missions; format permits at most 3")]
+    TooManyRecentMissions { count: usize },
 }
 
 fn read_vec<T>(
@@ -943,6 +956,53 @@ mod tests {
         Some(profiles)
     }
 
+    fn assert_original_import_history(campaign: &Campaign, original: &LegacyCampaign) {
+        campaign.validate_history_schema().unwrap();
+        let mut imported_recent = campaign
+            .missions
+            .iter()
+            .enumerate()
+            .flat_map(|(mission_index, mission)| {
+                mission
+                    .attempt_history()
+                    .attempts()
+                    .iter()
+                    .filter(|attempt| {
+                        attempt.outcome() == crate::campaign_history::MissionAttemptOutcome::Unknown
+                    })
+                    .map(move |attempt| (attempt.sequence(), mission_index))
+            })
+            .collect::<Vec<_>>();
+        imported_recent.sort_unstable();
+        assert_eq!(
+            imported_recent
+                .iter()
+                .map(|(_, mission_index)| *mission_index)
+                .collect::<Vec<_>>(),
+            original
+                .last_played_missions
+                .iter()
+                .map(|mission| usize::from(mission.expect("Original recent mission is required")))
+                .collect::<Vec<_>>()
+        );
+        for attempt in campaign
+            .missions
+            .iter()
+            .flat_map(|mission| mission.attempt_history().attempts())
+        {
+            assert_eq!(
+                attempt.source(),
+                crate::campaign_history::MissionAttemptSource::OriginalSaveImport
+            );
+            assert_eq!(attempt.completed_at_unix_seconds(), None);
+            assert_eq!(attempt.duration_seconds(), None);
+            assert_eq!(attempt.rules(), None);
+            assert!(attempt.stats().is_empty());
+            assert_eq!(attempt.achievements(), None);
+            assert_eq!(attempt.achievement_attestation(), None);
+        }
+    }
+
     #[test]
     fn parses_current_linux_continue_campaign_boundaries() {
         let Some(path) =
@@ -977,6 +1037,7 @@ mod tests {
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());
             assert!(!bootstrap.campaign.characters.is_empty());
+            assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
         }
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
@@ -1013,6 +1074,7 @@ mod tests {
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());
             assert_eq!(bootstrap.campaign.characters.len(), 1);
+            assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
         }
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }

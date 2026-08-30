@@ -31,6 +31,9 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Sherwood Production Forecast",
+    "Reusable Cloaks",
+    "Campaign Presentation",
     "Rotating Autosaves",
 ];
 
@@ -181,6 +184,16 @@ pub async fn show_gameplay(
                 );
             }
         }
+        if let Some(font) = resources.label_font() {
+            render_text_virt(
+                renderer,
+                font,
+                transform,
+                working.campaign_presentation.label(),
+                315,
+                opt_layout[5].y + 7,
+            );
+        }
 
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
@@ -210,7 +223,10 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
-        3 => config.autosave_enabled = !config.autosave_enabled,
+        3 => config.show_production_forecast = !config.show_production_forecast,
+        4 => config.reusable_cloaks = !config.reusable_cloaks,
+        5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => config.autosave_enabled = !config.autosave_enabled,
         _ => {}
     }
 }
@@ -220,7 +236,13 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
-        3 => config.autosave_enabled,
+        3 => config.show_production_forecast,
+        4 => config.reusable_cloaks,
+        5 => {
+            config.campaign_presentation
+                != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
+        }
+        6 => config.autosave_enabled,
         _ => false,
     }
 }
@@ -230,18 +252,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gameplay_rows_preserve_independent_setting_mappings() {
+        assert_eq!(
+            OPTION_LABELS,
+            [
+                "Fix Hard Reaction Times",
+                "Control Tactical Units",
+                "Allow Untying NPCs",
+                "Sherwood Production Forecast",
+                "Reusable Cloaks",
+                "Campaign Presentation",
+                "Rotating Autosaves",
+            ]
+        );
+
+        let mut config = GameplayConfig::default();
+        assert!(!is_option_selected(&config, 1));
+        assert!(is_option_selected(&config, 2));
+        assert!(is_option_selected(&config, 3));
+        assert!(is_option_selected(&config, 4));
+        assert!(is_option_selected(&config, 5));
+        assert!(is_option_selected(&config, 6));
+
+        apply_option_toggle(&mut config, 1);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 3);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 4);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 5);
+        assert_eq!(
+            config.campaign_presentation,
+            robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
+        );
+    }
+
+    #[test]
     fn autosave_has_an_independent_gameplay_toggle() {
         let mut config = GameplayConfig::default();
         let before = config;
-        assert_eq!(OPTION_LABELS[3], "Rotating Autosaves");
-        assert!(is_option_selected(&config, 3));
-        apply_option_toggle(&mut config, 3);
-        assert!(!is_option_selected(&config, 3));
+        assert_eq!(OPTION_LABELS[6], "Rotating Autosaves");
+        assert!(is_option_selected(&config, 6));
+        apply_option_toggle(&mut config, 6);
+        assert!(!is_option_selected(&config, 6));
         assert_eq!(
             config.fix_hard_reaction_times,
             before.fix_hard_reaction_times
         );
         assert_eq!(config.control_tactical_units, before.control_tactical_units);
         assert_eq!(config.enable_unbinding, before.enable_unbinding);
+        assert_eq!(
+            config.show_production_forecast,
+            before.show_production_forecast
+        );
+        assert_eq!(config.reusable_cloaks, before.reusable_cloaks);
+        assert_eq!(config.campaign_presentation, before.campaign_presentation);
     }
 }

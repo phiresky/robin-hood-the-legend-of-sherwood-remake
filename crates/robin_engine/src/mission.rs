@@ -6,6 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::achievement::{AchievementEvaluation, AchievementId, AchievementSet};
+use crate::campaign_history::MissionAttemptHistory;
+
 /// Mission completion status.
 #[repr(u32)]
 #[derive(
@@ -47,6 +50,9 @@ pub struct Mission {
     /// `WINCAMPAIGN` cheat (sets `ares_state_succeeded = 9`) stores its
     /// override here and readers must prefer this value when set.
     pub ares_state_override: Option<i8>,
+    /// Lossless terminal records for every played attempt, including losses,
+    /// interruptions, and successful history replays.
+    pub attempt_history: MissionAttemptHistory,
 }
 
 impl Default for Mission {
@@ -63,11 +69,24 @@ impl Mission {
             status: MissionStatus::Available,
             profile_idx: None,
             ares_state_override: None,
+            attempt_history: MissionAttemptHistory::default(),
         }
     }
 
     pub fn is_done(&self) -> bool {
         self.status != MissionStatus::Available
+    }
+
+    pub fn achievement_badges(&self) -> AchievementSet {
+        self.attempt_history.eligible_badges()
+    }
+
+    pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
+        self.attempt_history.best_eligible_achievement(id)
+    }
+
+    pub const fn attempt_history(&self) -> &MissionAttemptHistory {
+        &self.attempt_history
     }
 
     /// Get the profile for this mission.

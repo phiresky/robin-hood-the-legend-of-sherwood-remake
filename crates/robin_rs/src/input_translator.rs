@@ -61,6 +61,7 @@ pub enum GameKey {
 
     QuickSave1,
     QuickLoad1,
+    ToggleCloak,
 
     // --- Non-rebindable / debug ---
     StartMission,
@@ -78,7 +79,7 @@ pub enum GameKey {
 }
 
 impl GameKey {
-    pub const COUNT: usize = 37;
+    pub const COUNT: usize = 38;
 
     /// All variants in enum order.
     pub const ALL: [GameKey; Self::COUNT] = [
@@ -110,6 +111,7 @@ impl GameKey {
         Self::ShowViewCone,
         Self::QuickSave1,
         Self::QuickLoad1,
+        Self::ToggleCloak,
         Self::StartMission,
         Self::DisplayMenu,
         Self::RecordMovie,
@@ -152,6 +154,7 @@ impl GameKey {
             Self::ShowViewCone => "ShowViewCone",
             Self::QuickSave1 => "QuickSave1",
             Self::QuickLoad1 => "QuickLoad1",
+            Self::ToggleCloak => "ToggleCloak",
             Self::StartMission => "StartMission",
             Self::DisplayMenu => "DisplayMenu",
             Self::RecordMovie => "RecordMovie",
@@ -227,6 +230,7 @@ pub enum GameAction {
     // Stance
     CrouchDown,
     StandUp,
+    ToggleCloak,
 
     // System
     SwitchTask,
@@ -377,6 +381,7 @@ impl InputTranslator {
         // Save / Load
         self.bindings[GameKey::QuickSave1] = Some(F9);
         self.bindings[GameKey::QuickLoad1] = Some(F12);
+        self.bindings[GameKey::ToggleCloak] = Some(KeyV);
     }
 
     /// Set the non-rebindable key bindings (console, print screen, menu,
@@ -703,6 +708,9 @@ impl InputTranslator {
                 if key_released(keys, prev, self.key(GameKey::StandUp)) {
                     actions.push(GameAction::StandUp);
                 }
+                if key_released(keys, prev, self.key(GameKey::ToggleCloak)) {
+                    actions.push(GameAction::ToggleCloak);
+                }
 
                 if key_released(keys, prev, self.key(GameKey::RequestInfo)) {
                     actions.push(GameAction::DisplayInfo);
@@ -793,6 +801,7 @@ mod tests {
         t.set_binding(GameKey::ShowDoors, Some(KeyCode::ShiftLeft));
         t.set_binding(GameKey::QuickSave1, Some(KeyCode::F1));
         t.set_binding(GameKey::QuickLoad1, Some(KeyCode::F5));
+        t.set_binding(GameKey::ToggleCloak, Some(KeyCode::KeyV));
         t
     }
 
@@ -900,6 +909,20 @@ mod tests {
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
         assert!(actions.contains(&GameAction::ZoomIn));
+    }
+
+    #[test]
+    fn cloak_key_is_rebindable_and_release_triggered() {
+        let mut t = make_translator();
+        let pressed = keys_down(&[KeyCode::KeyV]);
+        assert!(
+            !t.translate_keyboard(&pressed, TranslationFlags::ALL)
+                .contains(&GameAction::ToggleCloak)
+        );
+        assert!(
+            t.translate_keyboard(&BTreeSet::new(), TranslationFlags::ALL)
+                .contains(&GameAction::ToggleCloak)
+        );
     }
 
     #[test]

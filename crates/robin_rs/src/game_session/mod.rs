@@ -154,6 +154,9 @@ pub(crate) fn prepare_replay_mission(
         .map_err(|error| format!("invalid replay: {error}"))?;
     let campaign: Campaign = bitcode::decode(&data.header.campaign)
         .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
+    campaign
+        .validate_history_schema()
+        .map_err(|error| format!("invalid replay campaign history: {error}"))?;
     let mission_id = data.header.mission_id.clone();
     let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
         format!("replay campaign has no current mission for header mission `{mission_id}`")
@@ -456,6 +459,7 @@ fn simulation_config_for_level_restart(
     if !replay_restart {
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
         checkpoint.enable_unbinding = outcome.enable_unbinding;
+        checkpoint.reusable_cloaks = outcome.reusable_cloaks;
     }
     checkpoint
 }

@@ -6,6 +6,49 @@ const fn enabled_by_default() -> bool {
     true
 }
 
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum CampaignPresentationMode {
+    ClassicMap = 0,
+    ProgressTree = 1,
+    SherwoodMuseum = 2,
+}
+
+impl CampaignPresentationMode {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ClassicMap => Self::ProgressTree,
+            Self::ProgressTree => Self::SherwoodMuseum,
+            Self::SherwoodMuseum => Self::ClassicMap,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicMap => "Classic map",
+            Self::ProgressTree => "Progress tree",
+            Self::SherwoodMuseum => "Sherwood museum",
+        }
+    }
+}
+
+impl Default for CampaignPresentationMode {
+    fn default() -> Self {
+        Self::ProgressTree
+    }
+}
+
 /// Gameplay extensions which intentionally differ from the original game.
 #[derive(
     Debug,
@@ -49,6 +92,30 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     #[state_hash(skip)]
     pub autosave_enabled: bool,
+
+    /// Include the live item-production forecast in the Sherwood report.
+    /// This is presentation-only and may be disabled independently from the
+    /// underlying production simulation.
+    #[serde(default = "default_show_production_forecast")]
+    pub show_production_forecast: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
+
+    /// Campaign-selection presentation. This affects visuals only; complete
+    /// attempt details and completed-mission practice remain available in all
+    /// modes.
+    #[serde(default)]
+    pub campaign_presentation: CampaignPresentationMode,
+}
+
+const fn default_show_production_forecast() -> bool {
+    true
 }
 
 impl Default for GameplayConfig {
@@ -58,6 +125,9 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            show_production_forecast: default_show_production_forecast(),
+            reusable_cloaks: true,
+            campaign_presentation: CampaignPresentationMode::ProgressTree,
         }
     }
 }
@@ -69,6 +139,7 @@ mod tests {
     #[test]
     fn hard_reaction_time_fix_is_the_default() {
         assert!(GameplayConfig::default().fix_hard_reaction_times);
+        assert!(GameplayConfig::default().show_production_forecast);
     }
 
     #[test]
@@ -78,6 +149,12 @@ mod tests {
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.autosave_enabled);
+        assert!(config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+        assert_eq!(
+            config.campaign_presentation,
+            super::CampaignPresentationMode::ProgressTree
+        );
     }
 
     #[test]
@@ -104,5 +181,22 @@ mod tests {
         let decoded: GameplayConfig =
             serde_json::from_str(&json).expect("deserialize gameplay config");
         assert!(!decoded.autosave_enabled);
+    }
+
+    #[test]
+    fn production_forecast_toggle_round_trips_with_profile_config() {
+        let config = GameplayConfig {
+            show_production_forecast: false,
+            ..GameplayConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.show_production_forecast);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }
