@@ -159,12 +159,21 @@ pub fn run_native_admission_worker() -> i32 {
 
     let limit = DEFAULT_REPLAY_ADMISSION_LIMITS.max_input_bytes;
     let mut bytes = Vec::new();
-    let read_result = std::io::stdin()
-        .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
-        .read_to_end(&mut bytes);
+    // Apply the limits again inside the worker. The normal parent installs
+    // them in `pre_exec`, before any child code can run; this second gate is
+    // defence in depth and makes a directly invoked hidden worker fail closed
+    // instead of becoming an unconstrained decoder.
+    let containment = configure_current_native_worker_limits();
+    let read_result = containment.and_then(|()| {
+        std::io::stdin()
+            .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+            .read_to_end(&mut bytes)
+    });
     let reply = match read_result {
         Err(error) => AdmissionWorkerReply::Rejected {
-            error: bounded_worker_error(format_args!("read compact replay: {error}")),
+            error: bounded_worker_error(format_args!(
+                "establish containment and read compact replay: {error}"
+            )),
         },
         Ok(_) if bytes.len() > limit => AdmissionWorkerReply::Rejected {
             error: format!(
@@ -301,21 +310,23 @@ fn configure_native_worker_limits(
 ) -> Result<(), ReplayLoadError> {
     use std::os::unix::process::CommandExt as _;
 
+    unsafe {
+        command.pre_exec(configure_current_native_worker_limits);
+    }
+    Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), unix))]
+fn configure_current_native_worker_limits() -> std::io::Result<()> {
     // The worker has no game assets/window/network stack. The 384 MiB ceiling
     // leaves >4x the bounded binary-buffer overlap while containing bitcode's
     // pre-validation collection allocation multiplier. Browser admission uses
     // the identical 384 MiB linear-memory maximum.
     const ADDRESS_SPACE_BYTES: libc::rlim_t = 384 * 1024 * 1024;
-    unsafe {
-        command.pre_exec(|| {
-            set_limit(libc::RLIMIT_AS, ADDRESS_SPACE_BYTES)?;
-            set_limit(libc::RLIMIT_CPU, 10)?;
-            set_limit(libc::RLIMIT_FSIZE, 1024 * 1024)?;
-            set_limit(libc::RLIMIT_NOFILE, 64)?;
-            Ok(())
-        });
-    }
-    Ok(())
+    set_limit(libc::RLIMIT_AS, ADDRESS_SPACE_BYTES)?;
+    set_limit(libc::RLIMIT_CPU, 10)?;
+    set_limit(libc::RLIMIT_FSIZE, 1024 * 1024)?;
+    set_limit(libc::RLIMIT_NOFILE, 64)
 }
 
 #[cfg(all(not(target_arch = "wasm32"), unix))]
@@ -340,6 +351,14 @@ fn configure_native_worker_limits(
     // Job Object, sandbox profile, etc.) is installed before `spawn`.
     Err(ReplayLoadError::ContainmentUnavailable(
         "native replay admission currently requires Unix setrlimit containment".into(),
+    ))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(unix)))]
+fn configure_current_native_worker_limits() -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "this platform has no hard replay admission containment",
     ))
 }
 

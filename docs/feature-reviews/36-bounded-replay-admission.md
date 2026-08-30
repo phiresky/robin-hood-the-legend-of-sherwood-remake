@@ -34,10 +34,11 @@ process as the first typed-decoding boundary.
   one-shot helper mode. On Unix the parent installs address-space, CPU, file,
   and descriptor limits before `exec`, applies a 15-second wall timeout,
   verifies a SHA-256 receipt for the exact input, bounds worker output, and
-  kills/reaps helpers on timeout or broken input pipes. Platforms without a
-  hard containment implementation fail closed. This includes Windows until a
-  Job Object implementation is added; an unconstrained subprocess is never
-  treated as isolation.
+  kills/reaps helpers on timeout or broken input pipes. The child reapplies the
+  same limits before reading as a fail-closed defence-in-depth gate. Platforms
+  without a hard containment implementation fail closed. This includes
+  Windows until a Job Object implementation is added; an unconstrained
+  subprocess is never treated as isolation.
 - Browser playback imports a minimal non-threaded validator wasm in a fresh
   Dedicated Worker. Its private, non-shared linear memory has an explicit
   384 MiB maximum. Publishing inspects the final optimized wasm and fails if
@@ -106,9 +107,12 @@ Primary references:
 
 - `cargo test -p robin_replay_format`: 16/16 passed on Feature 29 main.
 - `cargo test -p robin_rs replay_format`: 2/2 focused unit tests passed.
-- `cargo test -p robin_rs --test replay_admission_process`: cold native
-  helper accepted the exact current compact artifact and SHA-256 and rejected
-  plausible JSON without fallback.
+- `cargo test -p robin_rs --test replay_admission_process`: 2/2 passed. A cold
+  native helper accepted the exact current compact artifact and SHA-256 and
+  rejected plausible JSON without fallback; a second test admitted a canonical
+  outer replay containing a 65,537-entry nested Campaign allocation fixture to
+  the contained worker, observed the typed collection-limit rejection, and
+  then proved a fresh worker remained usable.
 - `pnpm test`: 11/11 passed, including cold public-load ordering and rejection
   before proof installation/game RPC.
 - `pnpm typecheck`: passed.
