@@ -3948,6 +3948,45 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::legacy_save::payload_ai::LegacyAiPathHistoryEntry;
+    use crate::legacy_save::payload_base::LegacySectorRef;
+
+    #[test]
+    fn legacy_detached_patrol_status_keeps_the_serialized_cursor_and_history() {
+        let saved = LegacyAiPathStatus {
+            current_waypoint_index: 7,
+            last_waypoint_index: 11,
+            forward_movement: false,
+            hiking_path_index: None,
+            history: vec![LegacyAiPathHistoryEntry {
+                position_x: 3.0,
+                position_y: 5.0,
+                sector: LegacySectorRef(None),
+                level: 2,
+                direction: 9,
+                distance: 13,
+            }],
+        };
+        let topology = LegacyPositionTopology {
+            sectors: Vec::new(),
+            sector_indices: Vec::new(),
+            sector_doors: Vec::new(),
+            doors: Vec::new(),
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        };
+
+        let (path, detached) = convert_patrol_path(&saved, 41, &topology, &[]).unwrap();
+
+        assert!(path.is_none());
+        assert_eq!(detached.hiking_path_index, None);
+        assert_eq!(detached.current_waypoint_index, 7);
+        assert_eq!(detached.last_waypoint_index, 11);
+        assert!(!detached.forward);
+        assert_eq!(detached.history.len(), 1);
+        assert_eq!(detached.history[0].direction, 9);
+        assert_eq!(detached.history[0].distance, 13);
+    }
 
     #[test]
     fn legacy_ai_load_drops_initialized_mission_completion_ownership() {

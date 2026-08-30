@@ -3930,6 +3930,78 @@ mod tests {
         (engine, assets)
     }
 
+    fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
+        let mut inner = EngineInner::new();
+        let mut ai = crate::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
+        ai.base.seek_position.sector = Some(crate::position_interface::SectorHandle::from_number(
+            crate::sector::SectorNumber::new(-1),
+        ));
+        ai.base.initial_position.sector = Some(
+            crate::position_interface::SectorHandle::new(23)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+        );
+        ai.base.detached_patrol_path_status = crate::ai::DetachedPatrolPathStatus {
+            hiking_path_index: crate::ai::PathId::new(3),
+            current_waypoint_index: 5,
+            last_waypoint_index: 7,
+            forward: false,
+            history: vec![crate::ai::PathHistoryEntry {
+                position: crate::ai::Position::default(),
+                direction: 9,
+                distance: 11,
+            }],
+        };
+        let id = inner.add_entity(crate::element::Entity::Soldier(
+            crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = crate::element::NpcData::default();
+                    npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(id.index(), 0, "fixture must occupy live arena slot zero");
+        (Engine { inner }, id)
+    }
+
+    fn assert_typed_sentinel_snapshot(engine: &Engine, id: EntityId) {
+        let ai = engine
+            .inner
+            .get_entity(id)
+            .and_then(crate::element::Entity::enemy_ai)
+            .expect("typed sentinel fixture retains EnemyAi");
+        assert_eq!(
+            ai.base.primary_target,
+            Some(crate::ai::AiEntityHandle::new(0))
+        );
+        let signed_sector = ai.base.seek_position.sector.unwrap();
+        assert_eq!(signed_sector.number().get(), -1);
+        assert_eq!(signed_sector.arena_index(), None);
+        let exact_sector = ai.base.initial_position.sector.unwrap();
+        assert_eq!(exact_sector.number().get(), 23);
+        assert_eq!(
+            exact_sector.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(0)
+        );
+        let detached = &ai.base.detached_patrol_path_status;
+        assert_eq!(detached.hiking_path_index, crate::ai::PathId::new(3));
+        assert_eq!(detached.current_waypoint_index, 5);
+        assert_eq!(detached.last_waypoint_index, 7);
+        assert!(!detached.forward);
+        assert_eq!(detached.history.len(), 1);
+        assert_eq!(detached.history[0].direction, 9);
+        assert_eq!(detached.history[0].distance, 11);
+    }
+
     #[test]
     fn native_snapshot_decodes_through_the_engine_facade() {
         let (mut engine, _) = frame_api_fixture();
@@ -3952,6 +4024,78 @@ mod tests {
             decoded.inner.feedback.cutscene_camera.old_zoom_factor, 1.0,
             "bitcode-skipped presentation zoom must restore its canonical default"
         );
+    }
+
+    #[test]
+    fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance() {
+        std::thread::Builder::new()
+            .name("typed-sentinel-rollback-snapshot".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(
+                rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner,
+            )
+            .expect("spawn large-stack rollback snapshot test")
+            .join()
+            .expect("rollback snapshot test panicked");
+    }
+
+    fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner() {
+        let (engine, id) = typed_sentinel_snapshot_fixture();
+        let bytes = engine.encode_native_snapshot();
+
+        let decoded = Engine::decode_native_snapshot(&bytes).expect("decode rollback snapshot");
+
+        assert_typed_sentinel_snapshot(&decoded, id);
+        let present_hash = crate::replay::state_hash(&decoded);
+        let mut absent = decoded;
+        absent
+            .inner
+            .get_entity_mut(id)
+            .and_then(crate::element::Entity::enemy_ai_mut)
+            .unwrap()
+            .base
+            .primary_target = None;
+        assert_ne!(
+            present_hash,
+            crate::replay::state_hash(&absent),
+            "rollback hashing must distinguish live slot zero from absence"
+        );
+    }
+
+    #[test]
+    fn network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance() {
+        std::thread::Builder::new()
+            .name("typed-sentinel-network-snapshot".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(
+                network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner,
+            )
+            .expect("spawn large-stack network snapshot test")
+            .join()
+            .expect("network snapshot test panicked");
+    }
+
+    fn network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner() {
+        let (engine, id) = typed_sentinel_snapshot_fixture();
+        let message = crate::multiplayer::NetMsg::InitialSnapshot {
+            frame: 37,
+            engine_bytes: engine.encode_native_snapshot(),
+        };
+
+        let decoded_message =
+            crate::multiplayer::decode_msg(&crate::multiplayer::encode_msg(&message))
+                .expect("decode network message");
+        let crate::multiplayer::NetMsg::InitialSnapshot {
+            frame,
+            engine_bytes,
+        } = decoded_message
+        else {
+            panic!("network message changed variant")
+        };
+        assert_eq!(frame, 37);
+        let decoded = Engine::decode_native_snapshot(&engine_bytes)
+            .expect("decode network-carried engine snapshot");
+        assert_typed_sentinel_snapshot(&decoded, id);
     }
 
     fn pending_drop_ale_seek(

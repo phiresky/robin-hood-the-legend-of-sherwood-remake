@@ -189,7 +189,8 @@ pub(crate) fn render_debug_motion_graph(
         .pc_ids()
         .first()
         .and_then(|id| engine.get_entity(*id))
-        .map(|e| e.sprite().position_iface.get_pathfinder_index())
+        .and_then(|e| e.sprite().position_iface.get_pathfinder_index())
+        .map(robin_engine::position_interface::PathfinderIndex::get)
         .unwrap_or(0);
 
     let world_to_screen = |p: engine_coordinates::MapPoint| -> (i32, i32) {

@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::WorldPoint3D;
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -404,8 +412,10 @@ pub struct TitbitInfo {
     pub frame_count: u16,
 
     /// Entity this titbit is attached to / draws info from.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub element_supplier: Option<ElementHandle>,
     /// PC actor that manages this titbit (quick-action chain).
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub element_manager: Option<ElementHandle>,
 
     pub layer: u16,

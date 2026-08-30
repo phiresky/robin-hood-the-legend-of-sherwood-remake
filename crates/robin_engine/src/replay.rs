@@ -882,6 +882,59 @@ mod tests {
     }
 
     #[test]
+    fn replay_hash_roundtrip_distinguishes_live_ai_slot_zero_from_absence() {
+        let mut live = crate::engine::EngineInner::new();
+        let mut ai = crate::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
+        let owner = live.add_entity(crate::element::Entity::Soldier(
+            crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = crate::element::NpcData::default();
+                    npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(owner.index(), 0);
+        let live_slot_zero_hash = state_hash(&live);
+        let mut absent = live;
+        absent
+            .get_entity_mut(owner)
+            .and_then(crate::element::Entity::enemy_ai_mut)
+            .unwrap()
+            .base
+            .primary_target = None;
+        assert_ne!(live_slot_zero_hash, state_hash(&absent));
+
+        let path = unique_replay_path("typed_slot_zero_hash");
+        let campaign = crate::campaign::Campaign::default();
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "typed_slot_zero".into(),
+            42,
+            crate::engine::SimConfig::default(),
+            &campaign,
+        )
+        .unwrap();
+        recorder.write_hash(0, live_slot_zero_hash);
+        record_tick(&mut recorder, 0, SimulationFrameInput::default());
+        drop(recorder);
+
+        let data = ReplayData::from_file(&path).expect("load current replay schema");
+        assert_eq!(data.hash_for_frame(0), Some(live_slot_zero_hash));
+        let player = ReplayPlayer::new(data);
+        assert_eq!(player.hash_for_frame(0), Some(live_slot_zero_hash));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn every_obsolete_rust_jsonl_schema_is_rejected() {
         for version in [10, 12, 13, 14, 16] {
             let input = format!(

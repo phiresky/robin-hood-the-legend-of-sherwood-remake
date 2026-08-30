@@ -3085,8 +3085,9 @@ pub struct DoorSeekInfo {
     pub position_in: Position,
     pub sector_out: u16,
     /// Exact arena half of Original's `RHDoor::GetSectorOut()` pointer.
-    /// Older synthetic state may retain only the public number above.
-    #[serde(default)]
+    /// Current Rust snapshots must carry this field explicitly; older Rust
+    /// layouts are rejected by their outer schema version.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Sector on the inside of the door (the building).
     pub sector_in: u16,
@@ -3101,6 +3102,14 @@ pub struct DoorSeekInfo {
     pub npc_villain_authorized_direct: bool,
 }
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 impl DoorSeekInfo {
     /// Complete the cached static authorization with the two live gates from
     /// `RHDoor::IsActorAutorized`: destination-building capacity and rider
@@ -3112,6 +3121,29 @@ impl DoorSeekInfo {
         actor_is_rider: bool,
     ) -> bool {
         self.npc_villain_authorized_direct && building_has_capacity && !actor_is_rider
+    }
+}
+
+#[cfg(test)]
+mod door_seek_schema_tests {
+    use super::*;
+
+    #[test]
+    fn current_door_seek_schema_requires_exact_sector_provenance_field() {
+        let info = DoorSeekInfo {
+            door_index: crate::gate::DoorIndex::new(1).unwrap(),
+            door_type: crate::gate::DoorType::Default,
+            point_out: MapPoint::new(1.0, 2.0),
+            position_in: Position::default(),
+            sector_out: 3,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(4),
+            sector_in: 5,
+            layer_out: 6,
+            npc_villain_authorized_direct: true,
+        };
+        let mut value = serde_json::to_value(info).unwrap();
+        value.as_object_mut().unwrap().remove("sector_out_index");
+        assert!(serde_json::from_value::<DoorSeekInfo>(value).is_err());
     }
 }
 

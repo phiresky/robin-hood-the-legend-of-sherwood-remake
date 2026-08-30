@@ -813,6 +813,51 @@ mod tests {
     }
 
     #[test]
+    fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
+        let (mut engine, assets) = fresh_engine();
+        let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
+        let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
+            robin_engine::element::ActorSoldier {
+                element: robin_engine::element::ElementData {
+                    kind: robin_engine::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = robin_engine::element::NpcData::default();
+                    npc.ai_brain = robin_engine::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(owner.index(), 0, "fixture must occupy live arena slot zero");
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "typed slot zero".into());
+
+        let json = serde_json::to_string(&save).expect("serialize current save schema");
+        assert!(json.contains(r#""primary_target":{"entity":0}"#));
+        let decoded: GameSaveFile =
+            serde_json::from_str(&json).expect("decode current save schema");
+        assert_eq!(
+            decoded.engine.parity_entity_runtime_state(owner, &assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
+
+        let (mut restored, restored_assets) = fresh_engine();
+        let mut restored_host = Host::scratch(800.0, 600.0);
+        decoded
+            .apply_to(&mut restored, &mut restored_host, &restored_assets)
+            .expect("apply typed slot-zero save");
+        assert_eq!(
+            restored.parity_entity_runtime_state(owner, &restored_assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
+    }
+
+    #[test]
     fn save_payload_round_trips_required_camera_transition_inputs() {
         let (mut engine, _assets) = fresh_engine();
         let expected = (

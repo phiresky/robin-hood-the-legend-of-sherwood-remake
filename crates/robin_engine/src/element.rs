@@ -35,6 +35,14 @@ use std::hash::Hasher;
 
 use serde::{Deserialize, Serialize};
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
@@ -1896,6 +1904,7 @@ impl PcAmmoData {
     bitcode::Decode,
 )]
 pub struct PcPortraitQuickIconState {
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub titbit_id: Option<crate::titbit::TitbitId>,
     pub running: bool,
 }
@@ -3221,14 +3230,15 @@ pub struct ProjectileData {
     /// pre-publication virtual Hourglass can determine its material.
     #[serde(default)]
     pub terminal_material_impact_index: Option<u16>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub trajectory_origin_sector: Option<u16>,
     /// Exact arena half of Original's `mposStartOfTrajectory.pSector`.
     /// The public number above remains for backward-compatible serialized
     /// state, but AI projectile-hit callbacks must copy the complete sector
     /// pointer identity into their stimulus position.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub trajectory_origin_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub trajectory_origin_layer: Option<crate::position_interface::Layer>,
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
@@ -3389,10 +3399,12 @@ pub struct PurseData {
     /// On a coin: layer the coin should snap to on landing.  Stored
     /// at spawn so `HitObstacle` can re-key the coin onto its goal
     /// layer. On a purse: `None` because the field is not applicable.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub layer_goal: Option<crate::position_interface::Layer>,
     /// On a coin: sector the coin should snap to on landing (None
     /// when the scatter target wasn't resolved against a known
     /// sector).
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub sector_goal: Option<crate::position_interface::SectorHandle>,
 }
 
