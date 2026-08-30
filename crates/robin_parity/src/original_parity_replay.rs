@@ -36,7 +36,7 @@ use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::player_command::{GestureQuality, PlayerCommand};
 use robin_engine::profiles::Action;
 use robin_engine::sector::SectorNumber;
 #[cfg(feature = "client")]
@@ -362,6 +362,11 @@ impl TraceSimConfig {
             // Royalist/Lacklandist NPC combat.
             diplomacy: false,
             npc_faction_wars: true,
+            // Advanced gesture recognition and quality-scaled damage are
+            // post-port extensions. Original parity traces must retain the
+            // shipped combat input and damage rules.
+            more_combat_gestures: false,
+            gesture_quality_damage: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -1746,6 +1751,8 @@ impl TraceCommand {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
                 command: command_from_stable_name(&original_command_name),
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek,
                 seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },
@@ -14021,6 +14028,8 @@ mod tests {
         assert!(config.synchronous_pathfinding);
         assert!(!config.diplomacy);
         assert!(config.npc_faction_wars);
+        assert!(!config.more_combat_gestures);
+        assert!(!config.gesture_quality_damage);
     }
 
     fn minimal_frame_json() -> serde_json::Value {

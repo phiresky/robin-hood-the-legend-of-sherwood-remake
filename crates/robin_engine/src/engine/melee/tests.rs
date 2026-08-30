@@ -193,6 +193,7 @@ fn sweep_state_uses_angles_returned_by_original_sword_getters() {
         Some(1),
         crate::profiles::WeaponThrustKind::Lateral,
         vec![victim],
+        crate::player_command::GestureQuality::PERFECT,
     );
     let direction_angle = sector_to_angle(
         engine
@@ -3045,6 +3046,7 @@ fn circle_done_initialization_advances_without_rotating_or_hitting() {
         Some(1),
         crate::profiles::WeaponThrustKind::TrueHalfCircle,
         vec![victim],
+        crate::player_command::GestureQuality::PERFECT,
     );
     let initial_angle = engine
         .get_entity(attacker)
@@ -3380,6 +3382,7 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
         direction: crate::profiles::WeaponThrustDirection::RightToLeft,
         strike: SwordStrike::D,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::Lateral,
     });
 
@@ -3645,6 +3648,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::I,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
     });
 
@@ -3824,6 +3828,7 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::H,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
     });
 
@@ -4031,6 +4036,7 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::H,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
     });
     {
@@ -4172,6 +4178,7 @@ fn terminal_true_circle_direction_is_presented_before_done_progresses() {
             direction: crate::profiles::WeaponThrustDirection::RightToLeft,
             strike: SwordStrike::F,
             attacker_profile_idx: Some(1),
+            gesture_quality: crate::player_command::GestureQuality::PERFECT,
             strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
         });
     }
@@ -4251,6 +4258,7 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
             direction: crate::profiles::WeaponThrustDirection::RightToLeft,
             strike: SwordStrike::F,
             attacker_profile_idx: Some(1),
+            gesture_quality: crate::player_command::GestureQuality::PERFECT,
             strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
         });
     }
@@ -4517,6 +4525,7 @@ fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
         Some(1),
         crate::profiles::WeaponThrustKind::Lateral,
         vec![victim],
+        crate::player_command::GestureQuality::PERFECT,
     );
     assert_eq!(
         engine
@@ -4599,6 +4608,7 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::F,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
     });
 
@@ -4677,6 +4687,7 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::F,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
     });
 
@@ -4734,6 +4745,7 @@ fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::D,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::Lateral,
     });
 
@@ -4879,6 +4891,7 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
         direction: crate::profiles::WeaponThrustDirection::LeftToRight,
         strike: SwordStrike::F,
         attacker_profile_idx: Some(1),
+        gesture_quality: crate::player_command::GestureQuality::PERFECT,
         strike_kind: crate::profiles::WeaponThrustKind::TrueHalfCircle,
     });
 
