@@ -16,8 +16,8 @@ use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
 use super::layout::{
-    MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
+    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
+    render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -204,8 +204,8 @@ pub async fn show_gameplay(
                 );
             }
         }
-        if let Some(font) = resources.label_font() {
-            render_text_virt(
+        if let Some(font) = resources.label_font_any() {
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,

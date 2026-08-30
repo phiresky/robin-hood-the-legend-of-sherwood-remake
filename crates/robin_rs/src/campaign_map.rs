@@ -281,6 +281,7 @@ pub(crate) async fn show_campaign_map(
                     ..
                 } => {
                     return show_campaign_progress(
+                        application_context,
                         window,
                         renderer,
                         game,
@@ -724,14 +725,14 @@ fn render_campaign_progress(
                 13
             };
             let name: String = node.name.chars().take(max_chars).collect();
-            layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
+            layout::render_text_virt_font(renderer, font, transform, &name, x + 5, y + h - 17);
             if node.attempt_count != 0 {
                 let detail = if show_achievement_badges {
                     format!("{}x  {} badge", node.attempt_count, node.badge_count)
                 } else {
                     format!("{}x", node.attempt_count)
                 };
-                layout::render_text_virt(renderer, font, transform, &detail, x + 31, y + 5);
+                layout::render_text_virt_font(renderer, font, transform, &detail, x + 31, y + 5);
             }
         }
     }
@@ -754,8 +755,8 @@ fn render_campaign_progress(
             ),
             CampaignPresentationMode::ClassicMap => unreachable!(),
         };
-        layout::render_text_virt(renderer, font, transform, &title, 25, 22);
-        layout::render_text_virt(
+        layout::render_text_virt_font(renderer, font, transform, &title, 25, 22);
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -766,7 +767,7 @@ fn render_campaign_progress(
             25,
             43,
         );
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -806,11 +807,11 @@ fn render_campaign_progress(
         } else {
             "Locked: inspect only"
         };
-        layout::render_text_virt(renderer, font, transform, action, 25, 414);
+        layout::render_text_virt_font(renderer, font, transform, action, 25, 414);
         if show_achievement_badges {
             render_progress_achievement_badges(renderer, transform, node.badges, Some(font));
         }
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -819,7 +820,7 @@ fn render_campaign_progress(
             437,
         );
         if graph.cyclic_prerequisites {
-            layout::render_text_virt(
+            layout::render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -836,10 +837,10 @@ fn render_achievement_aggregation_summary(
     transform: MenuTransform,
     scope_label: &str,
     summary: robin_engine::achievement::AchievementAggregationSummary,
-    font: &NativeFont,
+    font: &Font,
     y: i32,
 ) {
-    layout::render_text_virt(renderer, font, transform, scope_label, 25, y);
+    layout::render_text_virt_font(renderer, font, transform, scope_label, 25, y);
     for (index, presentation) in
         crate::achievement_hud::achievement_aggregation_presentations(summary)
             .iter()
@@ -856,7 +857,7 @@ fn render_achievement_aggregation_summary(
             transform.origin_x + x,
             transform.origin_y + item_y + 1,
         );
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -874,7 +875,7 @@ fn render_progress_achievement_badges(
     renderer: &mut Renderer,
     transform: MenuTransform,
     badges: robin_engine::achievement::AchievementSet,
-    font: Option<&NativeFont>,
+    font: Option<&Font>,
 ) {
     let Some(font) = font else {
         return;
@@ -892,7 +893,7 @@ fn render_progress_achievement_badges(
             transform.origin_x + x,
             transform.origin_y + y + 1,
         );
-        layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+        layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
     }
 }
 
@@ -1231,7 +1232,7 @@ fn render_campaign_map(
 
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
-        layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
+        layout::render_text_virt_font(renderer, font, transform, "Tab: History & Practice", 18, 12);
         if show_achievement_badges {
             render_achievement_aggregation_summary(
                 renderer,
@@ -1363,7 +1364,7 @@ fn render_tooltip(
                 transform.origin_x + x,
                 transform.origin_y + y + 1,
             );
-            layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+            layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
         }
     }
 }

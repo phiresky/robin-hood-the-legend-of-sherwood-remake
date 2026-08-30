@@ -740,7 +740,7 @@ fn draw_parameter_panel(
     y: i32,
     width: i32,
 ) {
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
     let upscale_values = [
@@ -771,7 +771,7 @@ fn draw_parameter_panel(
     };
     for (row, (label, value)) in values.iter().enumerate() {
         let row_y = y + row as i32 * 12;
-        render_text_virt(
+        render_text_virt_font(
             renderer,
             font,
             transform,

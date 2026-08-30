@@ -343,7 +343,7 @@ pub fn render_trackers(
             TRACKER_X,
             y,
             |font, text, x, y| {
-                crate::ingame_menu::layout::render_text_screen(renderer, font, text, x, y)
+                crate::ingame_menu::layout::render_text_screen_font(renderer, font, text, x, y)
             },
         );
     }
