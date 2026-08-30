@@ -101,6 +101,7 @@ pub(super) fn init_replay_and_rollback(
     engine_rng_seed: u64,
     engine_sim_config: robin_engine::engine::SimConfig,
     is_multiplayer: bool,
+    is_canonical_replay_owner: bool,
 ) -> ReplayAndRollback {
     // Every queued replay must be converted into `args.replay_data` before
     // mission construction. Reseeding an already-built Engine cannot recreate
@@ -130,7 +131,15 @@ pub(super) fn init_replay_and_rollback(
     // One-shot mission-map rendering exits before the first simulation
     // frame, so producing an empty replay (and its debug log) would only be
     // an unrelated filesystem side effect of the capture tool.
-    let recorder = if is_playing_back || args.mission_start_map_output.is_some() {
+    let recorder = if is_playing_back
+        || args.mission_start_map_output.is_some()
+        || !is_canonical_replay_owner
+    {
+        if is_multiplayer && !is_canonical_replay_owner {
+            tracing::info!(
+                "multiplayer: replay recording disabled on peer; the host owns the canonical ordered replay"
+            );
+        }
         None
     } else {
         // Native path owns an on-disk `.rhrec.jsonl` file so replays

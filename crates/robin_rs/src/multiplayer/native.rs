@@ -1086,6 +1086,10 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub fn assigned_seat(&self) -> Option<PlayerId> {
+        *self.assigned_seat.lock()
+    }
+
     pub fn mission_seed(&self) -> Option<u64> {
         self.mission_seed
     }

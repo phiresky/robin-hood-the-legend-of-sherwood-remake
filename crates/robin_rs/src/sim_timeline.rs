@@ -330,6 +330,16 @@ impl SnapshotHistory {
         true
     }
 
+    /// Replace the retained timeline with one exact whole-state adoption
+    /// boundary, even when that frame is outside the periodic checkpoint
+    /// cadence. Reconnect snapshots are new authoritative timelines; making
+    /// their frame an explicit anchor avoids fabricating commands between the
+    /// nearest periodic frame and the adopted state.
+    pub fn replace_with_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.snapshots.clear();
+        self.snapshots.push_back(SimSnapshot::new(frame, engine));
+    }
+
     /// Retain an already-cloned eligible checkpoint.
     pub fn remember(&mut self, snapshot: SimSnapshot) {
         assert!(
@@ -430,6 +440,12 @@ impl TimelineHistory {
             .should_checkpoint(frame)
             .then(|| SimSnapshot::new(frame, engine));
         self.pending = Some(PendingFrame { frame, checkpoint });
+    }
+
+    /// Start a new journal at an exact externally-adopted pre-tick state.
+    pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.clear();
+        self.checkpoints.replace_with_anchor(frame, engine);
     }
 
     /// Commit the open frame. Returns `false` only while the history has no
