@@ -76,11 +76,12 @@ The atlas is deliberately *only* a packing change:
 - Draw merging changes only how many `draw` calls record the same
   vertices under the same state.
 
-`ROBIN_SPRITE_ATLAS=0` restores the per-sprite texture path. This is
-temporary A/B scaffolding: it lets **one binary** render both halves of
-a comparison with data, build, driver and scene held fixed, which is a
-stronger test than diffing two builds. It goes away with the legacy
-path.
+While the migration was in flight, `ROBIN_SPRITE_ATLAS=0` restored the
+per-sprite texture path, so **one binary** could render both halves of a
+comparison with data, build, driver and scene held fixed — a stronger
+test than diffing two builds. That scaffolding has been removed now the
+comparison is signed off; the commands below are kept as the record of
+how the evidence was produced, and no longer run as written.
 
 ### Instrumentation
 
@@ -126,6 +127,7 @@ through `present`, so it does **not** reach `log_fps`; the counters for
 a captured scene come from the `capture …` line that readback logs.
 
 ```sh
+# How the identity evidence was produced, while the flag still existed.
 ROBIN_SPRITE_ATLAS=0 xvfb-run -a target/debug/examples/render_mission_map \
     Dem_Lei_MP --frame 0 --headless --data-dir datadirs/demo_leicester_ecoste -o legacy.png
 ROBIN_SPRITE_ATLAS=1 xvfb-run -a target/debug/examples/render_mission_map \
@@ -213,40 +215,84 @@ within noise, and not offered as an FPS result — a real FPS comparison
 needs a release build on real hardware, which this headless box cannot
 provide.
 
-### Still to do
+**In the browser.** The threaded wasm build
+(`scripts/build-wasm-threads.sh`, then
+`node scripts/wasm_mission_install_chrome.mjs <converted-datadir>
+--wait-ingame`) installs `H01_Lin_VL` 7.6 s after `wasm_boot` and
+reaches in-game at 8.4 s, with no atlas diagnostics and no panics. The
+three `ListDefault/ListFocused/ListSelected.tfn` font errors in that log
+predate this work and are unrelated to sprites.
 
-- **Shadow in the shader.** `decompress_rle_arno_law` rewrites
-  `SHADOW_KEY` to the ambience `shadow_color`, and
-  `rgb565_to_rgba_with_key` then maps both to black at `shadow_alpha`
-  — so shadow is *already* just "black at alpha", and `shadow_color` is
-  effectively a marker. Moving the classification into the fragment
-  shader collapses `shadow_color`/`shadow_alpha` out of the cache key
-  and makes ambience changes free. Two collision cases must be measured
-  before this can claim exactness: a source pixel equal to
-  `shadow_color` (arno_law bumps it by +1, an ambience-dependent colour
-  change) and a fog-blended pixel that *lands* on `shadow_color` (and is
-  then classified as shadow). Both are rare; neither may be assumed
-  absent without counting them over real data.
-- **Hit testing.** `rle_pixel_at` is O(rows) per query — every mouse-over
-  rewalks the sprite from row 0. `crate::ui::AlphaMask` is already the
-  1-bit-per-pixel structure needed, used today only for UI widgets.
-  **It takes two bits per pixel, not one**: `is_pixel_opaque` has two
-  modes, and blipped entities pass `blue_pixels_are_in = true`, which
-  makes shadow pixels hittable. So the mask needs two planes — "not
-  transparent" and "not transparent and not shadow" — i.e. the same
-  three-class encoding the atlas alpha wants. That is 1/8 the memory of
-  the packed `u16` pixels and O(1) per query, not the 1/16 a single
-  plane would give.
+### The memory trade, stated plainly
 
-  Both planes are ambience-independent and can be built once at load:
-  the RLE path tests raw `SHADOW_KEY` in the packed data, and the VQ
-  path tests the dictionary's *own* `shadow_color()` — deliberately not
-  the `Weather` colour, so a partially-published ambiance generation
-  cannot turn shadow pixels opaque. Any change here must keep that
-  property and be gated on an exhaustive equality check against the
-  current `is_pixel_opaque` over every sprite × every pixel × both
-  modes.
-- **Deletions** once the above land: the `ROBIN_SPRITE_ATLAS` flag and
-  `SpriteResidency::Legacy`; `uncompress_frame_wipe_shadow` /
-  `uncompress_frame_into_shadow` and their `decompress_rle_*` helpers,
-  which already have **no production callers** (tests only).
+The atlas reserves whole layers, so it holds *more* bytes than the
+per-sprite path it replaced, which allocated exactly `w × h × 4`. Two
+different numbers matter here and conflating them flatters the result:
+
+| scene | layers | reserved | occupancy | packing efficiency |
+|---|---|---|---|---|
+| `Dem_Lei_MP` f600 | 2 | 8 MiB | 53% | 64% |
+| `H01_Lin_VL` f300 | 2 | 8 MiB | 34% | 50% |
+
+*Occupancy* is sprite pixels over all reserved texels; it counts the
+newest layer's unused tail, which is simply capacity the next sprites
+will take. *Packing efficiency* (`AtlasStats::packing_efficiency`) is
+sprite pixels over what the packer actually committed to shelves, and is
+the number to judge the packer by. Roughly 10 points of the shortfall is
+the mandatory 1-texel gutter (a 31×49 sprite pays 9.7%); the rest is
+shelf-height slack from packing in draw order rather than sorted by
+height.
+
+So the honest trade is ~4 MiB of texture memory for a 26–34% cut in
+bind calls and the removal of one texture, view and bind-group object
+per sprite frame. Worth it on desktop; the occupancy and packing dials
+exist if a memory-constrained target ever disagrees.
+
+An attempt to close the gap **failed and was reverted**: opening a fresh
+right-height shelf whenever best-fit would waste more than a quarter of
+the sprite's height. It sounds better and measures worse — eagerly
+starting shelves burns the layer's vertical budget, taking the demo
+scene from 2 layers/8 MiB/64% packed to 3 layers/12 MiB/51%, and adding
+a bind. Filling an imperfect shelf beats reserving a perfect one. A real
+improvement would need to defer packing until sprite sizes are known,
+which conflicts with decoding sprites on first draw.
+
+### Closed questions
+
+- **Shadow stays on the CPU.** Moving the shadow resolve into the
+  fragment shader was investigated and rejected: it buys nothing
+  measurable. Ambience is set once per mission
+  (`level_loading_host::initialize_sprite_variants`, called only from
+  `game_session/setup.rs`), so `shadow_color` / `shadow_alpha` never
+  change during play and no sprite is ever re-baked for them. And the
+  cache carries no duplicates to collapse — the capture line reports
+  `cache=106e/106f` and `90e/90f`, i.e. entries exactly equal distinct
+  `(bank_id, variant)` frames.
+
+  The collision counting done first is recorded in the probe
+  (`sprite_compression_probe --shadow-collisions day|fog|night`). Over
+  the fullgame bank's 2,015,716 dictionary pixel slots: day (`0x2964`)
+  has 299 collisions across 61 of 134 dictionaries, fog and night have
+  none. All 299 are defused — after `apply_arno_law` exactly 212,633
+  slots equal the night colour in every ambiance, precisely the genuine
+  `SHADOW_KEY` population, so no art pixel is left indistinguishable
+  from shadow. That works because the load order runs the law *after*
+  the fog/night blend, so its `+1` bump covers blend results too. The
+  one residual hazard is a night colour of `0x001E`, where the bump
+  lands on `SHADOW_KEY` and is remapped straight back; none of the three
+  shipping ambiances is that, and the probe flags it if one ever is.
+
+- **No hit-test masks.** A 2-bit-per-pixel opacity mask was planned and
+  is not worth building. Shipping character data is entirely VQ
+  (`--stats` reports `0 RLE` for every character sampled; RLE sprites
+  come only from `append_runtime_sprite`, i.e. modded `.rhs.d` PNG
+  overlays), and the VQ branch of `is_pixel_opaque` is already O(1) —
+  one index read plus a dictionary lookup. The O(rows) `rle_pixel_at`
+  walk that motivated the mask is not on the shipping path at all.
+  Against that, the mask would cost roughly 177 MB for the fullgame
+  bank's ~708 M canvas pixels (404,855 sprites averaging ~1,750 px), and
+  building it eagerly at load would fight the lazy sprite streaming in
+  `robin_assets::late_sprites`, where grids arrive *after* mission
+  start. The hit test is also called only after an AABB rejection, so it
+  runs a handful of times per mouse move, not per pixel per frame.
+

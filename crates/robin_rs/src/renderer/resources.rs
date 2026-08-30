@@ -9,10 +9,10 @@ use crate::window::GpuContext;
 
 use super::atlas::SpriteAtlas;
 use super::{
-    BackgroundTexture, FontAtlas, LegacySpriteTexture, ManagedSurface, MaskAlpha, OUTLINE_PAD,
-    SpriteCacheKey, SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg,
-    outline_cache_key, rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_atlas_enabled,
-    sprite_outline_rgba, sprite_rgba_for_upload, upload_counter, upload_rgba_texture,
+    BackgroundTexture, FontAtlas, ManagedSurface, MaskAlpha, OUTLINE_PAD, SpriteCacheKey,
+    SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg, outline_cache_key,
+    rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba, sprite_rgba_for_upload,
+    upload_counter, upload_rgba_texture,
 };
 
 pub(super) struct GpuResources {
@@ -79,61 +79,35 @@ impl GpuResources {
             shadow_alpha,
             self.bit_depth,
         );
-        let label = format!("sprite {bank_id:?}/{variant:?}");
-        let residency = self.place_sprite(gpu, w, h, &rgba, &label, "sprite bg");
+        let residency = self.place_sprite(gpu, w, h, &rgba);
         self.sprite_cache.entries.insert(key, residency);
         Some((w, h))
     }
 
-    /// Put one decoded RGBA frame on the GPU, either packed into the
-    /// shared atlas or (A/B flag only) as its own texture.
+    /// Pack one decoded RGBA frame into the shared atlas.
     ///
-    /// `rgba` is uploaded verbatim on both paths — that is what makes
-    /// the two residencies pixel-identical.
+    /// `rgba` is uploaded verbatim — no colour conversion of any kind —
+    /// which is what kept this pixel-identical to the one-texture-per-
+    /// sprite path it replaced.
     fn place_sprite(
         &mut self,
         gpu: &GpuContext,
         width: u16,
         height: u16,
         rgba: &[u8],
-        texture_label: &str,
-        bind_group_label: &str,
     ) -> SpriteResidency {
-        if sprite_atlas_enabled() {
-            // Counted where the per-sprite `upload_rgba_texture` used
-            // to be, so the `uploads/f` FPS line stays comparable
-            // across the migration.
-            upload_counter::inc("sprite atlas insert");
-            return SpriteResidency::Atlas(self.sprite_atlas.insert(
-                gpu,
-                &self.bgl_tex,
-                &self.sampler,
-                width,
-                height,
-                rgba,
-            ));
-        }
-        let (texture, view) = upload_rgba_texture(
+        // Counted where the per-sprite `upload_rgba_texture` used to be,
+        // so the `uploads/f` FPS line stays comparable across the
+        // migration.
+        upload_counter::inc("sprite atlas insert");
+        SpriteResidency(self.sprite_atlas.insert(
             gpu,
-            rgba,
-            u32::from(width),
-            u32::from(height),
-            texture_label,
-        );
-        let bind_group = make_tex_bg(
-            &gpu.device,
             &self.bgl_tex,
-            &view,
             &self.sampler,
-            bind_group_label,
-        );
-        SpriteResidency::Legacy(LegacySpriteTexture {
-            _texture: texture,
-            _view: view,
-            bind_group,
             width,
             height,
-        })
+            rgba,
+        ))
     }
 
     /// Build the GPU cache for the edge-map outline used by the
@@ -188,9 +162,7 @@ impl GpuResources {
             TRANSPARENT_COLOR_KEY_16,
             shadow_color,
         );
-        let label = format!("sprite outline {bank_id:?}/{variant:?}");
-        let residency =
-            self.place_sprite(gpu, outline_w as u16, h, &rgba, &label, "sprite outline bg");
+        let residency = self.place_sprite(gpu, outline_w as u16, h, &rgba);
         self.sprite_cache.entries.insert(key, residency);
         Some((outline_w as u16, h))
     }

@@ -62,12 +62,13 @@ pub(super) fn capture_frame_rgba(
     tracing::info!(
         target: "fps",
         "capture {w}x{h}  quads={queued_draws}  drawcalls={}  binds={}  \
-         atlas={}L/{:.1}MiB/{:.0}%occ/{}spr  cache={entries}e/{distinct_frames}f",
+         atlas={}L/{:.1}MiB/{:.0}%occ/{:.0}%pack/{}spr  cache={entries}e/{distinct_frames}f",
         super::bind_counter::take_draw_calls(),
         super::bind_counter::take_count(),
         atlas.layers,
         atlas.bytes() as f32 / (1024.0 * 1024.0),
         atlas.occupancy() * 100.0,
+        atlas.packing_efficiency() * 100.0,
         atlas.sprites,
     );
     encoder.copy_texture_to_buffer(

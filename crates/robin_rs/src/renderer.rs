@@ -75,52 +75,21 @@ struct SpriteCacheKey {
     shadow_alpha: u8,
 }
 
-/// One decoded sprite frame's GPU residency.
-enum SpriteResidency {
-    /// Normal path: a sub-rect of a shared [`atlas`] layer.
-    Atlas(AtlasSlot),
-    /// Legacy path: this sprite owns a whole texture. Reachable only
-    /// with `ROBIN_SPRITE_ATLAS=0`, which exists so one binary can
-    /// produce both halves of a pixel-identity A/B capture — see
-    /// [`sprite_atlas_enabled`]. Delete along with the flag once the
-    /// atlas path has been signed off.
-    Legacy(LegacySpriteTexture),
-}
+/// One decoded sprite frame's GPU residency: a sub-rect of a shared
+/// [`atlas`] layer.
+///
+/// This was briefly an enum with a `Legacy` one-texture-per-sprite arm
+/// behind `ROBIN_SPRITE_ATLAS=0`, so a single binary could render both
+/// halves of an A/B comparison with data, build, driver and scene held
+/// fixed. That comparison is done — eight full-map captures across three
+/// missions and two datadirs came back byte-identical — so the arm and
+/// its flag are gone.
+struct SpriteResidency(AtlasSlot);
 
 impl SpriteResidency {
     fn dimensions(&self) -> (u16, u16) {
-        match self {
-            Self::Atlas(slot) => (slot.width, slot.height),
-            Self::Legacy(tex) => (tex.width, tex.height),
-        }
+        (self.0.width, self.0.height)
     }
-}
-
-/// A sprite that owns its own texture (legacy A/B path only).
-struct LegacySpriteTexture {
-    /// Held alive for the bind group's lifetime.
-    _texture: wgpu::Texture,
-    _view: wgpu::TextureView,
-    bind_group: wgpu::BindGroup,
-    width: u16,
-    height: u16,
-}
-
-/// Whether decoded sprites are packed into shared atlas layers.
-///
-/// Defaults to on. `ROBIN_SPRITE_ATLAS=0` restores the pre-atlas
-/// one-texture-per-sprite path so a single binary can render both
-/// halves of an A/B comparison with every other variable — data,
-/// build, driver, scene — held fixed. Temporary validation
-/// scaffolding.
-pub(crate) fn sprite_atlas_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        !matches!(
-            std::env::var("ROBIN_SPRITE_ATLAS").as_deref(),
-            Ok("0") | Ok("off") | Ok("false")
-        )
-    })
 }
 
 #[derive(Default)]
@@ -2077,26 +2046,13 @@ impl Renderer {
     }
 
     /// Resolve a cached sprite to `(per-frame bind-group index, uv)`,
-    /// or `None` when it was never cached.
-    ///
-    /// The atlas path returns the layer's shared bind group and the
-    /// sprite's sub-rect; the legacy A/B path returns the sprite's own
-    /// bind group and the full `0..1` rect.
+    /// or `None` when it was never cached: the layer's shared bind group
+    /// and the sprite's sub-rect within it.
     fn queue_sprite_texture(&mut self, key: &SpriteCacheKey) -> Option<(u32, [f32; 4])> {
-        // Resolve out of the cache first so the immutable borrow of
-        // `self.resources` ends before the `&mut self` queue calls.
-        enum Resolved {
-            Atlas(AtlasSlot),
-            Legacy(wgpu::BindGroup),
-        }
-        let resolved = match self.resources.sprite_cache.entries.get(key)? {
-            SpriteResidency::Atlas(slot) => Resolved::Atlas(*slot),
-            SpriteResidency::Legacy(tex) => Resolved::Legacy(tex.bind_group.clone()),
-        };
-        Some(match resolved {
-            Resolved::Atlas(slot) => (self.queue_atlas_layer(slot.layer), slot.uv),
-            Resolved::Legacy(bg) => (self.queue_cached_bg(bg), [0.0, 0.0, 1.0, 1.0]),
-        })
+        // Copy the slot out first so the immutable borrow of
+        // `self.resources` ends before the `&mut self` queue call.
+        let slot = self.resources.sprite_cache.entries.get(key)?.0;
+        Some((self.queue_atlas_layer(slot.layer), slot.uv))
     }
 
     /// Resolve an atlas layer to a per-frame bind-group index,
