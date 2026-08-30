@@ -141,6 +141,83 @@ struct TraceHeaderV67 {
     initial_save: Option<TraceInitialSave>,
 }
 
+/// Header layout written by native trace version 66. This is the oldest
+/// authoritative native format in the retained corpus and must remain frozen.
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceHeaderV66 {
+    record_type: String,
+    mission: String,
+    proto_level: String,
+    rng_seed: u64,
+    schema: u32,
+    session_index: u32,
+    start_state: TraceStartState,
+    initial_frame: u64,
+    simulation_hz: u32,
+    synchronous_pathfinding: bool,
+    rng_stream: String,
+    visibility_queries: String,
+    authoritative_state: Option<String>,
+    random_input_seed: Option<u32>,
+    sim_config: TraceSimConfig,
+    campaign: TraceCampaign,
+    motion_grid: TraceMotionGrid,
+    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
+    initial_save: Option<TraceInitialSave>,
+}
+
+impl From<TraceHeaderV66> for TraceHeader {
+    fn from(header: TraceHeaderV66) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            initial_npc_transients: header.initial_npc_transients,
+            initial_save: header.initial_save,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<TraceHeader> for TraceHeaderV66 {
+    fn from(header: TraceHeader) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            authoritative_state: None,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            initial_npc_transients: header.initial_npc_transients,
+            initial_save: header.initial_save,
+        }
+    }
+}
+
 impl From<TraceHeaderV67> for TraceHeader {
     fn from(header: TraceHeaderV67) -> Self {
         Self {
@@ -1389,6 +1466,351 @@ enum TraceCommand {
     },
 }
 
+/// Command layout embedded in native trace version 66. In particular,
+/// `SwordStrike::seek_distance` was optional on disk.
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TraceCommandV66 {
+    BoxSelect {
+        first: TracePoint,
+        second: TracePoint,
+        append: bool,
+    },
+    GroupMove {
+        actors: Vec<TraceEntityId>,
+        destination: TracePoint,
+        running: bool,
+        show_marker: bool,
+        goal_sector: i16,
+        goal_layer: u16,
+    },
+    LaunchInteraction {
+        actor: TraceEntityId,
+        target: TraceEntityId,
+        original_command: u32,
+        original_command_name: String,
+        running: bool,
+    },
+    LaunchSelfAbility {
+        actor: TraceEntityId,
+        original_command: u32,
+        original_command_name: String,
+    },
+    LaunchGroundTarget {
+        actor: TraceEntityId,
+        target: TracePoint3,
+        original_command: u32,
+        original_command_name: String,
+        original_target_field: u32,
+        titbit_layer: u16,
+    },
+    LaunchScrollRead {
+        actor: TraceEntityId,
+        target: TraceEntityId,
+        running: bool,
+    },
+    SwordStrike {
+        actor: TraceEntityId,
+        target: TraceEntityId,
+        original_command: u32,
+        original_command_name: String,
+        with_seek: bool,
+        seek_distance: Option<f32>,
+    },
+    SelectPc {
+        pc: TraceEntityId,
+        append: bool,
+    },
+    UnselectAllPcs,
+    StopPc {
+        pc: TraceEntityId,
+    },
+    SelectAction {
+        pc: TraceEntityId,
+        action: TraceAction,
+        original_action: u32,
+    },
+    CancelAction {
+        pc: Option<TraceEntityId>,
+        action: TraceAction,
+        original_action: u32,
+    },
+    OrientActionAt {
+        action: TraceAction,
+        original_action: u32,
+        actor: TraceEntityId,
+        mouse_map: TracePoint,
+        target: TracePoint3,
+    },
+    MakePcFast {
+        entity: TraceEntityId,
+    },
+    CrouchDown,
+    StandUp,
+    DropAleAt {
+        actor: TraceEntityId,
+        target: TracePoint,
+        running: bool,
+    },
+    ShieldSelectProtected {
+        actor: TraceEntityId,
+        protected_pc: TraceEntityId,
+    },
+    BoxUnselect {
+        first: TracePoint,
+        second: TracePoint,
+        append: bool,
+    },
+    RaiseShieldWithDanger {
+        actor: TraceEntityId,
+        protected_pc: TraceEntityId,
+        danger_point: TracePoint3,
+        danger_point_layer: u16,
+    },
+    TeleportSelected {
+        destination: TracePoint,
+        goal_sector: i16,
+        goal_layer: u16,
+    },
+    SelectAllPcs,
+    UnselectPc {
+        pc: TraceEntityId,
+    },
+    SelectActionIndex {
+        index: u32,
+    },
+    SetLockAlt {
+        on: bool,
+    },
+    KeyControl,
+    KeyReleaseControl,
+    StartMacro {
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    DeleteMacro {
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    StartRecordingMacro {
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    ChangeQaMemory {
+        slot: u8,
+    },
+    HeroRefusedAction {
+        actor: TraceEntityId,
+        action: TraceAction,
+        original_action: u32,
+        target: Option<TraceEntityId>,
+        reason: String,
+    },
+    BeggarDontTalkStamp {
+        entity: TraceEntityId,
+    },
+}
+
+impl TraceCommandV66 {
+    fn into_current(self) -> TraceCommand {
+        match self {
+            Self::BoxSelect {
+                first,
+                second,
+                append,
+            } => TraceCommand::BoxSelect {
+                first,
+                second,
+                append,
+            },
+            Self::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_sector,
+                goal_layer,
+            } => TraceCommand::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_sector,
+                goal_layer,
+            },
+            Self::LaunchInteraction {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                running,
+            } => TraceCommand::LaunchInteraction {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                running,
+            },
+            Self::LaunchSelfAbility {
+                actor,
+                original_command,
+                original_command_name,
+            } => TraceCommand::LaunchSelfAbility {
+                actor,
+                original_command,
+                original_command_name,
+            },
+            Self::LaunchGroundTarget {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                original_target_field,
+                titbit_layer,
+            } => TraceCommand::LaunchGroundTarget {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                original_target_field,
+                titbit_layer,
+            },
+            Self::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => TraceCommand::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            Self::SwordStrike {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                with_seek,
+                seek_distance,
+            } => TraceCommand::SwordStrike {
+                actor,
+                target,
+                original_command,
+                original_command_name,
+                with_seek,
+                seek_distance: seek_distance.unwrap_or_else(missing_legacy_seek_distance),
+            },
+            Self::SelectPc { pc, append } => TraceCommand::SelectPc { pc, append },
+            Self::UnselectAllPcs => TraceCommand::UnselectAllPcs,
+            Self::StopPc { pc } => TraceCommand::StopPc { pc },
+            Self::SelectAction {
+                pc,
+                action,
+                original_action,
+            } => TraceCommand::SelectAction {
+                pc,
+                action,
+                original_action,
+            },
+            Self::CancelAction {
+                pc,
+                action,
+                original_action,
+            } => TraceCommand::CancelAction {
+                pc,
+                action,
+                original_action,
+            },
+            Self::OrientActionAt {
+                action,
+                original_action,
+                actor,
+                mouse_map,
+                target,
+            } => TraceCommand::OrientActionAt {
+                action,
+                original_action,
+                actor,
+                mouse_map,
+                target,
+            },
+            Self::MakePcFast { entity } => TraceCommand::MakePcFast { entity },
+            Self::CrouchDown => TraceCommand::CrouchDown,
+            Self::StandUp => TraceCommand::StandUp,
+            Self::DropAleAt {
+                actor,
+                target,
+                running,
+            } => TraceCommand::DropAleAt {
+                actor,
+                target,
+                running,
+            },
+            Self::ShieldSelectProtected {
+                actor,
+                protected_pc,
+            } => TraceCommand::ShieldSelectProtected {
+                actor,
+                protected_pc,
+            },
+            Self::BoxUnselect {
+                first,
+                second,
+                append,
+            } => TraceCommand::BoxUnselect {
+                first,
+                second,
+                append,
+            },
+            Self::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => TraceCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            },
+            Self::TeleportSelected {
+                destination,
+                goal_sector,
+                goal_layer,
+            } => TraceCommand::TeleportSelected {
+                destination,
+                goal_sector,
+                goal_layer,
+            },
+            Self::SelectAllPcs => TraceCommand::SelectAllPcs,
+            Self::UnselectPc { pc } => TraceCommand::UnselectPc { pc },
+            Self::SelectActionIndex { index } => TraceCommand::SelectActionIndex { index },
+            Self::SetLockAlt { on } => TraceCommand::SetLockAlt { on },
+            Self::KeyControl => TraceCommand::KeyControl,
+            Self::KeyReleaseControl => TraceCommand::KeyReleaseControl,
+            Self::StartMacro { pc, slot } => TraceCommand::StartMacro { pc, slot },
+            Self::DeleteMacro { pc, slot } => TraceCommand::DeleteMacro { pc, slot },
+            Self::StartRecordingMacro { pc, slot } => {
+                TraceCommand::StartRecordingMacro { pc, slot }
+            }
+            Self::ChangeQaMemory { slot } => TraceCommand::ChangeQaMemory { slot },
+            Self::HeroRefusedAction {
+                actor,
+                action,
+                original_action,
+                target,
+                reason,
+            } => TraceCommand::HeroRefusedAction {
+                actor,
+                action,
+                original_action,
+                target,
+                reason,
+            },
+            Self::BeggarDontTalkStamp { entity } => TraceCommand::BeggarDontTalkStamp { entity },
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
 )]
@@ -2063,6 +2485,186 @@ struct TraceElementV67 {
     ai: Option<TraceAi>,
     detection: Option<TraceDetection>,
     runtime: TraceJsonValue,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceElementV66 {
+    entity_id: TraceEntityId,
+    creation_order: u32,
+    class_id: u16,
+    kind: TraceEntityKind,
+    active: bool,
+    blipped: bool,
+    unreachable: bool,
+    surface_id: u32,
+    posture: u32,
+    position_map: TracePoint,
+    old_position_map: TracePoint,
+    position_goal_map: TracePoint,
+    elevation: TraceFloat,
+    old_elevation: TraceFloat,
+    increment_map: TracePoint,
+    increment_map_valid: Option<bool>,
+    movement_map: TracePoint,
+    layer: u16,
+    layer_goal: u16,
+    sector: u16,
+    direction: i16,
+    direction_goal: i16,
+    moving: bool,
+    moving_map: bool,
+    sprite_row: u16,
+    sprite_frame: u16,
+    sprite_frame_count: Option<u16>,
+    actor: Option<TraceActorV66>,
+    human: Option<TraceHumanV66>,
+    pc: Option<TraceElementPc>,
+    ai: Option<TraceAiV66>,
+    detection: Option<TraceDetection>,
+    runtime: Option<TraceJsonValue>,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceActorV66 {
+    action_state: u32,
+    animation: u32,
+    command: u16,
+    command_name: String,
+    motion_state: u32,
+    wait_time: u32,
+    passing_door_directly: Option<bool>,
+    active_pass_door: Option<Option<TracePassDoor>>,
+    sequence_element: Option<Option<TraceSequenceElement>>,
+    position_interface: Option<TraceJsonValue>,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceHumanV66 {
+    life_points: i16,
+    dead: bool,
+    unconscious: bool,
+    camp: String,
+    original_camp: i32,
+    vip: bool,
+    civilian: bool,
+    opponents: Option<Vec<TraceEntityId>>,
+    opponent_jump_lines: Option<Vec<Option<TraceJumpLine>>>,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceAiV66 {
+    state: u32,
+    substate: u32,
+    script_locked: Option<bool>,
+    locked: Option<bool>,
+    locks: Option<u8>,
+    was_busy: Option<bool>,
+    very_busy: Option<bool>,
+    macro_timer_running: Option<bool>,
+    macro_timer_ring: Option<u32>,
+    macro_cursor: Option<Option<u16>>,
+    macro_remaining: Option<u16>,
+    macro_in_progress: Option<bool>,
+    list_us: Option<Vec<TraceEntityId>>,
+    list_them: Option<Vec<TraceEntityId>>,
+    my_line_jump: Option<Option<TraceJumpLine>>,
+}
+
+impl TraceActorV66 {
+    fn into_current(self) -> TraceActor {
+        TraceActor {
+            action_state: self.action_state,
+            animation: self.animation,
+            command: self.command,
+            command_name: self.command_name,
+            motion_state: self.motion_state,
+            wait_time: self.wait_time,
+            passing_door_directly: self.passing_door_directly.unwrap_or(false),
+            active_pass_door: self.active_pass_door.flatten(),
+            sequence_element: self.sequence_element.flatten(),
+            position_interface: self
+                .position_interface
+                .unwrap_or_else(missing_legacy_trace_json_value),
+        }
+    }
+}
+
+impl TraceHumanV66 {
+    fn into_current(self) -> TraceHuman {
+        TraceHuman {
+            life_points: self.life_points,
+            dead: self.dead,
+            unconscious: self.unconscious,
+            camp: self.camp,
+            original_camp: self.original_camp,
+            vip: self.vip,
+            civilian: self.civilian,
+            opponents: self.opponents.unwrap_or_default(),
+            opponent_jump_lines: self.opponent_jump_lines.unwrap_or_default(),
+        }
+    }
+}
+
+impl TraceAiV66 {
+    fn into_current(self) -> TraceAi {
+        TraceAi {
+            state: self.state,
+            substate: self.substate,
+            script_locked: self.script_locked.unwrap_or(false),
+            locked: self.locked.unwrap_or(false),
+            locks: self.locks.unwrap_or(0),
+            was_busy: self.was_busy.unwrap_or(false),
+            very_busy: self.very_busy.unwrap_or(false),
+            macro_timer_running: self.macro_timer_running.unwrap_or(false),
+            macro_timer_ring: self.macro_timer_ring.unwrap_or(0),
+            macro_cursor: self.macro_cursor.flatten(),
+            macro_remaining: self.macro_remaining.unwrap_or(0),
+            macro_in_progress: self.macro_in_progress.unwrap_or(false),
+            list_us: self.list_us.unwrap_or_default(),
+            list_them: self.list_them.unwrap_or_default(),
+            my_line_jump: self.my_line_jump.flatten(),
+        }
+    }
+}
+
+impl TraceElementV66 {
+    fn into_current(self) -> TraceElement {
+        TraceElement {
+            entity_id: self.entity_id,
+            creation_order: self.creation_order,
+            class_id: self.class_id,
+            kind: self.kind,
+            active: self.active,
+            blipped: self.blipped,
+            unreachable: self.unreachable,
+            surface_id: self.surface_id,
+            posture: self.posture,
+            position_map: self.position_map,
+            old_position_map: self.old_position_map,
+            position_goal_map: self.position_goal_map,
+            elevation: self.elevation,
+            old_elevation: self.old_elevation,
+            increment_map: self.increment_map,
+            increment_map_valid: self.increment_map_valid,
+            movement_map: self.movement_map,
+            layer: self.layer,
+            layer_goal: self.layer_goal,
+            sector: self.sector,
+            direction: self.direction,
+            direction_goal: self.direction_goal,
+            moving: self.moving,
+            moving_map: self.moving_map,
+            sprite_row: self.sprite_row,
+            sprite_frame: self.sprite_frame,
+            sprite_frame_count: self.sprite_frame_count.unwrap_or(0),
+            actor: self.actor.map(TraceActorV66::into_current),
+            human: self.human.map(TraceHumanV66::into_current),
+            pc: self.pc,
+            ai: self.ai.map(TraceAiV66::into_current),
+            detection: self.detection,
+            runtime: self.runtime.unwrap_or_else(missing_legacy_trace_json_value),
+        }
+    }
 }
 
 impl TraceElementV67 {
@@ -3363,6 +3965,132 @@ struct TraceFrameV67 {
     flight_steps: Vec<TraceFlightStep>,
 }
 
+/// Frame layout embedded in native trace version 66.
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceFrameV66 {
+    #[serde(rename = "type")]
+    record_type: String,
+    frame_before: u64,
+    frame_after: u64,
+    game_code: i32,
+    simulation_body_ran: bool,
+    commands: Vec<TraceCommandV66>,
+    director_completions: Vec<TraceDirectorCompletion>,
+    campaign: Option<TraceCampaign>,
+    engine_state: Option<TraceEngineStateV66>,
+    selected_pcs: Vec<TraceEntityId>,
+    elements: Vec<TraceElementV66>,
+    visibility_queries: Vec<TraceVisibilityQuery>,
+    rng_draws: TraceRngBatch,
+    motion_line_changes: Vec<TraceMotionLineChange>,
+    path_events: Vec<TracePathEvent>,
+    route_construction_events: Option<Vec<TraceRouteConstructionEvent>>,
+    popup_events: Option<Vec<TracePopupEvent>>,
+    ai_forecast_events: Option<Vec<TraceAiForecastEvent>>,
+    alert_formation_events: Option<Vec<TraceAlertFormationEvent>>,
+    goto_authorization_events: Option<Vec<TraceGoToAuthorizationEvent>>,
+    strike_proposal_events: Option<Vec<TraceStrikeProposalEvent>>,
+    sequence_lifecycle_events: Option<Vec<TraceSequenceLifecycleEvent>>,
+    target_lifecycle_events: Option<Vec<TraceTargetLifecycleEvent>>,
+    resolved_exclamations: Vec<TraceResolvedExclamation>,
+    movement_steps: Vec<TraceMovementStep>,
+    flight_steps: Vec<TraceFlightStep>,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceEngineStateV66 {
+    cheat_used_flags: u32,
+    next_creation_order: u32,
+    chorus_timer: u16,
+    force_check: bool,
+    men_to_blazon_conversion: bool,
+    game_ui: Option<TraceJsonValue>,
+    messenger_controller: Option<TraceJsonValue>,
+    shield_controller: Option<TraceJsonValue>,
+    pc_registry: TraceJsonValue,
+    lock_engine: bool,
+    freeze_all: bool,
+    locker: bool,
+    speed: TraceFloat,
+    speed_int: u16,
+    mission_won: bool,
+    mission_won_first_time: bool,
+    quit_won: bool,
+    quit_lost: bool,
+    quit_interrupted: bool,
+    script_globals: Vec<i32>,
+    sequence_manager: TraceJsonValue,
+    script_runtime: TraceJsonValue,
+    pathfinder: TraceJsonValue,
+    view_radius_cache: TraceJsonValue,
+    sound_sources: TraceJsonValue,
+    sound_completion_frontier: Option<TraceJsonValue>,
+    ai_global: TraceJsonValue,
+    engine_runtime_roots: TraceJsonValue,
+    world_interactables: TraceJsonValue,
+    repulsive_points: TraceJsonValue,
+    titbit_manager: TraceJsonValue,
+    failed_path_requests: Vec<TraceFailedPathRequestV66>,
+}
+
+#[derive(Debug, Serialize, bitcode::Encode, bitcode::Decode)]
+struct TraceFailedPathRequestV66 {
+    actor: TraceEntityId,
+    antagonist: Option<TraceEntityId>,
+    layer: u16,
+    area: u16,
+    source: TracePoint,
+    goal: TracePoint,
+    half_diagonal_index: u16,
+    half_diagonal: TracePoint,
+    animation: u32,
+    reverse: bool,
+    speed: u8,
+    tolerance: TraceFloat,
+    use_first_point: bool,
+    sector: u16,
+    time: u32,
+}
+
+impl TraceFrameV66 {
+    fn into_current(self) -> TraceFrame {
+        TraceFrame {
+            record_type: self.record_type,
+            frame_before: self.frame_before,
+            frame_after: self.frame_after,
+            game_code: self.game_code,
+            simulation_body_ran: self.simulation_body_ran,
+            commands: self
+                .commands
+                .into_iter()
+                .map(TraceCommandV66::into_current)
+                .collect(),
+            director_completions: self.director_completions,
+            selected_pcs: self.selected_pcs,
+            elements: self
+                .elements
+                .into_iter()
+                .map(TraceElementV66::into_current)
+                .collect(),
+            visibility_queries: self.visibility_queries,
+            rng_draws: self.rng_draws,
+            motion_line_changes: self.motion_line_changes,
+            path_events: self.path_events,
+            route_construction_events: self.route_construction_events.unwrap_or_default(),
+            popup_events: self.popup_events.unwrap_or_default(),
+            ai_forecast_events: self.ai_forecast_events.unwrap_or_default(),
+            alert_formation_events: self.alert_formation_events.unwrap_or_default(),
+            goto_authorization_events: self.goto_authorization_events.unwrap_or_default(),
+            strike_proposal_events: self.strike_proposal_events.unwrap_or_default(),
+            sequence_lifecycle_events: self.sequence_lifecycle_events.unwrap_or_default(),
+            target_lifecycle_events: self.target_lifecycle_events.unwrap_or_default(),
+            resolved_exclamations: self.resolved_exclamations,
+            movement_steps: self.movement_steps,
+            flight_steps: self.flight_steps,
+        }
+    }
+}
+
 impl TraceFrameV67 {
     fn into_current(self, increment_map_valid_was_recorded: bool) -> TraceFrame {
         TraceFrame {
@@ -3682,6 +4410,7 @@ fn validate_trace_frame(frame: &TraceFrame) {
 
 const TRACE_NATIVE_VERSION: u32 = 68;
 const TRACE_NATIVE_LEGACY_VERSION: u32 = 67;
+const TRACE_NATIVE_V66_VERSION: u32 = 66;
 /// The native parity trace is the authoritative artifact once its JSONL
 /// source has been converted (and possibly deleted), so its name carries no
 /// version: compatibility is enforced through the versioned header/footer,
@@ -3739,6 +4468,37 @@ struct BinaryTraceHeaderV67 {
     rng_prefix: TraceRngPrefix,
 }
 
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct BinaryTraceHeaderV66 {
+    version: u32,
+    source_fingerprint: String,
+    trace: TraceHeaderV66,
+    rng_prefix: TraceRngPrefix,
+}
+
+impl From<BinaryTraceHeaderV66> for BinaryTraceHeaderV68 {
+    fn from(header: BinaryTraceHeaderV66) -> Self {
+        Self {
+            version: header.version,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<BinaryTraceHeaderV68> for BinaryTraceHeaderV66 {
+    fn from(header: BinaryTraceHeaderV68) -> Self {
+        Self {
+            version: TRACE_NATIVE_V66_VERSION,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
 impl From<BinaryTraceHeaderV67> for BinaryTraceHeaderV68 {
     fn from(header: BinaryTraceHeaderV67) -> Self {
         Self {
@@ -3787,6 +4547,33 @@ enum BinaryTraceRecordV67 {
         final_frame: Option<u64>,
         frame_count: Option<u64>,
     },
+}
+
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+enum BinaryTraceRecordV66 {
+    Frame(TraceFrameV66),
+    End {
+        rng_suffix: Option<TraceRngBatch>,
+        final_frame: Option<u64>,
+        frame_count: Option<u64>,
+    },
+}
+
+impl BinaryTraceRecordV66 {
+    fn into_current(self) -> BinaryTraceRecord {
+        match self {
+            Self::Frame(frame) => BinaryTraceRecord::Frame(frame.into_current()),
+            Self::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            } => BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            },
+        }
+    }
 }
 
 impl BinaryTraceRecordV67 {
@@ -8254,10 +9041,10 @@ fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
 fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
     if !matches!(
         footer.version,
-        TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
+        TRACE_NATIVE_V66_VERSION | TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
     ) {
         return Err(format!(
-            "footer version {} is unsupported; this runner supports versions {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}",
+            "footer version {} is unsupported; this runner supports versions {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}",
             footer.version
         ));
     }
@@ -8412,13 +9199,16 @@ fn read_binary_trace_header_record(
     let label = "native parity trace header";
     let encoded = read_binary_record_payload(reader, label)?;
     match version {
+        TRACE_NATIVE_V66_VERSION => bitcode::decode::<BinaryTraceHeaderV66>(&encoded)
+            .map(Into::into)
+            .map_err(|error| format!("decode version-66 {label}: {error}")),
         TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<BinaryTraceHeaderV67>(&encoded)
             .map(Into::into)
             .map_err(|error| format!("decode version-67 {label}: {error}")),
         TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
             .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
         _ => Err(format!(
-            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}"
         )),
     }
 }
@@ -8431,6 +9221,14 @@ fn read_binary_trace_block_record(
     let label = "native parity trace block";
     let encoded = read_binary_record_payload(reader, label)?;
     match version {
+        TRACE_NATIVE_V66_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV66>>(&encoded)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(BinaryTraceRecordV66::into_current)
+                    .collect()
+            })
+            .map_err(|error| format!("decode version-66 {label}: {error}")),
         TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV67>>(&encoded)
             .map(|records| {
                 records
@@ -8442,7 +9240,7 @@ fn read_binary_trace_block_record(
         TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
             .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
         _ => Err(format!(
-            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}"
         )),
     }
 }
@@ -10653,13 +11451,15 @@ fn compare_frame(
             expected.sprite_frame,
             element.sprite.current_frame,
         );
-        compare(
-            &mut differences,
-            id,
-            "sprite_frame_count",
-            expected.sprite_frame_count,
-            element.sprite.frame_count,
-        );
+        if !legacy_additive_omissions {
+            compare(
+                &mut differences,
+                id,
+                "sprite_frame_count",
+                expected.sprite_frame_count,
+                element.sprite.frame_count,
+            );
+        }
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
             let reset_by_new_movement_order = expected.actor.as_ref().is_some_and(|actor| {
@@ -10827,54 +11627,56 @@ fn compare_frame(
                 expected_human.civilian,
                 actual.is_civilian(),
             );
-            let expected_opponents: Vec<EntityId> = expected_human
-                .opponents
-                .iter()
-                .copied()
-                .map(|opponent| entity_map.translate(opponent))
-                .collect();
-            let actual_human = actual
-                .human_data()
-                .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"));
-            compare(
-                &mut differences,
-                id,
-                "human.opponents",
-                expected_opponents,
-                actual_human.opponents.ids(),
-            );
-            let expected_jump_lines: Vec<Option<[u32; 4]>> = expected_human
-                .opponent_jump_lines
-                .iter()
-                .map(|line| line.as_ref().map(trace_jump_line_bits))
-                .collect();
-            let actual_jump_lines: Vec<Option<[u32; 4]>> = actual_human
-                .opponents
-                .iter_with_jump_lines()
-                .map(|(_, line_index)| line_index)
-                .map(|line_index| {
-                    line_index.map(|line_index| {
-                        let line = engine
-                            .fast_grid()
-                            .level
-                            .jump_lines
-                            .get(usize::from(line_index))
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "human {id:?} opponent jump-line index {line_index} is out of range"
-                                )
-                            });
-                        runtime_jump_line_bits(line)
+            if !legacy_additive_omissions {
+                let expected_opponents: Vec<EntityId> = expected_human
+                    .opponents
+                    .iter()
+                    .copied()
+                    .map(|opponent| entity_map.translate(opponent))
+                    .collect();
+                let actual_human = actual.human_data().unwrap_or_else(|| {
+                    panic!("trace reports human opponents for non-human {id:?}")
+                });
+                compare(
+                    &mut differences,
+                    id,
+                    "human.opponents",
+                    expected_opponents,
+                    actual_human.opponents.ids(),
+                );
+                let expected_jump_lines: Vec<Option<[u32; 4]>> = expected_human
+                    .opponent_jump_lines
+                    .iter()
+                    .map(|line| line.as_ref().map(trace_jump_line_bits))
+                    .collect();
+                let actual_jump_lines: Vec<Option<[u32; 4]>> = actual_human
+                    .opponents
+                    .iter_with_jump_lines()
+                    .map(|(_, line_index)| line_index)
+                    .map(|line_index| {
+                        line_index.map(|line_index| {
+                            let line = engine
+                                .fast_grid()
+                                .level
+                                .jump_lines
+                                .get(usize::from(line_index))
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "human {id:?} opponent jump-line index {line_index} is out of range"
+                                    )
+                                });
+                            runtime_jump_line_bits(line)
+                        })
                     })
-                })
-                .collect();
-            compare(
-                &mut differences,
-                id,
-                "human.opponent_jump_lines",
-                expected_jump_lines,
-                actual_jump_lines,
-            );
+                    .collect();
+                compare(
+                    &mut differences,
+                    id,
+                    "human.opponent_jump_lines",
+                    expected_jump_lines,
+                    actual_jump_lines,
+                );
+            }
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -11930,7 +12732,25 @@ mod tests {
     }
 
     #[test]
+    fn version_66_header_uses_frozen_legacy_layout() {
+        let legacy: BinaryTraceHeaderV66 = minimal_test_native_header("legacy-v66").into();
+        let mut encoded_record = Vec::new();
+        write_binary_record(&mut encoded_record, &legacy, "test version-66 header");
+
+        let decoded = read_binary_trace_header_record(
+            &mut std::io::Cursor::new(encoded_record),
+            TRACE_NATIVE_V66_VERSION,
+        )
+        .expect("decode version-66 header through its original bitcode layout");
+
+        assert_eq!(decoded.version, TRACE_NATIVE_V66_VERSION);
+        assert_eq!(decoded.source_fingerprint, "legacy-v66");
+        assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
+    }
+
+    #[test]
     fn native_level_nineteen_policy_round_trips_records_and_footer() {
+        assert_eq!(TRACE_NATIVE_V66_VERSION, 66);
         assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
         assert_eq!(TRACE_NATIVE_VERSION, 68);
         assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
