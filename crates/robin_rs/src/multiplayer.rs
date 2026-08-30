@@ -11,14 +11,18 @@ use robin_engine::multiplayer::NetChannels as EngineNetChannels;
 #[cfg(test)]
 use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
-    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent, NetMsg,
-    NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg,
+    FrameCursor, InitialSnapshot, NetEvent, NetOutbound, STATE_HASH_INTERVAL,
+};
+#[cfg(feature = "multiplayer")]
+pub(crate) use robin_engine::multiplayer::{
+    INPUT_DELAY_FRAMES, NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg,
 };
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
 
 /// A class byte precedes each frame length so an impossible client snapshot
 /// or oversized control message is rejected before allocating its body.
+#[cfg(feature = "multiplayer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum NetFrameClass {
@@ -27,13 +31,19 @@ pub(crate) enum NetFrameClass {
     Snapshot = 2,
 }
 
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_SERVER_CONTROL_FRAME_BYTES: usize = 64 * 1024;
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_CLIENT_CONTROL_FRAME_BYTES: usize = 32 * 1024;
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_INPUT_FRAME_BYTES: usize = 256 * 1024;
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_SNAPSHOT_FRAME_BYTES: usize =
     robin_engine::multiplayer::MAX_SNAPSHOT_FRAME_BYTES;
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_HELLO_FRAME_BYTES: usize = 24 * 1024;
 
+#[cfg(feature = "multiplayer")]
 impl NetFrameClass {
     pub(crate) fn from_byte(value: u8) -> Result<Self, String> {
         match value {
@@ -53,6 +63,7 @@ impl NetFrameClass {
     }
 }
 
+#[cfg(feature = "multiplayer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InboundFramePolicy {
     ClientHello,
@@ -60,6 +71,7 @@ pub(crate) enum InboundFramePolicy {
     ServerToClient,
 }
 
+#[cfg(feature = "multiplayer")]
 impl InboundFramePolicy {
     pub(crate) const fn limit(self, class: NetFrameClass) -> Option<usize> {
         match (self, class) {
@@ -75,6 +87,7 @@ impl InboundFramePolicy {
     }
 }
 
+#[cfg(feature = "multiplayer")]
 pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
     match message {
         NetMsg::InitialSnapshot { .. } => NetFrameClass::Snapshot,
@@ -91,23 +104,32 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
 }
 
 pub mod content_identity;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub mod identity;
+#[cfg(feature = "multiplayer")]
 pub mod join_ticket;
+#[cfg(feature = "multiplayer")]
+pub use join_ticket::MAX_MULTIPLAYER_PLAYERS;
+#[cfg(not(feature = "multiplayer"))]
+pub const MAX_MULTIPLAYER_PLAYERS: u32 = 4;
+#[cfg(feature = "multiplayer")]
 pub mod matchmaking;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "multiplayer"))]
+#[path = "multiplayer/matchmaking_disabled.rs"]
+pub mod matchmaking;
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub mod rendezvous;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 mod native;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub use native::{ClientHandle, ServerHandle, connect_client, start_server};
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
 mod wasm;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
 pub use wasm::{ClientHandle, connect_client};
 
 /// Owns every worker and platform resource for one multiplayer transport.
@@ -119,25 +141,28 @@ pub use wasm::{ClientHandle, connect_client};
 /// `SBNetwork::~SBNetwork()` closes an active session and releases the
 /// DirectPlay object. This runtime preserves that resource-owning RAII
 /// behavior for the port's iroh transport.
+#[cfg(feature = "multiplayer")]
 pub enum MultiplayerRuntime {
     #[cfg(not(target_arch = "wasm32"))]
     Server(ServerHandle),
     Client(ClientHandle),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 impl From<ServerHandle> for MultiplayerRuntime {
     fn from(handle: ServerHandle) -> Self {
         Self::Server(handle)
     }
 }
 
+#[cfg(feature = "multiplayer")]
 impl From<ClientHandle> for MultiplayerRuntime {
     fn from(handle: ClientHandle) -> Self {
         Self::Client(handle)
     }
 }
 
+#[cfg(feature = "multiplayer")]
 impl MultiplayerRuntime {
     /// Stop the transport now. Calling this more than once is harmless.
     pub fn shutdown(&mut self) {
@@ -149,6 +174,7 @@ impl MultiplayerRuntime {
     }
 }
 
+#[cfg(feature = "multiplayer")]
 impl Drop for MultiplayerRuntime {
     fn drop(&mut self) {
         self.shutdown();
@@ -162,6 +188,7 @@ impl Drop for MultiplayerRuntime {
 /// have closed.
 pub struct NetChannels {
     channels: EngineNetChannels,
+    #[cfg(feature = "multiplayer")]
     runtime: Option<MultiplayerRuntime>,
 }
 
@@ -181,6 +208,7 @@ impl NetChannels {
         (
             Self {
                 channels,
+                #[cfg(feature = "multiplayer")]
                 runtime: None,
             },
             incoming_tx,
@@ -191,6 +219,7 @@ impl NetChannels {
     }
 
     /// Couple the channel bundle to its transport owner.
+    #[cfg(feature = "multiplayer")]
     pub fn attach_runtime(&mut self, runtime: impl Into<MultiplayerRuntime>) {
         assert!(
             self.runtime.is_none(),
@@ -201,6 +230,7 @@ impl NetChannels {
 
     /// Explicitly stop and detach the transport. Drop performs the same work.
     pub fn shutdown(&mut self) {
+        #[cfg(feature = "multiplayer")]
         if let Some(mut runtime) = self.runtime.take() {
             runtime.shutdown();
         }
@@ -215,8 +245,7 @@ impl Deref for NetChannels {
     }
 }
 
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::multiplayer::native::{connect_client, start_server_with_key};

@@ -7,7 +7,7 @@ outdir=$1
 list=$2
 wt=/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/.claude/worktrees/fix-motionstate
 corpus=/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood
-runner=$wt/target/release/examples/original_parity_replay
+runner=$wt/target/release/original_parity_replay
 mkdir -p "$outdir"
 
 run_one() {

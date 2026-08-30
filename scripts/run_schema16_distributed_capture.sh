@@ -102,8 +102,8 @@ build_remote_converter() {
     # Captures own the machine, so the build yields to them.
     ssh_worker "cd '$remote_root/$converter_src_rel' \
         && PATH=\"\$HOME/.cargo/bin:\$PATH\" \
-            nice -n 19 cargo build --release --example original_parity_replay \
-        && install -m 0755 target/release/examples/original_parity_replay \
+            nice -n 19 cargo build -p robin_parity --release --bin original_parity_replay \
+        && install -m 0755 target/release/original_parity_replay \
             '$remote_root/$converter_rel' \
         && printf '%s\n' '$revision' > '$remote_root/$converter_rel.revision'"
     printf 'remote converter built from %s: %s:%s\n' \
@@ -155,10 +155,10 @@ capture_shard() {
     # builds the workspace anyway just uses what cargo produced.
     converter="$root/$converter_rel"
     if [[ ! -x "$converter" ]]; then
-        converter="$root/target/release/examples/original_parity_replay"
+        converter="$root/target/release/original_parity_replay"
     fi
     if [[ ! -x "$converter" ]]; then
-        printf 'error: no parity converter on this host (build with `%s build-remote-converter` or `cargo build --release --example original_parity_replay`): %s\n' \
+        printf 'error: no parity converter on this host (build with `%s build-remote-converter` or `cargo build -p robin_parity --release --bin original_parity_replay`): %s\n' \
             "$0" "$converter" >&2
         exit 2
     fi

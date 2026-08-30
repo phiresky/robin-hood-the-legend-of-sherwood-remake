@@ -19,20 +19,29 @@ fn main() {
     }
     // Velopack may consume installer/update activation arguments and exit or
     // restart the process, so its startup hook must run before all game setup.
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        feature = "auto-update",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    ))]
     velopack::VelopackApp::build().run();
 
     install_crash_diagnostics();
     robin_rs::init_tracing();
     let args = robin_rs::main_entry::parse_cli();
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        feature = "auto-update",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    ))]
     let updater = if args.headless {
         None
     } else {
         robin_rs::auto_update::start_github_auto_update()
     };
     let exit = run_native(args);
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        feature = "auto-update",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    ))]
     robin_rs::auto_update::apply_downloaded_update(updater);
     std::process::exit(exit);
 }
@@ -262,6 +271,11 @@ pub fn wasm_set_multiplayer_join_ticket(
 pub fn wasm_multiplayer_compatibility() -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
     use serde::Serialize as _;
 
+    #[cfg(feature = "multiplayer")]
+    let ticket_schema = robin_rs::multiplayer::join_ticket::JOIN_TICKET_SCHEMA;
+    #[cfg(not(feature = "multiplayer"))]
+    let ticket_schema = 0;
+
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Compatibility<'a> {
@@ -274,7 +288,7 @@ pub fn wasm_multiplayer_compatibility() -> Result<wasm_bindgen::JsValue, wasm_bi
         engine_commit: robin_rs::replay_format::ENGINE_SOURCE_COMMIT,
         artifact_short: robin_rs::replay_format::ENGINE_VERSION_HASH,
         net_protocol: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-        ticket_schema: robin_rs::multiplayer::join_ticket::JOIN_TICKET_SCHEMA,
+        ticket_schema,
     }
     .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
     .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))

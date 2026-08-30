@@ -139,6 +139,7 @@ pub fn find_installed_datadir() -> Option<PathBuf> {
 
 /// Accept a picked folder as either the installation root or its `Data`
 /// subfolder (players often select `Data` itself), returning the root.
+#[cfg(feature = "dialogs")]
 fn normalize_selection(path: &Path) -> Option<PathBuf> {
     if is_valid_install_dir(path) {
         return Some(path.to_owned());
@@ -152,6 +153,7 @@ fn normalize_selection(path: &Path) -> Option<PathBuf> {
 /// Whether a native dialog can appear at all. Prevents headless runs
 /// (CI, batch tools without a datadir) from hanging on an invisible
 /// prompt.
+#[cfg(feature = "dialogs")]
 fn display_available() -> bool {
     if cfg!(target_os = "linux") {
         std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
@@ -213,8 +215,10 @@ pub fn save_datadir(dir: &Path) {
 
 // ─── Dialogs ─────────────────────────────────────────────────────
 
+#[cfg(feature = "dialogs")]
 const STORE_RECOMMENDATION: &str = "I recommend to buy it on GOG if you do not have it:";
 
+#[cfg(feature = "dialogs")]
 fn store_recommendation() -> String {
     format!(
         "{STORE_RECOMMENDATION}\n{GOG_STORE_URL}\n\
@@ -225,6 +229,7 @@ fn store_recommendation() -> String {
 
 /// Confirmation dialog over an auto-detected installation: OK accepts it,
 /// Cancel opens the folder picker instead.
+#[cfg(feature = "dialogs")]
 fn confirm_candidate(candidate: &Path) -> rfd::MessageDialogResult {
     pollster::block_on(
         rfd::AsyncMessageDialog::new()
@@ -246,6 +251,7 @@ fn confirm_candidate(candidate: &Path) -> rfd::MessageDialogResult {
 
 /// Introduction dialog when nothing was auto-detected: OK opens the
 /// folder picker, Cancel aborts.
+#[cfg(feature = "dialogs")]
 fn confirm_search() -> rfd::MessageDialogResult {
     pollster::block_on(
         rfd::AsyncMessageDialog::new()
@@ -265,6 +271,7 @@ fn confirm_search() -> rfd::MessageDialogResult {
 
 /// Folder-picker loop: pick, validate, re-prompt on an invalid choice.
 /// Returns `None` when the player cancels the picker.
+#[cfg(feature = "dialogs")]
 fn pick_folder_loop() -> Option<PathBuf> {
     loop {
         let folder = pollster::block_on(
@@ -318,36 +325,43 @@ pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
         find_installed_datadir()
     };
 
-    if !display_available() {
-        if candidate.is_none() {
-            tracing::warn!("No display available; skipping the datadir picker dialog");
-        }
-        return candidate;
-    }
+    #[cfg(not(feature = "dialogs"))]
+    return candidate;
 
-    let chosen = match candidate {
-        Some(candidate) => {
-            if confirm_candidate(&candidate) == rfd::MessageDialogResult::Ok {
-                Some(candidate)
-            } else {
-                pick_folder_loop()
+    #[cfg(feature = "dialogs")]
+    {
+        if !display_available() {
+            if candidate.is_none() {
+                tracing::warn!("No display available; skipping the datadir picker dialog");
             }
+            return candidate;
         }
-        None => {
-            if confirm_search() == rfd::MessageDialogResult::Ok {
-                pick_folder_loop()
-            } else {
-                None
+
+        let chosen = match candidate {
+            Some(candidate) => {
+                if confirm_candidate(&candidate) == rfd::MessageDialogResult::Ok {
+                    Some(candidate)
+                } else {
+                    pick_folder_loop()
+                }
             }
-        }
-    }?;
-    save_datadir(&chosen);
-    Some(chosen)
+            None => {
+                if confirm_search() == rfd::MessageDialogResult::Ok {
+                    pick_folder_loop()
+                } else {
+                    None
+                }
+            }
+        }?;
+        save_datadir(&chosen);
+        Some(chosen)
+    }
 }
 
 /// Options-menu entry point: pick a new game data folder with the native
 /// picker, remember it, and tell the player it applies on the next
 /// launch. Returns the new folder, or `None` when the player cancelled.
+#[cfg(feature = "dialogs")]
 pub fn change_datadir_interactive() -> Option<PathBuf> {
     if !display_available() {
         return None;

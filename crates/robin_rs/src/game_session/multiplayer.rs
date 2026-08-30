@@ -711,6 +711,24 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 ///
 /// Network failures abort multiplayer startup so the caller can return
 /// to the main menu instead of silently launching a different local game.
+#[cfg(not(feature = "multiplayer"))]
+pub(super) async fn setup_multiplayer_session(
+    _host: &mut Host,
+    args: &crate::main_entry::CliArgs,
+    _authoritative_mission_id: &str,
+    _authoritative_rng_seed: u64,
+    _authoritative_sim_config: robin_engine::engine::SimConfig,
+) -> Result<(), String> {
+    if args.server || args.connect.is_some() || args.join.is_some() {
+        return Err(
+            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "multiplayer")]
 pub(super) async fn setup_multiplayer_session(
     host: &mut Host,
     args: &crate::main_entry::CliArgs,
@@ -959,6 +977,7 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
+#[cfg(feature = "multiplayer")]
 fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
     let saved = args
         .global_options
@@ -973,20 +992,22 @@ fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result
     ))
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
     cli_override.unwrap_or(saved)
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
     if args.server && args.connect.is_some() {
         return Err("multiplayer host and client modes are mutually exclusive".to_string());
     }
     if let Some(expected) = args.mp_expected_players
-        && !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
+        && !(1..=crate::multiplayer::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
     {
         return Err(format!(
             "multiplayer expected player count must be between 1 and {}",
-            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+            crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
         ));
     }
     let multiplayer = args.server || args.connect.is_some();

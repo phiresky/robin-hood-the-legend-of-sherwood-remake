@@ -22,8 +22,25 @@ Some new features are already added, some incomplete, some TODO or "maybe later.
 
 ## Building
 
-Currently only tested on a Linux host. Optional features: `video` (intro/outro via ffmpeg-next, on by default), `native-fs`
-(OS data-dir lookup, on by default).
+Currently only tested on a Linux host. Bare builds use no optional client
+features. Use `--features desktop` for the normal native game (audio, OS
+data-directory lookup/dialogs, gamepads, and hardware reporting). Large
+integrations are opt-in: `multiplayer` (iroh/DHT matchmaking), `video`
+(intro/outro via ffmpeg-next), `retroarch-shaders` (librashader), and `lua`
+(Spellforge custom missions). Packaged desktop builds additionally enable
+`auto-update` (Velopack). Enable every runtime integration with:
+
+    cargo build -p robin_rs --bin robin --features full
+
+The native packaging workflow uses `--features release`, which includes the
+desktop, Lua, multiplayer, and auto-update features. It will switch to `full`
+once FFmpeg libraries can be bundled consistently on every release target.
+
+At the workspace root, bare `cargo build` and `cargo test` intentionally cover
+only the small utility/proc-macro smoke set. Build the minimal client with
+`cargo build -p robin_rs --bin robin`, select any suite with `-p <crate>`, or
+use `--workspace` for everything. Conversion/inspection bins require
+`--features tools` and therefore stay out of bare builds.
 
 Theoretically, all the following platforms should be supported:
 

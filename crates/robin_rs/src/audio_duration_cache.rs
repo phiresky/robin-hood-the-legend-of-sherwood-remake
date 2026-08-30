@@ -137,7 +137,7 @@ impl AudioDurationCache {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
         let derived: Vec<_> = {
             use rayon::prelude::*;
             misses
@@ -148,7 +148,7 @@ impl AudioDurationCache {
                 })
                 .collect()
         };
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(any(target_arch = "wasm32", not(feature = "audio")))]
         let derived: Vec<_> = misses
             .into_iter()
             .map(|(name, identity)| {

@@ -6,10 +6,8 @@
 //!
 //! Usage:
 //!   ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-//!     cargo run --example original_parity_replay -- \
+//!     cargo run -p robin_parity --bin original_parity_replay -- \
 //!       original-code/parity-traces/original-demo-baseline.jsonl
-
-#![recursion_limit = "256"]
 
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -3609,7 +3607,7 @@ impl VisualReplay {
     }
 }
 
-fn main() {
+pub fn main() {
     let options = parse_options();
     if options.reblock {
         reblock_native_trace(&options.trace_path);
@@ -4830,7 +4828,7 @@ fn register_language_data_paths_for_tool() {
     #[cfg(feature = "client")]
     robin_rs::main_entry::register_language_data_paths_for_tool();
     #[cfg(not(feature = "client"))]
-    robin_parity::register_language_data_paths();
+    crate::register_language_data_paths();
 }
 
 fn parse_options() -> Options {
@@ -8157,7 +8155,7 @@ fn initialize_headless_engine(
     let profiles = Arc::new(profile_manager);
     let mut assets = LevelAssets::new();
     assets.profile_manager = profiles.clone();
-    robin_parity::populate_localized_names(&mut assets)
+    crate::populate_localized_names(&mut assets)
         .expect("load localized names for deterministic PC construction");
 
     let mut frame_holder = robin_assets::frame_holder::FrameHolder::new();
@@ -8189,7 +8187,7 @@ fn initialize_headless_engine(
     )
     .expect("load mission");
     let ambiance = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance);
-    let bg_pixel_dims = robin_parity::background_dimensions(
+    let bg_pixel_dims = crate::background_dimensions(
         &loaded.mission.header.map_filename,
         ambiance.directory(),
         "Data/Levels",
@@ -8214,7 +8212,7 @@ fn initialize_headless_engine(
             .to_sim_config(header.synchronous_pathfinding),
     })
     .expect("initialize engine");
-    robin_parity::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
+    crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
     (engine, assets, scb)
 }

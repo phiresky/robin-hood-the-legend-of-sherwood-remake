@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-[[example]]
+[[bin]]
 name = "original_parity_replay"
-path = "examples/original_parity_replay.rs"
+path = "src/bin/original_parity_replay.rs"
 
 [features]
 default = []
