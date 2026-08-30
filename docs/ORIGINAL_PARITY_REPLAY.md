@@ -746,10 +746,10 @@ ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
 Build once, then use the first-divergence run for iteration:
 
 ```sh
-cargo build -p robin_parity --example original_parity_replay
+cargo build -p robin_parity --bin original_parity_replay
 TRACE_JSONL=/path/to/schema11-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-  target/debug/examples/original_parity_replay \
+  target/debug/original_parity_replay \
   "$TRACE_JSONL"
 ```
 
@@ -796,7 +796,7 @@ For long traces where only the first divergent frame is needed, skip the
 
 ```sh
 ROBINHOOD_DATA_DIR=datadirs/fullgame_gog \
-  target/debug/examples/original_parity_replay --no-auto-dump \
+  target/debug/original_parity_replay --no-auto-dump \
   "$TRACE_JSONL"
 ```
 
@@ -834,7 +834,7 @@ LLVM_PROFDATA="$(dirname "$(rustc --print target-libdir)")/bin/llvm-profdata"
 
 CARGO_TARGET_DIR=target/pgo-generate CARGO_INCREMENTAL=0 \
   RUSTFLAGS="-Cprofile-generate=$PGO_DATA -Ctarget-cpu=native" \
-  cargo build --release --example original_parity_replay
+  cargo build -p robin_parity --release --bin original_parity_replay
 
 # Replace these with traces spanning the datadirs and replay shapes in the
 # intended sweep. Every training invocation must finish with an exact match.
@@ -842,7 +842,7 @@ for TRACE_JSONL in /path/to/training-trace-1.jsonl.zst \
                    /path/to/training-trace-2.jsonl.zst; do
   LLVM_PROFILE_FILE="$PGO_DATA/%m_%p.profraw" \
     ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
-    target/pgo-generate/release/examples/original_parity_replay \
+    target/pgo-generate/release/original_parity_replay \
     --no-auto-dump "$TRACE_JSONL" || exit 1
 done
 
@@ -851,10 +851,10 @@ done
 
 CARGO_TARGET_DIR=target/pgo-control CARGO_INCREMENTAL=0 \
   RUSTFLAGS='-Ctarget-cpu=native' \
-  cargo build --release --example original_parity_replay
+  cargo build -p robin_parity --release --bin original_parity_replay
 CARGO_TARGET_DIR=target/pgo-use CARGO_INCREMENTAL=0 \
   RUSTFLAGS="-Cprofile-use=$PGO_DATA/merged.profdata -Ctarget-cpu=native" \
-  cargo build --release --example original_parity_replay
+  cargo build -p robin_parity --release --bin original_parity_replay
 ```
 
 `target-cpu=native` makes both binaries specific to the build machine's CPU;
@@ -867,8 +867,8 @@ faster.
 
 ```sh
 HELD_OUT_TRACE=/path/to/held-out-trace.jsonl.zst
-for REPLAY in target/pgo-control/release/examples/original_parity_replay \
-              target/pgo-use/release/examples/original_parity_replay; do
+for REPLAY in target/pgo-control/release/original_parity_replay \
+              target/pgo-use/release/original_parity_replay; do
   ROBINHOOD_DATA_DIR=datadirs/fullgame_linux PARITY_PROFILE_TIMING=1 \
     "$REPLAY" --no-auto-dump "$HELD_OUT_TRACE" || exit 1
 done
@@ -891,10 +891,10 @@ replay, build the opt-in client feature and add `--visual`. The window freezes
 on the first divergence while the normal logical mismatch report is printed:
 
 ```sh
-cargo build -p robin_parity --example original_parity_replay --features client
+cargo build -p robin_parity --bin original_parity_replay --features client
 TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-  target/debug/examples/original_parity_replay --visual \
+  target/debug/original_parity_replay --visual \
   "$TRACE_JSONL"
 ```
 
@@ -906,10 +906,10 @@ GPU window stays hidden unless `--visual` is also present; flattened
 corpus-relative names avoid collisions between profiles:
 
 ```sh
-cargo build -p robin_parity --release --example original_parity_replay --features client
+cargo build -p robin_parity --release --bin original_parity_replay --features client
 TRACE_JSONL=/path/to/parity-save-replays/traces/Profile/Savegame_000-session-0001.jsonl.zst
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
-  target/release/examples/original_parity_replay \
+  target/release/original_parity_replay \
   --frame-zero-screenshot-dir output/parity-frame-zero \
   "$TRACE_JSONL"
 ```
@@ -920,7 +920,7 @@ remaining compared-field mismatch with:
 ```sh
 TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-  target/debug/examples/original_parity_replay --scan-all \
+  target/debug/original_parity_replay --scan-all \
   "$TRACE_JSONL"
 ```
 
@@ -930,7 +930,7 @@ HTTP endpoint:
 ```sh
 TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-  target/debug/examples/original_parity_replay \
+  target/debug/original_parity_replay \
   --http-server 17640 --start-paused \
   "$TRACE_JSONL"
 ```
