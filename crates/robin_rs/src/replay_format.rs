@@ -1,293 +1,357 @@
-//! Compact replay sharing format: `rhrec-{versionhash}-{base64}`.
+//! Game-facing replay loading facade.
 //!
-//! Designed to be as small as possible so a finished replay fits in a
-//! URL / bug-report paste: the engine's `ReplayData` is flattened into
-//! a [`ReplayFile`], bitcode-serialized, zstd-compressed, then
-//! base64-encoded (URL-safe, no padding). A short engine git hash is
-//! prepended so the loader rejects replays produced by a different build.
+//! The canonical codec and server/verifier admission contract live in
+//! [`robin_replay_format`]. This module adds two application-only concerns:
 //!
-//! The canonical recording format on disk is still JSONL (see
-//! [`robin_engine::replay`]) — that streams incrementally and is
-//! crash-safe. This module converts between the two: encode produces a
-//! sharing string from an in-memory replay, decode parses one back.
-//!
-//! # Acceptance from the CLI / JSON API
-//!
-//! [`load_replay_spec`] accepts three flavours:
-//!
-//! 1. A bare `rhrec-…` string (the compact format, inline).
-//! 2. On native builds, a filesystem path to a file whose contents are a
-//!    `rhrec-…` string (any extension; convenient for shell redirection).
-//! 3. On native builds, a filesystem path to a legacy `*.rhrec.jsonl` file.
-//!
-//! Browser builds intentionally accept only the compact inline format. They
-//! have no host filesystem, and URL replay loading must not retain the legacy
-//! JSONL import path in the production wasm module.
-//!
-//! The version hash is checked before playback. A mismatch is rejected because
-//! simulation compatibility is not promised across engine revisions.
+//! - local developer JSONL/path loading, visibly separate from production;
+//! - isolated public compact validation before the game process/wasm instance
+//!   decodes the exact bytes a second time.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
-use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile};
+pub use robin_replay_format::*;
 
-/// Git short-hash of the engine at build time (see `build.rs`).
-/// Falls back to `"unknown"` when built outside a git checkout.
-pub const ENGINE_VERSION_HASH: &str = env!("ROBIN_GIT_HASH");
-
-/// Exact source commit for authenticated executable-artifact selection.
-/// Replays retain the historical 12-character tag above; browser multiplayer
-/// invitations use this full identity and separately verify the artifact.
+/// Exact source commit used by multiplayer artifact selection.
 pub const ENGINE_SOURCE_COMMIT: &str = env!("ROBIN_GIT_COMMIT");
 
-/// Prefix byte sequence for the compact format; also the file-format
-/// magic when a `rhrec-…` string is written to disk.
-pub const COMPACT_PREFIX: &str = "rhrec-";
-
-/// Zstd compression level. 19 is near-max ratio; replays are tiny so
-/// the extra CPU cost is invisible compared to a mission run.
-const ZSTD_LEVEL: i32 = 19;
-
-/// Error from compact-format encode / decode.
 #[derive(Debug, thiserror::Error)]
-pub enum FormatError {
-    #[error("missing `rhrec-` prefix")]
-    MissingPrefix,
-    #[error("missing version/payload separator")]
-    MissingSeparator,
-    #[error("base64 decode failed: {0}")]
-    Base64(#[from] base64::DecodeError),
-    #[error("zstd decode failed: {0}")]
-    Zstd(std::io::Error),
-    #[error("bitcode decode failed: {0}")]
-    Bitcode(#[from] bitcode::Error),
-    #[error("io: {0}")]
+pub enum ReplayLoadError {
+    #[error(transparent)]
+    Compact(#[from] robin_replay_format::FormatError),
+    #[error("local replay I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[cfg(not(target_arch = "wasm32"))]
-    #[error("jsonl decode failed: {0}")]
-    Jsonl(String),
+    #[error("local JSONL replay decode failed: {0}")]
+    LocalJsonl(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("isolated replay admission rejected the artifact: {0}")]
+    AdmissionRejected(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("replay admission exhausted its {stage} resource limit: {detail}")]
+    ResourceLimit { stage: &'static str, detail: String },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("this platform cannot securely contain replay admission: {0}")]
+    ContainmentUnavailable(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("isolated replay admission protocol failed: {0}")]
+    WorkerProtocol(String),
     #[cfg(target_arch = "wasm32")]
-    #[error("browser replay loading accepts only an inline `rhrec-…` compact replay")]
+    #[error("browser compact replay was not validated by the isolated Web Worker")]
+    BrowserWorkerValidationRequired,
+    #[cfg(target_arch = "wasm32")]
+    #[error("browser replay loading accepts only an inline compact replay")]
     BrowserCompactOnly,
-    #[error("invalid replay layout: {0}")]
-    InvalidLayout(String),
-    #[error(
-        "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
-    )]
-    UnsupportedVersion { version: u32 },
-    #[error("replay engine version `{recorded}` does not match this build `{current}`")]
-    EngineVersionMismatch {
-        recorded: String,
-        current: &'static str,
-    },
 }
 
-/// Encode an in-memory [`ReplayData`] as a `rhrec-{hash}-{base64}`
-/// string. `hash` is the engine version tag to stamp into the output;
-/// callers normally pass [`ENGINE_VERSION_HASH`].
-pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatError> {
-    let file: ReplayFile = data.into();
-    let bytes = bitcode::encode(&file);
-    let zbytes = zstd::encode_all(&bytes[..], ZSTD_LEVEL).map_err(FormatError::Zstd)?;
-    let b64 = BASE64.encode(&zbytes);
-    Ok(format!("{COMPACT_PREFIX}{hash}-{b64}"))
+/// Load user-supplied compact bytes only after an isolated validator has
+/// accepted the exact digest. Native uses a short-lived child process with
+/// OS memory/CPU limits. Browser builds require the shell's dedicated Worker
+/// to install a one-shot digest proof before this call.
+pub fn decode_compact_for_public_playback(
+    text: &str,
+) -> Result<(String, robin_engine::replay::ReplayData), ReplayLoadError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    validate_in_native_child(text)?;
+    #[cfg(target_arch = "wasm32")]
+    consume_browser_worker_proof(text)?;
+
+    // The isolated worker validated and canonically re-encoded these exact
+    // immutable bytes. Repeating typed decode here is safe: collection/string
+    // sizes and total work were already proven under external containment.
+    robin_replay_format::decode_compact_for_admission(text).map_err(Into::into)
 }
 
-/// Parse a `rhrec-{hash}-{base64}` string back into a [`ReplayData`],
-/// returning the embedded version hash so callers can inspect it. Playback
-/// entry points reject a mismatch via [`validate_engine_hash`].
-pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
-    let rest = text
-        .trim()
-        .strip_prefix(COMPACT_PREFIX)
-        .ok_or(FormatError::MissingPrefix)?;
-    let (hash, payload) = rest.split_once('-').ok_or(FormatError::MissingSeparator)?;
-    let zbytes = BASE64.decode(payload.as_bytes())?;
-    let bytes = zstd::decode_all(&zbytes[..]).map_err(FormatError::Zstd)?;
-    let file: ReplayFile = bitcode::decode(&bytes)?;
-    let data = file.into();
-    validate_replay_data(&data)?;
-    Ok((hash.to_string(), data))
-}
-
-/// Reject replay schemas that this build cannot interpret reliably.
-///
-/// A successful decode alone cannot reject a header whose payload happens to
-/// fit today's structs but belongs to a different hash contract.
-pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
-    if data.header.version != REPLAY_SCHEMA_VERSION {
-        return Err(FormatError::UnsupportedVersion {
-            version: data.header.version,
-        });
-    }
-    data.validate_layout().map_err(FormatError::InvalidLayout)?;
-    Ok(())
-}
-
-/// Load a replay from either the compact inline format, a file
-/// containing the compact format, or a `*.rhrec.jsonl` file.
-///
-/// Compact replay hashes are an exact compatibility gate. JSONL recordings do
-/// not embed the build hash and remain governed by their replay schema.
-pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
-    // Inline `rhrec-…` wins first so `--replay rhrec-…` works without
-    // shell escaping headaches on a token that might also look like a
-    // relative path.
-    if spec.trim_start().starts_with(COMPACT_PREFIX) {
-        let (hash, data) = decode_compact(spec)?;
-        validate_engine_hash(&hash)?;
-        return Ok(data);
+/// Explicitly local CLI/developer loader. Production network/server code must
+/// call the canonical crate's bounded admission API and has no JSONL branch.
+pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, ReplayLoadError> {
+    if spec.starts_with(COMPACT_PREFIX) {
+        return decode_compact_for_public_playback(spec).map(|(_, replay)| replay);
     }
 
     #[cfg(target_arch = "wasm32")]
-    return Err(FormatError::BrowserCompactOnly);
+    return Err(ReplayLoadError::BrowserCompactOnly);
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // Otherwise read the file. If its contents start with `rhrec-`,
-        // treat it as a dumped compact string; otherwise try JSONL.
-        let contents = std::fs::read_to_string(spec)?;
-        let trimmed = contents.trim_start();
-        if trimmed.starts_with(COMPACT_PREFIX) {
-            let (hash, data) = decode_compact(trimmed)?;
-            validate_engine_hash(&hash)?;
-            Ok(data)
-        } else {
-            let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
-            validate_replay_data(&data)?;
-            Ok(data)
+        // JSONL is a visibly named, trusted local developer lane. It is never
+        // auto-detected from bytes and is unavailable to network admission.
+        if spec.ends_with(".rhrec.jsonl") {
+            let replay = robin_engine::replay::ReplayData::from_file(spec)
+                .map_err(ReplayLoadError::LocalJsonl)?;
+            robin_replay_format::validate_replay_data(&replay)?;
+            return Ok(replay);
+        }
+
+        // Every other path is a production compact artifact. Bound acquisition
+        // before allocating a String so hostile local/URL-derived paths cannot
+        // bypass the codec's transport preflight with `read_to_string`.
+        use std::io::Read as _;
+        let limit = DEFAULT_REPLAY_ADMISSION_LIMITS.max_input_bytes;
+        let file = std::fs::File::open(spec)?;
+        if file.metadata()?.len() > u64::try_from(limit).unwrap_or(u64::MAX) {
+            return Err(robin_replay_format::FormatError::LimitExceeded {
+                kind: ReplayLimitKind::CompactInputBytes,
+                observed: limit.saturating_add(1),
+                limit,
+            }
+            .into());
+        }
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(file.metadata()?.len())
+                .unwrap_or(limit)
+                .min(limit),
+        );
+        file.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(robin_replay_format::FormatError::LimitExceeded {
+                kind: ReplayLimitKind::CompactInputBytes,
+                observed: bytes.len(),
+                limit,
+            }
+            .into());
+        }
+        let contents = std::str::from_utf8(&bytes).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("compact replay is not UTF-8: {error}"),
+            )
+        })?;
+        decode_compact_for_public_playback(contents).map(|(_, replay)| replay)
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum AdmissionWorkerReply {
+    Accepted { sha256: String },
+    Rejected { error: String },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const ADMISSION_WORKER_ARG: &str = "--internal-replay-admission-worker";
+#[cfg(not(target_arch = "wasm32"))]
+const ADMISSION_WORKER_WALL_TIME: std::time::Duration = std::time::Duration::from_secs(15);
+#[cfg(not(target_arch = "wasm32"))]
+const ADMISSION_WORKER_REPLY_LIMIT: usize = 16 * 1024;
+
+/// Hidden native child entry point. The game binary dispatches here before
+/// tracing, asset loading, clap, windowing, or networking.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_native_admission_worker() -> i32 {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let limit = DEFAULT_REPLAY_ADMISSION_LIMITS.max_input_bytes;
+    let mut bytes = Vec::new();
+    let read_result = std::io::stdin()
+        .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+        .read_to_end(&mut bytes);
+    let reply = match read_result {
+        Err(error) => AdmissionWorkerReply::Rejected {
+            error: format!("read compact replay: {error}"),
+        },
+        Ok(_) if bytes.len() > limit => AdmissionWorkerReply::Rejected {
+            error: format!(
+                "compact replay {:?} observed {}, limit is {}",
+                ReplayLimitKind::CompactInputBytes,
+                bytes.len(),
+                limit
+            ),
+        },
+        Ok(_) => match std::str::from_utf8(&bytes) {
+            Err(error) => AdmissionWorkerReply::Rejected {
+                error: format!("compact replay is not UTF-8: {error}"),
+            },
+            Ok(text) => match robin_replay_format::decode_compact_for_admission(text) {
+                Ok(_) => AdmissionWorkerReply::Accepted {
+                    sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+                },
+                Err(error) => AdmissionWorkerReply::Rejected {
+                    error: error.to_string(),
+                },
+            },
+        },
+    };
+    match serde_json::to_writer(std::io::stdout().lock(), &reply) {
+        Ok(()) => 0,
+        Err(_) => 2,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError> {
+    use sha2::Digest as _;
+    use std::io::{Read as _, Write as _};
+    use std::process::{Command, Stdio};
+
+    preflight_compact_transport(text, &DEFAULT_REPLAY_ADMISSION_LIMITS)?;
+    let executable = std::env::current_exe().map_err(|error| {
+        ReplayLoadError::WorkerProtocol(format!("resolve current executable: {error}"))
+    })?;
+    let mut command = Command::new(executable);
+    command
+        .arg(ADMISSION_WORKER_ARG)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    configure_native_worker_limits(&mut command)?;
+    let mut child = command.spawn().map_err(|error| {
+        ReplayLoadError::WorkerProtocol(format!("spawn admission worker: {error}"))
+    })?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| ReplayLoadError::WorkerProtocol("worker stdin is unavailable".into()))?
+        .write_all(text.as_bytes())
+        .map_err(|error| ReplayLoadError::WorkerProtocol(format!("write worker input: {error}")))?;
+
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait().map_err(|error| {
+            ReplayLoadError::WorkerProtocol(format!("wait for admission worker: {error}"))
+        })? {
+            Some(status) => break status,
+            None if started.elapsed() >= ADMISSION_WORKER_WALL_TIME => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ReplayLoadError::ResourceLimit {
+                    stage: "wall-time",
+                    detail: format!(
+                        "limit of {} seconds exceeded",
+                        ADMISSION_WORKER_WALL_TIME.as_secs()
+                    ),
+                });
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    };
+    let mut output = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| ReplayLoadError::WorkerProtocol("worker stdout is unavailable".into()))?
+        .take((ADMISSION_WORKER_REPLY_LIMIT + 1) as u64)
+        .read_to_end(&mut output)
+        .map_err(|error| ReplayLoadError::WorkerProtocol(format!("read worker reply: {error}")))?;
+    if output.len() > ADMISSION_WORKER_REPLY_LIMIT {
+        return Err(ReplayLoadError::ResourceLimit {
+            stage: "worker-output",
+            detail: format!(
+                "observed at least {} bytes, limit is {}",
+                output.len(),
+                ADMISSION_WORKER_REPLY_LIMIT
+            ),
+        });
+    }
+    if !status.success() {
+        return Err(ReplayLoadError::ResourceLimit {
+            stage: "worker-process",
+            detail: format!("worker exited abnormally with {status}"),
+        });
+    }
+    let reply: AdmissionWorkerReply = serde_json::from_slice(&output).map_err(|error| {
+        ReplayLoadError::WorkerProtocol(format!("decode worker reply: {error}"))
+    })?;
+    match reply {
+        AdmissionWorkerReply::Rejected { error } => Err(ReplayLoadError::AdmissionRejected(error)),
+        AdmissionWorkerReply::Accepted { sha256 } => {
+            let actual = format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
+            if sha256 != actual {
+                return Err(ReplayLoadError::WorkerProtocol(
+                    "worker accepted a different replay digest".into(),
+                ));
+            }
+            Ok(())
         }
     }
 }
 
-fn validate_engine_hash(hash: &str) -> Result<(), FormatError> {
-    if hash != ENGINE_VERSION_HASH {
-        return Err(FormatError::EngineVersionMismatch {
-            recorded: hash.to_owned(),
-            current: ENGINE_VERSION_HASH,
+#[cfg(all(not(target_arch = "wasm32"), unix))]
+fn configure_native_worker_limits(
+    command: &mut std::process::Command,
+) -> Result<(), ReplayLoadError> {
+    use std::os::unix::process::CommandExt as _;
+
+    // The worker has no game assets/window/network stack. The 384 MiB ceiling
+    // leaves >4x the bounded binary-buffer overlap while containing bitcode's
+    // pre-validation collection allocation multiplier. Browser admission uses
+    // the identical 384 MiB linear-memory maximum.
+    const ADDRESS_SPACE_BYTES: libc::rlim_t = 384 * 1024 * 1024;
+    unsafe {
+        command.pre_exec(|| {
+            set_limit(libc::RLIMIT_AS, ADDRESS_SPACE_BYTES)?;
+            set_limit(libc::RLIMIT_CPU, 10)?;
+            set_limit(libc::RLIMIT_FSIZE, 1024 * 1024)?;
+            set_limit(libc::RLIMIT_NOFILE, 64)?;
+            Ok(())
         });
     }
     Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), unix))]
+fn set_limit(resource: libc::__rlimit_resource_t, value: libc::rlim_t) -> std::io::Result<()> {
+    let limit = libc::rlimit {
+        rlim_cur: value,
+        rlim_max: value,
+    };
+    if unsafe { libc::setrlimit(resource, &limit) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(unix)))]
+fn configure_native_worker_limits(
+    _command: &mut std::process::Command,
+) -> Result<(), ReplayLoadError> {
+    // A subprocess without an address-space/job memory ceiling can still OOM
+    // the machine. Fail closed until a platform-specific hard limit (Windows
+    // Job Object, sandbox profile, etc.) is installed before `spawn`.
+    Err(ReplayLoadError::ContainmentUnavailable(
+        "native replay admission currently requires Unix setrlimit containment".into(),
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static BROWSER_WORKER_PROOF: std::cell::RefCell<Option<[u8; 32]>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+/// Install a one-shot digest after the shell's isolated wasm Worker accepted
+/// the exact canonical compact replay. This performs transport preflight only;
+/// it never zstd/bitcode-decodes in the main wasm instance.
+#[cfg(target_arch = "wasm32")]
+pub fn mark_browser_worker_validated(text: &str) -> Result<(), ReplayLoadError> {
+    use sha2::Digest as _;
+
+    preflight_compact_transport(text, &DEFAULT_REPLAY_ADMISSION_LIMITS)?;
+    let digest: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+    BROWSER_WORKER_PROOF.with(|proof| *proof.borrow_mut() = Some(digest));
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn consume_browser_worker_proof(text: &str) -> Result<(), ReplayLoadError> {
+    use sha2::Digest as _;
+
+    let digest: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+    let accepted = BROWSER_WORKER_PROOF.with(|proof| proof.borrow_mut().take()) == Some(digest);
+    if accepted {
+        Ok(())
+    } else {
+        Err(ReplayLoadError::BrowserWorkerValidationRequired)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_engine::engine::SimulationFrameInput;
-    use robin_engine::player_command::{PlayerCommand, PlayerInput};
-    use robin_engine::replay::{ReplayFile, ReplayFrame, ReplayHeader};
-    use std::collections::BTreeMap;
-
-    fn sample_data() -> ReplayData {
-        let mut frames = (0..8)
-            .map(|frame| {
-                (
-                    frame,
-                    ReplayFrame {
-                        timeline_before: frame,
-                        timeline_after: frame + 1,
-                        input: SimulationFrameInput::default(),
-                        host_controls: Vec::new(),
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        frames.insert(
-            0,
-            ReplayFrame {
-                timeline_before: 0,
-                timeline_after: 1,
-                input: SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
-                    PlayerCommand::CrouchDown,
-                )]),
-                host_controls: Vec::new(),
-            },
-        );
-        frames.insert(
-            7,
-            ReplayFrame {
-                timeline_before: 7,
-                timeline_after: 8,
-                input: SimulationFrameInput::from_player_inputs(vec![
-                    PlayerInput::host(PlayerCommand::SelectAllPcs),
-                    PlayerInput::host(PlayerCommand::CrouchDown),
-                ]),
-                host_controls: Vec::new(),
-            },
-        );
-        let hashes = BTreeMap::new();
-        ReplayFile {
-            header: ReplayHeader {
-                mission_id: "Dem_Lei_MP".into(),
-                rng_seed: 0xdead_beef,
-                sim_config: robin_engine::engine::SimConfig::default(),
-                version: REPLAY_SCHEMA_VERSION,
-                total_frames: 8,
-                campaign: vec![1, 2, 3, 4],
-            },
-            frames,
-            hashes,
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        }
-        .into()
-    }
 
     #[test]
-    fn compact_roundtrip() {
-        let data = sample_data();
-        let s = encode_compact(&data, "abc123").unwrap();
-        assert!(s.starts_with("rhrec-abc123-"));
-        let (hash, back) = decode_compact(&s).unwrap();
-        assert_eq!(hash, "abc123");
-        assert_eq!(back.header.mission_id, "Dem_Lei_MP");
-        assert_eq!(back.header.rng_seed, 0xdead_beef);
-        assert_eq!(back.header.campaign, vec![1, 2, 3, 4]);
-        assert_eq!(back.frame_count(), 8);
-        assert_eq!(back.frame(0).expect("frame zero").input.commands.len(), 1);
-        assert_eq!(back.frame(7).expect("frame seven").input.commands.len(), 2);
-    }
-
-    #[test]
-    fn schema_twelve_is_rejected_without_compatibility_decode() {
-        let mut data = sample_data();
-        data.header.version = 12;
-        let encoded = encode_compact(&data, ENGINE_VERSION_HASH).unwrap();
-        assert!(matches!(
-            decode_compact(&encoded),
-            Err(FormatError::UnsupportedVersion { version: 12 })
-        ));
-    }
-
-    #[test]
-    fn compact_prefix_required() {
-        assert!(matches!(
-            decode_compact("not-a-replay"),
-            Err(FormatError::MissingPrefix)
-        ));
-    }
-
-    #[test]
-    fn load_spec_accepts_inline_string() {
-        let data = sample_data();
-        let s = encode_compact(&data, ENGINE_VERSION_HASH).unwrap();
-        let back = load_replay_spec(&s).unwrap();
-        assert_eq!(back.header.mission_id, "Dem_Lei_MP");
-    }
-
-    #[test]
-    fn load_spec_rejects_a_different_engine_hash() {
-        let data = sample_data();
-        let mismatched = if ENGINE_VERSION_HASH == "different" {
-            "another"
-        } else {
-            "different"
-        };
-        let encoded = encode_compact(&data, mismatched).unwrap();
-        assert!(matches!(
-            load_replay_spec(&encoded),
-            Err(FormatError::EngineVersionMismatch { recorded, current })
-                if recorded == mismatched && current == ENGINE_VERSION_HASH
-        ));
+    fn public_worker_argument_is_not_a_user_cli_format() {
+        assert!(ADMISSION_WORKER_ARG.starts_with("--internal-"));
     }
 }

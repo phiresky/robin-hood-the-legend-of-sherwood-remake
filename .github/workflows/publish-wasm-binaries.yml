@@ -86,6 +86,16 @@ jobs:
             --features audio,wasm-threads \
             -p robin_rs --bin robin
 
+      - name: Build memory-capped replay validator wasm
+        # Deliberately separate from the threaded 4 GiB-max game artifact.
+        # This module is loaded only in a short-lived Dedicated Worker.
+        run: |
+          cargo build --config scripts/replay-admission-wasm.cargo-config.toml \
+            -Zbuild-std=std,panic_abort \
+            --target wasm32-unknown-unknown \
+            --profile wasm-release \
+            -p robin_replay_admission_wasm
+
       - name: Stage versioned artifact
         id: stage
         env:
@@ -103,6 +113,12 @@ jobs:
             --out-dir "${artifact}" \
             --out-name robin \
             target/wasm32-unknown-unknown/wasm-release/robin.wasm
+
+          wasm-bindgen \
+            --target web \
+            --out-dir "${artifact}" \
+            --out-name replay_admission \
+            target/wasm32-unknown-unknown/wasm-release/robin_replay_admission_wasm.wasm
 
           optimized_wasm="${RUNNER_TEMP}/robin_bg.opt.wasm"
           # --enable-simd: the module contains simd128 instructions (see
@@ -122,6 +138,19 @@ jobs:
           mv "${optimized_wasm}" "${artifact}/robin_bg.wasm"
           wasm-strip "${artifact}/robin_bg.wasm"
 
+          replay_validator_opt="${RUNNER_TEMP}/replay_admission_bg.opt.wasm"
+          wasm-opt \
+            -Oz \
+            --enable-simd \
+            --strip-debug \
+            --strip-dwarf \
+            -o "${replay_validator_opt}" \
+            "${artifact}/replay_admission_bg.wasm"
+          mv "${replay_validator_opt}" "${artifact}/replay_admission_bg.wasm"
+          wasm-strip "${artifact}/replay_admission_bg.wasm"
+          scripts/assert-replay-admission-wasm-memory.sh \
+            "${artifact}/replay_admission_bg.wasm"
+
           smoke_wasm_artifact() {
             node --input-type=module -e '
               import { readFile } from "node:fs/promises";
@@ -136,6 +165,20 @@ jobs:
           }
 
           smoke_wasm_artifact "${artifact}"
+
+          node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            const artifact = process.argv[1];
+            const validator = await import(`file://${process.cwd()}/${artifact}/replay_admission.js`);
+            const bytes = await readFile(`${artifact}/replay_admission_bg.wasm`);
+            await validator.default({ module_or_path: bytes });
+            try {
+              validator.validate_compact_replay("not-a-replay");
+              throw new Error("validator accepted malformed replay");
+            } catch (error) {
+              if (String(error).includes("accepted malformed")) throw error;
+            }
+          ' "${artifact}"
 
           # GitHub Pages does not apply Content-Encoding to repository files.
           # Publish deterministic precompressed siblings; the web shell uses
@@ -171,6 +214,7 @@ jobs:
 
           wasm_sha="$(sha256sum "${artifact}/robin_bg.wasm" | cut -d ' ' -f 1)"
           wasm_gzip_sha="$(sha256sum "${artifact}/robin_bg.wasm.gz" | cut -d ' ' -f 1)"
+          replay_admission_sha="$(sha256sum "${artifact}/replay_admission_bg.wasm" | cut -d ' ' -f 1)"
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           demo_url="https://robinhood.phiresky.xyz/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst"
           curl -fsSL --retry 3 "${demo_url}" -o "${RUNNER_TEMP}/multiplayer-demo.rhdata.zst"
@@ -211,11 +255,14 @@ jobs:
               "js": "robin.js",
               "jsGzip": "robin.js.gz",
               "wasm": "robin_bg.wasm",
-              "wasmGzip": "robin_bg.wasm.gz"
+              "wasmGzip": "robin_bg.wasm.gz",
+              "replayAdmissionJs": "replay_admission.js",
+              "replayAdmissionWasm": "replay_admission_bg.wasm"
             },
             "sha256": {
               "wasm": "${wasm_sha}",
-              "wasmGzip": "${wasm_gzip_sha}"
+              "wasmGzip": "${wasm_gzip_sha}",
+              "replayAdmissionWasm": "${replay_admission_sha}"
             }
           }
           EOF

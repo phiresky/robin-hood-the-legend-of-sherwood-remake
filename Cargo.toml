@@ -4,6 +4,8 @@ cargo-features = ["codegen-backend"]
 resolver = "2"
 members = [
     "crates/robin_parity",
+    "crates/robin_replay_format",
+    "crates/robin_replay_admission_wasm",
     "crates/robin_rs",
     "crates/robin_engine",
     "crates/robin_lua",
@@ -45,6 +47,7 @@ result_large_err = "allow"
 robin_assets = { path = "crates/robin_assets" }
 robin_engine = { path = "crates/robin_engine" }
 robin_lua = { path = "crates/robin_lua" }
+robin_replay_format = { path = "crates/robin_replay_format" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
 robin_util = { path = "crates/robin_util" }
 
@@ -147,6 +150,8 @@ opt-level = 0
 opt-level = 0
 [profile.dev.package.robin_lua]
 opt-level = 0
+[profile.dev.package.robin_replay_format]
+opt-level = 0
 [profile.dev.package.robin_util]
 opt-level = 0
 [profile.dev.package.robin_assets]
@@ -183,6 +188,8 @@ opt-level = 1
 [profile.dev-opt1.package.robin_engine]
 opt-level = 1
 [profile.dev-opt1.package.robin_lua]
+opt-level = 1
+[profile.dev-opt1.package.robin_replay_format]
 opt-level = 1
 [profile.dev-opt1.package.robin_util]
 opt-level = 1

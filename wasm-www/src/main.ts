@@ -15,7 +15,12 @@ import {
     installBrowserMultiplayerIdentity,
     wasInvitationRedeemed,
 } from './multiplayer_identity.js';
-import { applyReplayFromQuery, installShareButton, type RobinRpc } from './replay.js';
+import {
+    applyReplayFromQuery,
+    installShareButton,
+    validateReplayInWorker,
+    type RobinRpc,
+} from './replay.js';
 import { installTimeline } from './timeline.js';
 
 declare global {
@@ -135,6 +140,7 @@ type RobinWasmModule = {
     readonly wasm_set_multiplayer_join_ticket?: (code: string, redeemed: boolean) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
     readonly wasm_preload_shipping_file?: (path: string, bytes: Uint8Array) => void;
+    readonly wasm_mark_compact_replay_validated?: (compact: string) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
 };
 
@@ -524,7 +530,21 @@ async function main(): Promise<void> {
     if (shareReplayButton !== null) {
         installShareButton(shareReplayButton, rpc);
     }
-    const replayLoaded = await applyReplayFromQuery(rpc);
+    const replayLoaded = await applyReplayFromQuery(rpc, {
+        validate: async (content): Promise<void> => {
+            await validateReplayInWorker(
+                content,
+                `${buildBase}/replay_admission.js`,
+                `${buildBase}/replay_admission_bg.wasm`,
+            );
+        },
+        markValidated: (content): void => {
+            if (wasm.wasm_mark_compact_replay_validated === undefined) {
+                throw new Error('selected wasm build cannot accept an isolated replay proof');
+            }
+            wasm.wasm_mark_compact_replay_validated(content);
+        },
+    });
     if (replayLoaded) {
         logOk('[replay queued from URL - start a mission to play it back]');
         if (replayTimeline !== null && !new URL(location.href).searchParams.has('notimeline')) {
