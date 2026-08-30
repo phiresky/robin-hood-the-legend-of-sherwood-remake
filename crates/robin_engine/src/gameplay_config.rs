@@ -86,12 +86,10 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
 
-    /// Keep three rotating recovery points during ordinary single-player
-    /// missions. Autosave persistence is host-only and deliberately excluded
-    /// from deterministic simulation state.
-    #[serde(default = "enabled_by_default")]
-    #[state_hash(skip)]
-    pub autosave_enabled: bool,
+    /// Enable world-camera pan, pinch zoom, and inertial motion for touch
+    /// input. Tap and drag emulation remains available when this is off.
+    #[serde(default = "default_touch_camera_gestures")]
+    pub touch_camera_gestures: bool,
 
     /// Include the live item-production forecast in the Sherwood report.
     /// This is presentation-only and may be disabled independently from the
@@ -142,6 +140,17 @@ pub struct GameplayConfig {
     /// Calculation and storage remain active when hidden.
     #[serde(default)]
     pub show_achievement_debrief: bool,
+
+    /// Keep three rotating recovery points during ordinary single-player
+    /// missions. Autosave persistence is host-only and deliberately excluded
+    /// from deterministic simulation state.
+    #[serde(default = "enabled_by_default")]
+    #[state_hash(skip)]
+    pub autosave_enabled: bool,
+}
+
+const fn default_touch_camera_gestures() -> bool {
+    true
 }
 
 const fn default_show_production_forecast() -> bool {
@@ -155,6 +164,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
             campaign_presentation: CampaignPresentationMode::ProgressTree,
@@ -188,6 +198,7 @@ mod tests {
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.autosave_enabled);
+        assert!(config.touch_camera_gestures);
         assert!(!config.clean_hands_npc_kills_invalidate);
         assert!(!config.show_detailed_xp);
         assert!(!config.show_achievement_badges);

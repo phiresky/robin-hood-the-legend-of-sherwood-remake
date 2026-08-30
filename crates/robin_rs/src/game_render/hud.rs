@@ -394,11 +394,18 @@ fn substitute_int(template: &str, value: i32) -> String {
 ///   subsequent frames paint the box even if the pointer briefly
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
-pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn draw_multi_selection_box(
+    host: &mut Host,
+    engine: &Engine,
+    renderer: &mut Renderer,
+    advance_transients: bool,
+) {
     // ── Swordfighting cancel ──
     if crate::game_input::is_selected_unit_swordfighting(engine, host.transport.local_seat) {
-        host.input.multi_selection_active = false;
-        host.input.multi_unselection_active = false;
+        if advance_transients {
+            host.input.multi_selection_active = false;
+            host.input.multi_unselection_active = false;
+        }
         return;
     }
 
@@ -412,15 +419,19 @@ pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, rendere
     // ── Latch draw_multi_selection once the drag clears the
     //    threshold.  The square norm is in map units; compared to
     //    `MULTI_SELECTION_THRESHOLD` (1600). ──
-    if !host.input.draw_multi_selection {
+    let mut draw_multi_selection = host.input.draw_multi_selection;
+    if !draw_multi_selection {
         let dx = p1.x - p2.x;
         let dy = p1.y - p2.y;
         if dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD {
-            host.input.draw_multi_selection = true;
+            draw_multi_selection = true;
+            if advance_transients {
+                host.input.draw_multi_selection = true;
+            }
         }
     }
 
-    if !host.input.draw_multi_selection {
+    if !draw_multi_selection {
         return;
     }
 

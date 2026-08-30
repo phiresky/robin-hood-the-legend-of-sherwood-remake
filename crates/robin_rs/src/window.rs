@@ -23,7 +23,7 @@
 //!   hidden-page timer throttling; on native the game runs on its own thread
 //!   and the yield is a no-op.
 
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,17 +40,30 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::touch_input::{TouchClassifier, TouchOutput};
 use robin_engine::graphic_config::GraphicConfig;
 
 #[cfg(not(target_arch = "wasm32"))]
 const GAME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
 
+static NATIVE_REFRESH_PRESENTATION: AtomicBool = AtomicBool::new(true);
+
 /// Wall-clock-ish millis since process start. Wraps at ~49 days,
 /// which is fine for game pacing (used as a delta between frames).
 pub fn process_uptime_ms() -> u32 {
+    process_uptime().as_millis() as u32
+}
+
+/// Monotonic process time at microsecond precision for presentation pacing.
+/// Simulation and replay timestamps intentionally remain millisecond based.
+pub fn process_uptime_us() -> u64 {
+    process_uptime().as_micros() as u64
+}
+
+fn process_uptime() -> web_time::Duration {
     static START: std::sync::OnceLock<web_time::Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(web_time::Instant::now);
-    start.elapsed().as_millis() as u32
+    start.elapsed()
 }
 
 // ---------------------------------------------------------------------
@@ -65,6 +78,27 @@ pub fn process_uptime_ms() -> u32 {
 pub async fn yield_to_runtime() {
     #[cfg(target_arch = "wasm32")]
     browser_wait_for_timer_or_lifecycle(0).await;
+}
+
+/// Wait for the browser compositor's next display refresh. Native wgpu FIFO
+/// presentation applies equivalent back-pressure in `get_current_texture`, so
+/// no additional host-thread delay is needed there.
+pub async fn yield_to_display_refresh() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use futures::future::select;
+
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let _frame = gloo_render::request_animation_frame(move |_| {
+            let _ = sender.send(());
+        });
+        let fallback = gloo_timers::future::TimeoutFuture::new(20);
+        futures::pin_mut!(receiver, fallback);
+        // Browsers suspend requestAnimationFrame for hidden tabs. Gameplay,
+        // especially multiplayer, must keep its fixed-step future alive; the
+        // timer wins in that state and dropping `_frame` cancels the request.
+        let _ = select(receiver, fallback).await;
+    }
 }
 
 /// Async sleep used by every per-frame pacing point in the game loop.
@@ -150,6 +184,17 @@ fn install_browser_lifecycle_autosave(requested: Arc<AtomicBool>) -> Result<(), 
         requested.store(true, Ordering::Release);
     }
     Ok(())
+}
+
+/// Pace a UI-owned render loop. Vsync presentation is itself the clock when
+/// native-refresh mode is enabled; the legacy/off path retains the historical
+/// 16 ms sleep.
+pub async fn sleep_ui_frame() {
+    if NATIVE_REFRESH_PRESENTATION.load(Ordering::Relaxed) {
+        yield_to_display_refresh().await;
+    } else {
+        sleep_ms(16).await;
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -240,6 +285,10 @@ impl Drop for SharedSurface {
 enum HostMsg {
     /// A regular input event the game should consume.
     Event(GameEvent),
+    /// Touch taps are recognized on physical release, but widgets need to
+    /// observe a pushed frame before the release frame. Queue their matching
+    /// mouse-up for the following game-side poll.
+    DeferredEvent(GameEvent),
     /// Window resized — both the new physical size and a new
     /// [`SurfaceConfiguration`] are computed on the main thread and
     /// pushed through.  The game side calls `surface.configure` to
@@ -345,6 +394,10 @@ pub struct GameWindow {
     events_rx: async_channel::Receiver<HostMsg>,
     cmd_tx: async_channel::Sender<HostCmd>,
     lifecycle_autosave_requested: Arc<AtomicBool>,
+    /// Ordered polling batches separated by synthetic touch releases. A tap
+    /// release is held until the next poll, while later input may join that
+    /// release's batch only until the next release barrier.
+    deferred_event_batches: VecDeque<Vec<GameEvent>>,
 }
 
 /// Aspect-preserving placement of a logical canvas inside a physical surface.
@@ -467,16 +520,23 @@ impl GameWindow {
     /// The corresponding yield point is [`sleep_ms`] / [`yield_to_runtime`],
     /// which the game's main loop calls every frame.
     pub fn poll_events(&mut self) -> Vec<GameEvent> {
-        let mut events = Vec::new();
+        let mut events = self.deferred_event_batches.pop_front().unwrap_or_default();
+        let mut defer_following_events = !self.deferred_event_batches.is_empty();
         while let Ok(msg) = self.events_rx.try_recv() {
             match msg {
-                HostMsg::Event(e) => match &e {
-                    GameEvent::Quit => {
+                HostMsg::Event(e) => {
+                    if matches!(&e, GameEvent::Quit) {
                         self.close_requested = true;
+                    }
+                    if defer_following_events {
+                        self.deferred_event_batches
+                            .back_mut()
+                            .expect("deferred event batch missing after barrier")
+                            .push(e);
+                    } else {
                         events.push(e);
                     }
-                    _ => events.push(e),
-                },
+                }
                 HostMsg::Resized { width, height } => {
                     self.surface_config.width = width.max(1);
                     self.surface_config.height = height.max(1);
@@ -488,7 +548,15 @@ impl GameWindow {
                     if width > 0 && height > 0 {
                         self.recompute_logical_resolution();
                     }
-                    events.push(GameEvent::Resized(width, height));
+                    let event = GameEvent::Resized(width, height);
+                    if defer_following_events {
+                        self.deferred_event_batches
+                            .back_mut()
+                            .expect("deferred resize batch missing after barrier")
+                            .push(event);
+                    } else {
+                        events.push(event);
+                    }
                 }
                 HostMsg::SurfaceReady { window } => {
                     match create_surface_any_thread(&self.gpu.instance, window) {
@@ -504,6 +572,13 @@ impl GameWindow {
                 HostMsg::LifecycleAutosave => {
                     self.lifecycle_autosave_requested
                         .store(true, Ordering::Release);
+                }
+                HostMsg::DeferredEvent(event) => {
+                    // Preserve channel order after the synthetic tap-up
+                    // barrier. A subsequent fast tap must not overtake the
+                    // first release merely because both arrived in one poll.
+                    defer_following_events = true;
+                    self.deferred_event_batches.push_back(vec![event]);
                 }
             }
         }
@@ -539,6 +614,41 @@ impl GameWindow {
                     let scale = self.window_pixel_to_logical_scale();
                     *xrel = (*xrel as f32 * scale.0) as i32;
                     *yrel = (*yrel as f32 * scale.1) as i32;
+                }
+                GameEvent::TouchTransformStart {
+                    first_x,
+                    first_y,
+                    second_x,
+                    second_y,
+                } => {
+                    (*first_x, *first_y) = self.window_to_logical_f32(*first_x, *first_y);
+                    (*second_x, *second_y) = self.window_to_logical_f32(*second_x, *second_y);
+                }
+                GameEvent::TouchTransform {
+                    centroid_x,
+                    centroid_y,
+                    pan_x,
+                    pan_y,
+                    velocity_x,
+                    velocity_y,
+                    ..
+                } => {
+                    (*centroid_x, *centroid_y) =
+                        self.window_to_logical_f32(*centroid_x, *centroid_y);
+                    let scale = self.window_pixel_to_logical_scale();
+                    *pan_x *= scale.0;
+                    *pan_y *= scale.1;
+                    *velocity_x *= scale.0;
+                    *velocity_y *= scale.1;
+                }
+                GameEvent::TouchTransformEnd {
+                    velocity_x,
+                    velocity_y,
+                    ..
+                } => {
+                    let scale = self.window_pixel_to_logical_scale();
+                    *velocity_x *= scale.0;
+                    *velocity_y *= scale.1;
                 }
                 _ => {}
             }
@@ -642,15 +752,36 @@ impl GameWindow {
         self.height = self.logical_h;
     }
 
+    pub fn set_native_refresh_presentation(&mut self, enabled: bool) {
+        NATIVE_REFRESH_PRESENTATION.store(enabled, Ordering::Relaxed);
+        let present_mode = if enabled {
+            wgpu::PresentMode::Fifo
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if self.surface_config.present_mode == present_mode {
+            return;
+        }
+        self.surface_config.present_mode = present_mode;
+        self.surface
+            .configure(&self.gpu.device, &self.surface_config);
+        tracing::info!(?present_mode, "updated swapchain presentation mode");
+    }
+
     pub fn window_to_logical(&self, x: i32, y: i32) -> (i32, i32) {
+        let (lx, ly) = self.window_to_logical_f32(x as f32, y as f32);
+        (lx as i32, ly as i32)
+    }
+
+    fn window_to_logical_f32(&self, x: f32, y: f32) -> (f32, f32) {
         let rect = PresentationRect::aspect_fit(
             self.logical_w,
             self.logical_h,
             self.surface_config.width.max(1),
             self.surface_config.height.max(1),
         );
-        let lx = ((x as f32 - rect.x) / rect.width * self.logical_w as f32) as i32;
-        let ly = ((y as f32 - rect.y) / rect.height * self.logical_h as f32) as i32;
+        let lx = (x - rect.x) / rect.width * self.logical_w as f32;
+        let ly = (y - rect.y) / rect.height * self.logical_h as f32;
         (lx, ly)
     }
 
@@ -884,7 +1015,7 @@ async fn build_game_window_async(
         color_space: wgpu::SurfaceColorSpace::Auto,
         width: actual.width.max(1),
         height: actual.height.max(1),
-        present_mode: wgpu::PresentMode::AutoNoVsync,
+        present_mode: wgpu::PresentMode::Fifo,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
@@ -936,6 +1067,7 @@ async fn build_game_window_async(
         events_rx,
         cmd_tx,
         lifecycle_autosave_requested,
+        deferred_event_batches: VecDeque::new(),
     })
 }
 
@@ -958,9 +1090,7 @@ pub struct AppHandler {
     on_window_ready: WindowReadyFn,
     window: Option<Arc<Window>>,
     last_cursor: (i32, i32),
-    active_touch_id: Option<u64>,
-    touch_points: BTreeMap<u64, (i32, i32)>,
-    two_finger_pan_last: Option<(f64, f64)>,
+    touch: TouchClassifier,
     #[cfg(target_os = "android")]
     resize_refresh_frames: u8,
     /// Per-button (button code, press timestamp) of the most recent press
@@ -968,6 +1098,12 @@ pub struct AppHandler {
     /// multi-click count.  Each entry is consumed (cleared) when it
     /// produces a double-click so a triple-press doesn't chain.
     last_press: Option<(u8, web_time::Instant)>,
+}
+
+fn touch_output_needs_deferred_up(output: &[TouchOutput]) -> bool {
+    output
+        .iter()
+        .any(|event| matches!(event, TouchOutput::PointerDown { .. }))
 }
 
 impl AppHandler {
@@ -984,29 +1120,79 @@ impl AppHandler {
             .try_send(HostMsg::Event(GameEvent::PauseRequested));
     }
 
-    fn send_mouse_move(&self, x: i32, y: i32) {
-        let _ = self
-            .events_tx
-            .try_send(HostMsg::Event(GameEvent::MouseMove {
-                x,
-                y,
-                xrel: 0,
-                yrel: 0,
-            }));
-    }
-
-    fn touch_centroid(&self) -> Option<(f64, f64)> {
-        if self.touch_points.is_empty() {
-            return None;
+    fn emit_touch_outputs(&mut self, output: Vec<TouchOutput>) {
+        // Only a release-classified interaction can emit Down and Up in the
+        // same winit callback. Give that synthetic press one game-side poll
+        // of lifetime for widget/input state. An ordinary drag already
+        // emitted Down on an earlier move, so its release remains immediate.
+        let defer_pointer_up = touch_output_needs_deferred_up(&output);
+        for event in output {
+            let event = match event {
+                TouchOutput::MotionStop => GameEvent::TouchMotionStop,
+                TouchOutput::PointerMove { x, y } => {
+                    self.last_cursor = (x as i32, y as i32);
+                    GameEvent::MouseMove {
+                        x: x as i32,
+                        y: y as i32,
+                        xrel: 0,
+                        yrel: 0,
+                    }
+                }
+                TouchOutput::PointerDown { x, y, clicks } => {
+                    self.last_cursor = (x as i32, y as i32);
+                    GameEvent::MouseDown(x as i32, y as i32, 1, clicks)
+                }
+                TouchOutput::PointerUp { x, y } => {
+                    self.last_cursor = (x as i32, y as i32);
+                    let mouse_up = GameEvent::MouseUp(x as i32, y as i32, 1);
+                    let _ = if defer_pointer_up {
+                        self.events_tx.try_send(HostMsg::DeferredEvent(mouse_up))
+                    } else {
+                        self.events_tx.try_send(HostMsg::Event(mouse_up))
+                    };
+                    continue;
+                }
+                TouchOutput::PointerCancel => GameEvent::PointerCancel,
+                TouchOutput::TransformStart {
+                    first_x,
+                    first_y,
+                    second_x,
+                    second_y,
+                } => GameEvent::TouchTransformStart {
+                    first_x: first_x as f32,
+                    first_y: first_y as f32,
+                    second_x: second_x as f32,
+                    second_y: second_y as f32,
+                },
+                TouchOutput::TransformUpdate {
+                    centroid_x,
+                    centroid_y,
+                    pan_x,
+                    pan_y,
+                    scale,
+                    velocity_x,
+                    velocity_y,
+                } => GameEvent::TouchTransform {
+                    centroid_x: centroid_x as f32,
+                    centroid_y: centroid_y as f32,
+                    pan_x: pan_x as f32,
+                    pan_y: pan_y as f32,
+                    scale: scale as f32,
+                    velocity_x: velocity_x as f32,
+                    velocity_y: velocity_y as f32,
+                },
+                TouchOutput::TransformEnd {
+                    velocity_x,
+                    velocity_y,
+                    cancelled,
+                } => GameEvent::TouchTransformEnd {
+                    velocity_x: velocity_x as f32,
+                    velocity_y: velocity_y as f32,
+                    cancelled,
+                },
+            };
+            let _ = self.events_tx.try_send(HostMsg::Event(event));
         }
-        let mut x = 0.0;
-        let mut y = 0.0;
-        for (tx, ty) in self.touch_points.values() {
-            x += *tx as f64;
-            y += *ty as f64;
-        }
-        let len = self.touch_points.len() as f64;
-        Some((x / len, y / len))
     }
 
     fn process_cmds(&mut self) {
@@ -1104,6 +1290,7 @@ impl ApplicationHandler for AppHandler {
         window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         window.set_cursor_visible(false);
         let window = Arc::new(window);
+        self.touch.set_scale_factor(window.scale_factor());
         self.window = Some(window.clone());
         set_game_window(window.clone());
 
@@ -1120,14 +1307,8 @@ impl ApplicationHandler for AppHandler {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(_touch_id) = self.active_touch_id.take() {
-            let (x, y) = self.last_cursor;
-            let _ = self
-                .events_tx
-                .try_send(HostMsg::Event(GameEvent::MouseUp(x, y, 1)));
-        }
-        self.touch_points.clear();
-        self.two_finger_pan_last = None;
+        let output = self.touch.cancel_all();
+        self.emit_touch_outputs(output);
         self.send_pause_request();
         let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
         let _ = self
@@ -1157,6 +1338,9 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::Resized(PhysicalSize { width, height }) => {
                 let _ = self.events_tx.try_send(HostMsg::Resized { width, height });
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.touch.set_scale_factor(scale_factor);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -1252,72 +1436,22 @@ impl ApplicationHandler for AppHandler {
                 let _ = self.events_tx.try_send(HostMsg::Event(event));
             }
             WindowEvent::Touch(touch) => {
-                let x = touch.location.x as i32;
-                let y = touch.location.y as i32;
-                match touch.phase {
-                    TouchPhase::Started => {
-                        self.touch_points.insert(touch.id, (x, y));
-                        if self.touch_points.len() == 1 && self.active_touch_id.is_none() {
-                            self.active_touch_id = Some(touch.id);
-                            self.last_cursor = (x, y);
-                            self.send_mouse_move(x, y);
-                            let _ = self
-                                .events_tx
-                                .try_send(HostMsg::Event(GameEvent::MouseDown(x, y, 1, 1)));
-                        } else if self.touch_points.len() == 2 {
-                            if self.active_touch_id.take().is_some() {
-                                let (last_x, last_y) = self.last_cursor;
-                                let _ = self.events_tx.try_send(HostMsg::Event(
-                                    GameEvent::MouseUp(last_x, last_y, 1),
-                                ));
-                            }
-                            self.two_finger_pan_last = self.touch_centroid();
-                        }
-                    }
-                    TouchPhase::Moved => {
-                        self.touch_points.insert(touch.id, (x, y));
-                        if let Some((cx, cy)) = self.touch_centroid()
-                            && self.touch_points.len() >= 2
-                        {
-                            if let Some((last_x, last_y)) = self.two_finger_pan_last {
-                                let xrel = (cx - last_x) as i32;
-                                let yrel = (cy - last_y) as i32;
-                                if xrel != 0 || yrel != 0 {
-                                    let _ = self.events_tx.try_send(HostMsg::Event(
-                                        GameEvent::ViewportPan { xrel, yrel },
-                                    ));
-                                }
-                            }
-                            self.two_finger_pan_last = Some((cx, cy));
-                        } else if self.active_touch_id == Some(touch.id) {
-                            self.last_cursor = (x, y);
-                            self.send_mouse_move(x, y);
-                        }
-                    }
-                    TouchPhase::Ended | TouchPhase::Cancelled => {
-                        let was_primary = self.active_touch_id == Some(touch.id);
-                        self.touch_points.remove(&touch.id);
-                        if self.touch_points.len() >= 2 {
-                            self.two_finger_pan_last = self.touch_centroid();
-                        } else {
-                            self.two_finger_pan_last = None;
-                        }
-                        if was_primary {
-                            self.active_touch_id = None;
-                            self.last_cursor = (x, y);
-                            if touch.phase == TouchPhase::Ended {
-                                self.send_mouse_move(x, y);
-                            }
-                            let _ = self
-                                .events_tx
-                                .try_send(HostMsg::Event(GameEvent::MouseUp(x, y, 1)));
-                        }
-                    }
-                }
+                let x = touch.location.x;
+                let y = touch.location.y;
+                let now_ms = process_uptime_ms();
+                let output = match touch.phase {
+                    TouchPhase::Started => self.touch.started(touch.id, x, y, now_ms),
+                    TouchPhase::Moved => self.touch.moved(touch.id, x, y, now_ms),
+                    TouchPhase::Ended => self.touch.ended(touch.id, x, y, now_ms, false),
+                    TouchPhase::Cancelled => self.touch.ended(touch.id, x, y, now_ms, true),
+                };
+                self.emit_touch_outputs(output);
             }
             WindowEvent::Focused(focused) => {
                 if !focused {
                     let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
+                    let output = self.touch.cancel_all();
+                    self.emit_touch_outputs(output);
                 }
                 let _ = self
                     .events_tx
@@ -1505,9 +1639,7 @@ where
         on_window_ready: on_ready,
         window: None,
         last_cursor: (0, 0),
-        active_touch_id: None,
-        touch_points: BTreeMap::new(),
-        two_finger_pan_last: None,
+        touch: TouchClassifier::default(),
         #[cfg(target_os = "android")]
         resize_refresh_frames: 0,
         last_press: None,
@@ -1691,7 +1823,8 @@ pub fn stop_text_input() {}
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::receive_game_exit_code;
+    use super::{receive_game_exit_code, touch_output_needs_deferred_up};
+    use crate::touch_input::TouchOutput;
 
     #[test]
     fn game_exit_code_is_forwarded() {
@@ -1720,6 +1853,22 @@ mod tests {
             receive_game_exit_code(&rx),
             Err("game thread terminated without publishing an exit code".to_owned())
         );
+    }
+
+    #[test]
+    fn only_release_classified_pointer_sequences_defer_their_up() {
+        assert!(touch_output_needs_deferred_up(&[
+            TouchOutput::PointerDown {
+                x: 10.0,
+                y: 20.0,
+                clicks: 1,
+            },
+            TouchOutput::PointerUp { x: 10.0, y: 20.0 },
+        ]));
+        assert!(!touch_output_needs_deferred_up(&[
+            TouchOutput::PointerMove { x: 30.0, y: 40.0 },
+            TouchOutput::PointerUp { x: 30.0, y: 40.0 },
+        ]));
     }
 }
 

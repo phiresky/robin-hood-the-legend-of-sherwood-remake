@@ -89,7 +89,7 @@ pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, HostConsoleDispatch, LevelLoadArgs,
     MinimapWidgetSetup, MissionSetup, ParityReplaySetup, SnapshotGridComponent,
-    SnapshotRestoreError,
+    SnapshotRestoreError, SpatialPresentationSnapshot,
 };
 pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
 pub use seat::SeatState;

@@ -394,6 +394,7 @@ impl MissionLoadingScreen {
         let renderer_config = MissionRendererConfig {
             scale_mode: profile.graphic_config.scale_mode,
             shader_preset: profile.graphic_config.shader_preset,
+            native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
             texture_effect: profile.graphic_config.texture_effect,
             upscale_parameters: profile.graphic_config.upscale_parameters,
             texture_effect_parameters: profile.graphic_config.texture_effect_parameters,

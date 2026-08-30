@@ -428,16 +428,16 @@ A list of which additional features we have added, which ones we might still wan
   full character corpus at 2.27x smaller than zstd-19. Integration design in
   `docs/COMPRESSION.md` (schema v7 section).
 
-## Todo
+- **Touch camera gestures and native-refresh presentation**. Touch input now
+  classifies taps, drags, double-taps, and two-finger transforms without
+  leaking cancelled pointer actions into gameplay. World gestures support
+  anchored pinch zoom, pan, bounded inertia, and UI/minimap exclusion, with an
+  independent Gameplay toggle. A separate Graphics toggle presents and
+  interpolates at the display's actual cadence while deterministic simulation
+  remains fixed at 25 Hz; 60/90/120/144/240 Hz are covered without a
+  hard-coded refresh-rate policy.
 
-- **Android touch polish**
-  - Complete two-finger pan and pinch-zoom support. The first Android pass maps
-    one-finger touch to left mouse and two-finger centroid drag to viewport pan;
-    follow up with proper gesture state, inertia/clamping, pinch zoom around the
-    gesture centroid, and interaction rules for UI/minimap/pause overlays.
-  - Render pacing should target 60 FPS or the device screen refresh rate instead
-    of the current fixed game-loop cadence. Keep simulation at the existing
-    fixed timestep, but present/interpolate at display cadence where possible.
+## Todo
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.
