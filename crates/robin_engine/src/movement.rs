@@ -206,7 +206,6 @@ pub struct SweepState {
     /// Resolved gesture tier for the strike that owns this sweep. Keeping it
     /// on the serialized sweep prevents a save at the action point from
     /// restoring authored damage instead of the player's reduced damage.
-    #[serde(default)]
     pub gesture_quality: crate::player_command::GestureQuality,
     /// The thrust kind — TrueCircle/FalseCircle need extended duration
     /// and per-frame attacker rotation.
@@ -905,11 +904,9 @@ mod tests {
             .as_object_mut()
             .expect("sweep object")
             .remove("gesture_quality");
-        let decoded: SweepState =
-            serde_json::from_value(pre_gesture).expect("decode pre-gesture sweep");
-        assert_eq!(
-            decoded.gesture_quality,
-            crate::player_command::GestureQuality::PERFECT
+        assert!(
+            serde_json::from_value::<SweepState>(pre_gesture).is_err(),
+            "a native sweep without gesture quality must not enter the current schema"
         );
     }
 

@@ -1039,7 +1039,6 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
     /// gesture. This is perfect for every original/script/AI element. It is
     /// stored on the sequence element so a save or rollback in the middle of
     /// an animation cannot lose the input result.
-    #[serde(default)]
     pub gesture_quality: crate::player_command::GestureQuality,
 
     /// Posture the actor should have after transition orders complete.
@@ -7646,9 +7645,10 @@ mod native_bitcode_tests {
             .as_object_mut()
             .expect("sequence element object")
             .remove("gesture_quality");
-        let decoded: SequenceElement =
-            serde_json::from_value(pre_gesture).expect("load pre-gesture sequence element");
-        assert_eq!(decoded.gesture_quality, GestureQuality::PERFECT);
+        assert!(
+            serde_json::from_value::<SequenceElement>(pre_gesture).is_err(),
+            "a native sequence element without gesture quality must not enter the current schema"
+        );
 
         let perfect = SequenceElement::new(1, Command::SwordstrikeThrustA, None);
         assert_ne!(

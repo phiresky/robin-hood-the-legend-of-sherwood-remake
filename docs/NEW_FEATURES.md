@@ -4,6 +4,25 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Advanced combat gestures.** Swordfighting accepts nine optional
+  single-stroke composite techniques in addition to the Original A-I gesture
+  vocabulary. Composite recognition runs only after the Original classifier
+  returns `Attempt`, so enabling it cannot steal an already recognized legacy
+  strike. Each technique expands into two ordinary authored sword commands,
+  retaining their normal animation, interruption, targeting, energy, and
+  protection behavior. An independent quality option quantizes template
+  accuracy to deterministic 25/50/75/100 percent tiers and scales only cutting
+  and concussion; protection RNG and geometry are unchanged. Optional guide
+  and post-stroke coach overlays teach both the legacy and composite paths.
+  Gameplay rules are authoritative mission state; presentation remains local.
+  All four controls are independent under Gameplay, whose standalone screen is
+  paginated so every row stays reachable at 640x480. Mouse and one-finger touch
+  share the same recognizer, and replays/rollback/multiplayer carry the resolved
+  typed technique and quality rather than platform-dependent pointer samples.
+  Malformed, disabled, or mismatched payloads fail before simulation or
+  quick-action recording. The incompatible native layouts advance to save
+  **67**, replay **25**, and multiplayer protocol **34**.
+
 - **Timed missions and runtime ambience.** Hackable JSON missions can author
   an active-play time limit and ordered Day/Night/Fog ambience cues. Timers
   pause with single-player/noninteractive simulation gates, stop once victory
@@ -31,7 +50,7 @@ A list of which additional features we have added, which ones we might still wan
   selection across list mutations, and ordinary HTTP screenshots capture the
   presented topmost pause UI. Settings rows carry typed actions, enabled state,
   labels, and help text; large pages use bounded 12-row pagination, so the
-  integrated Gameplay page exposes all 34 current settings without index or
+  integrated Gameplay page exposes all 42 current settings without index or
   hit-box remapping. The native desktop data-folder chooser remains
   a synchronous OS dialog launched from the cooperative Options state.
 - **Self-describing save metadata.** Every newly written manual, quick,
@@ -550,7 +569,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-33 game wire,
+  relay-over-WebSocket transport with the protocol-34 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -640,10 +659,6 @@ A list of which additional features we have added, which ones we might still wan
 - Add a method to unhorse horsed soldiers without killing them; no-kill runs
   are annoying with horses.
   - Add an option for Merry Men to knock people out instead of killing them.
-- More combat gestures; only 9 different ones feels too low.
-- Gesture quality: the more accurately a fighting gesture is drawn, the more
-  damage points it applies. Needs to show the correct template somehow so the
-  user can learn.
 - Item reliability rebalances are implemented as independent Gameplay
   settings. Direct apples can interrupt active swordfights; wasps acquire
   valid initial targets within 75 instead of 50 units; Will Scarlet's stone

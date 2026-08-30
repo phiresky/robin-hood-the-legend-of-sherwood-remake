@@ -165,6 +165,8 @@ impl ApplicationContext {
         sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
         sim_config.diplomacy = gameplay_config.diplomacy;
         sim_config.npc_faction_wars = gameplay_config.npc_faction_wars;
+        sim_config.more_combat_gestures = gameplay_config.more_combat_gestures;
+        sim_config.gesture_quality_damage = gameplay_config.gesture_quality_damage;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -192,6 +194,8 @@ impl ApplicationContext {
         sim_config.enable_dynamic_ambience = existing.enable_dynamic_ambience;
         sim_config.diplomacy = existing.diplomacy;
         sim_config.npc_faction_wars = existing.npc_faction_wars;
+        sim_config.more_combat_gestures = existing.more_combat_gestures;
+        sim_config.gesture_quality_damage = existing.gesture_quality_damage;
         *self
             .sim_config
             .lock()
@@ -521,6 +525,8 @@ impl ApplicationContext {
         sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
         sim_config.diplomacy = gameplay_config.diplomacy;
         sim_config.npc_faction_wars = gameplay_config.npc_faction_wars;
+        sim_config.more_combat_gestures = gameplay_config.more_combat_gestures;
+        sim_config.gesture_quality_damage = gameplay_config.gesture_quality_damage;
         *self
             .sim_config
             .lock()

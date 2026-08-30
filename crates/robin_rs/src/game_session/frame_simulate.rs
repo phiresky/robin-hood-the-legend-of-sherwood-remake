@@ -1028,6 +1028,26 @@ impl InteractiveFrameSimulation {
                                 },
                             );
                         }
+                        if result.gameplay_config.more_combat_gestures
+                            != result.original_gameplay_config.more_combat_gestures
+                            || result.gameplay_config.gesture_quality_damage
+                                != result.original_gameplay_config.gesture_quality_damage
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetCombatGestureRules {
+                                    more_combat_gestures: result
+                                        .gameplay_config
+                                        .more_combat_gestures,
+                                    gesture_quality_damage: result
+                                        .gameplay_config
+                                        .gesture_quality_damage,
+                                },
+                            );
+                        }
 
                         presentation
                             .renderer

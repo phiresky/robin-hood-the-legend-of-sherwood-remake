@@ -60,6 +60,10 @@ pub struct SimConfig {
     pub diplomacy: bool,
     #[serde(default = "default_enabled")]
     pub npc_faction_wars: bool,
+    /// Authoritative opt-out for the nine composite player sword techniques.
+    pub more_combat_gestures: bool,
+    /// Authoritative opt-out for gesture-quality damage scaling.
+    pub gesture_quality_damage: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -105,6 +109,8 @@ impl SimConfig {
             noise_distraction_feedback: true,
             diplomacy: true,
             npc_faction_wars: true,
+            more_combat_gestures: true,
+            gesture_quality_damage: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -257,6 +263,8 @@ mod tests {
         assert!(SimConfig::default().noise_distraction_feedback);
         assert!(SimConfig::default().sherwood_trading);
         assert!(SimConfig::default().diplomacy);
+        assert!(SimConfig::default().more_combat_gestures);
+        assert!(SimConfig::default().gesture_quality_damage);
     }
 
     #[test]
@@ -315,5 +323,19 @@ mod tests {
         let config: SimConfig = serde_json::from_value(serialized).unwrap();
         assert!(!config.diplomacy);
         assert!(config.npc_faction_wars);
+    }
+
+    #[test]
+    fn combat_gesture_rules_are_required_in_native_simulation_state() {
+        for field in ["more_combat_gestures", "gesture_quality_damage"] {
+            let mut serialized = serde_json::to_value(SimConfig::default()).unwrap();
+            serialized.as_object_mut().unwrap().remove(field);
+            let error = serde_json::from_value::<SimConfig>(serialized)
+                .expect_err("native simulation state must contain combat gesture rules");
+            assert!(
+                error.to_string().contains(field),
+                "missing-field error did not name {field}: {error}"
+            );
+        }
     }
 }

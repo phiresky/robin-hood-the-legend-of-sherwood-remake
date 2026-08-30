@@ -1611,6 +1611,7 @@ pub fn resolve_swordfight(
     let mut cmds = Vec::new();
     let mut consumed = false;
     let mut feedback_recorded = false;
+    let combat_rules = engine.sim_config();
 
     for pc_id in selected_units(engine, local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
@@ -1649,7 +1650,7 @@ pub fn resolve_swordfight(
         let evaluation = host.mouse_way.evaluate_detailed(
             pc_screen,
             facing_dir,
-            host.gameplay_config.more_combat_gestures,
+            combat_rules.more_combat_gestures,
         );
         let pattern = evaluation.pattern;
         tracing::trace!(
@@ -1664,7 +1665,7 @@ pub fn resolve_swordfight(
             && !matches!(pattern, MouseWayPattern::None)
             && let Some(bounds) = host.mouse_way.bounds()
         {
-            let feedback_pattern = if host.gameplay_config.more_combat_gestures
+            let feedback_pattern = if combat_rules.more_combat_gestures
                 && matches!(pattern, MouseWayPattern::Attempt)
             {
                 evaluation
@@ -1761,7 +1762,7 @@ pub fn resolve_swordfight(
                     target: target_id,
                     command: strike_cmd,
                     composite,
-                    gesture_quality: if host.gameplay_config.gesture_quality_damage {
+                    gesture_quality: if combat_rules.gesture_quality_damage {
                         evaluation.quality
                     } else {
                         GestureQuality::PERFECT
@@ -3098,8 +3099,14 @@ mod tests {
 
         // A full circle is the game's Thrust-H gesture. It exercises the
         // gesture path without needing a seek-distance profile fixture.
-        host.gameplay_config.more_combat_gestures = false;
-        host.gameplay_config.gesture_quality_damage = false;
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: false,
+                gesture_quality_damage: false,
+            },
+        );
         for (x, y) in [
             (320.0, 280.0),
             (360.0, 320.0),
@@ -3127,8 +3134,14 @@ mod tests {
         );
 
         host.mouse_way.clear();
-        host.gameplay_config.more_combat_gestures = true;
-        host.gameplay_config.gesture_quality_damage = true;
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: true,
+                gesture_quality_damage: true,
+            },
+        );
         for &(x, y) in crate::mouse_way::composite_template(CompositeSwordTechnique::Vortex) {
             host.mouse_way
                 .add_point(engine_coordinates::ScreenPoint::new(

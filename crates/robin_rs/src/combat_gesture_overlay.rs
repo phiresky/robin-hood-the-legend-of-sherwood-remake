@@ -24,7 +24,7 @@ pub fn render(host: &mut Host, engine: &Engine, renderer: &mut Renderer, fonts: 
         render_guide(
             renderer,
             fonts,
-            host.gameplay_config.more_combat_gestures,
+            engine.sim_config().more_combat_gestures,
             facing,
         );
     }
@@ -137,7 +137,7 @@ fn render_coach(host: &mut Host, renderer: &mut Renderer, fonts: Option<&HudFont
         (lo.y.round() as i32 - 18).clamp(2, (renderer.screen_height() as i32 - height - 20).max(2));
     let color = match quality {
         750..=1000 => 0x07E0,
-        500..=799 => 0xFFE0,
+        500..=749 => 0xFFE0,
         _ => 0xF800,
     };
     renderer.draw_rect_outline_screen(x, y, x + width, y + height + 16, color);
@@ -217,6 +217,8 @@ fn draw_label(renderer: &mut Renderer, fonts: Option<&HudFonts>, label: &str, x:
         label,
         x,
         y,
-        |font, text, tx, ty| renderer.render_text_argb(font, text, tx, ty),
+        |font, text, tx, ty| {
+            crate::ingame_menu::layout::render_text_screen_font(renderer, font, text, tx, ty)
+        },
     );
 }

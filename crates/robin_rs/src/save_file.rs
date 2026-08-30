@@ -532,7 +532,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v66** (2026-08-30, mission diplomacy): adds the authoritative
 ///   relationship matrix, player coalition, policy switches, per-faction
 ///   mission statistics, and full-fidelity attempt-history evidence.
-pub const SAVE_FORMAT_VERSION: u32 = 66;
+/// - **v67** (2026-08-30, advanced combat gestures): adds authoritative
+///   composite-gesture and quality-damage rules plus resolved gesture state in
+///   commands, quick actions, active sequences, and active sweeps.
+pub const SAVE_FORMAT_VERSION: u32 = 67;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -866,8 +869,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_diplomacy_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 66);
+    fn save_format_version_includes_combat_gesture_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 67);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

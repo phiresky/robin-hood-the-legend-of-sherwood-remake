@@ -208,9 +208,7 @@ pub enum QaReplayCommand {
     SwordStrike {
         target: EntityId,
         command: Command,
-        #[serde(default)]
         composite: Option<CompositeSwordTechnique>,
-        #[serde(default)]
         gesture_quality: GestureQuality,
         with_seek: bool,
         /// Exact seek tolerance captured with the resolved player command.
@@ -854,16 +852,10 @@ mod tests {
             .expect("externally tagged sword macro");
         payload.remove("composite");
         payload.remove("gesture_quality");
-        let decoded: QaReplayCommand =
-            serde_json::from_value(pre_gesture).expect("pre-gesture sword macro remains valid");
-        assert!(matches!(
-            decoded,
-            QaReplayCommand::SwordStrike {
-                composite: None,
-                gesture_quality: GestureQuality::PERFECT,
-                ..
-            }
-        ));
+        assert!(
+            serde_json::from_value::<QaReplayCommand>(pre_gesture).is_err(),
+            "a native sword macro without gesture fields must not enter current QA state"
+        );
 
         let mut legacy = encoded;
         legacy

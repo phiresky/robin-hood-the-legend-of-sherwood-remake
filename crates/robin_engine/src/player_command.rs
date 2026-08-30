@@ -182,6 +182,80 @@ impl CompositeSwordTechnique {
     }
 }
 
+/// Semantic rejection reason for a native sword-gesture command. Derived
+/// decoders can construct private fixed-point fields without calling
+/// [`GestureQuality::new`], so every command admission path must validate the
+/// decoded values before recording or dispatching them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidSwordGestureCommand {
+    NonSwordCommand(Command),
+    InvalidQuality(GestureQuality),
+    CompositeFirstStrikeMismatch {
+        command: Command,
+        composite: CompositeSwordTechnique,
+    },
+    CompositeTechniquesDisabled,
+    QualityDamageDisabled,
+}
+
+impl std::fmt::Display for InvalidSwordGestureCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonSwordCommand(command) => {
+                write!(formatter, "non-sword command {command:?} in SwordStrikeCmd")
+            }
+            Self::InvalidQuality(quality) => write!(
+                formatter,
+                "invalid sword-gesture quality {}",
+                quality.permille()
+            ),
+            Self::CompositeFirstStrikeMismatch { command, composite } => write!(
+                formatter,
+                "composite {composite:?} starts with {:?}, not {command:?}",
+                composite.first_command()
+            ),
+            Self::CompositeTechniquesDisabled => {
+                formatter.write_str("composite sword techniques are disabled for this mission")
+            }
+            Self::QualityDamageDisabled => {
+                formatter.write_str("reduced sword-gesture quality is disabled for this mission")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InvalidSwordGestureCommand {}
+
+fn validate_sword_gesture_fields(
+    command: Command,
+    composite: Option<CompositeSwordTechnique>,
+    gesture_quality: GestureQuality,
+    more_combat_gestures: bool,
+    gesture_quality_damage: bool,
+) -> Result<(), InvalidSwordGestureCommand> {
+    if !command.is_swordstrike() {
+        return Err(InvalidSwordGestureCommand::NonSwordCommand(command));
+    }
+    if !gesture_quality.is_strike_quality() {
+        return Err(InvalidSwordGestureCommand::InvalidQuality(gesture_quality));
+    }
+    if let Some(composite) = composite {
+        if !more_combat_gestures {
+            return Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled);
+        }
+        if composite.first_command() != command {
+            return Err(InvalidSwordGestureCommand::CompositeFirstStrikeMismatch {
+                command,
+                composite,
+            });
+        }
+    }
+    if !gesture_quality_damage && gesture_quality != GestureQuality::PERFECT {
+        return Err(InvalidSwordGestureCommand::QualityDamageDisabled);
+    }
+    Ok(())
+}
+
 /// The deliberately restricted command payload accepted by
 /// [`PlayerCommand::QueueQuickAction`]. Keeping this as a separate enum makes
 /// the player-command wire graph non-recursive and prevents queue commands
@@ -243,11 +317,8 @@ pub enum QueuedQuickActionCommand {
         command: Command,
         /// Optional authored two-strike technique. `command` must match its
         /// first strike so seek-distance resolution remains explicit.
-        #[serde(default)]
         composite: Option<CompositeSwordTechnique>,
-        /// Resolved input quality. Missing pre-feature JSON commands retain
-        /// original damage through the perfect default.
-        #[serde(default)]
+        /// Resolved input quality for this native-schema command.
         gesture_quality: GestureQuality,
         with_seek: bool,
         #[serde(deserialize_with = "deserialize_required_option")]
@@ -270,6 +341,29 @@ pub enum QueuedQuickActionCommand {
 }
 
 impl QueuedQuickActionCommand {
+    fn validate_sword_gesture(
+        &self,
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    ) -> Result<(), InvalidSwordGestureCommand> {
+        let Self::SwordStrikeCmd {
+            command,
+            composite,
+            gesture_quality,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        validate_sword_gesture_fields(
+            *command,
+            *composite,
+            *gesture_quality,
+            more_combat_gestures,
+            gesture_quality_damage,
+        )
+    }
+
     pub fn from_player_command(command: PlayerCommand) -> Option<Self> {
         use PlayerCommand::*;
         Some(match command {
@@ -627,9 +721,7 @@ pub enum PlayerCommand {
         actor: EntityId,
         target: EntityId,
         command: Command,
-        #[serde(default)]
         composite: Option<CompositeSwordTechnique>,
-        #[serde(default)]
         gesture_quality: GestureQuality,
         with_seek: bool,
         /// Exact tolerance resolved by the input source. Explicitly null for
@@ -1263,9 +1355,43 @@ pub enum PlayerCommand {
     SetDynamicAmbienceEnabled {
         enabled: bool,
     },
+    /// Replace the authoritative combat-gesture rule pair at a deterministic
+    /// frame. Presentation-only guide and coach switches remain host-local.
+    SetCombatGestureRules {
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    },
 }
 
 impl PlayerCommand {
+    /// Validate all sword-gesture payloads, including the restricted command
+    /// nested inside an automatic quick action, against the authoritative
+    /// mission rules. Call this before any recording or simulation mutation.
+    pub fn validate_sword_gesture(
+        &self,
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    ) -> Result<(), InvalidSwordGestureCommand> {
+        match self {
+            Self::SwordStrikeCmd {
+                command,
+                composite,
+                gesture_quality,
+                ..
+            } => validate_sword_gesture_fields(
+                *command,
+                *composite,
+                *gesture_quality,
+                more_combat_gestures,
+                gesture_quality_damage,
+            ),
+            Self::QueueQuickAction { command, .. } => {
+                command.validate_sword_gesture(more_combat_gestures, gesture_quality_damage)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Whether transport clients must be prevented from authoring this
     /// command. These mutations define shared campaign/session state rather
     /// than the issuing seat's controlled actors, so only the host may place
@@ -1297,6 +1423,12 @@ impl PlayerCommand {
                 | Self::SetCleanHandsNpcKillsInvalidate { .. }
                 | Self::SetItemGameplayConfig { .. }
                 | Self::SetNoiseDistractionFeedback { .. }
+                | Self::SetTimedMissionsEnabled { .. }
+                | Self::SetDynamicAmbienceEnabled { .. }
+                | Self::SetCombatGestureRules { .. }
+                | Self::SetDiplomacyEnabled { .. }
+                | Self::SetNpcFactionWars { .. }
+                | Self::SetDiplomacyRelationship { .. }
         )
     }
 }
@@ -1317,6 +1449,28 @@ where
 mod tests {
     use super::*;
     use crate::element::EntityIdKind;
+
+    #[test]
+    fn deterministic_rule_edits_require_host_authority() {
+        for command in [
+            PlayerCommand::SetTimedMissionsEnabled { enabled: false },
+            PlayerCommand::SetDynamicAmbienceEnabled { enabled: false },
+            PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: false,
+                gesture_quality_damage: false,
+            },
+            PlayerCommand::SetDiplomacyEnabled { enabled: false },
+            PlayerCommand::SetNpcFactionWars { enabled: false },
+            PlayerCommand::SetDiplomacyRelationship {
+                first: 2,
+                second: 3,
+                relationship: crate::diplomacy::Relationship::Neutral,
+            },
+        ] {
+            assert!(command.requires_host_authority(), "{command:?}");
+        }
+        assert!(!PlayerCommand::CrouchDown.requires_host_authority());
+    }
 
     #[test]
     fn diplomacy_command_roundtrips_through_replay_codecs() {
@@ -1464,7 +1618,7 @@ mod tests {
     }
 
     #[test]
-    fn sword_seek_distance_roundtrips_and_rejects_legacy_field_omission() {
+    fn sword_payload_roundtrips_and_rejects_native_field_omission() {
         let command = PlayerCommand::SwordStrikeCmd {
             actor: EntityId::new(3, EntityIdKind::Pc),
             target: EntityId::new(7, EntityIdKind::Soldier),
@@ -1506,16 +1660,10 @@ mod tests {
             .expect("externally tagged sword command");
         payload.remove("composite");
         payload.remove("gesture_quality");
-        let decoded: PlayerCommand =
-            serde_json::from_value(pre_gesture).expect("pre-gesture command remains compatible");
-        assert!(matches!(
-            decoded,
-            PlayerCommand::SwordStrikeCmd {
-                composite: None,
-                gesture_quality: GestureQuality::PERFECT,
-                ..
-            }
-        ));
+        assert!(
+            serde_json::from_value::<PlayerCommand>(pre_gesture).is_err(),
+            "a native sword command without gesture fields must not enter the current schema"
+        );
 
         let mut legacy = encoded;
         legacy
@@ -1545,6 +1693,85 @@ mod tests {
             assert_eq!(commands[0], technique.first_command());
             assert!(commands.into_iter().all(Command::is_swordstrike));
         }
+    }
+
+    #[test]
+    fn sword_gesture_validation_rejects_malformed_and_disabled_payloads() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        let target = EntityId::new(7, EntityIdKind::Soldier);
+        let make = |command, composite, gesture_quality| PlayerCommand::SwordStrikeCmd {
+            actor,
+            target,
+            command,
+            composite,
+            gesture_quality,
+            with_seek: false,
+            seek_distance: None,
+        };
+
+        assert_eq!(
+            make(Command::WhistleCmd, None, GestureQuality::PERFECT)
+                .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::NonSwordCommand(
+                Command::WhistleCmd
+            ))
+        );
+        assert_eq!(
+            make(
+                Command::SwordstrikeThrustA,
+                Some(CompositeSwordTechnique::RisingFeint),
+                GestureQuality::PERFECT,
+            )
+            .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::CompositeFirstStrikeMismatch {
+                command: Command::SwordstrikeThrustA,
+                composite: CompositeSwordTechnique::RisingFeint,
+            })
+        );
+        assert_eq!(
+            make(
+                CompositeSwordTechnique::RisingFeint.first_command(),
+                Some(CompositeSwordTechnique::RisingFeint),
+                GestureQuality::PERFECT,
+            )
+            .validate_sword_gesture(false, true),
+            Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled)
+        );
+        assert_eq!(
+            make(Command::SwordstrikeThrustA, None, GestureQuality::GOOD)
+                .validate_sword_gesture(true, false),
+            Err(InvalidSwordGestureCommand::QualityDamageDisabled)
+        );
+
+        let invalid_wire = bitcode::encode(&725_u16);
+        let invalid_quality: GestureQuality =
+            bitcode::decode(&invalid_wire).expect("decode malicious quality newtype");
+        assert_eq!(
+            make(Command::SwordstrikeThrustA, None, invalid_quality)
+                .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::InvalidQuality(invalid_quality))
+        );
+    }
+
+    #[test]
+    fn queued_sword_gesture_uses_the_same_validation() {
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: CompositeSwordTechnique::Vortex.first_command(),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::PERFECT,
+                with_seek: false,
+                seek_distance: None,
+            }
+            .into(),
+        };
+        assert_eq!(
+            command.validate_sword_gesture(false, true),
+            Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled)
+        );
     }
 
     #[test]

@@ -458,6 +458,14 @@ impl EngineInner {
             return;
         }
 
+        if let Err(error) = cmd.validate_sword_gesture(
+            self.control.sim_config.more_combat_gestures,
+            self.control.sim_config.gesture_quality_damage,
+        ) {
+            tracing::warn!(seat, %error, "rejecting invalid sword-gesture command");
+            return;
+        }
+
         // Append-while-recording hook.  Records one `QuickActionStep`
         // per sim-affecting player command addressed at the currently
         // recording PC, keyed by the resolved Action (portrait bar)
@@ -863,21 +871,6 @@ impl EngineInner {
                     with_seek,
                     "PlayerCommand::SwordStrikeCmd"
                 );
-                if !gesture_quality.is_strike_quality() {
-                    tracing::warn!(
-                        quality_permille = gesture_quality.permille(),
-                        "rejecting SwordStrikeCmd with invalid or zero gesture quality"
-                    );
-                    return;
-                }
-                if composite.is_some_and(|technique| technique.first_command() != *command) {
-                    tracing::warn!(
-                        ?command,
-                        ?composite,
-                        "rejecting SwordStrikeCmd whose first strike does not match its technique"
-                    );
-                    return;
-                }
                 self.prepare_tactical_player_combat_command(*actor);
                 if *with_seek {
                     self.apply_sword_strike_with_seek(
@@ -1553,6 +1546,17 @@ impl EngineInner {
                     self.control.sim_config.enable_dynamic_ambience = *enabled;
                 } else {
                     tracing::warn!(seat, "ignored non-host ambience setting command");
+                }
+            }
+            SetCombatGestureRules {
+                more_combat_gestures,
+                gesture_quality_damage,
+            } => {
+                if seat == usize::from(PlayerId::HOST.0) {
+                    self.control.sim_config.more_combat_gestures = *more_combat_gestures;
+                    self.control.sim_config.gesture_quality_damage = *gesture_quality_damage;
+                } else {
+                    tracing::warn!(seat, "ignored non-host combat-gesture setting command");
                 }
             }
             SetUnbindingEnabled { enabled } => {
@@ -6965,6 +6969,83 @@ mod tests {
                 seek_distance: None,
             },
         );
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+    }
+
+    #[test]
+    fn disabled_composite_cannot_enter_an_automatic_quick_action() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: false,
+                gesture_quality_damage: true,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::Hit,
+                command: PlayerCommand::SwordStrikeCmd {
+                    actor: pc_id,
+                    target,
+                    command: CompositeSwordTechnique::RisingFeint.first_command(),
+                    composite: Some(CompositeSwordTechnique::RisingFeint),
+                    gesture_quality: GestureQuality::PERFECT,
+                    with_seek: false,
+                    seek_distance: None,
+                }
+                .into(),
+            },
+        );
+
+        assert!(engine.players.auto_queues.is_empty(pc_id));
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+    }
+
+    #[test]
+    fn disabled_quality_damage_rejects_reduced_strike_before_launch() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: true,
+                gesture_quality_damage: false,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SwordStrikeCmd {
+                actor: pc_id,
+                target,
+                command: Command::SwordstrikeThrustA,
+                composite: None,
+                gesture_quality: GestureQuality::GOOD,
+                with_seek: false,
+                seek_distance: None,
+            },
+        );
+
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
     }
 
