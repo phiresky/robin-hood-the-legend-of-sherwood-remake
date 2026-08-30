@@ -107,7 +107,7 @@ pub fn derive_legacy_gate_order(
                 index: runtime_index,
             }
         })?;
-        mapped.push(DoorIndex(runtime_index));
+        mapped.push(DoorIndex::new(runtime_index).expect("valid door index"));
     }
 
     if door_indices.next().is_some() || jump_indices.next().is_some() {
@@ -153,11 +153,11 @@ mod tests {
         assert_eq!(
             derive_legacy_gate_order(&retained, &runtime).unwrap(),
             [
-                DoorIndex(0),
-                DoorIndex(3),
-                DoorIndex(1),
-                DoorIndex(4),
-                DoorIndex(2),
+                DoorIndex::new(0).expect("valid door index"),
+                DoorIndex::new(3).expect("valid door index"),
+                DoorIndex::new(1).expect("valid door index"),
+                DoorIndex::new(4).expect("valid door index"),
+                DoorIndex::new(2).expect("valid door index"),
             ]
         );
     }

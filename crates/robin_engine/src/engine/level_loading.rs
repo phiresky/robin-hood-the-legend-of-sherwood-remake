@@ -1595,7 +1595,10 @@ impl MissionLevelBuilder {
                 if doors.is_empty() {
                     return Err(MissionLevelBuildError::BuildingWithoutDoor { building_index });
                 }
-                Some(crate::gate::DoorIndex(authored_door_index as u32))
+                Some(
+                    crate::gate::DoorIndex::new(authored_door_index as u32)
+                        .expect("valid door index"),
+                )
             };
             for &element_index in &tenants.tenant_element_indices {
                 let Some(entity_id) = engine
@@ -1686,6 +1689,7 @@ fn mobile_sprite_map_position(
 /// consumed by [`EngineInner::apply_background_map`] (fast — GPU upload).
 /// Mask compositing is no longer done CPU-side — `mask_overlay.wgsl`
 /// samples the live bg texture in the fragment stage.
+#[derive(Clone)]
 pub struct PreDecodedBackground {
     pub width: u16,
     pub height: u16,
@@ -1697,6 +1701,7 @@ pub struct PreDecodedBackground {
 }
 
 /// CPU-decoded minimap ready for GPU upload.  See [`PreDecodedBackground`].
+#[derive(Clone)]
 pub struct PreDecodedMinimap {
     pub width: u16,
     pub height: u16,
@@ -1981,7 +1986,7 @@ mod mission_level_builder_tests {
         assert_eq!(engine.ai.global.reinforcement_doors.len(), 1);
         assert_eq!(
             engine.ai.global.reinforcement_doors[0].door_index,
-            crate::gate::DoorIndex(1)
+            crate::gate::DoorIndex::new(1).expect("valid door index")
         );
 
         for sector_number in [0_i16, 1_i16] {
@@ -2012,11 +2017,17 @@ mod mission_level_builder_tests {
         engine.populate_sector_gates_from_doors();
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
-            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
+            vec![
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index")
+            ]
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[1].gate_indices,
-            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
+            vec![
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index")
+            ]
         );
     }
 
@@ -2070,11 +2081,11 @@ mod mission_level_builder_tests {
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex::new(0).expect("valid door index")]
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[1].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex::new(0).expect("valid door index")]
         );
     }
 
@@ -2330,7 +2341,7 @@ mod mission_level_builder_tests {
             .expect("valid trap tenant plan");
         assert_eq!(
             plan.buildings.attachments[0].first_door_index,
-            Some(crate::gate::DoorIndex(1))
+            Some(crate::gate::DoorIndex::new(1).expect("valid door index"))
         );
         engine
             .build_mission_level_stages(&assets, &loaded, &plan)
@@ -3525,6 +3536,21 @@ impl EngineInner {
         entity: &crate::element::Entity,
         apply_fog_to_all_sprites: bool,
     ) -> crate::sprite_variant::SpriteVariant {
+        self.resolve_render_variant_for_ambiance(
+            entity,
+            apply_fog_to_all_sprites,
+            self.world.weather.ambiance,
+        )
+    }
+
+    /// Local-presentation counterpart used when the player disables runtime
+    /// ambience visuals while canonical gameplay continues advancing.
+    pub fn resolve_render_variant_for_ambiance(
+        &self,
+        entity: &crate::element::Entity,
+        apply_fog_to_all_sprites: bool,
+        ambiance: Ambiance,
+    ) -> crate::sprite_variant::SpriteVariant {
         use crate::element::Entity;
         use crate::sprite_variant::SpriteVariant;
 
@@ -3539,7 +3565,7 @@ impl EngineInner {
             _ => false,
         };
         let force_ambiance_variant = apply_fog_to_all_sprites
-            && matches!(self.world.weather.ambiance, Ambiance::Fog | Ambiance::Night)
+            && matches!(ambiance, Ambiance::Fog | Ambiance::Night)
             && !has_ambiance_baked_pixels;
         let apply_ambiance = force_ambiance_variant
             || match entity {
@@ -3558,7 +3584,15 @@ impl EngineInner {
             return SpriteVariant::Day;
         }
 
-        let default = self.default_variant();
+        let default = if self.control.sim_config.bypass_fog_sprites_crash {
+            SpriteVariant::Day
+        } else {
+            match ambiance {
+                Ambiance::Fog => SpriteVariant::Fog,
+                Ambiance::Night => SpriteVariant::Night,
+                _ => SpriteVariant::Day,
+            }
+        };
         if !matches!(default, SpriteVariant::Fog | SpriteVariant::Night) {
             return default;
         }
@@ -3566,12 +3600,11 @@ impl EngineInner {
         // Shadow-sector fallback: revert Fog/Night → Day when the entity
         // stands in a `SECTOR_SHADOW` (light-at-night) polygon.
         let elem = entity.element_data();
-        if elem.layer() != 0xFFFF
-            && self
-                .world
+        if elem.optional_layer().is_some_and(|layer| {
+            self.world
                 .fast_grid
-                .is_in_shadow_sector(elem.position_map(), elem.layer())
-        {
+                .is_in_shadow_sector(elem.position_map(), layer.get())
+        }) {
             SpriteVariant::Day
         } else {
             default
@@ -3695,10 +3728,20 @@ impl EngineInner {
         // Snapshot (idx, layer, box_ground) before mutating fast_grid —
         // `self.sight_obstacles(assets)` borrows engine immutably while
         // `add_obstacle_index` needs `&mut self.world.fast_grid`.
-        let obstacle_metadata: Vec<(u32, u16, crate::coordinates::GroundBBox)> = self
+        let obstacle_metadata: Vec<(
+            u32,
+            Option<crate::position_interface::Layer>,
+            crate::coordinates::GroundBBox,
+        )> = self
             .sight_obstacles(assets)
             .iter_indexed()
-            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground))
+            .map(|(idx, obs)| {
+                (
+                    idx,
+                    obs.projection_area_ref().map(|area| area.layer),
+                    obs.box_ground,
+                )
+            })
             .collect();
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
@@ -3742,14 +3785,14 @@ impl EngineInner {
         let mut elev_added = 0usize;
         let mut elev_skipped_layer = 0usize;
         for raw in &elev_raw {
-            let to_idx = |i: u16| -> Option<u16> {
+            let to_idx = |i: u16| -> Option<crate::sight_obstacle::SightObstacleIndex> {
                 // 0xFFFF is the sentinel for "no obstacle" in the proto.
                 if i == 0xFFFF {
                     None
                 } else if (i as usize) < num_obstacles {
-                    Some(i)
+                    crate::sight_obstacle::SightObstacleIndex::new(u32::from(i))
                 } else {
-                    None
+                    panic!("elevation line references obstacle {i}, but only {num_obstacles} exist")
                 }
             };
             let left = to_idx(raw.left_obstacle_index);
@@ -3853,7 +3896,12 @@ impl EngineInner {
                                 .level_repulsive_points
                                 .push(crate::fast_find_grid::LevelRepulsivePoint {
                                     position: MapPoint::new(bx as f32, by as f32),
-                                    layer: layer_idx as u16,
+                                    layer: Some(
+                                        crate::position_interface::Layer::new(layer_idx as u16)
+                                            .expect(
+                                                "level layer index collides with null sentinel",
+                                            ),
+                                    ),
                                     limit_left,
                                     limit_right,
                                     is_concave,
@@ -3941,7 +3989,12 @@ impl EngineInner {
                                     .level_repulsive_points
                                     .push(crate::fast_find_grid::LevelRepulsivePoint {
                                         position: MapPoint::new(ox as f32, oy as f32),
-                                        layer: layer_idx as u16,
+                                        layer: Some(
+                                            crate::position_interface::Layer::new(layer_idx as u16)
+                                                .expect(
+                                                    "level layer index collides with null sentinel",
+                                                ),
+                                        ),
                                         limit_left,
                                         limit_right,
                                         is_concave,
@@ -4311,13 +4364,19 @@ impl EngineInner {
 
             // ── Light / shadow sectors ──
             //
-            // Each raw light sector becomes a `SectorType::SHADOW` grid
-            // sector on its own layer iff its ambience bitmask overlaps
-            // the mission's ambience.  Sectors whose ambience bit is
-            // clear are dropped.  `is_in_shadow_sector` queries these to
-            // suppress the fog/night sprite variant when an actor stands
-            // inside a torch-lit polygon.
+            // Every valid raw light sector becomes a `SectorType::SHADOW`
+            // grid sector. The initial ambience controls the runtime-active
+            // bit; keeping the other authored polygons in immutable level
+            // geometry lets a timed ambience schedule switch lighting
+            // without rebuilding the fast grid or changing sector identity.
+            // `is_in_shadow_sector` queries only active sectors.
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
+            let runtime_switchable = self
+                .mission_domain
+                .state
+                .runtime_features
+                .ambience_schedule
+                .is_some();
             let raw_light_sectors = std::mem::take(&mut staging.motion.light_sectors);
             let debug_view_radius_lights = crate::ai_vision::view_radius_cache_debug_enabled();
             if debug_view_radius_lights {
@@ -4331,8 +4390,9 @@ impl EngineInner {
             let mut light_skipped_ambience = 0usize;
             let mut light_skipped_layer = 0usize;
             let mut light_skipped_polygon = 0usize;
+            let mut ambience_shadow_sectors = Vec::new();
             for (raw_index, raw) in raw_light_sectors.into_iter().enumerate() {
-                if (raw.ambience & ambiance_mask) == 0 {
+                if !runtime_switchable && raw.ambience & ambiance_mask == 0 {
                     if debug_view_radius_lights {
                         debug_view_radius_light(
                             raw_index,
@@ -4402,6 +4462,19 @@ impl EngineInner {
                     },
                     raw.layer,
                 );
+                self.world
+                    .fast_grid_mut()
+                    .set_sector_active(grid_index, (raw.ambience & ambiance_mask) != 0);
+                if runtime_switchable {
+                    ambience_shadow_sectors.push((
+                        crate::fast_find_grid::SectorIndex::new(grid_index).unwrap_or_else(|| {
+                            panic!(
+                                "shadow grid index {grid_index} cannot use the reserved u32::MAX"
+                            )
+                        }),
+                        raw.ambience,
+                    ));
+                }
                 if debug_view_radius_lights {
                     debug_view_radius_light(
                         raw_index,
@@ -4414,15 +4487,17 @@ impl EngineInner {
                 sector_number += 1;
                 light_added += 1;
             }
+            assets.ambience_shadow_sectors = std::sync::Arc::new(ambience_shadow_sectors);
             if light_added + light_skipped_ambience + light_skipped_layer + light_skipped_polygon
                 > 0
             {
                 tracing::debug!(
-                    "Loaded {} shadow sectors ({} filtered by ambience, {} bad layer, {} degenerate polygon)",
+                    "Loaded {} shadow sectors ({} filtered by ambience, {} bad layer, {} degenerate polygon; runtime_switchable={})",
                     light_added,
                     light_skipped_ambience,
                     light_skipped_layer,
                     light_skipped_polygon,
+                    runtime_switchable,
                 );
             }
 
@@ -4437,11 +4512,12 @@ impl EngineInner {
             // so we don't bloat every (mostly non-shadow) GridSector with
             // an `Option<ShadowData>`.  Consumed by the night/fog branch
             // of `ai_vision::compute_view_radius`.
-            let is_night_or_fog = matches!(
-                self.world.weather.ambiance,
-                crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-            );
-            if is_night_or_fog && light_added > 0 {
+            let needs_shadow_geometry = runtime_switchable
+                || matches!(
+                    self.world.weather.ambiance,
+                    crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
+                );
+            if needs_shadow_geometry && light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
                 let shadow_inputs: Vec<(u32, Vec<MapPoint>, u16)> = self
@@ -4494,7 +4570,7 @@ impl EngineInner {
                         .insert(sector_idx, shadow);
                 }
                 tracing::debug!(
-                    "Initialized shadow centroid data for {} sectors (NIGHT/FOG ambience)",
+                    "Initialized shadow centroid data for {} runtime ambience sectors",
                     self.world.fast_grid.level.shadow_data.len(),
                 );
             }
@@ -5007,7 +5083,7 @@ impl EngineInner {
                     panic!("canonical door {idx} exterior sector has no exact arena identity")
                 });
                 crate::ai::DoorSeekInfo {
-                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
                     door_type: door.door_type,
                     point_out: door.point_out,
                     position_in: crate::ai::Position {
@@ -5057,7 +5133,7 @@ impl EngineInner {
                         .map(|handle| handle.with_arena_index(sector_in_index)),
                         level: door.layer_in,
                     },
-                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
                     point_out: door.point_out,
                     point_in: door.point_in,
                     point_mid: door.point_mid,
@@ -5935,7 +6011,7 @@ impl EngineInner {
                 .get(usize::from(first_door_index))
                 .ok_or(MissionLevelBuildError::MissingCanonicalBuildingDoor {
                     building_index: building.building_index,
-                    door_index: first_door_index.0,
+                    door_index: first_door_index.get(),
                 })?;
             // `RHSectorBuilding::InitOccupant` resolves GetGate(0) after
             // RHDoor::AdaptPoints, so attachment must use this canonical
@@ -6117,7 +6193,7 @@ impl EngineInner {
                     );
                 };
 
-                let obstacle = pc.element.obstacle_index().map(u16::from).unwrap_or(0xFFFF);
+                let obstacle = pc.element.obstacle_index();
 
                 captured.push(crate::sector_production::Occupant {
                     pc_description_idx,
@@ -6400,9 +6476,9 @@ impl EngineInner {
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
                         crate::element::GameMaterial::default(),
-                        crate::position_interface::ObstacleHandle::new(point.obstacle),
+                        point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                            crate::position_interface::ObstacleHandle::new(point.obstacle),
+                            point.obstacle,
                             assets.static_sight_obstacles.as_slice(),
                         ),
                     );
@@ -6466,9 +6542,9 @@ impl EngineInner {
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
                         crate::element::GameMaterial::default(),
-                        crate::position_interface::ObstacleHandle::new(point.obstacle),
+                        point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                            crate::position_interface::ObstacleHandle::new(point.obstacle),
+                            point.obstacle,
                             assets.static_sight_obstacles.as_slice(),
                         ),
                     );
@@ -6548,12 +6624,7 @@ impl EngineInner {
                 }
                 // Release the `entities` borrow before calling helpers
                 // that take `&mut self`.
-                let occupant_obstacle_opt = if occupant.obstacle == 0xFFFF {
-                    None
-                } else {
-                    Some(occupant.obstacle)
-                };
-                self.set_obstacle_and_material(assets, entity_id, occupant_obstacle_opt);
+                self.set_obstacle_and_material(assets, entity_id, occupant.obstacle);
                 if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
                 {
                     pc.element.update_grid_cell();

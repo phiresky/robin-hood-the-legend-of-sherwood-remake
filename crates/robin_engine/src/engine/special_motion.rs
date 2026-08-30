@@ -129,10 +129,10 @@ impl EngineInner {
         clear_projection_when_missing: bool,
         context: &'static str,
     ) {
-        let Some((target_layer, target_sector)) = self.get_entity(entity_id).map(|entity| {
+        let Some((target_layer, current_sector)) = self.get_entity(entity_id).map(|entity| {
             (
                 layer.unwrap_or_else(|| entity.element_data().layer()),
-                sector.or_else(|| entity.element_data().sector().map(u16::from)),
+                entity.element_data().sector(),
             )
         }) else {
             tracing::warn!(
@@ -142,8 +142,31 @@ impl EngineInner {
             );
             return;
         };
+        let exact_sector = |number: u16| {
+            current_sector
+                .filter(|handle| handle.get() == number)
+                .or_else(|| {
+                    let number = crate::sector::SectorNumber::new(number as i16);
+                    self.world
+                        .fast_grid
+                        .level
+                        .sector_number_map
+                        .get(&number)
+                        .copied()
+                        .and_then(|index| {
+                            let index = crate::fast_find_grid::SectorIndex::new(
+                                u32::try_from(index).expect("sector arena index exceeds u32"),
+                            )
+                            .expect("sector arena index collides with the null encoding");
+                            crate::position_interface::SectorHandle::new(number.get() as u16)
+                                .map(|handle| handle.with_arena_index(index))
+                        })
+                })
+                .unwrap_or_else(|| panic!("{context}: sector {number} has no exact arena identity"))
+        };
+        let target_sector = sector.map(exact_sector).or(current_sector);
         let (projection_layer, projection_sector) = match projection_topology {
-            Some((layer, sector)) => (layer, Some(sector)),
+            Some((layer, sector)) => (layer, Some(exact_sector(sector))),
             None => (target_layer, target_sector),
         };
 
@@ -158,7 +181,7 @@ impl EngineInner {
                     ?entity_id,
                     context,
                     layer = projection_layer,
-                    sector = projection_sector,
+                    ?projection_sector,
                     probe_x = probe.x,
                     probe_y = probe.y,
                     "special motion finalization found no projection-area obstacle"
@@ -172,8 +195,8 @@ impl EngineInner {
             if let Some(layer) = layer {
                 elem.set_layer(layer);
             }
-            if let Some(sector) = sector {
-                elem.set_sector(crate::position_interface::SectorHandle::new(sector));
+            if sector.is_some() {
+                elem.set_sector(target_sector);
             }
             match position {
                 SpecialMovePosition::Map(point) => elem.set_position_map(point),

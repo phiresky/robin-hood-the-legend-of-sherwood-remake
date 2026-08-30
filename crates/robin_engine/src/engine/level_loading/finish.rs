@@ -210,12 +210,8 @@ impl EngineInner {
         // background map, patrol paths, tactical info, and tenants are loaded
         // from other code paths.
 
-        // Set night color based on ambiance — pack via draw_manager.
-        let (r, g, b) = self.world.weather.ambiance.night_color_rgb();
-        let _ = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-        // EngineInner format is always RGB565. Host can derive 15-bit packing
-        // at render time if its display needs it.
-        self.world.weather.night_color = robin_util::color::rgb565(r, g, b);
+        // Runtime-feature initialization already installed the exact RGB565
+        // color. Preserve a zero-time cue's in-progress crossfade here.
 
         tracing::info!(
             "EngineInner: initialized from mission '{}' / proto '{}' — \

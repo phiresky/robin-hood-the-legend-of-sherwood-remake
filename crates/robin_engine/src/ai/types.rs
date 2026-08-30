@@ -1,5 +1,4 @@
 use super::*;
-
 // ---------------------------------------------------------------------------
 // Opaque entity handle types
 // ---------------------------------------------------------------------------
@@ -20,6 +19,181 @@ pub type ObjectHandle = u32;
 /// Opaque handle to a door.
 pub type DoorHandle = u32;
 
+/// Non-null pointer identity in the Original's global element table.
+///
+/// AI state stores resolved indices in Rust's zero-based entity arena. Slot
+/// zero is a real entity (and commonly Robin), so the nominal handle must
+/// represent the complete `u32` range; runtime absence lives exclusively in
+/// `Option<AiEntityHandle>`.
+///
+/// This is deliberately distinct from the Original v48 stream encoding:
+/// `SerializePointerToElement` uses `54321` as its null marker and the legacy
+/// reader translates that marker to `LegacyAiElementRef(None)` before runtime
+/// handle resolution.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(transparent)]
+pub struct AiEntityHandle(u32);
+
+impl AiEntityHandle {
+    #[inline]
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for AiEntityHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
+impl From<AiEntityHandle> for u32 {
+    fn from(handle: AiEntityHandle) -> Self {
+        handle.get()
+    }
+}
+
+/// Accepted inputs at AI snapshot lookup boundaries. Raw handles remain
+/// supported for required/list entries that have not historically been
+/// nullable; optional controller references flow through without being
+/// collapsed back to zero first.
+pub trait IntoOptionalAiHandle {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle>;
+}
+
+impl IntoOptionalAiHandle for u32 {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        Some(AiEntityHandle::new(self))
+    }
+}
+
+impl IntoOptionalAiHandle for AiEntityHandle {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        Some(self)
+    }
+}
+
+impl IntoOptionalAiHandle for Option<AiEntityHandle> {
+    fn into_optional_ai_handle(self) -> Option<AiEntityHandle> {
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct TaggedAiEntityHandle {
+    entity: u32,
+}
+
+/// Encode nullable runtime handles without reintroducing the historical
+/// `0 == NULL` ambiguity. A tagged value can represent live arena slot zero;
+/// `null` remains absence.
+pub(crate) fn serialize_optional_ai_handle<S>(
+    handle: &Option<AiEntityHandle>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match handle {
+        Some(handle) => serializer.serialize_some(&TaggedAiEntityHandle {
+            entity: handle.get(),
+        }),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Decode the tagged current representation. Historical Rust JSON is not
+/// accepted here: schema-version gates reject it before runtime state is
+/// decoded, while Original C++ pointer sentinels are handled exclusively by
+/// `legacy_save`.
+pub(crate) fn deserialize_optional_ai_handle<'de, D>(
+    deserializer: D,
+) -> Result<Option<AiEntityHandle>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<TaggedAiEntityHandle>::deserialize(deserializer)?
+        .map(|tagged| AiEntityHandle::new(tagged.entity)))
+}
+
+#[cfg(test)]
+mod optional_ai_handle_serde_tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct Fixture {
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        handle: Option<AiEntityHandle>,
+    }
+
+    #[test]
+    fn current_schema_rejects_legacy_bare_zero() {
+        assert!(serde_json::from_str::<Fixture>(r#"{"handle":0}"#).is_err());
+    }
+
+    #[test]
+    fn current_schema_rejects_legacy_bare_nonzero() {
+        assert!(serde_json::from_str::<Fixture>(r#"{"handle":17}"#).is_err());
+    }
+
+    #[test]
+    fn current_schema_requires_the_nullable_handle_field() {
+        assert!(serde_json::from_str::<Fixture>(r#"{}"#).is_err());
+    }
+
+    #[test]
+    fn tagged_slot_zero_round_trips_as_live_handle() {
+        let fixture = Fixture {
+            handle: Some(AiEntityHandle::new(0)),
+        };
+        let json = serde_json::to_string(&fixture).unwrap();
+        assert_eq!(json, r#"{"handle":{"entity":0}}"#);
+        assert_eq!(serde_json::from_str::<Fixture>(&json).unwrap(), fixture);
+    }
+
+    #[test]
+    fn null_round_trips_without_a_fake_handle() {
+        let fixture = Fixture { handle: None };
+        let json = serde_json::to_string(&fixture).unwrap();
+        assert_eq!(json, r#"{"handle":null}"#);
+        assert_eq!(serde_json::from_str::<Fixture>(&json).unwrap(), fixture);
+    }
+
+    #[test]
+    fn native_codec_preserves_slot_zero_and_absence() {
+        let handles = [
+            None,
+            Some(AiEntityHandle::new(0)),
+            Some(AiEntityHandle::new(9)),
+        ];
+        let encoded = bitcode::encode(&handles);
+        let decoded: [Option<AiEntityHandle>; 3] = bitcode::decode(&encoded).unwrap();
+        assert_eq!(decoded, handles);
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -34,7 +208,7 @@ pub type DoorHandle = u32;
 )]
 pub enum CharlySeekerTarget {
     SelfNpc,
-    Npc(NpcHandle),
+    Npc(AiEntityHandle),
 }
 
 #[derive(
@@ -52,16 +226,14 @@ pub enum CharlySeekerTarget {
 pub enum AiStateChangeSource {
     SelfActor,
     Null,
-    Human(HumanHandle),
+    Human(AiEntityHandle),
 }
 
 impl AiStateChangeSource {
-    pub fn from_optional_human(handle: HumanHandle) -> Self {
-        if handle == 0 {
-            Self::Null
-        } else {
-            Self::Human(handle)
-        }
+    pub fn from_optional_human(handle: impl IntoOptionalAiHandle) -> Self {
+        handle
+            .into_optional_ai_handle()
+            .map_or(Self::Null, Self::Human)
     }
 }
 
@@ -79,15 +251,15 @@ impl AiStateChangeSource {
 )]
 pub enum EnterSwordfightRequest {
     RaiseSword,
-    Engage(HumanHandle),
+    Engage(AiEntityHandle),
     /// Direct `RHElementActorHuman::EnterSwordFight` call made by
     /// `ReconsiderSwordfight` while rebalancing an existing melee.
-    Rebalance(HumanHandle),
+    Rebalance(AiEntityHandle),
     /// Direct `RHElementActorHuman::EnterSwordFight` call made by the
     /// already-swordfighting `EVENT_GOTHIT` arm. This synchronously updates
     /// the relationship and, when needed, authors the reciprocal command on
     /// the attacker rather than on the AI receiving the event.
-    Direct(HumanHandle),
+    Direct(AiEntityHandle),
 }
 
 pub use crate::position_interface::SectorHandle;

@@ -11,7 +11,7 @@ use crate::game_render::{
     render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
     render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
     render_entities_gpu, render_ground_marks, render_item_effect_preview, render_listen_ping,
-    render_minimap, render_noise_display, render_ransom_amulet_overlay,
+    render_minimap, render_mission_countdown, render_noise_display, render_ransom_amulet_overlay,
     render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
     render_view_cone_overlay,
 };
@@ -20,6 +20,7 @@ use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
 use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
+use crate::renderer::Renderer;
 use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
 use crate::sherwood_hud::{self, SherwoodButtonEnable, SherwoodTooltipTracker};
 use crate::sound::MusicMode;
@@ -306,11 +307,26 @@ pub(super) fn drain_screenshots(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
+    let pending = crate::http_server::take_pending_screenshots(sim_frame);
+    drain_screenshot_requests(pending, engine, display, host, assets, dev, ctx);
+}
+
+/// Render an already-partitioned set of screenshot requests. Cooperative UI
+/// tasks use this for full-map, scene-only, and debug-override captures before
+/// fulfilling ordinary screenshots from the presented UI framebuffer.
+pub(super) fn drain_screenshot_requests(
+    pending: Vec<crate::http_server::PendingScreenshot>,
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    ctx: &mut RenderContext<'_>,
+) {
     // This is the normal frame's update boundary even when there are no HTTP
     // requests. The live draw later in the loop only reads the snapshot.
     update_zoom_presentation(engine, display, host, ctx);
 
-    let pending = crate::http_server::take_pending_screenshots(sim_frame);
     if pending.is_empty() {
         return;
     }
@@ -323,6 +339,27 @@ pub(super) fn drain_screenshots(
         // Clear the offscreen target so the next render (another
         // screenshot or the live frame) starts from a clean slate.
         ctx.renderer.reset_render_target();
+    }
+}
+
+/// Fulfil ordinary viewport screenshots from the already-presented topmost
+/// pause-side UI. Specialized requests remain queued for `drain_screenshots`.
+pub(super) fn drain_presented_ui_screenshots(sim_frame: u32, renderer: &Renderer) {
+    let pending = crate::http_server::take_pending_ui_screenshots(sim_frame);
+    if pending.is_empty() {
+        return;
+    }
+    match renderer.capture_presented_frame_rgba() {
+        Some((width, height, rgba)) => {
+            for screenshot in pending {
+                screenshot.respond(width, height, &rgba);
+            }
+        }
+        None => {
+            for screenshot in pending {
+                screenshot.respond_err("failed to read the presented pause UI framebuffer");
+            }
+        }
     }
 }
 
@@ -1766,6 +1803,7 @@ pub(super) fn render_frame(
         // Renders ransom and amulet values in the top-left corner
         // with a drop-shadow background font.
         render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
+        render_mission_countdown(host, engine, renderer, fonts);
 
         crate::achievement_hud::render_trackers(
             engine,

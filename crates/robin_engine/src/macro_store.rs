@@ -1011,7 +1011,7 @@ mod tests {
                 source_layer: 2,
                 outcome: crate::gate::RecordedGateOutcome::Success(vec![
                     crate::gate::GatePathStep {
-                        door_index: crate::gate::DoorIndex(11),
+                        door_index: crate::gate::DoorIndex::new(11).expect("valid door index"),
                         direct: false,
                     },
                 ]),

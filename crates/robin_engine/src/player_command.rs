@@ -1057,6 +1057,50 @@ pub enum PlayerCommand {
     SetNoiseDistractionFeedback {
         enabled: bool,
     },
+    /// Toggle authored time-limit enforcement at a deterministic frame.
+    SetTimedMissionsEnabled {
+        enabled: bool,
+    },
+    /// Toggle authored ambience gameplay changes at a deterministic frame.
+    SetDynamicAmbienceEnabled {
+        enabled: bool,
+    },
+}
+
+impl PlayerCommand {
+    /// Whether transport clients must be prevented from authoring this
+    /// command. These mutations define shared campaign/session state rather
+    /// than the issuing seat's controlled actors, so only the host may place
+    /// them in the deterministic command stream.
+    pub fn requires_host_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::ReleaseTacticalControl
+                | Self::SetGoldenEyeMode { .. }
+                | Self::SetMenToBlazonConversionMode { .. }
+                | Self::RegisterPeasantName { .. }
+                | Self::DispatchStartupMessage { .. }
+                | Self::RevealAllBlips
+                | Self::CampaignSelectNextMission { .. }
+                | Self::CampaignSwapPendingToAccessibleMissions
+                | Self::CampaignHarvestProductionSectorState
+                | Self::CampaignSellProductionItem { .. }
+                | Self::CampaignConvertSelectedPeasantsToBlazons
+                | Self::ApplyQuitMissionUpdates { .. }
+                | Self::QuitMissionRequested
+                | Self::SetAmountOfSpeaking { .. }
+                | Self::SetFixHardReactionTimes { .. }
+                | Self::SetUnbindingEnabled { .. }
+                | Self::SetSherwoodTrading { .. }
+                | Self::ModalDismiss { .. }
+                | Self::ConnectSeat { .. }
+                | Self::DisconnectSeat { .. }
+                | Self::SetReusableCloaks { .. }
+                | Self::SetCleanHandsNpcKillsInvalidate { .. }
+                | Self::SetItemGameplayConfig { .. }
+                | Self::SetNoiseDistractionFeedback { .. }
+        )
+    }
 }
 
 /// Deserialize an explicitly present optional value.

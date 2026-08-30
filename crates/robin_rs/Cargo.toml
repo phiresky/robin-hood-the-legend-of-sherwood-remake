@@ -30,7 +30,9 @@ serde-value = "0.7"
 tracing.workspace = true
 thiserror.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-jiff = "0.2"
+# Browser save metadata needs both the JavaScript wall clock and browser local
+# time zone. The `js` feature is inert on native targets.
+jiff = { version = "0.2", features = ["js"] }
 sys-locale = { version = "0.3", features = ["js"] }
 fastrand.workspace = true
 rand = "0.10"
@@ -53,7 +55,7 @@ hex = "0.4"
 zip.workspace = true
 # Windowing + input
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
-gilrs = "0.11"
+gilrs = { version = "0.11", optional = true }
 
 pollster = "1.0"
 
@@ -70,14 +72,10 @@ web-time.workspace = true
 # Native-only runtime integrations (Lua, filesystem/process services, and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Keep wgpu's native defaults/backends. `static-dxc` lets the DX12 backend
-# compile shader-model-6 features, while `webgl` preserves the existing native
-# feature graph for tooling that also targets a browser from a host build.
-wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
-robin_lua.workspace = true
-mlua.workspace = true
-rayon = "1"
-ogg = "0.9.2"
+robin_lua = { workspace = true, optional = true }
+mlua = { workspace = true, optional = true }
+rayon = { version = "1", optional = true }
+ogg = { version = "0.9.2", optional = true }
 # Keep Kira's complete native decoder/backend feature set. Native installs can
 # point at user-supplied data directories, so restricting their accepted audio
 # formats would be an unnecessary compatibility regression.
@@ -90,34 +88,43 @@ tiny_http = "0.12"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
 # hole punching.  Peers are addressed by their public-key endpoint id,
 # so no port forwarding or bind-address configuration is needed.
-iroh = "1.1.0"
-tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time", "io-util"] }
+iroh = { version = "1.1.0", default-features = false, features = ["tls-ring", "portmapper"], optional = true }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time", "io-util"], optional = true }
 # Non-poisoning mutexes for the multiplayer peer state shared across
 # transport worker threads.
-parking_lot = "0.12"
+parking_lot = { version = "0.12", optional = true }
 # Real memory / CPU-frequency queries for the options-menu hardware line.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"], optional = true }
 # Serverless matchmaking: hosts announce games on a well-known
 # iroh-gossip topic whose peers meet through BEP-44 mutable records on
 # the BitTorrent Mainline DHT (`multiplayer::rendezvous`) — no broker,
 # no configuration.  The DHT address lookup additionally lets endpoint
 # ids resolve without any hosted DNS/relay-discovery infrastructure.
-iroh-gossip = { version = "0.101", features = ["net"] }
-mainline = "7"
-iroh-mainline-address-lookup = "0.5"
+iroh-gossip = { version = "0.101", default-features = false, features = ["net"], optional = true }
+mainline = { version = "7", optional = true }
+iroh-mainline-address-lookup = { version = "0.5", optional = true }
+
+# Compile only the GPU backends usable on each native target. In particular,
+# Linux builds do not need the DX12/Metal/WebGPU feature graph.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl", "glsl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "gles", "wgsl", "glsl", "static-dxc"] }
+# GUI-subsystem binaries have no console; re-attach to the parent process
+# console so logs still reach the terminal when launched from one.
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "gles", "wgsl", "glsl"] }
 
 # Desktop installer/update lifecycle hooks. Keep this target-scoped so the
 # Android cdylib and browser build do not pull in desktop packaging support.
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
-semver = "1"
-velopack = "1.2.0"
+semver = { version = "1", optional = true }
+velopack = { version = "1.2.0", optional = true }
 # Native folder-picker / message dialogs for the startup datadir selector.
-rfd = "0.17"
-
-# GUI-subsystem binaries have no console; re-attach to the parent process
-# console so logs still reach the terminal when launched from one.
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+rfd = { version = "0.17", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Direct JNI calls let android_main ask the Java Activity to leave the
@@ -174,7 +181,7 @@ gloo-render = "0.3"
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 # Browser endpoints use iroh's built-in relay-over-WebSocket transport. Native
 # discovery remains target-scoped above; browser joins use a signed relay URL.
-iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"] }
+iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"], optional = true }
 
 [dev-dependencies]
 qoi = "0.4"
@@ -187,21 +194,47 @@ bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"]
 fs2 = "0.4"
 
 [features]
-# Desktop's standard build includes RetroArch preset support. Browser and
-# Android packaging already use --no-default-features and therefore keep the
-# native-only C++ shader toolchain out of those targets.
-default = ["native-fs", "audio", "video", "retroarch-shaders"]
+# Bare builds are intentionally dependency-minimal. Opt into the normal native
+# game with `desktop`, or select individual integrations as needed.
+default = []
+desktop = ["native-fs", "audio", "dialogs", "gamepad", "hardware-info"]
+# Packaged desktop builds retain the integrations they can currently ship.
+release = ["desktop", "lua", "multiplayer", "auto-update"]
+# Every supported native integration. FFmpeg packaging is not yet available on
+# every release target, so the release workflow uses `release` for now.
+full = ["release", "video", "retroarch-shaders"]
+# Native/browser iroh transport, signed join tickets, and DHT/gossip
+# matchmaking. Local play and rollback replay use only robin_engine channels.
+multiplayer = [
+    "dep:iroh",
+    "dep:tokio",
+    "dep:parking_lot",
+    "dep:iroh-gossip",
+    "dep:mainline",
+    "dep:iroh-mainline-address-lookup",
+]
+# Developer conversion/inspection binaries are built only on demand.
+tools = ["dep:ogg", "dep:rayon"]
 android = ["audio"]
-audio = ["dep:kira", "dep:mint"]
+audio = ["dep:kira", "dep:mint", "dep:rayon"]
+dialogs = ["dep:rfd"]
+gamepad = ["dep:gilrs"]
+hardware-info = ["dep:sysinfo"]
 # Cutscene video playback (Intro/Outro.ogg).  Pulls in ffmpeg-next,
 # which does not build on wasm32 — wasm builds turn the default
 # features off and re-enable selectively. Android builds should do the
 # same for now; ffmpeg packaging is TODO once the native APK boots.
 video = ["dep:ffmpeg-next", "audio"]
+# Spellforge custom-mission Lua scripting. Vanilla missions do not need the
+# bundled Luau C++ toolchain.
+lua = ["dep:robin_lua", "dep:mlua"]
 # Standard filesystem-backed save / replay directory resolution via the
 # `dirs` crate.  Disabled on wasm where saves/replays go through a
 # browser-side mechanism instead of OS data dirs.
 native-fs = ["dep:dirs"]
+# Installed desktop builds can opt into Velopack startup and background update
+# checks. Developer builds do not need its HTTP and packaging dependency graph.
+auto-update = ["dep:semver", "dep:velopack"]
 # RetroArch .slangp shader-preset support via librashader. This pulls in
 # glslang + SPIRV-Cross (C++); Windows GNU packages must ship libstdc++-6.dll.
 retroarch-shaders = ["dep:librashader"]
@@ -221,6 +254,13 @@ test = false
 name = "dump_level"
 path = "src/bin/dump_level.rs"
 test = false
+required-features = ["tools"]
+
+[[bin]]
+name = "convert_datadir"
+path = "src/bin/convert_datadir.rs"
+test = false
+required-features = ["tools"]
 
 [lints]
 workspace = true

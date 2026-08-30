@@ -335,6 +335,78 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
 }
 
 #[test]
+fn detached_patrol_status_preserves_original_cursor_history_across_reassignment() {
+    use crate::ai::PatrolAssignment;
+    use crate::ai::macro_patrol::{PathHistoryEntry, PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    // Original RHPath::SerializeStatus writes current, last, direction, path
+    // and history (original-code/RHpath.cpp), while Init(new_path) resets only
+    // current/direction. AssignNewPatrolPath uses that Init path in
+    // original-code/RHartificialintelligence.cpp.
+    let paths = vec![RawHikingPath {
+        waypoints: vec![
+            RawWaypoint {
+                x: 10,
+                y: 20,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+            RawWaypoint {
+                x: 30,
+                y: 40,
+                sector: 2,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+        ],
+    }];
+    let path_id = PathId::new(0).unwrap();
+    let history = vec![PathHistoryEntry {
+        position: Position {
+            x: 7.0,
+            y: 9.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        direction: 3,
+        distance: 11,
+    }];
+    let mut path = PatrolPath::new(path_id, &paths).unwrap();
+    path.current_waypoint_index = 1;
+    path.last_waypoint_index = 9;
+    path.forward = false;
+    path.history = history.clone();
+
+    let mut ai = AiController::new(17);
+    ai.has_patrol_path = true;
+    ai.patrol_path = Some(path);
+    ai.detach_patrol_path(None, false);
+    assert!(ai.patrol_path.is_none());
+    assert_eq!(ai.detached_patrol_path_status.current_waypoint_index, 1);
+    assert_eq!(ai.detached_patrol_path_status.last_waypoint_index, 9);
+    assert!(!ai.detached_patrol_path_status.forward);
+    assert_eq!(ai.detached_patrol_path_status.history.len(), 1);
+    assert_eq!(ai.detached_patrol_path_status.history[0].direction, 3);
+    assert_eq!(ai.detached_patrol_path_status.history[0].distance, 11);
+
+    assert!(ai.assign_new_patrol_path(
+        PatrolAssignment::Index(path_id),
+        Position::default(),
+        0,
+        &paths,
+    ));
+    let restored = ai.patrol_path.as_ref().unwrap();
+    assert_eq!(restored.current_waypoint_index, 0);
+    assert_eq!(restored.last_waypoint_index, 9);
+    assert!(restored.forward);
+    assert_eq!(restored.history.len(), 1);
+    assert_eq!(restored.history[0].direction, 3);
+    assert_eq!(restored.history[0].distance, 11);
+}
+
+#[test]
 fn script_way_assignment_keeps_special_action() {
     // `AssignPath` (script native) routes through Original's
     // `AssignNewPatrolPath(RHHikingPath*)` overload. Its valid-path arm
@@ -636,6 +708,11 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
         sq_self_view_radius: 1000.0 * 1000.0,
         entity_views: shared_entity_views(views),
         hiking_paths: std::sync::Arc::new(paths),
+        hiking_waypoint_sectors: Some(std::sync::Arc::new(vec![vec![
+            crate::position_interface::SectorHandle::new(0)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+        ]])),
         all_soldier_handles: std::sync::Arc::new(vec![1, 2]),
         self_is_soldier: true,
         ..AiContext::default()
@@ -657,7 +734,7 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
         ai.current_substate,
         Substate::DefaultLookingSidewardsForCharly
     );
-    assert_eq!(ai.checkpoint_charly, 2);
+    assert_eq!(ai.checkpoint_charly, Some(AiEntityHandle::new(2)));
     assert_eq!(ai.macro_command_offset, 17);
     assert_eq!(ai.number_of_remaining_macro_bytes, 3);
     assert!(!ai.macro_timer_is_running);
@@ -1422,12 +1499,12 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
         z: 400.001,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 1135.0,
             y: 1843.0,
             sector: None,
             level: 0,
-        },
+        }),
         noise_type: NoiseType::Drawbridge,
         volume: 274,
         elevation: 220,
@@ -1442,7 +1519,10 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
     assert_eq!(normalized_orders[0].explicit_direction, Some(6));
 
     let mut ground_level_control = AiController::new(1);
-    ground_level_control.face_position_3d_with_ctx(noise.origin, &ctx);
+    ground_level_control.face_position_3d_with_ctx(
+        noise.origin.position().expect("test noise has a layer"),
+        &ctx,
+    );
     let ground_level_orders = ground_level_control.take_pending_orders();
     assert_eq!(ground_level_orders.len(), 1);
     assert_eq!(ground_level_orders[0].explicit_direction, Some(1));
@@ -1469,12 +1549,12 @@ fn face_null_sentinel_noise_origin_preserves_original_ground_projection() {
         z: 480.001_04,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 341.819_34,
             y: 716.628_85,
             sector: None,
             level: u16::MAX,
-        },
+        }),
         noise_type: NoiseType::Zonk,
         volume: 1,
         elevation: 480,
@@ -1509,12 +1589,12 @@ fn face_null_sentinel_noise_origin_ignores_separate_impact_elevation() {
         z: 150.001,
     };
     let noise = Noise {
-        origin: Position {
+        origin: NoiseOrigin::from_position(Position {
             x: 1_092.945_9,
             y: 2_107.296_1,
             sector: None,
             level: u16::MAX,
-        },
+        }),
         noise_type: NoiseType::Zonk,
         volume: 7,
         elevation: 175,
@@ -2103,8 +2183,10 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
             z_top: 20.0,
         },
     ];
-    obstacle.layer = 2;
-    obstacle.sector = 7;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::new(2).unwrap(),
+        crate::fast_find_grid::SectorIndex::new(0).unwrap(),
+    );
     obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
     obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
     obstacle.rebuild_geometry();
@@ -2129,7 +2211,9 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
     let point = ctx.position_to_point_3d(Position {
         x: 50.0,
         y: 50.0,
-        sector: SectorHandle::new(7),
+        sector: SectorHandle::new(7).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
+        }),
         level: 2,
     });
 
@@ -2149,7 +2233,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
     level.sectors.push(GridSector {
         sector_type: SectorType::AREA | SectorType::MOTION | SectorType::BUILDING,
         sector_number: building_number,
-        gate_indices: vec![crate::gate::DoorIndex(0)],
+        gate_indices: vec![crate::gate::DoorIndex::new(0).expect("valid door index")],
         points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         layer: 0,
@@ -2168,7 +2252,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         point_in: MapPoint::new(50.0, 50.0),
         point_out: MapPoint::new(45.0, 55.0),
         sector_out: SectorNumber::new(8),
-        sector_out_index: None,
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(8),
         layer_out: 2,
     });
 
@@ -2205,8 +2289,10 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
             z_top: 20.0,
         },
     ];
-    obstacle.layer = 2;
-    obstacle.sector = 8;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::new(2).unwrap(),
+        crate::fast_find_grid::SectorIndex::new(8).unwrap(),
+    );
     obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
     obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
     obstacle.rebuild_geometry();

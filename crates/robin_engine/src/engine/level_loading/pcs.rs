@@ -531,9 +531,16 @@ impl EngineInner {
                 let pc_half_diag = self
                     .world
                     .fast_grid
-                    .try_move_box_half_diagonal(pc_pathfinder_idx as usize);
+                    .try_move_box_half_diagonal(pc_pathfinder_idx as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "PC profile {profile_idx} references missing pathfinder slot \
+                             {pc_pathfinder_idx}"
+                        )
+                    });
                 sprite.position_iface.configure_for_actor(
-                    pc_pathfinder_idx,
+                    crate::position_interface::PathfinderIndex::new(u16::from(pc_pathfinder_idx))
+                        .expect("u8 PC pathfinder index cannot equal 0xffff"),
                     pc_half_diag,
                     beam_me.position,
                 );
@@ -618,9 +625,13 @@ impl EngineInner {
                     // Apply initial facing from the beam-me point (0-15 sector).
                     (beam_me.direction & 15) as i16,
                     material,
-                    crate::position_interface::ObstacleHandle::new(beam_me.projection_area),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        beam_me.projection_area,
+                    ),
                     crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                        crate::position_interface::ObstacleHandle::new(beam_me.projection_area),
+                        crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                            beam_me.projection_area,
+                        ),
                         assets.static_sight_obstacles.as_slice(),
                     ),
                 );

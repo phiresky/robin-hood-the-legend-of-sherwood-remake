@@ -3046,10 +3046,12 @@ dependencies = [
  "jiff-core",
  "jiff-static",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -5462,6 +5464,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zip",
+]
+
+[[package]]
+name = "robin_parity"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fs2",
+ "png",
+ "robin_assets",
+ "robin_engine",
+ "robin_rs",
+ "serde",
+ "serde-value",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]

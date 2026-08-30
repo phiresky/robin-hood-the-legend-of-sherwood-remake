@@ -2,6 +2,7 @@
 
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
 use crate::host::ApplicationContext;
+#[cfg(feature = "multiplayer")]
 use crate::main_menu::multiplayer_menu::MultiplayerRole;
 use crate::main_menu::{MainMenuChoice, show_main_menu};
 use crate::window::GameWindow;
@@ -360,6 +361,7 @@ pub async fn run_rust_game(
                 let SessionResult::QuitToMenu = outcome.result?;
                 tracing::info!("Returned to main menu from Load");
             }
+            #[cfg(feature = "multiplayer")]
             MainMenuChoice::Multiplayer(launch) => {
                 let Some(idx) = campaign
                     .missions

@@ -4,13 +4,18 @@
 //! order from command recording through simulation history, stepping, scripted
 //! modals, and the handoff to presentation.
 
+use super::debriefing::{LostSherwoodGateProgress, drive_lost_sherwood_gate};
 use super::flow::{FrameControl, MissionServices};
 use super::interactive::{MissionPresentation, MissionResources};
 use super::runtime::FrameContractStage;
-use super::terminal_debriefing::{TerminalDebriefingContext, drive_tick_exit_modals};
+use super::terminal_debriefing::{
+    TerminalDebriefingContext, TerminalDebriefingProgress, drive_tick_exit_modals,
+};
+use super::ui_task_state::{ActiveUiTask, UiTaskOutcome};
 use super::*;
 use crate::game::Game;
 use crate::host::HostSignal;
+use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct FramePresentationHandoff {
@@ -63,6 +68,7 @@ struct SimulationModalState {
 /// deterministic tick but before scripted modal drains.
 struct SimulationVisualRefresh<'a> {
     last_shadow_color: &'a mut u16,
+    last_visual_ambiance: &'a mut robin_engine::engine::Ambiance,
     manager: &'a mut robin_engine::engine_manager::EngineManager,
     host: &'a mut Host,
     dev: &'a mut robin_engine::engine::DevState,
@@ -75,6 +81,7 @@ impl SimulationVisualRefresh<'_> {
     fn run(self) {
         let Self {
             last_shadow_color,
+            last_visual_ambiance,
             manager,
             host,
             dev,
@@ -83,14 +90,40 @@ impl SimulationVisualRefresh<'_> {
             window,
         } = self;
 
-        let current_shadow_color = manager.engine.weather().night_color;
-        if current_shadow_color != *last_shadow_color {
+        let dynamic_visuals = host
+            .application_context
+            .active_profile_snapshot()
+            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or(true);
+        let current_visual_ambiance = if dynamic_visuals {
+            manager.engine.weather().ambiance
+        } else {
+            manager.engine.initial_mission_ambiance()
+        };
+        let current_shadow_color = if dynamic_visuals {
+            manager.engine.weather().night_color
+        } else {
+            manager.engine.initial_mission_night_color()
+        };
+        let ambiance_changed = current_visual_ambiance != *last_visual_ambiance;
+        if ambiance_changed {
+            presentation.apply_ambience_maps(&manager.engine, host, current_visual_ambiance);
+            *last_visual_ambiance = current_visual_ambiance;
+        }
+        if current_shadow_color != *last_shadow_color || ambiance_changed {
             tracing::info!(
                 "Ambience shadow-key changed {:#06x} → {:#06x}; rebinding sprite caches",
                 last_shadow_color,
                 current_shadow_color,
             );
-            presentation.rebind_shadow_key(resources, host, &window.gpu, current_shadow_color);
+            presentation.rebind_shadow_key(
+                resources,
+                host,
+                &window.gpu,
+                current_shadow_color,
+                current_visual_ambiance,
+                manager.engine.sim_config().bypass_fog_sprites_crash,
+            );
             *last_shadow_color = current_shadow_color;
         }
 
@@ -432,6 +465,7 @@ fn drive_leave_mission_prompt(
                     None,
                 ),
                 replay_result,
+                awaiting_authority: false,
             });
         }
     }
@@ -486,9 +520,17 @@ fn drain_deferred_save_load_after_zoom(
         callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
     }
     if std::mem::take(&mut game.quick_load_after_zoom) {
-        callbacks.pending = Some(SaveLoadRequest::QuickLoad {
-            use_backup: shift_held,
-        });
+        if host.transport.authoritative_transition_actions_enabled() {
+            callbacks.pending = Some(SaveLoadRequest::QuickLoad {
+                use_backup: shift_held,
+            });
+        } else {
+            game.display_message(
+                "Quick Load is available only to the multiplayer host after synchronization finishes."
+                    .to_string(),
+                100,
+            );
+        }
     }
 }
 
@@ -548,11 +590,13 @@ impl InteractiveFrameSimulation {
         let MissionControl {
             manual_pause,
             last_shadow_color,
+            last_visual_ambiance,
             ..
         } = control;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let presentation = &mut frontend.presentation;
+        let input = &mut frontend.input;
         let Self { mut frame, flags } = this;
         let FrameSimulationFlags {
             rewind_active,
@@ -585,12 +629,17 @@ impl InteractiveFrameSimulation {
             assets,
             dev,
             manual_pause,
-            &mut ui.active_modal,
+            ui,
+            window,
+            presentation,
+            input,
+            tick_exit_code.is_some(),
             step_forward_pressed,
             step_back_pressed,
         );
         SimulationVisualRefresh {
             last_shadow_color,
+            last_visual_ambiance,
             manager,
             host,
             dev,
@@ -637,6 +686,7 @@ impl InteractiveFrameSimulation {
         let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
+        let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
         let SimulationModalState {
             mut frame,
@@ -654,7 +704,458 @@ impl InteractiveFrameSimulation {
         } else {
             ScriptedModalMode::Interactive
         };
-        if auto_dismiss_modals {
+        let mut ui_task_exit_requested = false;
+
+        // Pause-side UI is a cooperative process state just like scripted
+        // modals: it receives one event batch, draws once, and returns control
+        // to the mission loop. A script modal has priority and cancels the
+        // local task so deterministic dialogue cannot be obscured.
+        if ui.active_ui_task.is_some()
+            && (ui.active_modal.is_some() || modal_state_pending(host) || auto_dismiss_modals)
+        {
+            // A cross-mission QuickLoad already owns an exact decoded save;
+            // suspend it behind scripted dialogue rather than dropping the
+            // request. Pause-side pages are local and are cancelled when an
+            // authoritative modal takes over.
+            if !ui
+                .active_ui_task
+                .as_ref()
+                .is_some_and(|task| task.is_quick_load())
+            {
+                if let Some(mut task) = ui.active_ui_task.take() {
+                    task.cleanup();
+                }
+                if ui.close_pause(input, presentation) {
+                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                    if host.transport.net.is_none() {
+                        callbacks.start_play_time();
+                    }
+                }
+            }
+        } else if let Some(mut task) = ui.active_ui_task.take() {
+            let scene_screenshots =
+                crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
+            if !scene_screenshots.is_empty() {
+                pre_render_engine_setup(manager, host, assets.as_ref(), &mut presentation.renderer);
+                update_mouse_and_cursor(
+                    manager,
+                    host,
+                    assets.as_ref(),
+                    dev,
+                    &mut frame.post_external_actions,
+                    &mut presentation.renderer,
+                    &mut resources.cursor,
+                    &mut presentation.sprites.cursor_renderer,
+                    &input.threaded,
+                    &presentation.sprites.portrait_cache,
+                    shift_held,
+                    &mut hud.last_cursor_id,
+                );
+                let display_snapshot = host.engine_display.clone();
+                let mut render_context = presentation.render_context(
+                    resources,
+                    hud,
+                    input,
+                    ui,
+                    game,
+                    RenderViewState {
+                        shift_held,
+                        rewind_active,
+                        display_info_elapsed_secs:
+                            <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
+                                callbacks,
+                                manager.engine.campaign(),
+                            ),
+                    },
+                );
+                drain_screenshot_requests(
+                    scene_screenshots,
+                    &manager.engine,
+                    &display_snapshot,
+                    host,
+                    assets.as_ref(),
+                    dev,
+                    &mut render_context,
+                );
+                post_render_engine_cleanup(&mut frame, host);
+            }
+            let menu_resources =
+                required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
+            let cursor = default_modal_cursor(
+                &mut presentation.sprites.cursor_renderer,
+                &mut resources.cursor,
+                &mut presentation.renderer,
+            );
+            let task_outcome = task.tick(
+                window,
+                &mut presentation.renderer,
+                menu_resources,
+                Some(&cursor),
+                &mut callbacks.save_manager,
+                Some(profiles),
+                Some(&mut host.audio.sound),
+                audio
+                    .backend
+                    .as_mut()
+                    .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+                Some(&audio.sample_loader),
+            );
+            modal_rendered_this_frame = true;
+            drain_presented_ui_screenshots(runtime.frame_number(), &presentation.renderer);
+
+            if let Some(outcome) = task_outcome {
+                task.cleanup();
+                match outcome {
+                    UiTaskOutcome::ReturnToPause => {
+                        if let Some(menu) = ui.pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                            menu.seed_mouse_from_window(
+                                window,
+                                presentation.renderer.screen_width() as i32,
+                                presentation.renderer.screen_height() as i32,
+                            );
+                        }
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::OptionsAccepted(result) => {
+                        if result.changed {
+                            host.application_context
+                                .with_player_profiles_mut(|manager| {
+                                    let profile = manager
+                                        .profiles
+                                        .iter_mut()
+                                        .find(|profile| profile.id == result.profile_id)
+                                        .expect(
+                                            "Options profile disappeared while side task was open",
+                                        );
+                                    profile.graphic_config = result.graphic_config.clone();
+                                    profile.gameplay_config = result.gameplay_config;
+                                    profile.multiplayer_config = result.multiplayer_config;
+                                    profile.sound_config = result.sound_config;
+                                    if let Err(error) = manager.save() {
+                                        tracing::error!(
+                                            "Options: failed to save profile manager: {error:#}"
+                                        );
+                                    }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options profile update failed: {error}")
+                                });
+                        }
+
+                        host.frontend.key_config = result.key_config.clone();
+                        host.frontend.custom_key_config = result.custom_key_config.clone();
+                        host.control_tactical_units = result.gameplay_config.control_tactical_units;
+                        host.touch_camera_gestures = result.gameplay_config.touch_camera_gestures;
+                        host.gameplay_config = result.gameplay_config;
+                        host.native_refresh_presentation =
+                            result.graphic_config.native_refresh_presentation;
+                        window.set_native_refresh_presentation(
+                            result.graphic_config.native_refresh_presentation,
+                        );
+                        presentation.renderer.configure_native_refresh_presentation(
+                            result.graphic_config.native_refresh_presentation,
+                            window.surface_config.width,
+                            window.surface_config.height,
+                        );
+                        if !host.control_tactical_units {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::ReleaseTacticalControl,
+                            );
+                        }
+                        if result.sound_config.amount_of_speaking
+                            != result.original_amount_of_speaking
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetAmountOfSpeaking {
+                                    amount: result.sound_config.amount_of_speaking,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.fix_hard_reaction_times
+                            != result.original_gameplay_config.fix_hard_reaction_times
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetFixHardReactionTimes {
+                                    enabled: result.gameplay_config.fix_hard_reaction_times,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.enable_unbinding
+                            != result.original_gameplay_config.enable_unbinding
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetUnbindingEnabled {
+                                    enabled: result.gameplay_config.enable_unbinding,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.clean_hands_npc_kills_invalidate
+                            != result
+                                .original_gameplay_config
+                                .clean_hands_npc_kills_invalidate
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                                    enabled: result
+                                        .gameplay_config
+                                        .clean_hands_npc_kills_invalidate,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.reusable_cloaks
+                            != result.original_gameplay_config.reusable_cloaks
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetReusableCloaks {
+                                    enabled: result.gameplay_config.reusable_cloaks,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.item_gameplay
+                            != result.original_gameplay_config.item_gameplay
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetItemGameplayConfig {
+                                    config: result.gameplay_config.item_gameplay,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.noise_distraction_feedback
+                            != result.original_gameplay_config.noise_distraction_feedback
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetNoiseDistractionFeedback {
+                                    enabled: result.gameplay_config.noise_distraction_feedback,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.sherwood_trading
+                            != result.original_gameplay_config.sherwood_trading
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetSherwoodTrading {
+                                    enabled: result.gameplay_config.sherwood_trading,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.enable_timed_missions
+                            != result.original_gameplay_config.enable_timed_missions
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetTimedMissionsEnabled {
+                                    enabled: result.gameplay_config.enable_timed_missions,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.enable_dynamic_ambience
+                            != result.original_gameplay_config.enable_dynamic_ambience
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetDynamicAmbienceEnabled {
+                                    enabled: result.gameplay_config.enable_dynamic_ambience,
+                                },
+                            );
+                        }
+
+                        presentation
+                            .renderer
+                            .set_scale_mode(result.graphic_config.scale_mode);
+                        presentation
+                            .renderer
+                            .set_shader_preset(result.graphic_config.shader_preset.clone());
+                        if let Some(backend) = audio.backend.as_mut() {
+                            host.audio.sound.apply_sound_settings(
+                                false,
+                                backend,
+                                &result.sound_config,
+                                None,
+                            );
+                        } else {
+                            host.audio.sound.apply_volumes(&result.sound_config);
+                        }
+
+                        if result.resolution_changed {
+                            window.set_logical_resolution_policy(&result.graphic_config);
+                            presentation.renderer.sync_window_size(window);
+                            let (logical_width, logical_height) = window.logical_size();
+                            let width = logical_width as f32;
+                            let height = logical_height as f32;
+                            let width_u16 = logical_width as u16;
+                            let height_u16 = logical_height as u16;
+                            host.viewport.set_screen_size(width, height);
+                            game.set_resolution(width_u16, height_u16);
+                            input.resize(logical_width, logical_height, &result.key_config);
+                            hud.resize(logical_width, logical_height);
+                            if host.minimap_corner_size.x > 0.0 {
+                                dispatch_local_command(
+                                    host,
+                                    &mut manager.engine,
+                                    &mut frame.post_commands,
+                                    assets.as_ref(),
+                                    &PlayerCommand::MinimapResize {
+                                        base: engine_coordinates::ScreenPoint::new(
+                                            width - 83.0,
+                                            38.0,
+                                        ),
+                                        corner_size: host.minimap_corner_size,
+                                    },
+                                );
+                            }
+                            game.reshow_campaign_map();
+                        } else if result.key_config_changed {
+                            input
+                                .translator
+                                .load_bindings_from_keyconfig(&result.key_config);
+                        }
+
+                        if result.key_config_changed {
+                            host.application_context
+                                .with_key_configs_mut(|store| {
+                                    let entry = store.entry_or_default(result.profile_id);
+                                    entry.active = result.key_config.clone();
+                                    entry.custom = result.custom_key_config.clone();
+                                    if let Err(error) = store.save() {
+                                        tracing::error!(
+                                            "Options: failed to save key configs: {error:#}"
+                                        );
+                                    }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options key-config update failed: {error}")
+                                });
+                            host.minimap_fast_key =
+                                input.translator.get_binding(GameKey::DisplayMap);
+                        }
+                        if let Some(menu) = ui.pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                            menu.seed_mouse_from_window(
+                                window,
+                                presentation.renderer.screen_width() as i32,
+                                presentation.renderer.screen_height() as i32,
+                            );
+                        }
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::SaveLoadSelected {
+                        mode,
+                        filename,
+                        mission_id,
+                    } => {
+                        let slot = callbacks
+                            .save_manager
+                            .find_by_filename(&filename)
+                            .unwrap_or_else(|| {
+                                panic!("selected save slot '{filename}' disappeared")
+                            });
+                        callbacks.pending = Some(match mode {
+                            SaveLoadMode::Save => SaveLoadRequest::Save {
+                                slot: Some(slot),
+                                mission_id,
+                            },
+                            SaveLoadMode::Load => SaveLoadRequest::Load {
+                                slot: Some(slot),
+                                mission_id,
+                                save: None,
+                            },
+                        });
+                        ui.pause_menu = None;
+                        presentation.renderer.clear_frozen_scene();
+                        input.reset_after_modal();
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                        if host.transport.net.is_none() {
+                            callbacks.start_play_time();
+                        }
+                    }
+                    UiTaskOutcome::QuickLoadAccepted {
+                        slot,
+                        mission_id,
+                        save,
+                    } => {
+                        callbacks.pending = Some(SaveLoadRequest::Load {
+                            slot: Some(slot),
+                            mission_id,
+                            save: Some(*save),
+                        });
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::QuickLoadCancelled => {
+                        input.reset_after_modal();
+                    }
+                    UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                        ui_task_exit_requested = true;
+                    }
+                }
+            } else {
+                ui.active_ui_task = Some(task);
+            }
+        }
+
+        let lost_sherwood_progress = drive_lost_sherwood_gate(
+            &mut ui.lost_sherwood_gate,
+            window,
+            host,
+            &manager.engine,
+            game.is_sherwood,
+            resources,
+            presentation,
+        );
+        let lost_sherwood_modal_active = matches!(
+            lost_sherwood_progress,
+            LostSherwoodGateProgress::Pending | LostSherwoodGateProgress::Exit
+        );
+        let terminal_modal_active = ui.terminal_debriefing.is_some();
+        if terminal_modal_active || lost_sherwood_modal_active {
+            // The terminal sequence owns presentation until its typed outcome
+            // settles. Network/HTTP/replay still drain through the surrounding
+            // outer frame; only competing scripted surfaces are deferred.
+            modal_rendered_this_frame = true;
+        } else if auto_dismiss_modals {
             let dismissed = dismiss_pending_modals(host);
             let active_dismissed = usize::from(ui.active_modal.take().is_some());
             if dismissed + active_dismissed > 0 {
@@ -684,22 +1185,26 @@ impl InteractiveFrameSimulation {
             .await;
         }
 
-        drain_pending_console_display(host, &mut ui.console_overlay);
+        if !terminal_modal_active && !lost_sherwood_modal_active {
+            drain_pending_console_display(host, &mut ui.console_overlay);
+        }
 
-        modal_rendered_this_frame = drive_leave_mission_prompt(
-            host,
-            manager,
-            assets.as_ref(),
-            window,
-            audio,
-            resources,
-            ui,
-            presentation,
-            runtime,
-            &mut frame,
-            modal_mode,
-            modal_rendered_this_frame,
-        );
+        if !terminal_modal_active && !lost_sherwood_modal_active {
+            modal_rendered_this_frame = drive_leave_mission_prompt(
+                host,
+                manager,
+                assets.as_ref(),
+                window,
+                audio,
+                resources,
+                ui,
+                presentation,
+                runtime,
+                &mut frame,
+                modal_mode,
+                modal_rendered_this_frame,
+            );
+        }
 
         drain_deferred_save_load_after_zoom(
             host,
@@ -711,7 +1216,40 @@ impl InteractiveFrameSimulation {
         );
         reset_input_after_tick_request(host, input);
 
-        if drive_tick_exit_modals(TerminalDebriefingContext {
+        if ui_task_exit_requested {
+            let mut display = std::mem::take(&mut host.engine_display);
+            let post_initialized = runtime.cross_post_initialize(|| {
+                crate::sim_timeline::run_post_initialize_stage_with_actions(
+                    host,
+                    &mut display,
+                    assets,
+                    &mut manager.engine,
+                    dev,
+                    frame.unapplied_post_external_actions(),
+                    &frame.post_commands.commands,
+                    frame.run_post_initialize,
+                )
+            });
+            frame.run_post_initialize = post_initialized;
+            host.engine_display = display;
+            if history_commit_pending {
+                runtime.commit_simulation_history(
+                    host,
+                    manager,
+                    &frame,
+                    FrameCommitPolicy {
+                        store_rewind_commands: !consumed_buffered,
+                    },
+                );
+            }
+            runtime.finish_recording(&mut frame);
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
+                GameCode::Quit,
+            )));
+        }
+
+        let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
             host,
             game,
@@ -725,8 +1263,12 @@ impl InteractiveFrameSimulation {
             ui,
             presentation,
             frame: &mut frame,
-        })
-        .await
+        });
+        if terminal_progress == TerminalDebriefingProgress::Pending {
+            modal_rendered_this_frame = true;
+        }
+        if terminal_progress == TerminalDebriefingProgress::EmergencyExit
+            || lost_sherwood_progress == LostSherwoodGateProgress::Exit
         {
             let mut display = std::mem::take(&mut host.engine_display);
             let post_initialized = runtime.cross_post_initialize(|| {
@@ -891,7 +1433,11 @@ impl InteractiveFrameSimulation {
         assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
         dev: &mut robin_engine::engine::DevState,
         manual_pause: &mut bool,
-        active_modal: &mut Option<ActiveModal>,
+        ui: &mut super::interactive::MissionUi,
+        window: &crate::window::GameWindow,
+        presentation: &mut super::interactive::MissionPresentation,
+        input: &mut super::interactive::MissionInput,
+        terminal_exit_pending: bool,
         step_forward_pressed: bool,
         step_back_pressed: bool,
     ) {
@@ -902,6 +1448,19 @@ impl InteractiveFrameSimulation {
         // purpose is to drive the sim from a paused state — but still
         // refuse if a modal dialog is queued so the user doesn't step
         // past it.
+        let campaign_ui_blocked = ui.sherwood_campaign_flow.is_some()
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
+        let mission_ui_block_reason = if terminal_exit_pending {
+            Some("terminal mission transition")
+        } else if campaign_ui_blocked {
+            Some("campaign UI")
+        } else {
+            None
+        };
+        let active_ui_task = &mut ui.active_ui_task;
+        let pause_menu = &mut ui.pause_menu;
         drain_steps(
             manager,
             host,
@@ -910,7 +1469,36 @@ impl InteractiveFrameSimulation {
             game,
             runtime,
             manual_pause,
-            active_modal,
+            &mut ui.active_modal,
+            ui.terminal_debriefing.as_mut(),
+            mission_ui_block_reason,
+            |policy| {
+                let Some(kind) = active_ui_task.as_ref().map(ActiveUiTask::kind) else {
+                    return Ok(());
+                };
+                kind.require_http_auto_dismiss(policy)?;
+
+                let mut task = active_ui_task
+                    .take()
+                    .expect("validated cooperative UI task disappeared before dismissal");
+                let outcome = task.auto_dismiss();
+                task.cleanup();
+                debug_assert!(matches!(
+                    outcome,
+                    UiTaskOutcome::ReturnToPause | UiTaskOutcome::QuickLoadCancelled
+                ));
+                if let Some(menu) = pause_menu.as_mut() {
+                    menu.reset_after_side_menu();
+                    menu.seed_mouse_from_window(
+                        window,
+                        presentation.renderer.screen_width() as i32,
+                        presentation.renderer.screen_height() as i32,
+                    );
+                }
+                input.reset_after_modal();
+                tracing::debug!(?kind, "HTTP step: auto-dismissed cooperative UI task");
+                Ok(())
+            },
         );
 
         // Publish replay-playback status for the script-RPC `state`
@@ -937,7 +1525,19 @@ impl InteractiveFrameSimulation {
         // cursor themselves: forward pulls the next recorded commands
         // and applies them before the tick; back seeks the cursor to
         // the rewound frame so playback resumes from there.
-        if step_forward_pressed && !modal_state_pending(host) {
+        let mission_ui_modal_pending = terminal_exit_pending
+            || campaign_ui_blocked
+            || ui.terminal_debriefing.is_some()
+            || ui
+                .active_modal
+                .as_ref()
+                .is_some_and(|modal| !modal.is_empty());
+        let keyboard_stepping_allowed = host.transport.net.is_none();
+        if step_forward_pressed
+            && keyboard_stepping_allowed
+            && !modal_state_pending(&host)
+            && !mission_ui_modal_pending
+        {
             // Stepping into a save-marker / load-back frame must pin or
             // swap state exactly like the normal playback admission path.
             runtime
@@ -1023,7 +1623,11 @@ impl InteractiveFrameSimulation {
                     "step-forward: frame lies inside recorded history but its commands are missing"
                 );
             }
-        } else if step_back_pressed && !modal_state_pending(host) {
+        } else if step_back_pressed
+            && keyboard_stepping_allowed
+            && !modal_state_pending(&host)
+            && !mission_ui_modal_pending
+        {
             if let Some(target) = runtime.current_frame().previous()
                 && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
                 && target.number() >= oldest

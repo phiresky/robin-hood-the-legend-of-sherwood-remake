@@ -30,6 +30,7 @@ use super::layout::{
     MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
     render_text_virt_font,
 };
+#[cfg(feature = "multiplayer")]
 use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
     IngameMenuResources, MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS,
@@ -57,11 +58,14 @@ const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
 const BUTTON_GAMEPLAY: u32 = 3;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
 const BUTTON_MULTIPLAYER_PRIVACY: u32 = 4;
 /// Desktop only: re-select the game data folder (see
 /// [`crate::datadir_locator`]).
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[cfg(all(
+    feature = "dialogs",
+    any(target_os = "windows", target_os = "linux", target_os = "macos")
+))]
 const BUTTON_GAME_DATA: u32 = 5;
 const BUTTON_BACK: u32 = 6;
 const BUTTON_LANGUAGE: u32 = 7;
@@ -97,6 +101,8 @@ pub async fn show_options(
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) -> OptionsOutcome {
+    #[cfg(not(feature = "multiplayer"))]
+    let _ = multiplayer_config;
     let mut outcome = OptionsOutcome::default();
     let mut input_state = ModalInputState::new();
 
@@ -122,7 +128,7 @@ pub async fn show_options(
             (BUTTON_SHORTCUTS, &shortcuts_label),
             (BUTTON_GAMEPLAY, "Gameplay"),
         ];
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
         entries.push((BUTTON_MULTIPLAYER_PRIVACY, "Multiplayer / Privacy"));
         let language_label = application_context
             .port_text(crate::localization::PortTextKey::Language)
@@ -134,7 +140,10 @@ pub async fn show_options(
         if language_option_visible(allow_language_switching, selector_visible) {
             entries.push((BUTTON_LANGUAGE, language_label));
         }
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        #[cfg(all(
+            feature = "dialogs",
+            any(target_os = "windows", target_os = "linux", target_os = "macos")
+        ))]
         entries.push((BUTTON_GAME_DATA, "Game Data Folder"));
         entries.push((BUTTON_BACK, &back_label));
         let labels: Vec<(&str, bool)> = entries.iter().map(|&(_, label)| (label, true)).collect();
@@ -286,7 +295,7 @@ pub async fn show_options(
                         .await;
                         outcome.changed |= changed;
                     }
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
                     BUTTON_MULTIPLAYER_PRIVACY => {
                         let changed = show_multiplayer_privacy(
                             event_pump,
@@ -313,7 +322,10 @@ pub async fn show_options(
                             done = true;
                         }
                     }
-                    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+                    #[cfg(all(
+                        feature = "dialogs",
+                        any(target_os = "windows", target_os = "linux", target_os = "macos")
+                    ))]
                     BUTTON_GAME_DATA => {
                         // Opens the native folder picker; the modal loop is
                         // frozen while the OS dialog is up, which is fine —

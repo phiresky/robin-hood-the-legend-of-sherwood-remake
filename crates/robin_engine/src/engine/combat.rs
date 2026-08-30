@@ -717,7 +717,6 @@ impl EngineInner {
             let obstacle_list = self.sight_obstacles(assets);
             let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                 fast_find_grid: &self.world.fast_grid,
-                layer,
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
@@ -906,7 +905,7 @@ impl EngineInner {
                 ) {
                     let obstacle_list = self.sight_obstacles(assets);
                     let obstacle = terminal_obstacle.map(|handle| {
-                        let index = usize::from(u16::from(handle));
+                        let index = usize::from(handle);
                         let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
                             panic!("diagnostic terminal obstacle {index} disappeared")
                         });
@@ -914,8 +913,7 @@ impl EngineInner {
                             index,
                             obstacle_list.is_active(index),
                             obstacle.is_projection_area(),
-                            obstacle.layer,
-                            obstacle.sector,
+                            obstacle.projection_area_ref(),
                             obstacle.contains_point_projection(
                                 trajectory_end
                                     .expect("terminal impact lost its endpoint")
@@ -927,7 +925,7 @@ impl EngineInner {
                         .expect("terminal impact lost its endpoint")
                         .to_map();
                     let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
-                        let index = usize::from(u16::from(handle));
+                        let index = usize::from(handle);
                         obstacle_list.get(index).unwrap_or_else(|| {
                             panic!("diagnostic terminal obstacle {index} disappeared")
                         })
@@ -969,10 +967,12 @@ impl EngineInner {
                     )
                     .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
                     let candidate_layer = obstacle
-                        .filter(|(_, active, projection, layer, _, _)| {
-                            *active && *projection && *layer != u16::MAX
+                        .filter(|(_, active, projection, topology, _)| {
+                            *active && *projection && topology.is_some()
                         })
-                        .map_or(0, |(_, _, _, layer, _, _)| layer);
+                        .map_or(0, |(_, _, _, topology, _)| {
+                            topology.expect("filtered projection topology").layer.get()
+                        });
                     let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
                         let block = self
                             .world
@@ -1028,7 +1028,12 @@ impl EngineInner {
                 let element = entity.element_data_mut();
                 element.set_sector(resolution.sector);
                 if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-                    element.set_layer(resolution.layer);
+                    element.set_layer(
+                        resolution
+                            .layer
+                            .expect("authorized projectile landing has no resolved layer")
+                            .get(),
+                    );
                 }
             }
             if terminal_membership {
@@ -1127,7 +1132,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -1638,7 +1642,6 @@ impl EngineInner {
         };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -1706,7 +1709,6 @@ impl EngineInner {
             super::ai::ai_view_position_sector(self, thrower.element_data());
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -2268,7 +2270,7 @@ fn set_projectile_trajectory_origin(
 ) {
     projectile.trajectory_origin_sector = sector.map(crate::position_interface::SectorHandle::get);
     projectile.trajectory_origin_sector_index = sector.and_then(|sector| sector.arena_index());
-    projectile.trajectory_origin_layer = layer;
+    projectile.trajectory_origin_layer = crate::position_interface::Layer::new(layer);
 }
 
 fn projectile_trajectory_origin_sector(
@@ -2291,11 +2293,12 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> 
     match entity {
         Entity::Projectile(p) => {
             let sector = projectile_trajectory_origin_sector(&p.projectile);
+            let layer = p.projectile.trajectory_origin_layer?;
             Some(crate::ai::Position {
                 x: p.projectile.start_of_trajectory_x,
                 y: p.projectile.start_of_trajectory_y,
                 sector,
-                level: p.projectile.trajectory_origin_layer,
+                level: layer.get(),
             })
         }
         _ => None,
@@ -2451,7 +2454,10 @@ mod tests {
         assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
         assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
         assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
-        assert_eq!(purse.projectile.trajectory_origin_layer, 2);
+        assert_eq!(
+            purse.projectile.trajectory_origin_layer,
+            crate::position_interface::Layer::new(2)
+        );
         let after_prime = purse.element.position();
         engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
@@ -2518,17 +2524,17 @@ mod tests {
             assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
             assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
             assert_eq!(coin.projectile.trajectory_origin_sector, None);
-            assert_eq!(coin.projectile.trajectory_origin_layer, u16::MAX);
+            assert_eq!(coin.projectile.trajectory_origin_layer, None);
             assert_eq!(coin.element.sector(), None);
-            assert_eq!(coin.element.layer(), u16::MAX);
+            assert_eq!(coin.element.optional_layer(), None);
             assert!(
                 purse_creation < engine.original_creation_order(child),
                 "purse constructor identity must precede child coin constructors"
             );
         }
-        assert_eq!(empty_purse.element.layer(), u16::MAX);
+        assert_eq!(empty_purse.element.optional_layer(), None);
         assert_eq!(empty_purse.element.sector(), None);
-        assert_eq!(empty_purse.projectile.trajectory_origin_layer, u16::MAX);
+        assert_eq!(empty_purse.projectile.trajectory_origin_layer, None);
         assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
 
         let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
@@ -2824,7 +2830,7 @@ mod tests {
                 .unwrap()
                 .base
                 .primary_target,
-            shooter.index(),
+            Some(crate::ai::AiEntityHandle::new(shooter.index())),
             "the arrow reaction must run now, not remain queued for the target's later slot"
         );
         let queued = &engine
@@ -3519,9 +3525,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            // A deflection trajectory is recomputed from scratch and drops the
-            // projectile's membership, so it carries no layer of its own.
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -3550,7 +3553,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: u16::MAX,
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
@@ -3887,7 +3889,7 @@ impl EngineInner {
             }
             projectile.projectile.noise_distraction = false;
             (
-                projectile.element.layer(),
+                projectile.element.optional_layer(),
                 projectile.element.sprite.position_iface.get_elevation() as u16,
             )
         };
@@ -4127,21 +4129,26 @@ impl EngineInner {
                     | Substate::AttackingBowAiming
                     | Substate::AttackingBowShooting
             );
-            if !tracks || ai.primary_target == 0 {
+            if !tracks {
                 return;
             }
-            ai.primary_target
+            let Some(target) = ai.primary_target else {
+                return;
+            };
+            target
         };
         let my_pos = match self.get_entity(npc_id) {
             Some(e) => e.ground_position(),
             None => panic!("tracking soldier {} disappeared", npc_id.index()),
         };
-        let target_pos = match self.get_entity(
-            self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
-        ) {
-            Some(e) => e.ground_position(),
-            None => return,
-        };
+        let target_pos =
+            match self.get_entity(self.expect_entity_id_for_index(
+                target_handle.get(),
+                "update_bow_defense target handle",
+            )) {
+                Some(e) => e.ground_position(),
+                None => return,
+            };
         let dx = target_pos.x - my_pos.x;
         let dy = target_pos.y - my_pos.y;
         let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
@@ -4327,7 +4334,7 @@ impl EngineInner {
                         assets,
                         crate::ai::NoiseType::Zonk,
                         position_map,
-                        layer,
+                        crate::position_interface::Layer::new(layer),
                         crate::parameters_ai::NOISE_VOLUME_ZONK as u16,
                         position.z.max(0.0) as u16,
                         Some(arrow),
@@ -4387,7 +4394,7 @@ impl EngineInner {
             assets,
             crate::ai::NoiseType::Plouf,
             position_map,
-            layer,
+            crate::position_interface::Layer::new(layer),
             crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
             position.z.max(0.0) as u16,
             Some(arrow),
@@ -5582,13 +5589,13 @@ impl EngineInner {
                                 e.element_data().position().z.max(0.0) as u16,
                             )
                         })
-                        .unwrap_or((0, 0));
+                        .unwrap_or_else(|| panic!("whistle noise owner {actor_id:?} disappeared"));
                     self.broadcast_noise_synchronously(
                         sim,
                         assets,
                         crate::ai::NoiseType::Pfiiit,
                         crate::coordinates::MapPoint::new(position.x, position.y),
-                        layer,
+                        crate::position_interface::Layer::new(layer),
                         crate::abilities::NOISE_VOLUME_WHISTLE,
                         elevation,
                         Some(actor_id),
@@ -5674,7 +5681,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };
@@ -5721,7 +5727,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };
@@ -5767,7 +5772,6 @@ impl EngineInner {
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
-                        layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
                     };

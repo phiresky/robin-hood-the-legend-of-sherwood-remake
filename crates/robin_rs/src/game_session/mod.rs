@@ -20,10 +20,12 @@ mod replay_init;
 mod runtime;
 mod setup;
 pub(crate) use setup::PhaseTimer;
+mod sherwood_flow;
 pub(crate) use setup::initial_sim_config;
 pub use setup::{load_fixed_vip_name_map, load_peasant_name_pool};
 mod terminal_debriefing;
 mod tick;
+mod ui_task_state;
 
 /// Initialize the host-side mission sound caches and deterministic duration
 /// tables for developer tools that construct an [`Engine`] directly.
@@ -78,7 +80,8 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    RenderCadence, capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
+    RenderCadence, capture_save_thumbnail, capture_screenshot_to_path,
+    drain_presented_ui_screenshots, drain_print_screen_request, drain_screenshot_requests,
     drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
@@ -103,17 +106,15 @@ use tick::{
 
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::corner_hud::{CornerButton, CornerButtonEnable, CornerHudLayout};
-use crate::cursor::CursorRenderer;
 use crate::game::GameCallbacks;
 use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::host::Host;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::resources::{MT_MSG_LEAVE_MISSION_NOW, MT_MSG_REALLY_LOAD_QUICKSAVE};
-use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     DebriefingOutcome, IngameMenuResources, MissionStatePopupState, PauseMenu, SaveLoadMode,
-    SaveLoadOutcome, show_yesno,
+    SaveLoadOutcome,
 };
 use crate::input_translator::GameKey;
 use crate::input_translator::{GameAction, TranslationFlags};
@@ -130,7 +131,6 @@ use crate::stature_hud::{StatureButton, StatureEnable, StatureHudLayout};
 use crate::ui_panel::PortraitHitArea;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButton, ZoomButtonEnable};
-use robin_assets::resource_manager::ResourceManager;
 use robin_engine::campaign::Campaign;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerCommand;
@@ -488,6 +488,8 @@ fn simulation_config_for_level_restart(
         checkpoint.item_gameplay = outcome.item_gameplay;
         checkpoint.noise_distraction_feedback = outcome.noise_distraction_feedback;
         checkpoint.sherwood_trading = outcome.sherwood_trading;
+        checkpoint.enable_timed_missions = outcome.enable_timed_missions;
+        checkpoint.enable_dynamic_ambience = outcome.enable_dynamic_ambience;
     }
     checkpoint
 }
@@ -578,6 +580,18 @@ pub(crate) async fn run_mission_headless(
 /// `initial_load` lets the caller pre-seed a load request — used by the
 /// main menu's "Load Game" entry to kick straight into a saved mission
 /// (see `main_menu::save_load`).
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+struct HostSessionContinuationCleanup(bool);
+
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+impl Drop for HostSessionContinuationCleanup {
+    fn drop(&mut self) {
+        if self.0 {
+            crate::multiplayer::discard_host_session_continuation();
+        }
+    }
+}
+
 pub(crate) async fn run_session(
     window: &mut GameWindow,
     mut campaign: Campaign,
@@ -586,6 +600,9 @@ pub(crate) async fn run_session(
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
 ) -> SessionOutcome {
+    let mut session_args = args.clone();
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+    let _host_continuation_cleanup = HostSessionContinuationCleanup(session_args.server);
     let mut callbacks = RustCallbacks::new(application_context.clone());
     callbacks.pending = initial_load;
     if args.replay_data.is_some() || args.replay.is_some() {
@@ -700,7 +717,7 @@ pub(crate) async fn run_session(
             let location = campaign.missions[mission_idx].profile(profiles).location;
             (mission_idx, location, restart_rng_seed, restart_sim_config)
         };
-        let mission_args = mission_args_storage.as_ref().unwrap_or(args);
+        let mission_args = mission_args_storage.as_ref().unwrap_or(&session_args);
 
         // Sherwood is a real loaded mission (level geometry, PCs,
         // NPCs, production sectors, script). The campaign map is an
@@ -794,6 +811,7 @@ pub(crate) async fn run_session(
                     replay_for_restart.is_some(),
                 );
                 replay_restart = replay_for_restart;
+                session_args.mp_continue_session = session_args.server;
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
             }
@@ -834,10 +852,12 @@ pub(crate) async fn run_session(
                     mission_id: req.target_mission_id,
                     save: Some(save),
                 });
+                session_args.mp_continue_session = session_args.server;
                 continue;
             }
             _ => {}
         }
+        session_args.mp_continue_session = session_args.server;
     }
 }
 
@@ -845,27 +865,23 @@ pub(crate) async fn run_session(
 ///
 /// Creates a Game + Engine, runs frames until the mission ends.
 /// Returns the exit GameCode.
-/// Cross-mission quick-load confirmation modal.
+/// Prepare the cooperative cross-mission quick-load confirmation.
 ///
 /// Decode and strictly validate the exact queued QuickLoad payload before
 /// deciding whether a cross-mission confirmation is required. The decoded
 /// bytes are carried into `Load`, so neither a stale `saves.json` entry nor a
 /// file replacement after the modal can change what is eventually applied.
-#[allow(clippy::too_many_arguments)]
-async fn confirm_quickload_cross_mission(
+fn prepare_quickload_cross_mission(
     callbacks: &mut RustCallbacks,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    _host: &Host,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
-) {
+) -> Option<ui_task_state::ActiveUiTask> {
     let use_backup = match callbacks.pending {
         Some(SaveLoadRequest::QuickLoad { use_backup }) => use_backup,
-        _ => return,
+        _ => return None,
     };
     let slot_name = if use_backup {
         special_slots::EX_QUICK
@@ -873,23 +889,23 @@ async fn confirm_quickload_cross_mission(
         special_slots::QUICK
     };
     let Some(idx) = callbacks.save_manager.find_by_filename(slot_name) else {
-        return;
+        return None;
     };
     if !callbacks.save_manager.slot_file_exists(idx) {
-        return;
+        return None;
     }
     let save = match callbacks.save_manager.preflight_exact_slot(idx) {
         Ok(save) => save,
         Err(error) => {
             tracing::error!("QuickLoad confirmation preflight failed for {slot_name}: {error:#}");
             callbacks.pending = None;
-            return;
+            return None;
         }
     };
     if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, &save) {
         tracing::error!("QuickLoad confirmation rejected stale {slot_name} slot: {error:#}");
         callbacks.pending = None;
-        return;
+        return None;
     }
     let current = current_mission_id(engine.campaign(), profiles);
     let target_mission_id = match validated_save_reload_target(&save, profiles, current) {
@@ -897,7 +913,7 @@ async fn confirm_quickload_cross_mission(
         Err(error) => {
             tracing::error!("QuickLoad confirmation rejected {slot_name}: {error}");
             callbacks.pending = None;
-            return;
+            return None;
         }
     };
     if target_mission_id.is_none() {
@@ -906,23 +922,18 @@ async fn confirm_quickload_cross_mission(
             mission_id: current,
             save: Some(save),
         });
-        return;
+        return None;
     }
     let resources = required_menu_resources(menu_resources, "cross-mission QuickLoad confirmation");
     let msg = resources.menu_text.get(MT_MSG_REALLY_LOAD_QUICKSAVE);
-    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-    let confirmed = show_yesno(event_pump, renderer, resources, cursor, &msg).await;
-    if confirmed {
-        // Route the already-validated payload through the regular `Load`
-        // arm so its cross-mission plumbing switches immutable level assets.
-        callbacks.pending = Some(SaveLoadRequest::Load {
-            slot: Some(idx),
-            mission_id: current,
-            save: Some(save),
-        });
-    } else {
-        callbacks.pending = None;
-    }
+    // Remove the intent while the question is open. Accepting restores an
+    // exact, already-decoded `Load`; cancelling leaves the queue empty.
+    callbacks.pending = None;
+    Some(ui_task_state::ActiveUiTask::QuickLoad(
+        ui_task_state::QuickLoadTaskState::new(
+            event_pump, renderer, resources, msg, idx, current, save,
+        ),
+    ))
 }
 
 pub(crate) async fn run_mission(

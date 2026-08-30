@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
     ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
@@ -553,7 +554,10 @@ fn make_soldier(
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
         pos.x, pos.y, pos.z,
     ));
-    element.set_sector(sector);
+    element
+        .sprite
+        .position_iface
+        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
     Entity::Soldier(ActorSoldier {
         element,
         actor: ActorData::default(),
@@ -583,7 +587,10 @@ fn make_pc(pos: WorldPoint3D, sector: Option<crate::position_interface::SectorHa
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
         pos.x, pos.y, pos.z,
     ));
-    element.set_sector(sector);
+    element
+        .sprite
+        .position_iface
+        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
     Entity::Pc(ActorPc {
         element,
         actor: ActorData::default(),
@@ -1140,6 +1147,7 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
             point_out: crate::coordinates::MapPoint::new(30.0, 0.0),
             layer_out: 3,
             sector_out: crate::sector::SectorNumber::new(7),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(7),
             ..crate::gate::Door::default()
         });
 
@@ -1606,7 +1614,7 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
             .push(attacker);
         let target_actor = target_entity.actor_data_mut().unwrap();
         target_actor.active_door_pass = Some(crate::element::ActiveDoorPass {
-            door_index: crate::gate::DoorIndex(7),
+            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: true,
             position_direct: true,
             steps: std::collections::VecDeque::new(),
@@ -1615,9 +1623,9 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
             current_reverse: false,
             saved_action_state: None,
         });
-        target_entity
-            .position_iface_mut()
-            .set_door_for_test(crate::position_interface::DoorHandle(7));
+        target_entity.position_iface_mut().set_door_for_test(
+            crate::position_interface::DoorHandle::new(7).expect("valid door index"),
+        );
     }
     assert!(engine.get_entity(target).unwrap().is_in_door_transit());
 
@@ -1690,7 +1698,7 @@ fn make_enemy_strike_pair(
         };
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.base.primary_target = target.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
         ai.hth_weapon_id = 1;
         ai.pending_sword_strike_consideration = pending_consideration;
     }
@@ -1754,7 +1762,7 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         let mut ai = crate::ai_enemy::EnemyAi::new(owner.index());
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.base.primary_target = opponent.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(opponent.index()));
         ai.hth_weapon_id = 1;
         ai.pending_sword_strike_consideration = authorize_strike;
         pc.pc.ai = Some(Box::new(crate::element::AiActorData {
@@ -2446,7 +2454,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             );
             assert_eq!(
                 ai.base.stimulus_queue[0].info,
-                crate::ai::StimulusInfo::Human(attacker.index()),
+                crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(attacker.index())),
                 "queued EVENT_SWORDSTRIKE must retain the attacking human"
             );
         }
@@ -6099,7 +6107,9 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         0,
@@ -6825,7 +6835,9 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         1,
@@ -6979,7 +6991,9 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
             .iter()
             .filter(|titbit| {
                 titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
-                    && titbit.element_supplier.0 == victim.index()
+                    && titbit
+                        .element_supplier
+                        .is_some_and(|supplier| supplier.0 == victim.index())
             })
             .count(),
         0,
@@ -7338,7 +7352,9 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
             y: 100.0,
             z: 0.0,
         },
-        crate::position_interface::SectorHandle::new(32),
+        crate::position_interface::SectorHandle::new(32).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(32).unwrap())
+        }),
     ));
 
     // The landing projection is ten units above the takeoff point. An
@@ -7349,8 +7365,10 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         0,
         crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
     );
-    obstacle.layer = 0;
-    obstacle.sector = 32;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::ZERO,
+        crate::fast_find_grid::SectorIndex::new(32).unwrap(),
+    );
     obstacle.obstacle_points = vec![
         crate::sight_obstacle::ObstaclePoint {
             x: -1000.0,
@@ -7479,15 +7497,19 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
             y: 100.0,
             z: 0.0,
         },
-        crate::position_interface::SectorHandle::new(32),
+        crate::position_interface::SectorHandle::new(32).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(32).unwrap())
+        }),
     ));
 
     let mut obstacle = crate::sight_obstacle::SightObstacle::new(
         0,
         crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
     );
-    obstacle.layer = 0;
-    obstacle.sector = 32;
+    obstacle.set_projection_area_ref(
+        crate::position_interface::Layer::ZERO,
+        crate::fast_find_grid::SectorIndex::new(32).unwrap(),
+    );
     obstacle.obstacle_points = vec![
         crate::sight_obstacle::ObstaclePoint {
             x: -1000.0,
@@ -9250,7 +9272,9 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
         .base
         .outbox
         .actor
-        .enter_swordfight = Some(EnterSwordfightRequest::Rebalance(replacement_handle));
+        .enter_swordfight = Some(EnterSwordfightRequest::Rebalance(AiEntityHandle::new(
+        replacement_handle,
+    )));
 
     engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
 
@@ -9270,7 +9294,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
     };
     assert_eq!(
         soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
-        replacement_handle,
+        Some(AiEntityHandle::new(replacement_handle)),
         "successful rebalance must promote the AI primary target"
     );
     assert!(
@@ -9329,9 +9353,10 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
         unreachable!()
     };
     let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
-    ai.base.primary_target = old_primary_handle;
-    ai.base.outbox.actor.enter_swordfight =
-        Some(EnterSwordfightRequest::Rebalance(replacement_handle));
+    ai.base.primary_target = Some(AiEntityHandle::new(old_primary_handle));
+    ai.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::Rebalance(
+        AiEntityHandle::new(replacement_handle),
+    ));
 
     engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
 
@@ -9341,7 +9366,7 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
     assert_eq!(soldier.human.opponents, vec![old_primary]);
     assert_eq!(
         soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
-        old_primary_handle,
+        Some(AiEntityHandle::new(old_primary_handle)),
         "failed EnterSwordFight must preserve the old AI primary target"
     );
 }
@@ -9429,7 +9454,9 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
         .base
         .outbox
         .actor
-        .enter_swordfight = Some(EnterSwordfightRequest::Direct(attacker_handle));
+        .enter_swordfight = Some(EnterSwordfightRequest::Direct(AiEntityHandle::new(
+        attacker_handle,
+    )));
 
     engine.drain_pending_for_npc(&sim, victim, &LevelAssets::default());
 

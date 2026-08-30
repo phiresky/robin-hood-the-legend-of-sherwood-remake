@@ -221,9 +221,14 @@ impl EngineInner {
 
             // Civilians hardcode pathfinder index 0 and take the move box
             // from the grid's slot 0.
-            let civ_half_diag = self.world.fast_grid.try_move_box_half_diagonal(0);
+            let civ_pathfinder = crate::position_interface::PathfinderIndex::new(0).unwrap();
+            let civ_half_diag = self
+                .world
+                .fast_grid
+                .try_move_box_half_diagonal(0)
+                .unwrap_or_else(|| panic!("civilian pathfinder move-box slot 0 is missing"));
             sprite.position_iface.configure_for_actor(
-                0,
+                civ_pathfinder,
                 civ_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
@@ -233,9 +238,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -345,10 +354,17 @@ impl EngineInner {
             let pc_half_diag = self
                 .world
                 .fast_grid
-                .try_move_box_half_diagonal(char_profile.pathfinder_index as usize);
+                .try_move_box_half_diagonal(char_profile.pathfinder_index as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "rescue PC profile {} references missing pathfinder slot {}",
+                        raw.profile_index, pc_pathfinder_idx
+                    )
+                });
             let initial_position = MapPoint::new(raw.position_x as f32, raw.position_y as f32);
             sprite.position_iface.configure_for_actor(
-                pc_pathfinder_idx,
+                crate::position_interface::PathfinderIndex::new(u16::from(pc_pathfinder_idx))
+                    .expect("u8 rescue-PC pathfinder index cannot equal 0xffff"),
                 pc_half_diag,
                 initial_position,
             );
@@ -417,9 +433,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -825,19 +845,17 @@ impl EngineInner {
             let soldier_half_diag = self
                 .world
                 .fast_grid
-                .try_move_box_half_diagonal(soldier_pathfinder_idx as usize);
-            if soldier_half_diag.is_none() {
-                tracing::warn!(
-                    pf_idx = soldier_pathfinder_idx,
-                    table_len = self.world.fast_grid.level.move_box_half_diagonals.len(),
-                    profile = profile_number,
-                    "BUG: soldier spawn: half-diag table empty → move_box falls back to \
-                     (-1,-1,1,1); pathfinder proto loads after spawn_soldier and baked \
-                     move_box breaks TestIfPathIsFine / anti-collision"
-                );
-            }
+                .try_move_box_half_diagonal(soldier_pathfinder_idx as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "soldier profile {profile_number} references missing pathfinder slot \
+                         {soldier_pathfinder_idx} (table has {})",
+                        self.world.fast_grid.level.move_box_half_diagonals.len()
+                    )
+                });
             sprite.position_iface.configure_for_actor(
-                soldier_pathfinder_idx,
+                crate::position_interface::PathfinderIndex::new(u16::from(soldier_pathfinder_idx))
+                    .expect("u8 soldier pathfinder index cannot equal 0xffff"),
                 soldier_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
@@ -848,9 +866,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1026,9 +1048,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1231,9 +1257,13 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
@@ -1351,9 +1381,13 @@ impl EngineInner {
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                    raw.obstacle_index,
+                ),
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
+                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        raw.obstacle_index,
+                    ),
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );

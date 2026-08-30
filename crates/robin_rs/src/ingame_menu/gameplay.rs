@@ -15,6 +15,7 @@ use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
+use super::ModalScreenOutcome;
 use super::layout::{
     MenuTransform, TooltipState, align_bottom_right, dim_screen, draw_screen_background,
     enter_modal_gpu_phase, render_text_virt_font,
@@ -25,11 +26,14 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
-const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
-const AUTOSAVE_OPTION_INDEX: usize = 17;
+pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
+pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
+pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
+pub(crate) const TIMED_MISSIONS_OPTION_INDEX: usize = 34;
+pub(crate) const DYNAMIC_AMBIENCE_OPTION_INDEX: usize = 35;
 
 /// Toggle rows shown on the screen, in display order.
-const OPTION_LABELS: &[&str] = &[
+pub(crate) const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
@@ -63,6 +67,9 @@ const OPTION_LABELS: &[&str] = &[
     "Preview Ale Effect",
     "Preview Purse Effect",
     "Preview Wasp Area",
+    "Detailed Save Metadata",
+    "Authored Mission Timers",
+    "Dynamic Ambience Gameplay",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -99,7 +106,17 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
     "Explain purse value and money-interest conditions.",
     "Show wasp acquisition range and target eligibility.",
+    "Show mission and player provenance, relative age, and expanded save details.",
+    "Enforce time limits authored by Rust JSON missions.",
+    "Advance authored day, night, and fog gameplay schedules.",
 ];
+
+pub(crate) fn option_tooltip(index: usize) -> &'static str {
+    OPTION_TOOLTIPS
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| panic!("gameplay option tooltip index {index} is out of range"))
+}
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
@@ -111,89 +128,144 @@ pub async fn show_gameplay(
     config: &mut GameplayConfig,
     sherwood_trading_editable: bool,
 ) -> bool {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
-    let mut working = *config;
-    let mut dirty = false;
-
-    // ── OK / Cancel (bottom-right) ─────────────────────────────────
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
-
-    // Two columns keep every independent feature visible at 640x480 and up.
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let rows_per_column = OPTION_LABELS.len().div_ceil(2);
-    let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
-        .iter()
-        .enumerate()
-        .map(|(i, label)| super::layout::MenuButton {
-            label: label.to_string(),
-            enabled: true,
-            x: if i < rows_per_column { 30 } else { 320 },
-            y: 100
-                + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
-                    * (field_h + 2),
-            w: field_w,
-            h: field_h,
-        })
-        .collect();
-
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
-
-    for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            ID_OPT_BASE + i as u32,
-            &mb.label,
-            i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
-        frame
-            .widget_mut(ID_OPT_BASE + i as u32)
-            .expect("new gameplay option widget")
-            .base_mut()
-            .set_tooltip_text(OPTION_TOOLTIPS[i]);
+    let mut state = GameplayScreenState::new(
+        event_pump,
+        renderer,
+        resources,
+        config,
+        sherwood_trading_editable,
+    );
+    loop {
+        if let Some(outcome) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
+            if let ModalScreenOutcome::Accepted(next) = outcome {
+                let changed = next != *config;
+                *config = next;
+                return changed;
+            }
+            return false;
+        }
+        crate::window::sleep_ms(16).await;
     }
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
+}
 
-    let title = "Gameplay";
+/// Owned, one-frame state for the gameplay settings page.
+pub struct GameplayScreenState {
+    working: GameplayConfig,
+    original: GameplayConfig,
+    frame: FrameWnd,
+    input_state: ModalInputState,
+    tooltip: TooltipState,
+    transform: MenuTransform,
+    sherwood_trading_editable: bool,
+}
 
-    let mut done = false;
-    let mut accepted = false;
-    let mut input_state = ModalInputState::new();
-    let mut tooltip = TooltipState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+impl GameplayScreenState {
+    pub fn new(
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        config: &GameplayConfig,
+        sherwood_trading_editable: bool,
+    ) -> Self {
+        let sw = renderer.screen_width() as i32;
+        let sh = renderer.screen_height() as i32;
+        let transform = MenuTransform::centered(sw, sh);
 
-    while !done {
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            input_state.update_from_event(&event, transform);
+        let working = *config;
+
+        // ── OK / Cancel (bottom-right) ─────────────────────────────────
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let ok_label = resources.menu_text.get(MT_BTN_OK);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
+        let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
+
+        // ── Option toggle buttons stacked from (30,100) ───────────────
+        let (field_w, field_h) = resources.input_field_dimensions();
+        let rows_per_column = OPTION_LABELS.len().div_ceil(2);
+        let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
+            .iter()
+            .enumerate()
+            .map(|(i, label)| super::layout::MenuButton {
+                label: label.to_string(),
+                enabled: true,
+                x: if i < rows_per_column { 30 } else { 320 },
+                y: 100
+                    + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
+                        * (field_h + 2),
+                w: field_w,
+                h: field_h,
+            })
+            .collect();
+
+        let mut frame = FrameWnd::default();
+        frame.enabled = true;
+        frame.input_enabled = true;
+
+        for (i, mb) in opt_layout.iter().enumerate() {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                ID_OPT_BASE + i as u32,
+                &mb.label,
+                i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
+            ));
+            frame
+                .widget_mut(ID_OPT_BASE + i as u32)
+                .expect("new gameplay option widget")
+                .base_mut()
+                .set_tooltip_text(option_tooltip(i));
+        }
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_OK,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+
+        let mut input_state = ModalInputState::new();
+        input_state.seed_mouse_from_window(event_pump, transform);
+
+        Self {
+            working,
+            original: *config,
+            frame,
+            input_state,
+            tooltip: TooltipState::new(),
+            transform,
+            sherwood_trading_editable,
+        }
+    }
+
+    pub fn tick(
+        &mut self,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        cursor: Option<&ModalCursor<'_>>,
+    ) -> Option<ModalScreenOutcome<GameplayConfig>> {
+        let mut outcome = None;
+        renderer.sync_window_size(event_pump);
+        self.transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        for event in event_pump.poll_events() {
+            self.input_state.update_from_event(&event, self.transform);
             match event {
-                GameEvent::Quit => done = true,
+                GameEvent::Quit => outcome = Some(ModalScreenOutcome::ExitRequested),
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -202,33 +274,30 @@ pub async fn show_gameplay(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    accepted = true;
-                    done = true;
+                    outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Escape,
                     ..
-                } => done = true,
+                } => outcome = Some(ModalScreenOutcome::Cancelled),
                 _ => {}
             }
         }
 
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
 
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_OK => {
-                    accepted = true;
-                    done = true;
+                    outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
-                ID_CANCEL => done = true,
+                ID_CANCEL => outcome = Some(ModalScreenOutcome::Cancelled),
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
                     let index = (id - ID_OPT_BASE) as usize;
-                    if index != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable {
-                        apply_option_toggle(&mut working, index);
-                        dirty = true;
+                    if index != SHERWOOD_TRADING_OPTION_INDEX || self.sherwood_trading_editable {
+                        apply_option_toggle(&mut self.working, index);
                     }
                 }
                 _ => {}
@@ -243,21 +312,28 @@ pub async fn show_gameplay(
         }
 
         if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width(title);
-            render_text_virt_font(renderer, font, transform, title, (490 - tw) / 2, 20);
+            let tw = font.text_width("Gameplay");
+            render_text_virt_font(
+                renderer,
+                font,
+                self.transform,
+                "Gameplay",
+                (490 - tw) / 2,
+                20,
+            );
         }
         if let Some(font) = resources.label_font_any() {
-            render_text_virt_font(renderer, font, transform, "Gameplay Tweaks", 30, 80);
+            render_text_virt_font(renderer, font, self.transform, "Gameplay Tweaks", 30, 80);
         }
 
         for i in 0..OPTION_LABELS.len() as u32 {
-            if let Some(w) = frame.widget(ID_OPT_BASE + i) {
+            if let Some(w) = self.frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
                     resources,
-                    transform,
+                    self.transform,
                     w,
-                    is_option_selected(&working, i as usize),
+                    is_option_selected(&self.working, i as usize),
                 );
             }
         }
@@ -265,44 +341,44 @@ pub async fn show_gameplay(
             render_text_virt_font(
                 renderer,
                 font,
-                transform,
-                working.campaign_presentation.label(),
-                235,
-                opt_layout[5].y + 7,
+                self.transform,
+                self.working.campaign_presentation.label(),
+                30,
+                335,
             );
         }
 
-        let mouse_point =
-            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
-        tooltip.update(&frame, mouse_point);
+        if let Some(w) = self.frame.widget(ID_OK) {
+            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+        }
+        if let Some(w) = self.frame.widget(ID_CANCEL) {
+            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+        }
+
+        let mouse_point = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
+        self.tooltip.update(&self.frame, mouse_point);
         if let Some(font) = resources.popup_font_any() {
-            tooltip.draw(renderer, font, transform, &frame, mouse_point);
+            self.tooltip
+                .draw(renderer, font, self.transform, &self.frame, mouse_point);
         }
 
-        if let Some(w) = frame.widget(ID_OK) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
-        if let Some(w) = frame.widget(ID_CANCEL) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
-
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+        if let Some(c) = cursor {
+            c.draw(renderer, self.transform, &self.input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+        outcome
     }
 
-    if accepted && dirty && working != *config {
-        *config = working;
-        true
-    } else {
-        false
+    pub fn changed(&self) -> bool {
+        self.working != self.original
     }
 }
 
-fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
+pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
     match idx {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
@@ -361,11 +437,18 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => {
+            config.detailed_save_metadata = !config.detailed_save_metadata
+        }
+        TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions = !config.enable_timed_missions,
+        DYNAMIC_AMBIENCE_OPTION_INDEX => {
+            config.enable_dynamic_ambience = !config.enable_dynamic_ambience
+        }
         _ => {}
     }
 }
 
-fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
+pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
     match idx {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
@@ -403,6 +486,9 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         30 => config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
+        TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions,
+        DYNAMIC_AMBIENCE_OPTION_INDEX => config.enable_dynamic_ambience,
         _ => false,
     }
 }
@@ -449,6 +535,9 @@ mod tests {
                 "Preview Ale Effect",
                 "Preview Purse Effect",
                 "Preview Wasp Area",
+                "Detailed Save Metadata",
+                "Authored Mission Timers",
+                "Dynamic Ambience Gameplay",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -466,6 +555,12 @@ mod tests {
         assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
         assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert!(is_option_selected(&config, 32));
+        assert!(is_option_selected(
+            &config,
+            DETAILED_SAVE_METADATA_OPTION_INDEX
+        ));
+        assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
+        assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -535,6 +630,11 @@ mod tests {
         assert_eq!(config.autosave_enabled, autosave_enabled);
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
+
+        let autosave_enabled = config.autosave_enabled;
+        apply_option_toggle(&mut config, DETAILED_SAVE_METADATA_OPTION_INDEX);
+        assert!(!config.detailed_save_metadata);
+        assert_eq!(config.autosave_enabled, autosave_enabled);
     }
 
     #[test]

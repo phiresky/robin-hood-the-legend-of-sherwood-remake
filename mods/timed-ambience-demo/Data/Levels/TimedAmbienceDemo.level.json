@@ -1,0 +1,51 @@
+{
+  "title": "The Longest Three Minutes",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [1152, 1760],
+  "spawn_player": true,
+  "walkable_polygon": [
+    [80, 80],
+    [2428, 80],
+    [2428, 2428],
+    [80, 2428]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [1450, 1500],
+      "profile": 1,
+      "allegiance": 1,
+      "direction": 8
+    },
+    {
+      "position": [1650, 1450],
+      "profile": 7,
+      "allegiance": 1,
+      "direction": 8
+    }
+  ],
+  "pcs": [],
+  "timed_mission": {
+    "limit_seconds": 180,
+    "warning_seconds": 45,
+    "countdown": "always"
+  },
+  "ambience_schedule": [
+    {
+      "at_seconds": 20,
+      "ambiance": "night",
+      "transition_seconds": 10
+    },
+    {
+      "at_seconds": 70,
+      "ambiance": "fog",
+      "transition_seconds": 8
+    },
+    {
+      "at_seconds": 120,
+      "ambiance": "day",
+      "transition_seconds": 10
+    }
+  ]
+}

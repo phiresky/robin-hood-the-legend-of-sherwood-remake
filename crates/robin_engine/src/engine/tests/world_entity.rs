@@ -2,7 +2,7 @@ use super::*;
 
 /// Build a minimal soldier entity for posture / command tests.
 pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
-    Entity::Soldier(crate::element::ActorSoldier {
+    let mut entity = Entity::Soldier(crate::element::ActorSoldier {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorSoldier,
             posture,
@@ -12,7 +12,11 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         npc: Default::default(),
         soldier: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]
@@ -1858,7 +1862,7 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
                 .expect("speech test owner has Enemy AI");
             enemy.base.current_state = AiState::Seeking;
             enemy.base.current_substate = Substate::SeekingSendCharlyToOfficer;
-            enemy.base.friend_in_trouble = 0;
+            enemy.base.friend_in_trouble = None;
             enemy
                 .base
                 .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
@@ -1878,7 +1882,10 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
             .get_entity(owner)
             .and_then(Entity::enemy_ai)
             .expect("speech test owner retains Enemy AI");
-        assert_eq!(enemy.base.friend_in_trouble, charly_handle);
+        assert_eq!(
+            enemy.base.friend_in_trouble,
+            Some(crate::ai::AiEntityHandle::new(charly_handle))
+        );
         if rejected {
             assert_eq!(enemy.base.current_state, AiState::Default);
             assert_eq!(last_speech_impossible(&engine, owner), Some(2));
@@ -2356,7 +2363,7 @@ fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier
                 target: target.index(),
                 caller: caller.index(),
                 stimulus_type: StimulusType::CallAlert,
-                info: StimulusInfo::Human(target.index()),
+                info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(target.index())),
                 continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                     last: true,
                     use_formation: true,
@@ -2421,7 +2428,7 @@ fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier
 
 /// Build a minimal civilian entity for NPC-translate tests.
 pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
-    Entity::Civilian(crate::element::ActorCivilian {
+    let mut entity = Entity::Civilian(crate::element::ActorCivilian {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorCivilian,
             posture,
@@ -2431,7 +2438,11 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         npc: Default::default(),
         civilian: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]
@@ -2799,7 +2810,10 @@ fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
         .get_entity(owner)
         .and_then(Entity::ai_controller)
         .expect("AlertSoldier owner retains AI");
-    assert_eq!(ai.antagonist, soldier.index());
+    assert_eq!(
+        ai.antagonist,
+        Some(crate::ai::AiEntityHandle::new(soldier.index()))
+    );
     assert_eq!(ai.current_remark, Remark::CivPanic);
     assert!(!ai.couldnt_reachpoint);
     assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
@@ -2851,7 +2865,7 @@ fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() 
 }
 
 pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
-    Entity::Pc(crate::element::ActorPc {
+    let mut entity = Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorPc,
             posture,
@@ -2860,7 +2874,11 @@ pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
         actor: Default::default(),
         human: Default::default(),
         pc: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]
@@ -3582,7 +3600,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         &assets,
         NoiseType::Bonk,
         MapPoint::new(20.0, 10.0),
-        0,
+        Some(crate::position_interface::Layer::ZERO),
         crate::parameters_ai::NOISE_VOLUME_BONK as u16,
         0,
         None,
@@ -3648,7 +3666,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     let audible = engine.one_shot_noise(
         NoiseType::Bonk,
         MapPoint::new(20.0, 10.0),
-        0,
+        Some(crate::position_interface::Layer::ZERO),
         crate::parameters_ai::NOISE_VOLUME_BONK as u16,
         0,
         None,
@@ -3672,7 +3690,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     let same_point = engine.one_shot_noise(
         NoiseType::Aaargh,
         MapPoint::new(10.0, 10.0),
-        0,
+        Some(crate::position_interface::Layer::ZERO),
         crate::parameters_ai::NOISE_VOLUME_AAARGH as u16,
         0,
         Some(listener_id),
@@ -3685,8 +3703,14 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     );
 
     engine.control.frame_counter = 6;
-    let max_norm_only =
-        engine.one_shot_noise(NoiseType::Bonk, MapPoint::new(18.0, 14.0), 0, 10, 0, None);
+    let max_norm_only = engine.one_shot_noise(
+        NoiseType::Bonk,
+        MapPoint::new(18.0, 14.0),
+        Some(crate::position_interface::Layer::ZERO),
+        10,
+        0,
+        None,
+    );
     assert!(
         engine
             .subjective_one_shot_noise_for(listener_id, max_norm_only)
@@ -3744,7 +3768,7 @@ fn one_shot_hearing_uses_authoritative_world_y_at_uword_volume_boundary() {
     let drawbridge = engine.one_shot_noise(
         NoiseType::Drawbridge,
         MapPoint::new(0.0, 0.0),
-        0,
+        Some(crate::position_interface::Layer::ZERO),
         crate::parameters_ai::NOISE_VOLUME_DRAWBRIDGE as u16,
         0,
         None,
@@ -3909,11 +3933,31 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
     let unrelated_left_handle = unrelated_left.index();
     let unrelated_right_handle = unrelated_right.index();
     for (entity, left_neighbour, right_neighbour) in [
-        (left, 0, victim_handle),
-        (victim, left_handle, right_handle),
-        (right, victim_handle, 0),
-        (unrelated_left, 0, unrelated_right_handle),
-        (unrelated_right, unrelated_left_handle, 0),
+        (
+            left,
+            None,
+            Some(crate::ai::AiEntityHandle::new(victim_handle)),
+        ),
+        (
+            victim,
+            Some(crate::ai::AiEntityHandle::new(left_handle)),
+            Some(crate::ai::AiEntityHandle::new(right_handle)),
+        ),
+        (
+            right,
+            Some(crate::ai::AiEntityHandle::new(victim_handle)),
+            None,
+        ),
+        (
+            unrelated_left,
+            None,
+            Some(crate::ai::AiEntityHandle::new(unrelated_right_handle)),
+        ),
+        (
+            unrelated_right,
+            Some(crate::ai::AiEntityHandle::new(unrelated_left_handle)),
+            None,
+        ),
     ] {
         let Some(Entity::Soldier(soldier)) = engine.get_entity_mut(entity) else {
             panic!("combat-neighbour fixture contains a non-soldier")
@@ -3947,16 +3991,22 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
         (enemy.left_combat_neighbour, enemy.right_combat_neighbour)
     };
 
-    assert_eq!(links(&engine, left_handle), (0, 0));
-    assert_eq!(links(&engine, victim_handle), (0, 0));
-    assert_eq!(links(&engine, right_handle), (0, 0));
+    assert_eq!(links(&engine, left_handle), (None, None));
+    assert_eq!(links(&engine, victim_handle), (None, None));
+    assert_eq!(links(&engine, right_handle), (None, None));
     assert_eq!(
         links(&engine, unrelated_left_handle),
-        (0, unrelated_right_handle)
+        (
+            None,
+            Some(crate::ai::AiEntityHandle::new(unrelated_right_handle))
+        )
     );
     assert_eq!(
         links(&engine, unrelated_right_handle),
-        (unrelated_left_handle, 0)
+        (
+            Some(crate::ai::AiEntityHandle::new(unrelated_left_handle)),
+            None
+        )
     );
 }
 
@@ -3974,9 +4024,18 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
     let old_left_handle = old_left.index();
     let old_right_handle = old_right.index();
 
-    for (entity, left_neighbour, right_neighbour) in
-        [(old_left, 0, victim_handle), (old_right, victim_handle, 0)]
-    {
+    for (entity, left_neighbour, right_neighbour) in [
+        (
+            old_left,
+            None,
+            Some(crate::ai::AiEntityHandle::new(victim_handle)),
+        ),
+        (
+            old_right,
+            Some(crate::ai::AiEntityHandle::new(victim_handle)),
+            None,
+        ),
+    ] {
         let Some(Entity::Soldier(soldier)) = engine.get_entity_mut(entity) else {
             panic!("queued combat-neighbour fixture contains a non-soldier")
         };
@@ -3996,8 +4055,8 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
         .ai_brain
         .enemy_mut()
         .expect("test victim has enemy AI");
-    assert_eq!(victim_enemy.left_combat_neighbour, 0);
-    assert_eq!(victim_enemy.right_combat_neighbour, 0);
+    assert_eq!(victim_enemy.left_combat_neighbour, None);
+    assert_eq!(victim_enemy.right_combat_neighbour, None);
     victim_enemy
         .base
         .outbox
@@ -4006,11 +4065,11 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
         .extend([
             CrossNpcAction::SetRightCombatNeighbour {
                 target: old_left_handle,
-                neighbour: 0,
+                neighbour: None,
             },
             CrossNpcAction::SetLeftCombatNeighbour {
                 target: old_right_handle,
-                neighbour: 0,
+                neighbour: None,
             },
         ]);
 
@@ -4033,9 +4092,9 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
             .expect("test soldier retains enemy AI");
         (enemy.left_combat_neighbour, enemy.right_combat_neighbour)
     };
-    assert_eq!(links(&engine, old_left_handle), (0, 0));
-    assert_eq!(links(&engine, victim_handle), (0, 0));
-    assert_eq!(links(&engine, old_right_handle), (0, 0));
+    assert_eq!(links(&engine, old_left_handle), (None, None));
+    assert_eq!(links(&engine, victim_handle), (None, None));
+    assert_eq!(links(&engine, old_right_handle), (None, None));
 }
 
 #[test]
@@ -4080,8 +4139,8 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
         .cross_npc_actions
         .push(CrossNpcAction::UpdateLeftCombatNeighbour {
             target: owner.index(),
-            old_left: 0,
-            new_left: left.index(),
+            old_left: None,
+            new_left: Some(crate::ai::AiEntityHandle::new(left.index())),
         });
 
     let mut assets = LevelAssets::new();
@@ -4096,12 +4155,18 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
         .get_entity(owner)
         .and_then(Entity::enemy_ai)
         .expect("owner PC retains EnemyAi");
-    assert_eq!(owner_enemy.left_combat_neighbour, left.index());
+    assert_eq!(
+        owner_enemy.left_combat_neighbour,
+        Some(crate::ai::AiEntityHandle::new(left.index()))
+    );
     let left_enemy = engine
         .get_entity(left)
         .and_then(Entity::enemy_ai)
         .expect("left PC retains EnemyAi");
-    assert_eq!(left_enemy.right_combat_neighbour, owner.index());
+    assert_eq!(
+        left_enemy.right_combat_neighbour,
+        Some(crate::ai::AiEntityHandle::new(owner.index()))
+    );
 }
 
 #[test]
@@ -4142,22 +4207,22 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
             .get_entity_mut(left)
             .and_then(Entity::enemy_ai_mut)
             .expect("left PC has EnemyAi");
-        enemy.right_combat_neighbour = victim.index();
+        enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
     {
         let enemy = engine
             .get_entity_mut(victim)
             .and_then(Entity::enemy_ai_mut)
             .expect("victim PC has EnemyAi");
-        enemy.left_combat_neighbour = left.index();
-        enemy.right_combat_neighbour = right.index();
+        enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(left.index()));
+        enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(right.index()));
     }
     {
         let enemy = engine
             .get_entity_mut(right)
             .and_then(Entity::enemy_ai_mut)
             .expect("right PC has EnemyAi");
-        enemy.left_combat_neighbour = victim.index();
+        enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
 
     let mut assets = LevelAssets::new();
@@ -4173,7 +4238,7 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
             .and_then(Entity::enemy_ai)
             .expect("left PC retains EnemyAi")
             .right_combat_neighbour,
-        0
+        None
     );
     assert_eq!(
         engine
@@ -4181,7 +4246,7 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
             .and_then(Entity::enemy_ai)
             .expect("right PC retains EnemyAi")
             .left_combat_neighbour,
-        0
+        None
     );
 }
 
@@ -4423,7 +4488,7 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
             .sprite
             .position_iface
             .get_door()
-            .is_null()
+            .is_none()
     );
     let friend_ai = friend_soldier
         .npc
@@ -4431,7 +4496,7 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         .base_mut()
         .expect("friend has AI");
     friend_ai.current_substate = crate::ai::Substate::AttackingRunningToEnemy;
-    friend_ai.primary_target = target.index();
+    friend_ai.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
 
     let Entity::Pc(target_pc) = engine.get_entity_mut(target).unwrap() else {
         panic!("target changed kind")
@@ -4442,13 +4507,15 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
     assert!(target_pc.actor.active_door_pass.is_none());
     // A different live sprite door must not replace the selected movement
     // element's gate or direction for AI Position.
-    target_pc
-        .element
-        .sprite
-        .position_iface
-        .set_door(crate::position_interface::DoorHandle(2), true);
+    target_pc.element.sprite.position_iface.set_door(
+        crate::position_interface::DoorHandle::new(2).expect("valid door index"),
+        true,
+    );
 
-    for (passing, gate, direction) in [(friend, DoorIndex(0), 1), (target, DoorIndex(1), 0)] {
+    for (passing, gate, direction) in [
+        (friend, DoorIndex::new(0).expect("valid door index"), 1),
+        (target, DoorIndex::new(1).expect("valid door index"), 0),
+    ] {
         let mut element = SequenceElement::new_movement(
             1,
             crate::element::Command::PassDoor,
@@ -4514,7 +4581,10 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         crate::position_interface::SectorHandle::new(11)
     );
     assert_eq!(candidate.friend_position.level, 3);
-    assert_eq!(candidate.friend_primary_target, target.index());
+    assert_eq!(
+        candidate.friend_primary_target,
+        Some(crate::ai::AiEntityHandle::new(target.index()))
+    );
     assert_eq!(candidate.friend_primary_target_position.x, 201.0);
     assert_eq!(candidate.friend_primary_target_position.y, 202.0);
     assert_eq!(
@@ -4576,7 +4646,7 @@ fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
         .ai_brain
         .base_mut()
         .unwrap()
-        .primary_target = target.index();
+        .primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
 
     let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
     target_element.set_position_map(MapPoint::new(684.1841, 745.0576));
@@ -4636,7 +4706,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
     engine
@@ -4742,7 +4812,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         .and_then(Entity::enemy_ai_mut)
         .expect("roof-wait owner has Enemy AI");
     owner.base.me = owner_id.index();
-    owner.base.primary_target = target_id.index();
+    owner.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_id.index()));
 
     // The target sprite is still on the owner's side. Original AI Position
     // instead reports point_in/sector_in while this PassDoor is selected.
@@ -4770,7 +4840,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
     engine
@@ -4996,7 +5066,7 @@ fn reconsider_approach_route_settles_before_roof_wait_resume() {
         .and_then(Entity::enemy_ai_mut)
         .expect("owner has Enemy AI");
     ai.base.me = owner_id.index();
-    ai.base.primary_target = target_id.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_id.index()));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingRunningToEnemy;
     ai.base.think_recursion_depth = 1;
@@ -5071,7 +5141,7 @@ fn reconsider_approach_route_settles_before_roof_wait_resume() {
         .and_then(Entity::enemy_ai_mut)
         .expect("reachable owner has Enemy AI");
     ai.base.me = reachable_owner.index();
-    ai.base.primary_target = reachable_target.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(reachable_target.index()));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingRunningToEnemy;
     ai.base.think_recursion_depth = 1;
@@ -5192,7 +5262,7 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
         .and_then(Entity::enemy_ai_mut)
         .expect("battle-observe owner has Enemy AI");
     ai.base.me = owner_id.index();
-    ai.base.primary_target = target_id.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_id.index()));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.think_recursion_depth = 1;
@@ -5200,7 +5270,10 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
     ai.base
         .go_near(target_position, 50, GotoFlags::empty(), &ctx);
     let first_route = std::mem::take(&mut ai.base.outbox.actor);
-    assert_eq!(first_route.focus, Some(target_id.index()));
+    assert_eq!(
+        first_route.focus,
+        Some(crate::ai::AiEntityHandle::new(target_id.index()))
+    );
     assert_eq!(first_route.orders.len(), 1);
     ai.base
         .outbox
@@ -5283,7 +5356,7 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
         .and_then(Entity::enemy_ai_mut)
         .expect("reachable owner has Enemy AI");
     ai.base.me = reachable_owner.index();
-    ai.base.primary_target = reachable_target.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(reachable_target.index()));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.think_recursion_depth = 1;
@@ -5351,7 +5424,7 @@ fn battle_observe_continuation_fails_loud_for_stale_target() {
         .and_then(Entity::enemy_ai_mut)
         .expect("battle-observe owner has Enemy AI");
     ai.base.me = owner.index();
-    ai.base.primary_target = 999;
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(999));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.outbox.reentrant.battle_observe_completion_pending = true;
@@ -5383,7 +5456,7 @@ fn battle_observe_roof_fallback_fails_loud_without_mission() {
         .and_then(Entity::enemy_ai_mut)
         .expect("battle-observe owner has Enemy AI");
     ai.base.me = owner.index();
-    ai.base.primary_target = target.index();
+    ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.couldnt_reachpoint = true;
@@ -5469,7 +5542,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
     engine
@@ -5614,7 +5687,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         else {
             panic!("PassDoor test element changed kind")
         };
-        *gate_id = Some(DoorIndex(door_index));
+        *gate_id = Some(DoorIndex::new(door_index).expect("valid door index"));
         *direction = 0;
         let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
         engine
@@ -5769,7 +5842,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     else {
         panic!("PassDoor test element changed kind")
     };
-    *gate_id = Some(DoorIndex(0));
+    *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
     engine
@@ -5852,7 +5925,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
             .expect("test soldier has Enemy AI");
         enemy.base.me = id.index();
         enemy.set_state(AiState::Attacking, substate);
-        enemy.base.primary_target = old_target_id.index();
+        enemy.base.primary_target = Some(crate::ai::AiEntityHandle::new(old_target_id.index()));
     }
     engine
         .get_entity_mut(owner_id)
@@ -5891,14 +5964,17 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         .iter()
         .find(|friend| friend.handle == friend_id.index())
         .expect("stale tick includes the admitted friend");
-    assert_eq!(stale_friend.primary_target, old_target_id.index());
+    assert_eq!(
+        stale_friend.primary_target,
+        Some(crate::ai::AiEntityHandle::new(old_target_id.index()))
+    );
     let captured_position = stale_friend.position;
 
     let friend = engine
         .get_entity_mut(friend_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("friend has Enemy AI");
-    friend.base.primary_target = new_target_id.index();
+    friend.base.primary_target = Some(crate::ai::AiEntityHandle::new(new_target_id.index()));
     // Geometry remains owner-boundary data even when the live entity moves
     // after the tick snapshot was constructed.
     engine
@@ -6044,7 +6120,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .get_entity_mut(charly_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("test Charly has enemy AI");
-        charly.base.antagonist = officer_id.index();
+        charly.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
         charly.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
         charly.base.launch_timer(0, 100);
         charly.base.timer_is_running = false;
@@ -6183,7 +6259,7 @@ fn run_synchronous_civilian_alert(
         .friendly_mut()
         .expect("test civilian has FriendlyAi");
     friendly.base.owner_entity_id = Some(civilian_id);
-    friendly.base.antagonist = soldier_id.index();
+    friendly.base.antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     friendly.base.my_reconnaissance_report.update(
         crate::ai::ReportType::Enemy,
         crate::ai::Position {
@@ -6507,7 +6583,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         .and_then(Entity::enemy_ai_mut)
         .expect("officer has EnemyAi")
         .base
-        .antagonist = soldier_id.index();
+        .antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let scratch = engine.build_sim_scratch(&sim, &assets);
@@ -6655,7 +6731,9 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         .push(crate::ai::CrossNpcAction::SendStimulus {
             target: reporter_id.index(),
             stimulus_type: StimulusType::CallAlert,
-            info: crate::ai::StimulusInfo::Human(callback_officer_id.index()),
+            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
+                callback_officer_id.index(),
+            )),
             fallback_to_sender: None,
             to_whole_patrol: false,
         });
@@ -6701,7 +6779,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     );
     assert_eq!(
         reporter.base.antagonist,
-        callback_officer_id.index(),
+        Some(crate::ai::AiEntityHandle::new(callback_officer_id.index())),
         "recipient callback must be allowed to mutate the suspended caller"
     );
     assert_eq!(
@@ -6816,7 +6894,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     let officer_ai = officer
         .enemy_ai_mut()
         .expect("call-rejection officer has EnemyAi");
-    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     officer_ai.base.initial_position = crate::ai::Position {
         x: 200.0,
         y: 100.0,
@@ -6836,7 +6914,9 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
             target: soldier_id.index(),
             caller: officer_id.index(),
             stimulus_type: crate::ai::StimulusType::CallHey,
-            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
+                officer_id.index(),
+            )),
             continuation: ThinkResultContinuation::OfficerCalledSoldier,
         });
     engine
@@ -7193,7 +7273,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     let officer_ai = officer
         .enemy_ai_mut()
         .expect("call-acceptance officer has EnemyAi");
-    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     officer_ai.attentive = true;
     officer_ai.will_be_attentive = true;
     officer_ai.base.current_state = AiState::Seeking;
@@ -7207,7 +7287,9 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             target: soldier_id.index(),
             caller: officer_id.index(),
             stimulus_type: crate::ai::StimulusType::CallHey,
-            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
+                officer_id.index(),
+            )),
             continuation: ThinkResultContinuation::OfficerCalledSoldier,
         });
 
@@ -7229,7 +7311,10 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
         ai.base.when_does_timer_ring,
         engine.control.frame_counter + 20
     );
-    assert_eq!(ai.base.antagonist, soldier_id.index());
+    assert_eq!(
+        ai.base.antagonist,
+        Some(crate::ai::AiEntityHandle::new(soldier_id.index()))
+    );
     assert_eq!(
         officer
             .npc_data()
@@ -7272,7 +7357,10 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
         soldier.base.current_substate,
         Substate::SeekingSoldierCalledByOfficer
     );
-    assert_eq!(soldier.base.antagonist, officer_id.index());
+    assert_eq!(
+        soldier.base.antagonist,
+        Some(crate::ai::AiEntityHandle::new(officer_id.index()))
+    );
 }
 
 #[test]
@@ -7302,7 +7390,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         .expect("nested-turn target has EnemyAi");
     target_ai.base.current_state = AiState::Seeking;
     target_ai.base.current_substate = Substate::SeekingOfficerWaitForCharly;
-    target_ai.base.antagonist = source_id.index();
+    target_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(source_id.index()));
 
     engine
         .get_entity_mut(source_id)
@@ -7314,7 +7402,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         .push(CrossNpcAction::SendStimulus {
             target: target_id.index(),
             stimulus_type: StimulusType::CallCoordinate,
-            info: StimulusInfo::Human(source_id.index()),
+            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(source_id.index())),
             fallback_to_sender: None,
             to_whole_patrol: false,
         });
@@ -7378,7 +7466,7 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
             .ai_brain
             .enemy_mut()
             .expect("reporting soldier has EnemyAi");
-        reporter.base.antagonist = officer_id.index();
+        reporter.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
         reporter.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
     }
 
@@ -7772,8 +7860,9 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .enemy_mut()
             .expect("Charly-seeker candidate has EnemyAi");
         enemy.set_state(AiState::Seeking, Substate::SeekingBody);
-        enemy.base.my_reconnaissance_report.charly = charly.index();
-        enemy.base.checkpoint_charly = charly.index();
+        enemy.base.my_reconnaissance_report.charly =
+            Some(crate::ai::AiEntityHandle::new(charly.index()));
+        enemy.base.checkpoint_charly = Some(crate::ai::AiEntityHandle::new(charly.index()));
         enemy.base.sorrow_level = 37;
         soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].push(Detectable {
             element: Some(charly),
@@ -7787,18 +7876,19 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .and_then(Entity::enemy_ai_mut)
             .expect("Unalert owner has EnemyAi");
         owner_ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
-        owner_ai.base.antagonist = excluded_antagonist.index();
+        owner_ai.base.antagonist =
+            Some(crate::ai::AiEntityHandle::new(excluded_antagonist.index()));
         owner_ai
             .base
             .outbox
             .actor
             .queue_unalert_near_charly_seekers(
-                CharlySeekerTarget::Npc(charly.index()),
+                CharlySeekerTarget::Npc(crate::ai::AiEntityHandle::new(charly.index())),
                 owner_ai.base.antagonist,
             );
         // Model rejected speech running ReturnToDuty after the Original call
         // but before Rust drains the engine-side sweep.
-        owner_ai.base.antagonist = 0;
+        owner_ai.base.antagonist = None;
     }
 
     let mut wall = SightObstacle::new_default(1);
@@ -7893,7 +7983,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
                 .any(|line| line.info == StimulusType::CallCharlyIsBack as u16),
             "the admitted recipient must synchronously receive CALL_CHARLY_IS_BACK"
         );
-        assert_eq!(enemy.base.checkpoint_charly, 0);
+        assert_eq!(enemy.base.checkpoint_charly, None);
         assert_eq!(enemy.base.sorrow_level, 0);
         assert!(
             soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
@@ -8722,7 +8812,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
             AiState::Seeking,
             Substate::SeekingOfficerWaitForInstructedSoldier,
         );
-        officer.base.antagonist = soldier_id.index();
+        officer.base.antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
         officer.base.my_reconnaissance_report.report_type = ReportType::Body;
         officer.base.my_reconnaissance_report.seek_position = Position {
             x: 91.0,
@@ -8855,7 +8945,7 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
             target: soldier_id.index(),
             caller: officer_id.index(),
             stimulus_type: StimulusType::CallAlert,
-            info: StimulusInfo::Human(officer_id.index()),
+            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(officer_id.index())),
             continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                 last: false,
                 use_formation: false,
@@ -8871,7 +8961,7 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
             target: second_id.index(),
             caller: officer_id.index(),
             stimulus_type: StimulusType::CallAlert,
-            info: StimulusInfo::Human(officer_id.index()),
+            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(officer_id.index())),
             continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                 last: true,
                 use_formation: false,
@@ -8963,12 +9053,12 @@ fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
     source.outbox.reentrant.cross_npc_actions.extend([
         CrossNpcAction::SetPrimaryTarget {
             target: member_id.index(),
-            primary_target: propagated_target,
+            primary_target: Some(crate::ai::AiEntityHandle::new(propagated_target)),
         },
         CrossNpcAction::SetPhalanxThemList {
             target: member_id.index(),
             them: vec![member_target],
-            primary_target: member_target,
+            primary_target: Some(crate::ai::AiEntityHandle::new(member_target)),
         },
     ]);
 
@@ -8980,7 +9070,8 @@ fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
         .expect("phalanx member retains EnemyAi");
     assert_eq!(member.list_them, vec![member_target]);
     assert_eq!(
-        member.base.primary_target, member_target,
+        member.base.primary_target,
+        Some(crate::ai::AiEntityHandle::new(member_target)),
         "the later inline member decision must win over propagated phalanx target"
     );
     assert!(
@@ -9037,7 +9128,7 @@ fn recursive_break_phalanx_borrows_global_think_depth_without_owning_end_think()
         member.base.current_state = AiState::Attacking;
         member.base.current_substate = Substate::AttackingPhalanx;
         member.list_them = vec![source_id.index()];
-        member.base.primary_target = source_id.index();
+        member.base.primary_target = Some(crate::ai::AiEntityHandle::new(source_id.index()));
         assert_eq!(member.base.think_recursion_depth, 0);
         // Model a completion candidate already present on the recursively
         // called object. BreakPhalanx has no matching EndThink of its own,
@@ -9132,7 +9223,9 @@ fn queue_review2_wrong_kind_think(
             target: civilian_id.index(),
             caller: officer_id.index(),
             stimulus_type,
-            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
+                officer_id.index(),
+            )),
             continuation,
         });
 }

@@ -3,11 +3,19 @@ cargo-features = ["codegen-backend"]
 [workspace]
 resolver = "2"
 members = [
+    "crates/robin_parity",
     "crates/robin_rs",
     "crates/robin_engine",
     "crates/robin_lua",
     "crates/robin_util",
     "crates/robin_assets",
+    "crates/robin_state_hash_derive",
+]
+# Keep bare `cargo build` / `cargo test` as a quick workspace smoke check.
+# Simulation, assets, client, Lua, and parity suites remain available through
+# `-p <crate>` or `--workspace` and should be selected deliberately.
+default-members = [
+    "crates/robin_util",
     "crates/robin_state_hash_derive",
 ]
 
@@ -82,7 +90,7 @@ lto = "thin"
 # engine change relink the entire example for many minutes. Keep incremental
 # codegen units reusable and trade a little runtime throughput for fast links.
 #
-# Use with: cargo build --profile parity --example original_parity_replay
+# Use with: cargo build -p robin_parity --profile parity --bin original_parity_replay
 [profile.parity]
 inherits = "release"
 lto = false

@@ -12,7 +12,7 @@ use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
-use robin_engine::player_command::{PlayerCommand, PlayerInput};
+use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use robin_engine::sound_cache::SampleLoader;
 
 /// Per-frame audio tick.
@@ -40,6 +40,7 @@ pub(super) fn tick_audio(
     let mut pending_play_delayed_sources = Vec::new();
     let mut resume_all_sources = false;
     let mut activate_sources = Vec::new();
+    let mut refresh_ambience_sources = false;
     let mut stop_exclamations = Vec::new();
     let mut stop_exclamation_channels = Vec::new();
     for request in deferred {
@@ -49,6 +50,7 @@ pub(super) fn tick_audio(
             }
             DeferredAudioRequest::ResumeAllSources => resume_all_sources = true,
             DeferredAudioRequest::ActivateSource(index) => activate_sources.push(index),
+            DeferredAudioRequest::RefreshAmbienceSources => refresh_ambience_sources = true,
             DeferredAudioRequest::StopExclamation(actor_id) => {
                 stop_exclamations.push(actor_id);
             }
@@ -66,6 +68,11 @@ pub(super) fn tick_audio(
             host.viewport.sound_listen_point(),
             host.viewport.zoom_factor,
         );
+    }
+    if refresh_ambience_sources {
+        host.audio
+            .sound
+            .sync_ambience_sources(&manager.engine.sound_sim().sources, backend);
     }
     for idx in activate_sources {
         // Sim already flipped `src.active = true` inside
@@ -215,14 +222,11 @@ pub(super) fn post_render_engine_cleanup(
 /// rewinds `n` frames through the rewind buffer, swapping out the live
 /// rollback state with the reconstructed state.
 ///
-/// **Pending modals (dialog / popup-scroll / debriefing / sherwood
-/// report / pause-all) are dismissed silently.**  The normal per-frame
-/// drain functions show a blocking UI that waits for a mouse click —
-/// fine interactively, a deadlock for scripted HTTP drivers (which is
-/// the whole point of `--start-paused`).  We just clear the queues
-/// both before the first tick and after each subsequent tick so the
-/// sim keeps advancing past anything the scripts queue.  The reply
-/// includes `modals_dismissed` so callers can see it happened.
+/// Pending gameplay modals are resolved under the request's typed modal
+/// policy. Automation defaults to a conservative auto-dismiss outcome; strict
+/// drivers can disable it and provide one-shot `(ModalKind, DialogResult)`
+/// answers. An unanswered modal blocks without mutating its queue. Replies
+/// include every accepted typed outcome.
 ///
 /// Called once per frame from the main loop, after `drain_global`
 /// (which enqueues the requests) and after the normal tick block (so
@@ -238,6 +242,9 @@ pub(super) fn drain_steps(
     timeline: &mut super::runtime::TimelineRuntime,
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
+    mut terminal_debriefing: Option<&mut super::terminal_debriefing::TerminalDebriefingState>,
+    mission_ui_block_reason: Option<&str>,
+    mut resolve_local_ui: impl FnMut(&crate::http_server::StepModalPolicy) -> Result<(), String>,
 ) {
     let steps = crate::http_server::take_pending_steps();
     if steps.is_empty() {
@@ -245,38 +252,126 @@ pub(super) fn drain_steps(
     }
 
     for step in steps {
-        let mut modals_dismissed = dismiss_pending_modals(host);
-        if active_modal.take().is_some() {
-            modals_dismissed += 1;
-            tracing::debug!("HTTP step: dismissed pre-existing active modal");
+        // Keep the response handle intact: every branch below consumes the
+        // complete PendingStep when it replies.
+        let kind = step.kind.clone();
+        let mut modal_policy = match &kind {
+            crate::http_server::StepKind::Forward { modal_policy, .. }
+            | crate::http_server::StepKind::Back { modal_policy, .. }
+            | crate::http_server::StepKind::GoToFrame { modal_policy, .. } => {
+                Some(modal_policy.clone())
+            }
+            crate::http_server::StepKind::SetPaused { .. } => None,
+        };
+        if let Err(error) = validate_multiplayer_step_request(host, &kind) {
+            step.respond_err(error);
+            continue;
         }
-
-        match step.kind {
-            crate::http_server::StepKind::Forward { n } => {
-                let start = timeline.frame_number();
-                let result = run_forward_ticks(manager, host, assets, dev, game, timeline, n);
-                // Stepping bypasses the checker's begin_frame/end_frame
-                // pairing, so its ring buffer is now stale relative to
-                // the advanced engine.  Clear it — the checker resumes
-                // populating on the next normal frame.
-                if let Some(checker) = timeline.rollback_checker.as_mut() {
-                    checker.reset();
+        if let Some(policy) = modal_policy.as_ref()
+            && let Err(error) = resolve_local_ui(policy)
+        {
+            step.respond_err(error);
+            continue;
+        }
+        if modal_policy.is_some()
+            && let Some(reason) = mission_ui_block_reason
+        {
+            step.respond_err(format!(
+                "blocked by {reason}; dismiss it in the game before stepping"
+            ));
+            continue;
+        }
+        if let (Some(policy), Some(terminal)) =
+            (modal_policy.as_mut(), terminal_debriefing.as_deref_mut())
+        {
+            let modal_kind = terminal.current_kind();
+            let explicit = policy
+                .dismissals
+                .iter()
+                .position(|dismissal| dismissal.kind == modal_kind)
+                .map(|index| policy.dismissals.remove(index).result);
+            let result = match explicit.or_else(|| {
+                policy
+                    .auto_dismiss
+                    .then(|| default_http_modal_result(&modal_kind))
+            }) {
+                Some(result) => result,
+                None => {
+                    step.respond_err(format!(
+                        "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
+                        serde_json::to_string(&modal_kind).expect("ModalKind serializes")
+                    ));
+                    continue;
                 }
+            };
+            let terminal_dismissal = crate::http_server::HttpModalDismissal {
+                kind: modal_kind.clone(),
+                result,
+            };
+            if let Err(error) = validate_http_modal_result(&modal_kind, result)
+                .and_then(|()| authorize_http_modal_dismissals(host, &[terminal_dismissal]))
+                .and_then(|()| terminal.queue_http_result(modal_kind.clone(), result))
+            {
+                step.respond_err(error);
+                continue;
+            }
+            step.respond_err(format!(
+                "dismissed terminal modal {}; retry the step after the outer frame applies it",
+                serde_json::to_string(&modal_kind).expect("ModalKind serializes")
+            ));
+            continue;
+        }
+        let mut accepted_dismissals = if let Some(policy) = modal_policy.as_mut() {
+            match resolve_http_step_modals(host, Some(active_modal), policy) {
+                Ok(dismissals) => dismissals,
+                Err(error) => {
+                    step.respond_err(error);
+                    continue;
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        match kind {
+            crate::http_server::StepKind::Forward { n, .. } => {
+                let start = timeline.frame_number();
+                let result = run_forward_ticks(
+                    manager,
+                    host,
+                    assets,
+                    dev,
+                    game,
+                    timeline,
+                    n,
+                    modal_policy
+                        .as_mut()
+                        .expect("forward steps always carry a modal policy"),
+                );
                 match result {
                     Ok((advanced, dismissed_during)) => {
-                        modals_dismissed += dismissed_during;
+                        accepted_dismissals.extend(dismissed_during);
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
                         step.respond_ok(serde_json::json!({
                             "direction": "forward",
                             "from_frame": start,
                             "frame": timeline.frame_number(),
                             "advanced": advanced,
-                            "modals_dismissed": modals_dismissed,
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
                         }));
                     }
                     Err(error) => step.respond_err(error),
                 }
             }
-            crate::http_server::StepKind::Back { n } => {
+            crate::http_server::StepKind::Back { n, .. } => {
                 let Some(target) = timeline.frame_number().checked_sub(n) else {
                     step.respond_err(format!(
                         "n={} exceeds current frame {}",
@@ -286,25 +381,48 @@ pub(super) fn drain_steps(
                     continue;
                 };
                 match rewind_to_frame(manager, host, assets, timeline, target) {
-                    Ok(from) => step.respond_ok(serde_json::json!({
-                        "direction": "back",
-                        "from_frame": from,
-                        "frame": target,
-                        "rewound": from - target,
-                    })),
+                    Ok(from) => {
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
+                        step.respond_ok(serde_json::json!({
+                            "direction": "back",
+                            "from_frame": from,
+                            "frame": target,
+                            "rewound": from - target,
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
+                        }))
+                    }
                     Err(e) => step.respond_err(e),
                 }
             }
-            crate::http_server::StepKind::GoToFrame { target } => {
+            crate::http_server::StepKind::GoToFrame { target, .. } => {
                 let from = timeline.frame_number();
                 use std::cmp::Ordering;
-                let result: Result<&'static str, String> = match target.cmp(&from) {
+                let mut result: Result<&'static str, String> = match target.cmp(&from) {
                     Ordering::Equal => Ok("noop"),
                     Ordering::Greater => {
                         let delta = target - from;
-                        match run_forward_ticks(manager, host, assets, dev, game, timeline, delta) {
+                        match run_forward_ticks(
+                            manager,
+                            host,
+                            assets,
+                            dev,
+                            game,
+                            timeline,
+                            delta,
+                            modal_policy
+                                .as_mut()
+                                .expect("go-to-frame steps always carry a modal policy"),
+                        ) {
                             Ok((advanced, dismissed_during)) => {
-                                modals_dismissed += dismissed_during;
+                                accepted_dismissals.extend(dismissed_during);
                                 if advanced < delta {
                                     Err(format!(
                                         "advanced {advanced} of {delta} frames before stepping stopped"
@@ -320,28 +438,36 @@ pub(super) fn drain_steps(
                         rewind_to_frame(manager, host, assets, timeline, target).map(|_| "back")
                     }
                 };
-                // The rollback checker's ring now references a timeline
-                // the live engine is no longer on; clear it so the next
-                // normal frame starts a fresh window.
-                if let Some(checker) = timeline.rollback_checker.as_mut() {
-                    checker.reset();
-                }
-                // Post-rewind / post-forward state may have its own
-                // pending modals; keep the same "always dismiss"
-                // policy so the next drain_steps call (or normal
-                // tick) doesn't hit a blocking UI.
-                modals_dismissed += dismiss_pending_modals(host);
-                if active_modal.take().is_some() {
-                    modals_dismissed += 1;
+                match resolve_http_step_modals(
+                    host,
+                    Some(active_modal),
+                    modal_policy
+                        .as_mut()
+                        .expect("go-to-frame steps always carry a modal policy"),
+                ) {
+                    Ok(dismissed) => accepted_dismissals.extend(dismissed),
+                    Err(error) if result.is_ok() => result = Err(error),
+                    Err(_) => {}
                 }
                 match result {
-                    Ok(kind) => step.respond_ok(serde_json::json!({
-                        "direction": "go-to-frame",
-                        "from_frame": from,
-                        "frame": timeline.frame_number(),
-                        "applied": kind,
-                        "modals_dismissed": modals_dismissed,
-                    })),
+                    Ok(kind) => {
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
+                        step.respond_ok(serde_json::json!({
+                            "direction": "go-to-frame",
+                            "from_frame": from,
+                            "frame": timeline.frame_number(),
+                            "applied": kind,
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
+                        }))
+                    }
                     Err(e) => step.respond_err(e),
                 }
             }
@@ -356,18 +482,73 @@ pub(super) fn drain_steps(
     }
 }
 
+fn validate_multiplayer_step_request(
+    host: &Host,
+    kind: &crate::http_server::StepKind,
+) -> Result<(), String> {
+    if host.transport.net.is_none() {
+        return Ok(());
+    }
+    let policy = match kind {
+        crate::http_server::StepKind::SetPaused { .. } => {
+            return Err(
+                "manual pause is disabled in multiplayer; use explicit synchronized host timeline movement"
+                    .to_string(),
+            );
+        }
+        crate::http_server::StepKind::Forward { modal_policy, .. }
+        | crate::http_server::StepKind::Back { modal_policy, .. }
+        | crate::http_server::StepKind::GoToFrame { modal_policy, .. } => modal_policy,
+    };
+    if host.transport.local_seat != PlayerId::HOST {
+        return Err(
+            "manual stepping is disabled for multiplayer clients; only explicit synchronized host automation is allowed"
+                .to_string(),
+        );
+    }
+    if !policy.synchronized_multiplayer {
+        return Err(
+            "manual stepping is disabled in multiplayer; retry on the host with synchronized_multiplayer=true"
+                .to_string(),
+        );
+    }
+    if host.transport.reconnecting {
+        return Err(
+            "multiplayer snapshot synchronization is still in progress; wait for the ready barrier"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn begin_synchronized_step_resync(
+    host: &mut Host,
+    frame: u32,
+    engine: &engine_api::Engine,
+) -> Result<(), String> {
+    let Some(net) = host.transport.net.as_ref() else {
+        return Ok(());
+    };
+    if host.transport.local_seat != PlayerId::HOST {
+        return Err("only the multiplayer host can synchronize manual stepping".to_string());
+    }
+    net.set_initial_snapshot(frame, engine);
+    net.reconnect_all_for_snapshot(format!(
+        "host synchronized automation adopted timeline frame {frame}"
+    ))?;
+    net.send_ready_to_sim(frame);
+    host.transport.reconnecting = true;
+    Ok(())
+}
+
 /// Run up to `n` forward ticks, applying the next recorded commands
 /// on each tick when a replay is active.  Returns the number of
-/// frames advanced and the count of modals silently dismissed
-/// mid-sequence.
+/// frames advanced and the typed modals resolved mid-sequence.
 ///
-/// Any modal that becomes pending during the run (dialog,
-/// popup-scroll, debriefing, sherwood report, mission-state popup)
-/// is dismissed in place and the loop keeps going — the whole point
-/// of HTTP stepping is to drive past these without an interactive
-/// click.  The keyboard step path in `run_mission` instead refuses
-/// to step while a modal is pending; that's a deliberate
-/// interactive-vs-scripted divergence.
+/// Any modal that becomes pending during the run (dialog, popup-scroll,
+/// debriefing, sherwood report, mission-state popup) is resolved by that same
+/// request policy. The keyboard step path instead refuses to step while a
+/// modal is pending; that's a deliberate interactive-vs-scripted divergence.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_forward_ticks(
     manager: &mut engine_manager_api::EngineManager,
@@ -377,9 +558,10 @@ pub(super) fn run_forward_ticks(
     game: &mut Game,
     timeline: &mut super::runtime::TimelineRuntime,
     n: u32,
-) -> Result<(u32, usize), String> {
+    modal_policy: &mut crate::http_server::StepModalPolicy,
+) -> Result<(u32, Vec<crate::http_server::HttpModalDismissal>), String> {
     let start = timeline.frame_number();
-    let mut dismissed = 0usize;
+    let mut dismissed = Vec::new();
     for _ in 0..n {
         let frame = timeline.frame_number();
         // Stepping into a save-marker / load-back frame must pin or swap
@@ -438,9 +620,6 @@ pub(super) fn run_forward_ticks(
         // replay EOF before opening either transaction.
         let engine = &mut manager.engine;
         timeline.rewind_buffer.begin_frame(frame, engine, assets);
-        if let Some(checker) = timeline.rollback_checker.as_mut() {
-            checker.begin_frame(frame, engine);
-        }
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
@@ -464,17 +643,18 @@ pub(super) fn run_forward_ticks(
             false,
         );
         host.engine_display = display;
-        if let Some(checker) = timeline.rollback_checker.as_mut() {
-            checker.end_frame_input(host, simulation_frame.clone(), engine);
-        }
         if buffered_frame.is_none() {
             timeline.rewind_buffer.end_frame_input(simulation_frame);
+            if let Some(checker) = timeline.rollback_checker.as_mut() {
+                checker.check_after_commit(host, &timeline.rewind_buffer, engine);
+            }
         }
         if let Some(after) = replay_timeline_after {
             timeline.adopt_frame(after);
         } else {
             timeline.advance_frame();
         }
+        refresh_authoritative_multiplayer_state(host, timeline.frame_number(), engine);
 
         // If the tick queued any modal, drop it silently and keep
         // going.  Without this the caller's `step N` would stop at
@@ -482,7 +662,7 @@ pub(super) fn run_forward_ticks(
         // same dance — making `step 1000` advance only as far as
         // the first scripted dialog.
         if modal_state_pending(host) {
-            dismissed += dismiss_pending_modals(host);
+            dismissed.extend(resolve_http_step_modals(host, None, modal_policy)?);
         }
     }
     Ok((timeline.frame_number() - start, dismissed))
@@ -499,7 +679,6 @@ pub(super) fn rewind_to_frame(
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
 ) -> Result<u32, String> {
-    let _ = host; // reserved for future hooks (e.g. cursor reset on scrub)
     let Some(oldest) = timeline.rewind_buffer.oldest_reachable_frame() else {
         return Err("rewind buffer empty".into());
     };
@@ -519,7 +698,20 @@ pub(super) fn rewind_to_frame(
     if !restored {
         return Err("rewind_to failed (no matching snapshot)".into());
     }
+    refresh_authoritative_multiplayer_state(host, timeline.frame_number(), &manager.engine);
     Ok(from)
+}
+
+/// Keep reconnect admission and input stamping aligned with debugger-driven
+/// timeline movement. Manual HTTP steps bypass the normal outer-frame commit,
+/// which otherwise refreshes both pieces of host-authoritative network state.
+fn refresh_authoritative_multiplayer_state(host: &Host, frame: u32, engine: &engine_api::Engine) {
+    if let Some(net) = host.transport.net.as_ref()
+        && host.transport.local_seat == PlayerId::HOST
+    {
+        net.publish_frame(frame);
+        net.set_initial_snapshot(frame, engine);
+    }
 }
 
 /// True iff the engine has queued a modal dialog / debriefing / scroll
@@ -565,6 +757,132 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
     host.effects.take_sherwood_report();
     host.effects.take_signal(HostSignal::MissionStatePopup);
     n
+}
+
+fn default_http_modal_result(
+    kind: &robin_engine::player_command::ModalKind,
+) -> robin_engine::player_command::DialogResult {
+    use robin_engine::player_command::DialogResult;
+    match kind {
+        // Automation's historical behavior was to continue informational
+        // screens and decline/abort choice screens.
+        robin_engine::player_command::ModalKind::Dialog { .. }
+        | robin_engine::player_command::ModalKind::PopupText { .. }
+        | robin_engine::player_command::ModalKind::SherwoodReport
+        | robin_engine::player_command::ModalKind::Debriefing { .. }
+        | robin_engine::player_command::ModalKind::FinalDebriefing { .. } => {
+            DialogResult::Completed
+        }
+        robin_engine::player_command::ModalKind::MissionState { .. } => DialogResult::Aborted,
+    }
+}
+
+fn validate_http_modal_result(
+    kind: &robin_engine::player_command::ModalKind,
+    result: robin_engine::player_command::DialogResult,
+) -> Result<(), String> {
+    use robin_engine::player_command::{DialogResult, ModalKind};
+
+    let valid = match kind {
+        ModalKind::Dialog { .. }
+        | ModalKind::Debriefing { .. }
+        | ModalKind::MissionState { .. } => {
+            matches!(result, DialogResult::Completed | DialogResult::Aborted)
+        }
+        ModalKind::PopupText { .. } | ModalKind::SherwoodReport => {
+            result == DialogResult::Completed
+        }
+        ModalKind::FinalDebriefing { .. } => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "modal {} cannot accept result {}",
+            serde_json::to_string(kind).expect("ModalKind serializes"),
+            serde_json::to_string(&result).expect("DialogResult serializes")
+        ))
+    }
+}
+
+/// Apply multiplayer authority to HTTP-supplied modal outcomes before any
+/// local presentation state is changed. A host publishes the same decision
+/// its own UI would publish; a client can only submit an advisory proposal and
+/// must keep the modal open until that decision comes back from the host.
+fn authorize_http_modal_dismissals(
+    host: &Host,
+    dismissals: &[crate::http_server::HttpModalDismissal],
+) -> Result<(), String> {
+    let Some(net) = host.transport.net.as_ref() else {
+        return Ok(());
+    };
+
+    if host.transport.local_seat == PlayerId::HOST {
+        for dismissal in dismissals {
+            let instance = net.open_modal_instance(&dismissal.kind)?;
+            net.decide_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)?;
+            net.complete_modal_instance(&dismissal.kind, instance)?;
+        }
+        Ok(())
+    } else {
+        for dismissal in dismissals {
+            let instance = net.open_modal_instance(&dismissal.kind)?;
+            net.propose_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)?;
+        }
+        Err(format!(
+            "blocked by host-authoritative multiplayer modal; submitted {} proposal(s) and left local modal state unchanged",
+            dismissals.len()
+        ))
+    }
+}
+
+fn resolve_http_step_modals(
+    host: &mut Host,
+    active_modal: Option<&mut Option<ActiveModal>>,
+    policy: &mut crate::http_server::StepModalPolicy,
+) -> Result<Vec<crate::http_server::HttpModalDismissal>, String> {
+    use robin_engine::player_command::{MissionStateModalKind, ModalKind};
+
+    let mut pending = host.effects.pending_modal_kinds();
+    if host.effects.has_signal(HostSignal::MissionStatePopup) {
+        pending.push(ModalKind::MissionState {
+            kind: MissionStateModalKind::LeaveMissionNow,
+        });
+    }
+    if let Some(active) = active_modal.as_deref()
+        && let Some(kind) = active.as_ref().and_then(ActiveModal::kind)
+    {
+        pending.push(kind);
+    }
+    if pending.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut accepted = Vec::with_capacity(pending.len());
+    for kind in pending {
+        let explicit = policy
+            .dismissals
+            .iter()
+            .position(|dismissal| dismissal.kind == kind)
+            .map(|index| policy.dismissals.remove(index).result);
+        let result = explicit
+            .or_else(|| policy.auto_dismiss.then(|| default_http_modal_result(&kind)))
+            .ok_or_else(|| {
+                format!(
+                    "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
+                    serde_json::to_string(&kind).expect("ModalKind serializes")
+                )
+            })?;
+        validate_http_modal_result(&kind, result)?;
+        accepted.push(crate::http_server::HttpModalDismissal { kind, result });
+    }
+
+    authorize_http_modal_dismissals(host, &accepted)?;
+    dismiss_pending_modals(host);
+    if let Some(active) = active_modal {
+        active.take();
+    }
+    Ok(accepted)
 }
 
 #[cfg(test)]
@@ -650,6 +968,7 @@ mod tests {
     fn non_replay_forward_step_keeps_live_debugger_behavior() {
         let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
             stepping_fixture(None);
+        let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, dismissed) = run_forward_ticks(
             &mut manager,
@@ -659,11 +978,12 @@ mod tests {
             &mut game,
             &mut timeline,
             1,
+            &mut modal_policy,
         )
         .expect("live debugger step");
 
         assert_eq!(advanced, 1);
-        assert_eq!(dismissed, 0);
+        assert!(dismissed.is_empty());
         assert_eq!(timeline.frame_number(), 1);
         let input = timeline
             .rewind_buffer
@@ -673,11 +993,215 @@ mod tests {
     }
 
     #[test]
+    fn multiplayer_host_manual_steps_refresh_reconnect_state() {
+        let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(None);
+        let (net, _incoming, _outgoing, frame_cursor, initial_snapshot) =
+            crate::multiplayer::NetChannels::new();
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(net);
+        let mut modal_policy = crate::http_server::StepModalPolicy::default();
+
+        run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut timeline,
+            1,
+            &mut modal_policy,
+        )
+        .expect("multiplayer host forward step");
+
+        assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 1);
+        {
+            let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
+            let (frame, engine_bytes) = snapshot.as_ref().expect("forward-step snapshot");
+            assert_eq!(*frame, 1);
+            assert_eq!(
+                engine_bytes.as_slice(),
+                manager.engine.encode_native_snapshot().as_slice()
+            );
+        }
+
+        rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 0)
+            .expect("multiplayer host rewind");
+
+        assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
+        let (frame, engine_bytes) = snapshot.as_ref().expect("rewind snapshot");
+        assert_eq!(*frame, 0);
+        assert_eq!(
+            engine_bytes.as_slice(),
+            manager.engine.encode_native_snapshot().as_slice()
+        );
+    }
+
+    #[test]
+    fn multiplayer_rejects_local_pause_and_requires_explicit_host_sync() {
+        let (net, _incoming, _outgoing, _cursor, _snapshot) =
+            crate::multiplayer::NetChannels::new();
+        let mut host = Host::default();
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(net);
+
+        let pause_error = validate_multiplayer_step_request(
+            &host,
+            &crate::http_server::StepKind::SetPaused { paused: true },
+        )
+        .expect_err("one peer must not pause a multiplayer timeline");
+        assert!(pause_error.contains("manual pause is disabled"));
+
+        let ordinary = crate::http_server::StepKind::Forward {
+            n: 1,
+            modal_policy: crate::http_server::StepModalPolicy::default(),
+        };
+        let ordinary_error = validate_multiplayer_step_request(&host, &ordinary)
+            .expect_err("ordinary multiplayer stepping must be rejected");
+        assert!(ordinary_error.contains("synchronized_multiplayer=true"));
+
+        let synchronized = crate::http_server::StepKind::Forward {
+            n: 1,
+            modal_policy: crate::http_server::StepModalPolicy {
+                synchronized_multiplayer: true,
+                ..Default::default()
+            },
+        };
+        validate_multiplayer_step_request(&host, &synchronized)
+            .expect("the host may explicitly synchronize automation");
+
+        host.transport.local_seat = PlayerId(1);
+        let client_error = validate_multiplayer_step_request(&host, &synchronized)
+            .expect_err("a client must never own timeline movement");
+        assert!(client_error.contains("multiplayer clients"));
+    }
+
+    #[test]
+    fn http_step_without_auto_dismiss_reports_typed_modal_blocker() {
+        let mut host = Host::default();
+        host.effects.extend_dialogues([7]);
+        let mut policy = crate::http_server::StepModalPolicy {
+            auto_dismiss: false,
+            dismissals: Vec::new(),
+            synchronized_multiplayer: false,
+        };
+        let error = resolve_http_step_modals(&mut host, None, &mut policy)
+            .expect_err("unanswered modal must block");
+        assert!(error.contains("blocked by modal"));
+        assert!(error.contains("dialog_id"));
+        assert_eq!(host.effects.dialogue_count(), 1);
+    }
+
+    #[test]
+    fn http_step_accepts_matching_typed_modal_result() {
+        use robin_engine::player_command::{DialogResult, ModalKind};
+
+        let mut host = Host::default();
+        host.effects.extend_dialogues([7]);
+        let expected = crate::http_server::HttpModalDismissal {
+            kind: ModalKind::Dialog { dialog_id: 7 },
+            result: DialogResult::Aborted,
+        };
+        let mut policy = crate::http_server::StepModalPolicy {
+            auto_dismiss: false,
+            dismissals: vec![expected.clone()],
+            synchronized_multiplayer: false,
+        };
+        let accepted = resolve_http_step_modals(&mut host, None, &mut policy)
+            .expect("matching typed dismissal");
+        assert_eq!(accepted, vec![expected]);
+        assert!(policy.dismissals.is_empty(), "typed outcomes are one-shot");
+        assert_eq!(host.effects.dialogue_count(), 0);
+    }
+
+    #[test]
+    fn multiplayer_client_http_step_proposes_but_cannot_dismiss_modal() {
+        use crate::multiplayer::{NetChannels, NetOutbound};
+        use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
+
+        let (net, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
+        net.install_session_id(crate::multiplayer::MultiplayerSessionId([1; 32]))
+            .unwrap();
+        let mut host = Host::default();
+        host.transport.local_seat = PlayerId(1);
+        host.transport.net = Some(net);
+        host.effects.extend_dialogues([7]);
+        let expected = crate::http_server::HttpModalDismissal {
+            kind: ModalKind::Dialog { dialog_id: 7 },
+            result: DialogResult::Completed,
+        };
+        let mut policy = crate::http_server::StepModalPolicy::default();
+
+        let error = resolve_http_step_modals(&mut host, None, &mut policy)
+            .expect_err("client HTTP endpoint is not modal authority");
+
+        assert!(error.contains("host-authoritative multiplayer modal"));
+        assert_eq!(host.effects.dialogue_count(), 1);
+        assert!(matches!(
+            outgoing.try_recv().expect("advisory proposal"),
+            NetOutbound::ModalProposal { kind, result, .. }
+                if kind == expected.kind && result == expected.result
+        ));
+    }
+
+    #[test]
+    fn multiplayer_host_http_step_broadcasts_decision_before_dismissal() {
+        use crate::multiplayer::{NetChannels, NetOutbound};
+        use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
+
+        let (net, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
+        net.install_session_id(crate::multiplayer::MultiplayerSessionId([2; 32]))
+            .unwrap();
+        let mut host = Host::default();
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(net);
+        host.effects.extend_popup_texts([9]);
+        let expected = crate::http_server::HttpModalDismissal {
+            kind: ModalKind::PopupText { text_id: 9 },
+            result: DialogResult::Completed,
+        };
+        let mut policy = crate::http_server::StepModalPolicy::default();
+
+        let accepted = resolve_http_step_modals(&mut host, None, &mut policy)
+            .expect("host HTTP endpoint has modal authority");
+
+        assert_eq!(accepted, vec![expected.clone()]);
+        assert_eq!(host.effects.popup_text_count(), 0);
+        assert!(matches!(
+            outgoing.try_recv().expect("authoritative decision"),
+            NetOutbound::ModalDecision { kind, result, .. }
+                if kind == expected.kind && result == expected.result
+        ));
+    }
+
+    #[test]
+    fn http_step_rejects_a_result_invalid_for_the_modal_kind() {
+        use robin_engine::player_command::{DialogResult, ModalKind};
+
+        let mut host = Host::default();
+        host.effects.extend_popup_texts([9]);
+        let mut policy = crate::http_server::StepModalPolicy {
+            auto_dismiss: false,
+            dismissals: vec![crate::http_server::HttpModalDismissal {
+                kind: ModalKind::PopupText { text_id: 9 },
+                result: DialogResult::Restart,
+            }],
+            synchronized_multiplayer: false,
+        };
+        let error = resolve_http_step_modals(&mut host, None, &mut policy)
+            .expect_err("single-button popup cannot restart a mission");
+        assert!(error.contains("cannot accept result"));
+        assert_eq!(host.effects.popup_text_count(), 1);
+    }
+
+    #[test]
     fn replay_eof_refuses_to_fabricate_another_step() {
         let recorded_input = engine_api::SimulationFrameInput::default();
         let player = one_frame_replay(recorded_input);
         let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
             stepping_fixture(Some(player));
+        let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, _) = run_forward_ticks(
             &mut manager,
@@ -687,6 +1211,7 @@ mod tests {
             &mut game,
             &mut timeline,
             1,
+            &mut modal_policy,
         )
         .expect("recorded replay step");
         assert_eq!(advanced, 1);
@@ -707,6 +1232,7 @@ mod tests {
             &mut game,
             &mut timeline,
             1,
+            &mut modal_policy,
         )
         .expect_err("replay EOF must refuse a synthetic live frame");
 
@@ -766,6 +1292,7 @@ mod tests {
             true,
         );
         timeline.adopt_frame(super::super::runtime::TimelineFrame::from_wire(250));
+        let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, _) = run_forward_ticks(
             &mut manager,
@@ -775,6 +1302,7 @@ mod tests {
             &mut game,
             &mut timeline,
             1,
+            &mut modal_policy,
         )
         .expect("forward scrub should reuse frame 250");
 

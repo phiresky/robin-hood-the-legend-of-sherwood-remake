@@ -5,7 +5,8 @@
 //! escapes the phase or crosses into simulation.
 
 use super::event_hud::{
-    CollectedFrameInput, EventHudContext, EventHudOutcome, collect_event_and_hud_input,
+    CollectedFrameInput, EventHudContext, EventHudOutcome, InputModifiers,
+    collect_event_and_hud_input,
 };
 use super::flow::{FrameControl, MissionExit, MissionServices};
 use super::interactive::MissionInput;
@@ -396,6 +397,10 @@ fn pre_tick_is_paused(sources: PreTickPauseSources) -> bool {
     sources.pause_menu || sources.manual || sources.multiplayer_clock || sources.modal
 }
 
+fn local_pause_stops_timeline(menu_open: bool, multiplayer: bool) -> bool {
+    menu_open && !multiplayer
+}
+
 /// A modal freezes the authoritative timeline but not the dense replay host
 /// record cursor. Recording emits stationary records while the modal remains
 /// open, including the later record carrying its dismissal. Explicit user or
@@ -596,7 +601,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             mut frame,
             mp_clock_pause,
         } = begin_interactive_frame(mission);
-        let modal_rendered_this_frame = false;
+        let mut modal_rendered_this_frame = false;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
         // state copies.
@@ -626,10 +631,127 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
 
+        if let Some(transition) = host.transport.take_committed_snapshot_transition() {
+            match transition.payload {
+                crate::host::PendingSnapshotTransitionPayload::Save { slot, save } => {
+                    let target_mission_id = save.header.mission_id;
+                    callbacks.pending_level_load = Some(crate::main_entry::PendingLevelLoad {
+                        slot: slot.unwrap_or(usize::MAX),
+                        target_mission_id,
+                        save: *save,
+                    });
+                    callbacks.applying_multiplayer_transition = true;
+                    game.operation.set(GameCode::LevelLoad);
+                    tracing::info!(
+                        ?transition.id,
+                        target_mission_id,
+                        "multiplayer: authoritative load committed; rebuilding mission transport"
+                    );
+                    runtime.trace(FrameContractStage::Exit);
+                    return Ok(Some(FrameControl::Exit(MissionExit::new(
+                        GameCode::LevelLoad,
+                    ))));
+                }
+                crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                    exit_code,
+                    engine,
+                } => {
+                    if let Some(engine) = engine {
+                        manager.engine = *engine;
+                    }
+                    game.operation.set(exit_code);
+                    tracing::info!(
+                        ?transition.id,
+                        ?exit_code,
+                        "multiplayer: host campaign transition committed"
+                    );
+                    runtime.trace(FrameContractStage::Exit);
+                    return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
+                }
+            }
+        }
+        if callbacks
+            .pending_multiplayer_campaign_exit
+            .is_some_and(|pending| runtime.frame_number() >= pending.not_before_frame)
+        {
+            let pending = callbacks
+                .pending_multiplayer_campaign_exit
+                .take()
+                .expect("checked deferred multiplayer campaign exit exists");
+            assert_eq!(
+                host.transport.local_seat,
+                robin_engine::player_command::PlayerId::HOST,
+                "only the host may publish a campaign-exit snapshot"
+            );
+            assert!(
+                host.transport.snapshot_transition.is_none() && !host.transport.reconnecting,
+                "campaign exit reached its snapshot boundary during another transition"
+            );
+            assert!(
+                callbacks.pending.is_none(),
+                "campaign exit cannot overwrite another pending save/load request"
+            );
+            let engine_bytes = manager.engine.encode_native_snapshot();
+            let id = host
+                .transport
+                .net
+                .as_ref()
+                .expect("deferred multiplayer campaign exit lost its transport")
+                .begin_campaign_exit_transition(GameCode::LevelInterrupted, engine_bytes)
+                .unwrap_or_else(|error| {
+                    panic!("failed to begin multiplayer campaign transition: {error}")
+                });
+            host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
+                id,
+                payload: crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                    exit_code: GameCode::LevelInterrupted,
+                    engine: None,
+                },
+                committed: false,
+            });
+            host.transport.reconnecting = true;
+            callbacks.pending = Some(crate::main_entry::SaveLoadRequest::Sherwood {
+                mission_id: pending.mission_id,
+            });
+            tracing::info!(
+                ?id,
+                frame = runtime.frame_number(),
+                "multiplayer: waiting for peers to validate the campaign-exit snapshot"
+            );
+        }
+        if host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+            && let Some(net) = host.transport.net.as_ref()
+        {
+            let proposals = net
+                .take_all_visible_modal_requests()
+                .unwrap_or_else(|error| {
+                    panic!("failed to present multiplayer modal proposals: {error}")
+                });
+            if !proposals.is_empty() {
+                let summary = proposals
+                    .iter()
+                    .map(|request| {
+                        format!(
+                            "Player {} proposes {:?} for {:?}",
+                            request.from.0, request.result, request.kind
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                game.display_message(format!("{summary}; host confirmation is required."), 100);
+            }
+        }
+
+        let client_waiting_for_campaign_host = host.transport.net.is_some()
+            && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+            && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());
+        let campaign_ui_presented = !client_waiting_for_campaign_host
+            && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());
         match handle_sherwood_campaign_map_overlay(
             game,
             manager,
             host,
+            callbacks,
             &mut frame,
             assets,
             &mut *window,
@@ -638,11 +760,10 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             &mut presentation.sprites.cursor_renderer,
             &mut resources.text,
             &mut ui.campaign_map,
+            &mut ui.sherwood_campaign_flow,
             &mut resources.menu,
             &mut hud.sherwood_enable,
-        )
-        .await?
-        {
+        )? {
             HandlerAction::Continue => {
                 runtime.trace(FrameContractStage::EarlyRestart);
                 return Ok(Some(FrameControl::RestartIteration));
@@ -653,27 +774,52 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             }
             HandlerAction::Proceed => {}
         }
+        modal_rendered_this_frame |= campaign_ui_presented;
 
-        let collected = collect_event_and_hud_input(EventHudContext {
-            host,
-            manager,
-            game,
-            assets: assets.as_ref(),
-            dev,
-            callbacks,
-            window,
-            presentation,
-            resources,
-            input,
-            ui,
-            hud,
-            runtime,
-            frame: &mut frame,
-            manual_pause,
-            step_forward_repeat_at_ms,
-            step_back_repeat_at_ms,
-        })
-        .await;
+        let mission_ui_owns_input = ui.terminal_debriefing.is_some()
+            || game.persistent.campaign_map_active
+            || ui.sherwood_campaign_flow.is_some()
+            || ui.active_ui_task.is_some()
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
+        let collected = if mission_ui_owns_input {
+            EventHudOutcome::Ready(CollectedFrameInput {
+                events: Vec::new(),
+                keyboard_actions: Vec::new(),
+                mouse_actions: Vec::new(),
+                modifiers: InputModifiers {
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                },
+                minimap_toggle_pressed: false,
+                pause_closed_this_frame: false,
+                rewind_active: false,
+                step_forward_pressed: false,
+                step_back_pressed: false,
+            })
+        } else {
+            collect_event_and_hud_input(EventHudContext {
+                host,
+                manager,
+                game,
+                assets: assets.as_ref(),
+                dev,
+                callbacks,
+                window,
+                presentation,
+                resources,
+                input,
+                ui,
+                hud,
+                runtime,
+                frame: &mut frame,
+                manual_pause,
+                step_forward_repeat_at_ms,
+                step_back_repeat_at_ms,
+            })
+        };
         let CollectedFrameInput {
             events,
             keyboard_actions: kb_actions,
@@ -739,7 +885,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                     audio,
                     input,
                     ui,
-                    hud,
                     frame: &mut frame,
                 },
                 LiveGameplayInput {
@@ -764,26 +909,24 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 HandlerAction::Proceed => {}
             }
         }
-        // ── Cross-mission QuickLoad confirmation modal ──
+        // ── Cross-mission QuickLoad confirmation task ──
         // Quick-load prompts the
         // player with `MSG_REALLY_LOAD_QUICKSAVE` whenever the quicksave
         // header's mission ID differs from the running mission.  Run
-        // the modal here, before the thumbnail capture and state-machine
-        // drain — the helper either drops the pending request (No) or
-        // rewrites it into a `Load` so the existing cross-mission
-        // routing performs the mission swap (Yes).
-        confirm_quickload_cross_mission(
-            callbacks,
-            &manager.engine,
-            profiles,
-            host,
-            &mut *window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &resources.menu,
-        )
-        .await;
+        // the task here, before the save/load drain. It then advances one
+        // frame at a time alongside the mission loop.
+        if ui.active_ui_task.is_none()
+            && let Some(task) = prepare_quickload_cross_mission(
+                callbacks,
+                &manager.engine,
+                profiles,
+                &mut *window,
+                &mut presentation.renderer,
+                &resources.menu,
+            )
+        {
+            ui.active_ui_task = Some(task);
+        }
 
         runtime.trace(FrameContractStage::InputAndMenus);
 
@@ -1102,7 +1245,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let modal_pause = ui
             .active_modal
             .as_ref()
-            .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()));
+            .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()))
+            || ui.terminal_debriefing.is_some()
+            || (ui.sherwood_campaign_flow.is_some() && host.transport.net.is_none())
+            || ui
+                .lost_sherwood_gate
+                .blocks_mission(game.is_sherwood, &manager.engine);
 
         // Drain once more at the last deterministic pre-tick boundary.
         // Packets can arrive after the top-of-loop drain while this
@@ -1128,7 +1276,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         process_pre_tick_state_hash(runtime, host, manager);
 
         let pause_sources = PreTickPauseSources {
-            pause_menu: ui.pause_menu.is_some(),
+            // A local menu cannot stop an authoritative multiplayer clock.
+            // It still owns local input and presentation, but peers and the
+            // local simulation continue underneath it.
+            pause_menu: local_pause_stops_timeline(
+                ui.pause_menu.is_some() || ui.active_ui_task.is_some(),
+                host.transport.net.is_some(),
+            ),
             manual: *manual_pause,
             multiplayer_clock: mp_clock_pause,
             modal: modal_pause,
@@ -1181,7 +1335,17 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
 #[cfg(test)]
 mod tests {
-    use super::{PreTickPauseSources, pre_tick_is_paused, replay_cursor_is_paused};
+    use super::{
+        PreTickPauseSources, local_pause_stops_timeline, pre_tick_is_paused,
+        replay_cursor_is_paused,
+    };
+
+    #[test]
+    fn local_pause_only_stops_single_player_timeline() {
+        assert!(local_pause_stops_timeline(true, false));
+        assert!(!local_pause_stops_timeline(true, true));
+        assert!(!local_pause_stops_timeline(false, false));
+    }
 
     #[test]
     fn pre_tick_pause_combines_all_graphical_pause_sources() {

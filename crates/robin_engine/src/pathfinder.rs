@@ -1405,10 +1405,13 @@ impl PathFinderRuntime {
             .half_diagonals
             .get(half_diagonal_idx as usize)
             .copied()
-            // Hackable JSON levels do not carry the legacy unit-size
-            // table. Their actors are initialized with this same minimal
-            // footprint fallback in PositionInterface.
-            .unwrap_or(MoveBoxHalfDiagonal::new(1.0, 1.0));
+            .unwrap_or_else(|| {
+                panic!(
+                    "pathfinder request references missing half-diagonal slot \
+                     {half_diagonal_idx} (table has {})",
+                    self.graph.static_data.half_diagonals.len()
+                )
+            });
 
         let has_authored_graph_nodes = self
             .graph

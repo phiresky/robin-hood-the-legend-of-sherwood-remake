@@ -23,6 +23,7 @@ use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_profile::{PlayerProfile, PlayerProfileManager};
 use robin_engine::profiles::Action;
+use robin_engine::sprite_variant::SpriteVariant;
 use robin_engine::tactical_control::TacticalFormation;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -159,6 +160,8 @@ impl ApplicationContext {
         sim_config.item_gameplay = gameplay_config.item_gameplay;
         sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
         sim_config.sherwood_trading = gameplay_config.sherwood_trading;
+        sim_config.enable_timed_missions = gameplay_config.enable_timed_missions;
+        sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -182,6 +185,8 @@ impl ApplicationContext {
         sim_config.item_gameplay = existing.item_gameplay;
         sim_config.noise_distraction_feedback = existing.noise_distraction_feedback;
         sim_config.sherwood_trading = existing.sherwood_trading;
+        sim_config.enable_timed_missions = existing.enable_timed_missions;
+        sim_config.enable_dynamic_ambience = existing.enable_dynamic_ambience;
         *self
             .sim_config
             .lock()
@@ -506,6 +511,8 @@ impl ApplicationContext {
         sim_config.item_gameplay = gameplay_config.item_gameplay;
         sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
         sim_config.sherwood_trading = gameplay_config.sherwood_trading;
+        sim_config.enable_timed_missions = gameplay_config.enable_timed_missions;
+        sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
         *self
             .sim_config
             .lock()
@@ -1093,6 +1100,50 @@ pub struct HostTransport {
     pub speech_timing_locale: Option<String>,
     pub mission_id: Option<String>,
     pub reconnecting: bool,
+    pub snapshot_transition: Option<PendingSnapshotTransition>,
+}
+
+pub struct PendingSnapshotTransition {
+    pub id: robin_engine::multiplayer::SnapshotTransitionId,
+    pub payload: PendingSnapshotTransitionPayload,
+    pub committed: bool,
+}
+
+pub enum PendingSnapshotTransitionPayload {
+    Save {
+        /// Host-local slot identity. Peers receive the exact save payload but do
+        /// not resolve it through their unrelated local slot index.
+        slot: Option<usize>,
+        save: Box<crate::save_file::GameSaveFile>,
+    },
+    CampaignExit {
+        exit_code: robin_engine::game_operation::GameCode,
+        /// Clients retain the exact decoded host engine so their campaign is
+        /// identical before all participants enter the next mission. The
+        /// host already owns that engine and therefore stores `None`.
+        engine: Option<Box<robin_engine::engine::Engine>>,
+    },
+}
+
+impl HostTransport {
+    pub fn authoritative_transition_actions_enabled(&self) -> bool {
+        !self.reconnecting
+            && self.snapshot_transition.is_none()
+            && (self.net.is_none()
+                || self.local_seat == robin_engine::player_command::PlayerId::HOST)
+    }
+
+    pub fn take_committed_snapshot_transition(&mut self) -> Option<PendingSnapshotTransition> {
+        if self
+            .snapshot_transition
+            .as_ref()
+            .is_some_and(|transition| transition.committed)
+        {
+            self.snapshot_transition.take()
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1100,6 +1151,7 @@ pub enum DeferredAudioRequest {
     PlayDelayedSource(usize),
     ResumeAllSources,
     ActivateSource(usize),
+    RefreshAmbienceSources,
     StopExclamation(u32),
     StopExclamationChannel(u32),
 }
@@ -1170,6 +1222,26 @@ pub struct HostEffectBatches {
 }
 
 impl HostEffectBatches {
+    pub fn pending_modal_kinds(&self) -> Vec<engine_player_command::ModalKind> {
+        self.modals
+            .iter()
+            .map(|request| match *request {
+                HostModalRequest::Dialogue(dialog_id) => {
+                    engine_player_command::ModalKind::Dialog { dialog_id }
+                }
+                HostModalRequest::PopupText(text_id) => {
+                    engine_player_command::ModalKind::PopupText { text_id }
+                }
+                HostModalRequest::Debriefing(text_id) => {
+                    engine_player_command::ModalKind::Debriefing { text_id }
+                }
+                HostModalRequest::SherwoodReport => {
+                    engine_player_command::ModalKind::SherwoodReport
+                }
+            })
+            .collect()
+    }
+
     pub fn extend_dialogues(&mut self, ids: impl IntoIterator<Item = i32>) {
         self.modals
             .extend(ids.into_iter().map(HostModalRequest::Dialogue));
@@ -1456,6 +1528,50 @@ impl Host {
         published.publish(Arc::clone(&self.frame_holder));
     }
 
+    /// Rebuild ambience dictionaries and the shadow key as one published
+    /// generation. This extends Feature 14's single-generation rebinding
+    /// boundary so render pixels and engine hit testing stay synchronized.
+    pub fn rebind_frame_holder_ambiance(
+        &mut self,
+        ambiance: engine_api::Ambiance,
+        bypass_fog_sprites_crash: bool,
+        shadow_color: u16,
+    ) {
+        let published = Arc::clone(
+            self.frame_holder_opacity
+                .as_ref()
+                .expect("frame-holder opacity must be published before runtime rebinding"),
+        );
+        let holder = Arc::make_mut(&mut self.frame_holder);
+        if bypass_fog_sprites_crash {
+            holder.drop_variant_dictionaries(SpriteVariant::Night);
+            holder.drop_variant_dictionaries(SpriteVariant::Fog);
+        } else {
+            match ambiance {
+                engine_api::Ambiance::Fog => {
+                    holder.drop_variant_dictionaries(SpriteVariant::Night);
+                    holder.generate_fog_dictionaries();
+                    holder.set_global_shadow(10);
+                    holder.set_global_blip_shadow(40);
+                }
+                engine_api::Ambiance::Night => {
+                    holder.drop_variant_dictionaries(SpriteVariant::Fog);
+                    holder.generate_night_dictionaries();
+                    holder.set_global_shadow(40);
+                    holder.set_global_blip_shadow(60);
+                }
+                _ => {
+                    holder.drop_variant_dictionaries(SpriteVariant::Night);
+                    holder.drop_variant_dictionaries(SpriteVariant::Fog);
+                    holder.set_global_shadow(40);
+                    holder.set_global_blip_shadow(60);
+                }
+            }
+        }
+        holder.apply_arno_law(shadow_color);
+        published.publish(Arc::clone(&self.frame_holder));
+    }
+
     /// Clear persistent decals that belonged to the previous level.
     pub fn clear_background_decals(&mut self) {
         self.background_decals.clear();
@@ -1696,6 +1812,17 @@ impl Host {
                     self.audio
                         .deferred
                         .push(DeferredAudioRequest::ActivateSource(idx));
+                }
+                SoundCommand::RefreshAmbienceSources => {
+                    if !self
+                        .audio
+                        .deferred
+                        .contains(&DeferredAudioRequest::RefreshAmbienceSources)
+                    {
+                        self.audio
+                            .deferred
+                            .push(DeferredAudioRequest::RefreshAmbienceSources);
+                    }
                 }
             }
         }

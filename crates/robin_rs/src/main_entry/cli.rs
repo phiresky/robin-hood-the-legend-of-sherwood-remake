@@ -237,6 +237,12 @@ pub struct CliArgs {
     #[serde(skip)]
     pub browser_join_redeemed: bool,
 
+    /// Internal outer-mission handoff. A replacement host consumes the exact
+    /// authenticated session/seat roster retained by the previous transport.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mp_continue_session: bool,
+
     /// Internal matchmaking handoff: keep the simulation paused until this
     /// wall-clock timestamp so host and joiners begin together.
     #[arg(long, hide = true)]
@@ -363,6 +369,7 @@ impl Default for CliArgs {
             connect: None,
             join: None,
             browser_join_redeemed: false,
+            mp_continue_session: false,
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
             mp_mission_profile_id: None,
@@ -382,14 +389,14 @@ impl Default for CliArgs {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "multiplayer"))]
 thread_local! {
     static PENDING_BROWSER_JOIN: std::cell::RefCell<Option<(String, bool)>> = const {
         std::cell::RefCell::new(None)
     };
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "multiplayer"))]
 pub fn set_pending_browser_join(code: String, redeemed: bool) -> Result<(), String> {
     // Authenticate immediately, before the shell can use ticket-selected
     // mission or relay fields. Time is rechecked when the run starts.
@@ -412,6 +419,15 @@ pub fn set_pending_browser_join(code: String, redeemed: bool) -> Result<(), Stri
     })
 }
 
+#[cfg(all(target_arch = "wasm32", not(feature = "multiplayer")))]
+pub fn set_pending_browser_join(_code: String, _redeemed: bool) -> Result<(), String> {
+    Err(
+        "browser multiplayer is unavailable in this build; rebuild with `--features multiplayer`"
+            .to_string(),
+    )
+}
+
+#[cfg(feature = "multiplayer")]
 pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     if args.join.is_none() {
@@ -450,6 +466,18 @@ pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(feature = "multiplayer"))]
+pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
+    if args.join.is_some() || args.server || args.connect.is_some() {
+        return Err(
+            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "multiplayer")]
 fn current_epoch_seconds() -> u64 {
     web_time::SystemTime::now()
         .duration_since(web_time::SystemTime::UNIX_EPOCH)

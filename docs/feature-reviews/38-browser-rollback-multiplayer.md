@@ -41,7 +41,7 @@ be called production-ready until those prerequisites and the live QA gate pass.
 ### Signed invitation
 
 - The canonical public artifact is an `rhmp3-...` ticket with schema 3. The
-  final integration uses gameplay wire protocol 29; invitation and content
+  final integration uses gameplay wire protocol 31; invitation and content
   schemas are independently versioned.
 - The native host's persistent iroh endpoint key signs the ticket in the
   `robinhood/browser-join-ticket/v3` domain. The public key must be the key that
@@ -263,7 +263,7 @@ not converted into fake local success.
 
 - Browser transport is relay-WebSocket only. Browser direct UDP/hole punching
   is not implemented.
-- Builds must match the full engine commit and protocol 29. There is no legacy
+- Builds must match the full engine commit and protocol 31. There is no legacy
   protocol, snapshot, ticket, or content-manifest migration.
 - Browser multiplayer requires WebCrypto Ed25519 and durable IndexedDB. If the
   browser deletes the isolated origin's storage, it loses the durable owner and

@@ -394,11 +394,11 @@ impl EngineInner {
             };
             let position = pc.element.position_map();
             let noise = crate::ai::Noise {
-                origin: crate::ai::Position {
+                origin: crate::ai::NoiseOrigin {
                     x: position.x,
                     y: position.y,
                     sector: pc.element.sector(),
-                    level: pc.element.layer(),
+                    layer: pc.element.optional_layer(),
                 },
                 noise_type: if pc.human.opponents.is_empty() {
                     crate::ai::NoiseType::TapTapTap

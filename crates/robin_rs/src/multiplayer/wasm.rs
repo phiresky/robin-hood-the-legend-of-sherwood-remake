@@ -36,6 +36,7 @@ const MAX_RECONNECT_BACKOFF_MS: u32 = 10_000;
 /// Browser-side handle to the live single-threaded iroh task.
 pub struct ClientHandle {
     pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
+    pub session_id: Rc<RefCell<Option<robin_engine::multiplayer::MultiplayerSessionId>>>,
     pub mission_seed: Rc<RefCell<Option<u64>>>,
     pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
     pub speech_timing_locale: Rc<RefCell<Option<Option<String>>>>,
@@ -45,6 +46,10 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub fn session_id(&self) -> Option<robin_engine::multiplayer::MultiplayerSessionId> {
+        *self.session_id.borrow()
+    }
+
     pub fn assigned_seat(&self) -> Option<PlayerId> {
         *self.assigned_seat.borrow()
     }
@@ -100,6 +105,7 @@ pub fn connect_client(
         BrowserJoinTicket::decode_authenticated(addr.as_ref()).map_err(std::io::Error::other)?;
     let server_addr = ticket.endpoint_addr().map_err(std::io::Error::other)?;
     let assigned_seat = Rc::new(RefCell::new(None));
+    let session_id = Rc::new(RefCell::new(None));
     let mission_seed = Rc::new(RefCell::new(None));
     let mission_sim_config = Rc::new(RefCell::new(None));
     let speech_timing_locale = Rc::new(RefCell::new(None));
@@ -114,6 +120,7 @@ pub fn connect_client(
         incoming_tx,
         outgoing_rx,
         Rc::clone(&assigned_seat),
+        Rc::clone(&session_id),
         Rc::clone(&mission_seed),
         Rc::clone(&mission_sim_config),
         Rc::clone(&speech_timing_locale),
@@ -124,6 +131,7 @@ pub fn connect_client(
 
     Ok(ClientHandle {
         assigned_seat,
+        session_id,
         mission_seed,
         mission_sim_config,
         speech_timing_locale,
@@ -205,6 +213,7 @@ async fn run_client_io(
     incoming_tx: Sender<NetEvent>,
     mut outgoing_rx: Receiver<NetOutbound>,
     assigned: Rc<RefCell<Option<PlayerId>>>,
+    session_id_slot: Rc<RefCell<Option<robin_engine::multiplayer::MultiplayerSessionId>>>,
     mission_seed_slot: Rc<RefCell<Option<u64>>>,
     sim_config_slot: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
     speech_timing_locale_slot: Rc<RefCell<Option<Option<String>>>>,
@@ -281,6 +290,7 @@ async fn run_client_io(
     }
 
     *assigned.borrow_mut() = Some(your_seat);
+    *session_id_slot.borrow_mut() = Some(session_id);
     *mission_seed_slot.borrow_mut() = Some(mission_seed);
     *sim_config_slot.borrow_mut() = Some(sim_config);
     *speech_timing_locale_slot.borrow_mut() = Some(speech_timing_locale.clone());
@@ -407,8 +417,9 @@ async fn initial_handshake(
     let started = web_time::Instant::now();
     let mut backoff_ms = 50_u32;
     let mut last_error = "host has not accepted the connection".to_string();
-    let expected_session_id =
-        BrowserJoinTicket::decode_authenticated(&browser_auth.join_code)?.session_id()?;
+    let expected_session_id = robin_engine::multiplayer::MultiplayerSessionId(
+        BrowserJoinTicket::decode_authenticated(&browser_auth.join_code)?.session_id()?,
+    );
     while started.elapsed().as_millis() < u128::from(INITIAL_CONNECT_TIMEOUT_MS) {
         if cancellation.get() {
             return Err("browser multiplayer connection cancelled".to_string());
@@ -444,7 +455,7 @@ type Handshake = (
     u64,
     robin_engine::engine::SimConfig,
     Option<String>,
-    [u8; 32],
+    robin_engine::multiplayer::MultiplayerSessionId,
 );
 
 struct ClientSession {
@@ -458,7 +469,7 @@ async fn handshake(
     server_addr: &EndpointAddr,
     nickname: &str,
     browser_auth: &BrowserPeerAuth,
-    expected_session_id: [u8; 32],
+    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
 ) -> Result<Handshake, String> {
     let connection = endpoint
         .connect(server_addr.clone(), GAME_ALPN)
@@ -525,13 +536,13 @@ fn validate_reconnect_state(
     expected_seed: u64,
     expected_config: robin_engine::engine::SimConfig,
     expected_speech_timing_locale: Option<&str>,
-    expected_session_id: [u8; 32],
+    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
     seat: PlayerId,
     mission_id: &str,
     seed: u64,
     config: robin_engine::engine::SimConfig,
     speech_timing_locale: Option<&str>,
-    session_id: [u8; 32],
+    session_id: robin_engine::multiplayer::MultiplayerSessionId,
 ) -> Result<(), String> {
     if seat != expected_seat
         || mission_id != expected_mission_id
@@ -652,8 +663,36 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, message: NetMsg) -> Re
                 start_epoch_ms,
             });
         }
-        NetMsg::ModalDismiss { kind, result } => {
-            let _ = incoming_tx.send(NetEvent::ModalDismiss { kind, result });
+        NetMsg::ModalDecision {
+            instance,
+            kind,
+            result,
+            decision_frame,
+        } => {
+            incoming_tx
+                .send(NetEvent::ModalDecision {
+                    instance,
+                    kind,
+                    result,
+                    decision_frame,
+                })
+                .map_err(|_| "browser modal decision channel is closed".to_string())?;
+        }
+        NetMsg::ReconnectRequired { reason } => {
+            return Err(format!("host requires a full-snapshot reconnect: {reason}"));
+        }
+        NetMsg::PrepareSnapshotTransition { id, payload } => {
+            incoming_tx
+                .send(NetEvent::PrepareSnapshotTransition { id, payload })
+                .map_err(|_| "browser snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::CommitSnapshotTransition { id } => {
+            incoming_tx
+                .send(NetEvent::CommitSnapshotTransition { id })
+                .map_err(|_| "browser snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::ModalProposal { .. } | NetMsg::SnapshotTransitionReady { .. } => {
+            return Err("host sent a client-only multiplayer message".to_string());
         }
         NetMsg::Reject { reason } => return Err(format!("host rejected session: {reason}")),
         other => {
@@ -680,14 +719,36 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
             )
             .await?;
         }
-        NetOutbound::StateHash { .. } | NetOutbound::InitialSnapshot { .. } => {
+        NetOutbound::StateHash { .. }
+        | NetOutbound::InitialSnapshot { .. }
+        | NetOutbound::ModalDecision { .. }
+        | NetOutbound::ReconnectForSnapshot { .. }
+        | NetOutbound::ReconnectAllForSnapshot { .. }
+        | NetOutbound::BeginSnapshotTransition { .. } => {
             return Err("browser client attempted a host-only multiplayer publication".to_string());
         }
         NetOutbound::ReadyToSim { frame } => {
             write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
         }
-        NetOutbound::ModalDismiss { kind, result } => {
-            write_frame(send, &NetMsg::ModalDismiss { kind, result }).await?;
+        NetOutbound::ModalProposal {
+            instance,
+            kind,
+            result,
+            requested_frame,
+        } => {
+            write_frame(
+                send,
+                &NetMsg::ModalProposal {
+                    instance,
+                    kind,
+                    result,
+                    requested_frame,
+                },
+            )
+            .await?;
+        }
+        NetOutbound::SnapshotTransitionReady { id } => {
+            write_frame(send, &NetMsg::SnapshotTransitionReady { id }).await?;
         }
     }
     Ok(())
@@ -814,13 +875,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "A",
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_ok()
         );
@@ -831,13 +892,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(2),
                 "A",
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );
@@ -848,13 +909,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "A",
                 7,
                 expected,
                 Some("en-US"),
-                [2; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([2; 32]),
             )
             .is_err()
         );
@@ -865,13 +926,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "A",
                 7,
                 expected,
                 Some("de-DE"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );

@@ -1517,27 +1517,43 @@ pub enum CrossNpcAction {
     /// (reciprocal cleanup).
     SetLeftCombatNeighbour {
         target: NpcHandle,
-        neighbour: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
     },
     /// Set the target NPC's right combat neighbour link (one-way).
     SetRightCombatNeighbour {
         target: NpcHandle,
-        neighbour: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
     },
     /// One-way counterpart of Original `SetArcherBehindMe`, used while
     /// applying the reciprocal half of `UpdateShieldBearerBeforeMe`.
     SetArcherBehindMe {
         target: NpcHandle,
-        archer: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        archer: Option<AiEntityHandle>,
     },
     /// One-way counterpart of Original `SetShieldBearerBeforeMe`, used while
     /// applying the reciprocal half of `UpdateArcherBehindMe`.
     SetShieldBearerBeforeMe {
         target: NpcHandle,
-        shield_bearer: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        shield_bearer: Option<AiEntityHandle>,
     },
     /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
-    ///   1. Clear `old_left`'s right pointer (if non-zero).
+    ///   1. Clear `old_left`'s right pointer (if present).
     ///   2. Store `new_left` on `target`'s left pointer.
     ///   3. Pre-clean `new_left`'s existing right (and that-right's left).
     ///   4. Wire `new_left`'s right pointer back to `target`.
@@ -1546,20 +1562,36 @@ pub enum CrossNpcAction {
     /// `target`'s current state being unmodified.
     UpdateLeftCombatNeighbour {
         target: NpcHandle,
-        old_left: HumanHandle,
-        new_left: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_left: Option<AiEntityHandle>,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_left: Option<AiEntityHandle>,
     },
     /// Mirror of [`Self::UpdateLeftCombatNeighbour`] for the right side.
     UpdateRightCombatNeighbour {
         target: NpcHandle,
-        old_right: HumanHandle,
-        new_right: HumanHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_right: Option<AiEntityHandle>,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_right: Option<AiEntityHandle>,
     },
     /// Propagate primary target to a phalanx member during
     /// `ReconsiderPhalanx`'s phalanx-member walk.
     SetPrimaryTarget {
         target: NpcHandle,
-        primary_target: HumanHandle,
+        primary_target: Option<AiEntityHandle>,
     },
     /// Install the merged phalanx them-list and its head target on one
     /// member. `PhalanxReinitializeThemList` recurses to the right end and
@@ -1569,7 +1601,7 @@ pub enum CrossNpcAction {
     SetPhalanxThemList {
         target: NpcHandle,
         them: Vec<HumanHandle>,
-        primary_target: HumanHandle,
+        primary_target: Option<AiEntityHandle>,
     },
     /// Make the target NPC say a remark.
     Say { target: NpcHandle, remark: Remark },
@@ -1933,6 +1965,48 @@ pub enum NoiseType {
     Distraction,
 }
 
+/// Spatial origin of a noise. One-shot effects may deliberately have no
+/// world layer (for example a crumpled net launched without a landing
+/// surface), so absence is represented structurally rather than by layer
+/// `0xffff`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct NoiseOrigin {
+    pub x: f32,
+    pub y: f32,
+    pub sector: Option<crate::position_interface::SectorHandle>,
+    pub layer: Option<crate::position_interface::Layer>,
+}
+
+impl NoiseOrigin {
+    pub fn from_position(position: Position) -> Self {
+        Self {
+            x: position.x,
+            y: position.y,
+            sector: position.sector,
+            layer: crate::position_interface::Layer::new(position.level),
+        }
+    }
+
+    pub fn position(self) -> Option<Position> {
+        self.layer.map(|layer| Position {
+            x: self.x,
+            y: self.y,
+            sector: self.sector,
+            level: layer.get(),
+        })
+    }
+}
+
 /// A noise event with origin, type, volume, and elevation.
 #[derive(
     Debug,
@@ -1946,7 +2020,7 @@ pub enum NoiseType {
     bitcode::Decode,
 )]
 pub struct Noise {
-    pub origin: Position,
+    pub origin: NoiseOrigin,
     pub noise_type: NoiseType,
     pub volume: u16,
     pub elevation: u16,
@@ -2163,7 +2237,7 @@ pub enum ReportType {
 pub struct Hint {
     pub seek_point: Position,
     pub seek_flags: u16,
-    pub who_tells_me: NpcHandle,
+    pub who_tells_me: AiEntityHandle,
 }
 
 /// Info about a stolen object.
@@ -2179,8 +2253,8 @@ pub struct Hint {
     bitcode::Decode,
 )]
 pub struct StolenObject {
-    pub object: ObjectHandle,
-    pub thief: NpcHandle,
+    pub object: AiEntityHandle,
+    pub thief: AiEntityHandle,
 }
 
 /// Info about a friend in trouble.
@@ -2196,7 +2270,7 @@ pub struct StolenObject {
     bitcode::Decode,
 )]
 pub struct CombatInfo {
-    pub actor_npc: NpcHandle,
+    pub actor_npc: AiEntityHandle,
     pub enemy_position: Position,
 }
 
@@ -2216,7 +2290,55 @@ pub struct DoorCombatInfo {
     pub delay: u16,
     pub goal: Position,
     pub direction: u16,
-    pub adversary: HumanHandle,
+    /// Original `SendBeforeDoorToFight` explicitly permits a null adversary.
+    /// Slot zero is a live human, so only `None` represents that null pointer.
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub adversary: Option<AiEntityHandle>,
+}
+
+#[cfg(test)]
+mod nullable_stimulus_reference_tests {
+    use super::*;
+
+    #[test]
+    fn current_door_adversary_rejects_legacy_bare_zero() {
+        let mut value = serde_json::to_value(DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: None,
+        })
+        .unwrap();
+        value["adversary"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<DoorCombatInfo>(value).is_err());
+    }
+
+    #[test]
+    fn door_adversary_slot_zero_round_trips_as_live() {
+        let info = DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: Some(AiEntityHandle::new(0)),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""adversary":{"entity":0}"#));
+        let restored: DoorCombatInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.adversary, Some(AiEntityHandle::new(0)));
+    }
+
+    #[test]
+    fn stimulus_owner_slot_zero_round_trips_as_live() {
+        let mut stimulus = Stimulus::new(StimulusType::NoEvent);
+        stimulus.owner = Some(AiEntityHandle::new(0));
+        let json = serde_json::to_string(&stimulus).unwrap();
+        assert!(json.contains(r#""owner":{"entity":0}"#));
+        let restored: Stimulus = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
+    }
 }
 
 /// The payload of a [`Stimulus`].
@@ -2237,9 +2359,9 @@ pub enum StimulusInfo {
     None,
     Noise(Noise),
     Position(Position),
-    Human(HumanHandle),
+    Human(AiEntityHandle),
     Hint(Hint),
-    Object(ObjectHandle),
+    Object(AiEntityHandle),
     Stolen(StolenObject),
     Combat(CombatInfo),
     DoorCombat(DoorCombatInfo),
@@ -2320,7 +2442,13 @@ impl PartialEq<QueuedSelfStimulus> for StimulusType {
 pub struct Stimulus {
     pub stimulus_type: StimulusType,
     pub info: StimulusInfo,
-    pub owner: NpcHandle,
+    /// Optional Original stimulus owner pointer. This is independent of the
+    /// actor currently processing the stimulus and is initialized to NULL.
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub owner: Option<AiEntityHandle>,
     pub to_whole_patrol: bool,
     #[serde(skip)]
     #[bitcode(skip)]
@@ -2343,7 +2471,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::None,
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2353,7 +2481,7 @@ impl Stimulus {
         Self {
             stimulus_type: queued.stimulus_type,
             info: StimulusInfo::None,
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: queued.origin,
         }
@@ -2363,7 +2491,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::Noise(noise),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2373,7 +2501,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::Position(pos),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2382,8 +2510,8 @@ impl Stimulus {
     pub fn with_human(stimulus_type: StimulusType, human: HumanHandle) -> Self {
         Self {
             stimulus_type,
-            info: StimulusInfo::Human(human),
-            owner: 0,
+            info: StimulusInfo::Human(AiEntityHandle::new(human)),
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2393,7 +2521,7 @@ impl Stimulus {
         Self {
             stimulus_type,
             info: StimulusInfo::DoorCombat(dc),
-            owner: 0,
+            owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,
         }
@@ -2490,7 +2618,11 @@ pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
-    pub charly: NpcHandle,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
 }
 
@@ -2500,7 +2632,7 @@ impl Default for ReconnaissanceReport {
             seek_position: Position::default(),
             report_type: ReportType::Nothing,
             seen_bodies: Vec::new(),
-            charly: 0,
+            charly: None,
             charly_seen: false,
         }
     }
@@ -2510,7 +2642,7 @@ impl ReconnaissanceReport {
     pub fn reset(&mut self) {
         self.seen_bodies.clear();
         self.report_type = ReportType::Nothing;
-        self.charly = 0;
+        self.charly = None;
     }
 
     pub fn update(&mut self, new_type: ReportType, new_position: Position) {
@@ -2956,8 +3088,9 @@ pub struct DoorSeekInfo {
     pub position_in: Position,
     pub sector_out: u16,
     /// Exact arena half of Original's `RHDoor::GetSectorOut()` pointer.
-    /// Older synthetic state may retain only the public number above.
-    #[serde(default)]
+    /// Current Rust snapshots must carry this field explicitly; older Rust
+    /// layouts are rejected by their outer schema version.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Sector on the inside of the door (the building).
     pub sector_in: u16,
@@ -2972,6 +3105,14 @@ pub struct DoorSeekInfo {
     pub npc_villain_authorized_direct: bool,
 }
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 impl DoorSeekInfo {
     /// Complete the cached static authorization with the two live gates from
     /// `RHDoor::IsActorAutorized`: destination-building capacity and rider
@@ -2983,6 +3124,29 @@ impl DoorSeekInfo {
         actor_is_rider: bool,
     ) -> bool {
         self.npc_villain_authorized_direct && building_has_capacity && !actor_is_rider
+    }
+}
+
+#[cfg(test)]
+mod door_seek_schema_tests {
+    use super::*;
+
+    #[test]
+    fn current_door_seek_schema_requires_exact_sector_provenance_field() {
+        let info = DoorSeekInfo {
+            door_index: crate::gate::DoorIndex::new(1).unwrap(),
+            door_type: crate::gate::DoorType::Default,
+            point_out: MapPoint::new(1.0, 2.0),
+            position_in: Position::default(),
+            sector_out: 3,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(4),
+            sector_in: 5,
+            layer_out: 6,
+            npc_villain_authorized_direct: true,
+        };
+        let mut value = serde_json::to_value(info).unwrap();
+        value.as_object_mut().unwrap().remove("sector_out_index");
+        assert!(serde_json::from_value::<DoorSeekInfo>(value).is_err());
     }
 }
 

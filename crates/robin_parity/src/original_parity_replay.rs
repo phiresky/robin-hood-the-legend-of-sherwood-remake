@@ -6,10 +6,8 @@
 //!
 //! Usage:
 //!   ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
-//!     cargo run --example original_parity_replay -- \
+//!     cargo run -p robin_parity --bin original_parity_replay -- \
 //!       original-code/parity-traces/original-demo-baseline.jsonl
-
-#![recursion_limit = "256"]
 
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -31,18 +29,24 @@ use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
-use robin_engine::engine::{
-    Engine, HostDisplayState, InputState, LegacyGridSectorAsset, LevelAssets,
-};
+use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
+#[cfg(feature = "client")]
+use robin_engine::engine::{HostDisplayState, InputState};
 use robin_engine::fast_find_grid::LineIndex;
+#[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::Action;
 use robin_engine::sector::SectorNumber;
+#[cfg(feature = "client")]
 use robin_engine::sprite::BBox;
+#[cfg(feature = "client")]
 use robin_rs::Host;
+#[cfg(feature = "client")]
 use robin_rs::gfx_types::BlendMode;
+#[cfg(feature = "client")]
 use robin_rs::level_loading_host::EngineLevelLoadExt;
+#[cfg(feature = "client")]
 use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -275,6 +279,10 @@ impl TraceSimConfig {
             amount_of_speaking: self.amount_of_speaking,
             synchronous_pathfinding,
             sherwood_trading: false,
+            // Original traces contain no Rust-authored timer or ambience
+            // schedule, so leaving the authoring gates enabled is inert.
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }
@@ -2261,7 +2269,7 @@ fn recorded_gate_path_from_event(
                     .gates
                     .iter()
                     .map(|gate| robin_engine::gate::GatePathStep {
-                        door_index: robin_engine::gate::DoorIndex(
+                        door_index: robin_engine::gate::DoorIndex::from(
                             entity_map.translate_gate(gate.gate_id),
                         ),
                         direct: gate.direct,
@@ -3234,6 +3242,7 @@ struct Options {
     trace_path: PathBuf,
     dump: Option<DumpOptions>,
     http_server: Option<u16>,
+    #[cfg(feature = "client")]
     start_paused: bool,
     frame_zero_screenshot_dir: Option<PathBuf>,
     bench_encodings: bool,
@@ -3450,6 +3459,7 @@ impl DumpOptions {
     }
 }
 
+#[cfg(feature = "client")]
 struct ActiveHttpStep {
     request: robin_rs::http_server::PendingStep,
     direction: &'static str,
@@ -3458,6 +3468,7 @@ struct ActiveHttpStep {
     requested: u32,
 }
 
+#[cfg(feature = "client")]
 struct VisualReplay {
     window: robin_rs::window::GameWindow,
     renderer: Renderer,
@@ -3465,6 +3476,7 @@ struct VisualReplay {
     sprite_images: BTreeMap<u32, (GpuImage, u16, u16)>,
 }
 
+#[cfg(feature = "client")]
 impl VisualReplay {
     fn new(
         mut window: robin_rs::window::GameWindow,
@@ -3597,7 +3609,7 @@ impl VisualReplay {
     }
 }
 
-fn main() {
+pub fn main() {
     let options = parse_options();
     if options.reblock {
         reblock_native_trace(&options.trace_path);
@@ -3615,35 +3627,58 @@ fn main() {
         bench_trace_encodings(&options.trace_path);
         return;
     }
-    if options.frame_zero_screenshot_dir.is_some() {
-        let exit = robin_rs::window::run_with_game_visibility(
-            "Robin Hood — Original parity frame-zero capture",
-            1024,
-            768,
-            options.visual,
-            move |mut window| async move {
-                capture_full_frame_zero_screenshot(options, &mut window).await
-            },
-        )
-        .unwrap_or_else(|error| panic!("start frame-zero parity capture: {error}"));
-        std::process::exit(exit);
+
+    #[cfg(not(feature = "client"))]
+    {
+        assert!(
+            !options.visual,
+            "--visual requires rebuilding original_parity_replay with --features client"
+        );
+        assert!(
+            options.frame_zero_screenshot_dir.is_none(),
+            "--frame-zero-screenshot-dir requires rebuilding original_parity_replay with --features client"
+        );
+        assert!(
+            options.http_server.is_none(),
+            "--http-server requires rebuilding original_parity_replay with --features client"
+        );
+        tracing_subscriber::fmt::init();
+        std::process::exit(run_replay(options, None));
     }
-    tracing_subscriber::fmt::init();
-    if options.visual {
-        let visible = options.visual;
-        let exit = robin_rs::window::run_with_game_visibility(
-            "Robin Hood — Original parity replay",
-            1024,
-            768,
-            visible,
-            move |window| async move { run_replay(options, Some(window)) },
-        )
-        .unwrap_or_else(|error| panic!("start visual parity replay: {error}"));
-        std::process::exit(exit);
+
+    #[cfg(feature = "client")]
+    {
+        if options.frame_zero_screenshot_dir.is_some() {
+            let exit = robin_rs::window::run_with_game_visibility(
+                "Robin Hood — Original parity frame-zero capture",
+                1024,
+                768,
+                options.visual,
+                move |mut window| async move {
+                    capture_full_frame_zero_screenshot(options, &mut window).await
+                },
+            )
+            .unwrap_or_else(|error| panic!("start frame-zero parity capture: {error}"));
+            std::process::exit(exit);
+        }
+        tracing_subscriber::fmt::init();
+        if options.visual {
+            let visible = options.visual;
+            let exit = robin_rs::window::run_with_game_visibility(
+                "Robin Hood — Original parity replay",
+                1024,
+                768,
+                visible,
+                move |window| async move { run_replay(options, Some(window)) },
+            )
+            .unwrap_or_else(|error| panic!("start visual parity replay: {error}"));
+            std::process::exit(exit);
+        }
+        std::process::exit(run_replay(options, None));
     }
-    std::process::exit(run_replay(options, None));
 }
 
+#[cfg(feature = "client")]
 async fn capture_full_frame_zero_screenshot(
     options: Options,
     window: &mut robin_rs::window::GameWindow,
@@ -3710,12 +3745,20 @@ async fn capture_full_frame_zero_screenshot(
     }
 }
 
-fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
+#[cfg(feature = "client")]
+type ClientWindow = robin_rs::window::GameWindow;
+
+#[cfg(not(feature = "client"))]
+type ClientWindow = ();
+
+fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let replay_started = Instant::now();
     let scan_all = options.scan_all;
     let no_auto_dump = options.no_auto_dump;
     let trace_path = options.trace_path;
+    #[cfg(feature = "client")]
     let http_server = options.http_server;
+    #[cfg(feature = "client")]
     let mut manual_pause = options.start_paused;
     let trace_path = canonicalize_trace_identity(&trace_path);
     let native_path = ensure_native_binary_trace(&trace_path);
@@ -3752,7 +3795,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
     }
-    robin_rs::main_entry::register_language_data_paths_for_tool();
+    register_language_data_paths_for_tool();
 
     let mut records = BinaryTraceReader::open(&native_path);
     let stream_header = records.read_header();
@@ -3799,8 +3842,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
+    #[cfg(feature = "client")]
     let (mut engine, assets, mut host, background, mission_scb, _menu_text) =
         initialize_engine(&header, initial_rng_draws.clone());
+    #[cfg(not(feature = "client"))]
+    let (mut engine, assets, mission_scb) =
+        initialize_headless_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
@@ -3871,14 +3918,20 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     engine
         .parity_replay_setup()
         .use_external_director_completions(true);
+    #[cfg(feature = "client")]
     let mut display = HostDisplayState::default();
+    #[cfg(feature = "client")]
     let mut input = InputState::default();
+    #[cfg(feature = "client")]
     let mut selected_view_element = None;
     if let Some(loaded) = &loaded_save_host {
-        loaded.apply_display_to(&mut display);
-        loaded.apply_display_to(&mut host.engine_display);
-        selected_view_element = loaded.selected_view_element();
-        host.selected_view_element = selected_view_element;
+        #[cfg(feature = "client")]
+        {
+            loaded.apply_display_to(&mut display);
+            loaded.apply_display_to(&mut host.engine_display);
+            selected_view_element = loaded.selected_view_element();
+            host.selected_view_element = selected_view_element;
+        }
         assert!(
             loaded.trajectory_output().clear_preview,
             "Original loaded-save adoption must invalidate trajectory preview"
@@ -3887,8 +3940,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // This replay host and input state were constructed afresh, so all
         // explicit Original post-load transient clears already hold.
     }
+    #[cfg(feature = "client")]
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
+    #[cfg(not(feature = "client"))]
+    assert!(
+        visual_window.is_none(),
+        "headless parity replay received an impossible client window"
+    );
     assert_eq!(
         engine.original_rng_replay_cursor(),
         Some(prefix_end),
@@ -3908,11 +3967,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let mut divergent_frames = 0_u64;
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
+    #[cfg(feature = "client")]
     let mut active_http_step = None;
     let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
 
+    #[cfg(feature = "client")]
     if let Some(port) = http_server {
         robin_rs::http_server::start_global(port)
             .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
@@ -3966,7 +4027,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             .observe(frame.frame_before, frame.frame_after)
             .unwrap_or_else(|error| panic!("invalid parity frame timeline: {error}"));
         line_index += 1;
+        #[cfg(feature = "client")]
         let mut http_frame_commands = robin_engine::player_command::FrameCommands::new();
+        #[cfg(not(feature = "client"))]
+        let http_frame_commands = robin_engine::player_command::FrameCommands::new();
+        #[cfg(feature = "client")]
         if http_server.is_some() {
             loop {
                 let drained = drain_headless_http(
@@ -4303,6 +4368,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.frame_after
             );
         }
+        #[cfg(feature = "client")]
         if let Some(visual) = &mut visual
             && !visual.render(&engine)
         {
@@ -4554,6 +4620,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             );
         }
         if !differences.is_empty() {
+            #[cfg(feature = "client")]
             if let Some(step) = active_http_step.take() {
                 step.request.respond_err(format!(
                     "parity divergence after frame {}: {} differences",
@@ -4567,7 +4634,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     .entry(difference_field(difference).to_string())
                     .or_insert_with(|| (frame.frame_after, difference.clone()));
             }
-            if scan_all && visual.is_none() {
+            #[cfg(feature = "client")]
+            let continue_scanning = scan_all && visual.is_none();
+            #[cfg(not(feature = "client"))]
+            let continue_scanning = scan_all;
+            if continue_scanning {
                 // RHGame records the authoritative frame immediately after
                 // PerformHourglass, then runs the one-shot PostInitialize
                 // hook after refresh/sound. Apply that boundary only after
@@ -4634,6 +4705,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame.frame_after,
                 );
             }
+            #[cfg(feature = "client")]
             if http_server.is_some() {
                 eprintln!(
                     "parity replay halted at frame {}; HTTP inspection remains available",
@@ -4647,6 +4719,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut selected_view_element,
                 );
             }
+            #[cfg(feature = "client")]
             if let Some(visual) = &mut visual {
                 eprintln!(
                     "visual parity replay frozen at first divergence; close the window to exit"
@@ -4659,6 +4732,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
         cross_post_initialize_frame(&mut engine, &assets);
+        #[cfg(feature = "client")]
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
             if step.remaining == 0 {
@@ -4727,6 +4801,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }
 
+    #[cfg(feature = "client")]
     if let Some(step) = active_http_step.take() {
         step.request.respond_err(format!(
             "trace ended at frame {} with {} requested frames still pending",
@@ -4736,6 +4811,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
     if divergent_frames == 0 {
         println!("parity trace matched every recorded frame");
+        #[cfg(feature = "client")]
         if let Some(visual) = &mut visual {
             eprintln!("visual parity replay finished; close the window to exit");
             visual.wait_until_closed();
@@ -4748,6 +4824,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
         1
     }
+}
+
+fn register_language_data_paths_for_tool() {
+    #[cfg(feature = "client")]
+    robin_rs::main_entry::register_language_data_paths_for_tool();
+    #[cfg(not(feature = "client"))]
+    crate::register_language_data_paths();
 }
 
 fn parse_options() -> Options {
@@ -4857,6 +4940,7 @@ fn parse_options() -> Options {
         visual,
         trace_path,
         http_server,
+        #[cfg(feature = "client")]
         start_paused,
         frame_zero_screenshot_dir,
         bench_encodings,
@@ -4872,6 +4956,7 @@ fn parse_options() -> Options {
     }
 }
 
+#[cfg(feature = "client")]
 fn frame_zero_screenshot_path(output_dir: &Path, trace_path: &Path) -> PathBuf {
     let relative = trace_path
         .ancestors()
@@ -4920,6 +5005,7 @@ fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
     }
 }
 
+#[cfg(feature = "client")]
 fn drain_headless_http(
     engine: &mut Engine,
     display: &mut HostDisplayState,
@@ -4938,7 +5024,7 @@ fn drain_headless_http(
     );
     for request in robin_rs::http_server::take_pending_steps() {
         match request.kind {
-            robin_rs::http_server::StepKind::Forward { n } => {
+            robin_rs::http_server::StepKind::Forward { n, .. } => {
                 if n == 0 {
                     request.respond_ok(serde_json::json!({
                         "direction": "forward",
@@ -4964,7 +5050,7 @@ fn drain_headless_http(
                     "step-back is unavailable for Original parity traces; restart and go-to-frame",
                 );
             }
-            robin_rs::http_server::StepKind::GoToFrame { target } => {
+            robin_rs::http_server::StepKind::GoToFrame { target, .. } => {
                 let current = engine.frame_counter();
                 if target < current {
                     request.respond_err(
@@ -5002,6 +5088,7 @@ fn drain_headless_http(
     commands
 }
 
+#[cfg(feature = "client")]
 fn serve_halted_http(
     engine: &mut Engine,
     display: &mut HostDisplayState,
@@ -8011,7 +8098,10 @@ fn restore_campaign(
                     pc_description_idx: validate_character_index(occupant.character_index),
                     x: occupant.x.value(),
                     y: occupant.y.value(),
-                    obstacle: occupant.obstacle,
+                    obstacle:
+                        robin_engine::position_interface::ObstacleHandle::from_serialized_pointer(
+                            occupant.obstacle,
+                        ),
                 })
                 .collect(),
             amount: source.amount,
@@ -8023,6 +8113,107 @@ fn restore_campaign(
     campaign
 }
 
+#[cfg(not(feature = "client"))]
+fn initialize_headless_engine(
+    header: &TraceHeader,
+    rng_prefix: Vec<u32>,
+) -> (Engine, LevelAssets, robin_engine::scb::ScbFile) {
+    let mut profile_manager = robin_engine::profiles::ProfileManager::new();
+    let mut cpf = robin_engine::sbfile::SbFile::open(
+        "Data/Configuration/profile.cpf",
+        robin_engine::sbfile::SB_FILE_READ,
+    )
+    .expect("open profile.cpf");
+    profile_manager
+        .load_all_legacy_cpf(&mut cpf)
+        .expect("parse profile.cpf");
+    profile_manager.import_beam_mes("Data/Levels");
+
+    let campaign = restore_campaign(&header.campaign, &profile_manager);
+    let mission_idx = campaign
+        .current_mission_idx
+        .expect("recorded campaign has no current mission");
+    let current_profile = campaign.missions[mission_idx].profile(&profile_manager);
+    assert!(
+        current_profile
+            .mission_filename
+            .eq_ignore_ascii_case(&header.mission)
+            && current_profile
+                .proto_level_filename
+                .eq_ignore_ascii_case(&header.proto_level),
+        "trace header mission/proto {}/{} disagrees with campaign current mission {}/{}",
+        header.mission,
+        header.proto_level,
+        current_profile.mission_filename,
+        current_profile.proto_level_filename
+    );
+
+    let profiles = Arc::new(profile_manager);
+    let mut assets = LevelAssets::new();
+    assets.profile_manager = profiles.clone();
+    crate::populate_localized_names(&mut assets)
+        .expect("load localized names for deterministic PC construction");
+
+    let mut frame_holder = robin_assets::frame_holder::FrameHolder::new();
+    frame_holder
+        .initialize_sprite_bank(".")
+        .expect("initialize sprite bank");
+    assets.bank_signature = frame_holder.signature();
+
+    let mission_name = campaign.missions[mission_idx]
+        .profile(&profiles)
+        .mission_filename
+        .clone();
+    let script_path = format!("Data/Levels/{mission_name}.scb");
+    let bytes = robin_engine::sbfile::SbFile::read_all(&script_path)
+        .unwrap_or_else(|status| panic!("read mission script {script_path}: status {status}"));
+    let scb = robin_assets::scb::parse_bytes(&bytes).expect("parse mission script");
+    assets.scripts.mission_programs = Arc::new(BTreeMap::from([(
+        mission_name,
+        Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(
+            scb.clone(),
+        )),
+    )]));
+
+    let loaded = robin_engine::engine::level_loading::load_mission_for_campaign(
+        &campaign,
+        &profiles,
+        "Data/Levels",
+        &mut |_| {},
+    )
+    .expect("load mission");
+    let ambiance = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance);
+    let bg_pixel_dims = crate::background_dimensions(
+        &loaded.mission.header.map_filename,
+        ambiance.directory(),
+        "Data/Levels",
+    )
+    .expect("read background dimensions");
+
+    let engine = Engine::new(robin_engine::engine::EngineArgs {
+        campaign,
+        level: robin_engine::engine::LevelLoadArgs {
+            assets: &mut assets,
+            level_directory: "Data/Levels",
+            progress: &mut |_| {},
+            loaded,
+            bg_pixel_dims,
+        },
+        ground_mark_sprite: None,
+        titbit_row_frame_counts: Vec::new(),
+        rng_seed: header.rng_seed,
+        original_rng_replay: Some(rng_prefix),
+        sim_config: header
+            .sim_config
+            .to_sim_config(header.synchronous_pathfinding),
+    })
+    .expect("initialize engine");
+    crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
+        .expect("load deterministic sound duration tables");
+    (engine, assets, scb)
+}
+
+#[cfg(feature = "client")]
 fn initialize_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
@@ -9141,6 +9332,70 @@ fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
     })
 }
 
+fn parity_float_is_positive_zero(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("bits"))
+        .and_then(serde_json::Value::as_u64)
+        == Some(0)
+}
+
+fn original_blocked_box_is_unset(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.len() != 2 {
+        return false;
+    }
+    ["min", "max"].into_iter().all(|corner| {
+        let Some(point) = object.get(corner).and_then(serde_json::Value::as_object) else {
+            return false;
+        };
+        point.len() == 2
+            && ["x", "y"]
+                .into_iter()
+                .all(|axis| point.get(axis).is_some_and(parity_float_is_positive_zero))
+    })
+}
+
+/// Translate Original-only wire representations into their Rust parity
+/// projection equivalents.
+///
+/// `RHOrder::mulNextID` starts at zero (`RHorder.cpp:13-21`), whereas Rust
+/// deliberately uses `NonZeroU32` order IDs. This is the same +1 translation
+/// used while adopting legacy saves, but runtime snapshots must retain their
+/// authoritative raw payload and apply it only while comparing.
+///
+/// Original's `SBGeoBoundingBox2D::Reset` clears only
+/// `mbBoxBoundsAreSet` (`sblibng/SBGeoBoundingBox2D.cpp:299-305`). The parity
+/// emitter omits that bit and therefore publishes a newly constructed unset
+/// blocked box as an all-positive-zero object. Rust represents the same unset
+/// state as `null`.
+fn canonicalize_original_runtime_representation(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                canonicalize_original_runtime_representation(value);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                if key == "last_processed_order_id"
+                    && let Some(original) = child.as_u64()
+                    && original < u64::from(u32::MAX)
+                {
+                    *child = serde_json::Value::from(original + 1);
+                } else if key == "blocked_box" && original_blocked_box_is_unset(child) {
+                    *child = serde_json::Value::Null;
+                } else {
+                    canonicalize_original_runtime_representation(child);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'static str {
     match kind {
         robin_engine::element::EntityIdKind::Pc => "pc",
@@ -9514,6 +9769,7 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
+            canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
             collect_json_subset_differences(
@@ -9585,7 +9841,7 @@ fn compare_frame(
                     .map(trace_pass_door_key);
                 let actual_pass = engine
                     .actor_selected_pass_door(id)
-                    .map(|(gate_id, direction)| (gate_id.0, direction != 0));
+                    .map(|(gate_id, direction)| (gate_id.get(), direction != 0));
                 if !active_pass_door_keys_match(
                     expected_actor.active_pass_door.as_ref(),
                     actual_pass,
@@ -13103,6 +13359,75 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_canonicalizes_original_zero_based_order_ids() {
+        let mut expected = serde_json::json!({
+            "sprite": {
+                "last_processed_order_id": 41,
+                "unrelated_id": 41
+            },
+            "nested": [{"last_processed_order_id": 0}],
+            "sentinel": {"last_processed_order_id": u32::MAX}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert_eq!(expected["sprite"]["last_processed_order_id"], 42);
+        assert_eq!(expected["sprite"]["unrelated_id"], 41);
+        assert_eq!(expected["nested"][0]["last_processed_order_id"], 1);
+        assert_eq!(expected["sentinel"]["last_processed_order_id"], u32::MAX);
+    }
+
+    #[test]
+    fn runtime_snapshot_canonicalizes_only_zero_original_blocked_boxes() {
+        let float = |bits| serde_json::json!({"bits": bits, "value": 0.0});
+        let zero_box = serde_json::json!({
+            "min": {"x": float(0), "y": float(0)},
+            "max": {"x": float(0), "y": float(0)}
+        });
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": zero_box},
+            "active_position": {"blocked_box": {
+                "min": {"x": float(0), "y": float(0)},
+                "max": {"x": float(0x3f80_0000), "y": float(0)}
+            }},
+            "unrelated_box": zero_box
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert!(expected["position"]["blocked_box"].is_null());
+        assert!(expected["active_position"]["blocked_box"].is_object());
+        assert!(expected["unrelated_box"].is_object());
+    }
+
+    #[test]
+    fn runtime_snapshot_compatibility_projection_matches_rust_representation() {
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": {
+                "min": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                },
+                "max": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                }
+            }},
+            "sprite": {"last_processed_order_id": 41}
+        });
+        let actual = serde_json::json!({
+            "position": {"blocked_box": null},
+            "sprite": {"last_processed_order_id": 42}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+        let mut differences = Vec::new();
+        collect_json_subset_differences("runtime", &expected, &actual, &mut differences);
+
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
+
+    #[test]
     fn runtime_snapshot_comparison_requires_recorded_subset_and_float_bits() {
         let expected = serde_json::json!({
             "position": {
@@ -13549,9 +13874,9 @@ mod tests {
             // Rust installed the stateful doors first, so its runtime peer is
             // door-table index 3.
             gates: vec![
-                robin_engine::gate::DoorIndex(0),
-                robin_engine::gate::DoorIndex(3),
-                robin_engine::gate::DoorIndex(1),
+                robin_engine::gate::DoorIndex::from(0),
+                robin_engine::gate::DoorIndex::from(3),
+                robin_engine::gate::DoorIndex::from(1),
             ],
             runtime_creation_order_boundary: 0,
         };
@@ -13597,7 +13922,9 @@ mod tests {
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
             sector_indices: BTreeMap::new(),
-            gates: (0..=max_gate).map(robin_engine::gate::DoorIndex).collect(),
+            gates: (0..=max_gate)
+                .map(robin_engine::gate::DoorIndex::from)
+                .collect(),
             runtime_creation_order_boundary: 0,
         }
     }
@@ -14019,7 +14346,7 @@ mod tests {
                     robin_engine::fast_find_grid::SectorIndex::new(38).unwrap(),
                 ),
             ]),
-            gates: vec![robin_engine::gate::DoorIndex(42)],
+            gates: vec![robin_engine::gate::DoorIndex::from(42)],
             runtime_creation_order_boundary: 0,
         }
     }
@@ -14064,7 +14391,7 @@ mod tests {
                     source_layer: 6,
                     outcome: robin_engine::gate::RecordedGateOutcome::Success(vec![
                         robin_engine::gate::GatePathStep {
-                            door_index: robin_engine::gate::DoorIndex(42),
+                            door_index: robin_engine::gate::DoorIndex::from(42),
                             direct: false,
                         },
                     ]),

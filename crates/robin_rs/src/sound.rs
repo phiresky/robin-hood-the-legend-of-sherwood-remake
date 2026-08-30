@@ -726,7 +726,7 @@ impl SoundManager {
 
         // Start all currently-active sound sources
         for i in 0..sources.num_sources() {
-            if sources.get(i).is_some_and(|s| s.active) {
+            if sources.get(i).is_some_and(|s| s.is_effectively_active()) {
                 self.start_sound_source_pending(i, sources);
             }
         }
@@ -1284,8 +1284,8 @@ impl SoundManager {
         self.set_listen_point(position, zoom);
 
         for i in 0..sources.num_sources() {
-            let should_start =
-                sources.get(i).is_some_and(|s| s.active) && !self.is_source_pending(i);
+            let should_start = sources.get(i).is_some_and(|s| s.is_effectively_active())
+                && !self.is_source_pending(i);
             if should_start {
                 self.start_sound_source_pending(i, sources);
             }
@@ -1314,8 +1314,53 @@ impl SoundManager {
     /// already flipped it to `true` inside `perform_hourglass`
     /// (paired with the deactivate side); host reads, not writes.
     pub fn activate_sound_source(&mut self, sources: &SoundSourceManager, index: usize) {
-        if sources.get(index).is_some_and(|s| s.active) {
+        if sources
+            .get(index)
+            .is_some_and(|s| s.is_effectively_active())
+        {
             self.start_sound_source_pending(index, sources);
+        }
+    }
+
+    /// Stop sources excluded by the new ambience and queue newly included
+    /// active sources. Script activation remains independent of this gate.
+    pub fn sync_ambience_sources(
+        &mut self,
+        sources: &SoundSourceManager,
+        backend: &mut dyn AudioBackend,
+    ) {
+        let channels_to_stop: Vec<_> = self
+            .pending_sounds
+            .iter()
+            .filter(|pending| {
+                pending.settings.sound_type == SoundType::Source
+                    && pending.source_index.is_some_and(|index| {
+                        !sources
+                            .get(index)
+                            .is_some_and(|source| source.is_effectively_active())
+                    })
+            })
+            .filter_map(|pending| (pending.channel >= 0).then_some(pending.channel))
+            .collect();
+        for channel in channels_to_stop {
+            self.stop_channel(channel, backend);
+        }
+        self.pending_sounds.retain(|pending| {
+            pending.settings.sound_type != SoundType::Source
+                || pending.source_index.is_some_and(|index| {
+                    sources
+                        .get(index)
+                        .is_some_and(|source| source.is_effectively_active())
+                })
+        });
+        for index in 0..sources.num_sources() {
+            if sources
+                .get(index)
+                .is_some_and(|source| source.is_effectively_active())
+                && !self.is_source_pending(index)
+            {
+                self.start_sound_source_pending(index, sources);
+            }
         }
     }
 
@@ -1376,7 +1421,9 @@ impl SoundManager {
         // reset used to live here, driven by audio-backend playback
         // completion + a host RNG, which broke rollback determinism.)
         for idx in pending_play_delayed_sources.drain(..) {
-            if !self.is_source_pending(idx) && sources.get(idx).is_some_and(|s| s.active) {
+            if !self.is_source_pending(idx)
+                && sources.get(idx).is_some_and(|s| s.is_effectively_active())
+            {
                 self.start_sound_source_pending(idx, sources);
             }
         }

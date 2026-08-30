@@ -348,6 +348,9 @@ impl HeadlessMission {
             timeline,
             &mut control.manual_pause,
             &mut active_modal,
+            None,
+            None,
+            |_| Ok(()),
         );
     }
 
@@ -401,10 +404,7 @@ mod tests {
                 server_frame: 0,
                 origin_frame: 0,
                 target_frame: 0,
-                input: PlayerInput::new(
-                    PlayerId(2),
-                    PlayerCommand::SetUnbindingEnabled { enabled: false },
-                ),
+                input: PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false }),
             })
             .expect("queue current-frame network command");
         let manager = EngineManager::new(engine);
@@ -420,7 +420,11 @@ mod tests {
             false,
             true,
         );
-        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let control = MissionControl::new(
+            false,
+            manager.engine.weather().night_color,
+            manager.engine.weather().ambiance,
+        );
         let runtime = MissionRuntime::new(
             MissionWorld::new(
                 host,
@@ -447,7 +451,7 @@ mod tests {
                 .engine
                 .sim_config()
                 .enable_unbinding,
-            "network-owned gameplay settings must apply on the admitted frame"
+            "host-authored network settings must apply on the admitted frame"
         );
 
         let checkpoint = mission
@@ -488,7 +492,11 @@ mod tests {
             false,
             true,
         );
-        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let control = MissionControl::new(
+            false,
+            manager.engine.weather().night_color,
+            manager.engine.weather().ambiance,
+        );
         let runtime = MissionRuntime::new(
             MissionWorld::new(
                 host,
@@ -527,8 +535,16 @@ mod tests {
                 assets,
                 dev,
             } = world.simulation_phase();
+            let mut modal_policy = crate::http_server::StepModalPolicy::default();
             crate::game_session::tick::run_forward_ticks(
-                manager, host, assets, dev, game, timeline, 1,
+                manager,
+                host,
+                assets,
+                dev,
+                game,
+                timeline,
+                1,
+                &mut modal_policy,
             )
             .expect("forward step after outer commit")
             .0

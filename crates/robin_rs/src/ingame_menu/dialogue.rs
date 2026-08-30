@@ -500,7 +500,7 @@ pub async fn show_dialogue(
     }
     sound.leave_dialogue(sound_config);
 
-    let result = if let Some(result) = remote_result {
+    let mut result = if let Some(result) = remote_result {
         result
     } else if aborted {
         DialogResult::Aborted
@@ -511,6 +511,15 @@ pub async fn show_dialogue(
         && let Some(net) = modal_net.as_mut()
     {
         net.publish(result);
+        if !net.is_authority() {
+            loop {
+                if let Some(decision) = net.poll_remote_dismissal() {
+                    result = decision;
+                    break;
+                }
+                crate::window::sleep_ms(10).await;
+            }
+        }
     }
     result
 }
@@ -537,6 +546,7 @@ pub struct DialogueModalState {
     aborted: bool,
     portrait_fade: PortraitFade,
     entered_dialogue: bool,
+    awaiting_authority: bool,
 }
 
 impl DialogueModalState {
@@ -622,6 +632,7 @@ impl DialogueModalState {
             aborted: false,
             portrait_fade,
             entered_dialogue: false,
+            awaiting_authority: false,
         }
     }
 
@@ -650,7 +661,17 @@ impl DialogueModalState {
         }
 
         if let Some(result) = modal_net.and_then(|net| net.poll_remote_dismissal()) {
-            return Some(self.finish(sound, sound_config, audio, result, true, modal_net));
+            return Some(self.finish(sound, sound_config, audio, result));
+        }
+
+        if self.awaiting_authority {
+            for event in event_pump.poll_events() {
+                self.input_state.update_from_event(&event, self.transform);
+            }
+            self.input_state.end_frame();
+            self.render(renderer, resources, cursor);
+            renderer.present();
+            return None;
         }
 
         let mut advance = false;
@@ -705,14 +726,16 @@ impl DialogueModalState {
         }
 
         if self.aborted {
-            return Some(self.finish(
-                sound,
-                sound_config,
-                audio,
-                DialogResult::Aborted,
-                false,
-                modal_net,
-            ));
+            let result = DialogResult::Aborted;
+            if let Some(net) = modal_net
+                && !net.publish(result)
+            {
+                self.awaiting_authority = true;
+                self.render(renderer, resources, cursor);
+                renderer.present();
+                return None;
+            }
+            return Some(self.finish(sound, sound_config, audio, result));
         }
 
         if advance {
@@ -721,17 +744,19 @@ impl DialogueModalState {
             {
                 sound.close_dialog(backend);
             }
-            self.sentence_idx += 1;
-            if self.sentence_idx >= self.sentences.len() {
-                return Some(self.finish(
-                    sound,
-                    sound_config,
-                    audio,
-                    DialogResult::Completed,
-                    false,
-                    modal_net,
-                ));
+            if self.sentence_idx + 1 >= self.sentences.len() {
+                let result = DialogResult::Completed;
+                if let Some(net) = modal_net
+                    && !net.publish(result)
+                {
+                    self.awaiting_authority = true;
+                    self.render(renderer, resources, cursor);
+                    renderer.present();
+                    return None;
+                }
+                return Some(self.finish(sound, sound_config, audio, result));
             }
+            self.sentence_idx += 1;
             start_sentence(
                 sound,
                 &mut audio,
@@ -753,8 +778,6 @@ impl DialogueModalState {
         sound_config: &robin_engine::sound_config::SoundConfig,
         audio: Option<&mut dyn AudioBackend>,
         result: DialogResult,
-        remote: bool,
-        modal_net: Option<&super::ModalNet<'_>>,
     ) -> DialogResult {
         if let Some(backend) = audio {
             sound.close_dialog(backend);
@@ -762,9 +785,6 @@ impl DialogueModalState {
         if self.entered_dialogue {
             sound.leave_dialogue(sound_config);
             self.entered_dialogue = false;
-        }
-        if !remote && let Some(net) = modal_net {
-            net.publish(result);
         }
         result
     }

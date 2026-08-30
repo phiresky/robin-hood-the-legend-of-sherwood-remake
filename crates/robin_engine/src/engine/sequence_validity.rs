@@ -594,7 +594,7 @@ impl EngineInner {
                     .and_then(|v| match v {
                         crate::sequence::FieldValue::DoorId(id) => Some(*id),
                         crate::sequence::FieldValue::Integer(id) => {
-                            Some(crate::gate::DoorIndex(*id))
+                            Some(crate::gate::DoorIndex::new(*id).expect("valid door index"))
                         }
                         _ => None,
                     });
@@ -1381,7 +1381,6 @@ impl EngineInner {
         );
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer: actor.element_data().layer(),
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -2420,7 +2419,10 @@ mod tests {
         let assets = LevelAssets::new();
         let actor = add_pc(&mut engine);
         let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(actor));
-        element.set_property(Field::Door, FieldValue::DoorId(crate::gate::DoorIndex(0)));
+        element.set_property(
+            Field::Door,
+            FieldValue::DoorId(crate::gate::DoorIndex::new(0).expect("valid door index")),
+        );
 
         engine.check_sequence_element_validity(&assets, actor, &element, true);
     }

@@ -1537,7 +1537,7 @@ impl EngineInner {
                 assets,
                 crate::ai::NoiseType::Heeelp,
                 origin,
-                layer,
+                crate::position_interface::Layer::new(layer),
                 crate::parameters_ai::NOISE_VOLUME_HEEELP as u16,
                 elevation,
                 Some(speaker),

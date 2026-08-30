@@ -659,7 +659,9 @@ impl LegacyProductionSector {
                     pc_description_idx,
                     x: occupant.x,
                     y: occupant.y,
-                    obstacle: occupant.obstacle,
+                    obstacle: crate::position_interface::ObstacleHandle::from_serialized_pointer(
+                        occupant.obstacle,
+                    ),
                 })
             })
             .collect::<Result<Vec<_>, LegacyCampaignMappingError>>()?;

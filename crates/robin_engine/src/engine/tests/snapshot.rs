@@ -35,6 +35,33 @@ fn engine_snapshot_fixture() -> EngineInner {
     engine.control.fast_forward = true;
     engine.orders.pending_reinforcements.push(None);
     engine.world.static_sight_obstacle_active = vec![true, false, true];
+    engine.mission_domain.state.runtime_features = MissionRuntimeFeatures {
+        active_elapsed_ticks: 87,
+        timed_mission: Some(TimedMissionRuntime {
+            limit_ticks: 2_500,
+            warning_ticks: 500,
+            countdown_mode: MissionCountdownMode::FinalOnly,
+            elapsed_ticks: 321,
+            expired: false,
+        }),
+        ambience_schedule: Some(AmbienceScheduleRuntime {
+            initial_ambiance: Ambiance::Day,
+            current_ambiance: Ambiance::Night,
+            elapsed_ticks: 700,
+            cues: vec![AmbienceRuntimeCue {
+                at_tick: 500,
+                ambiance: Ambiance::Night,
+                transition_ticks: 250,
+            }],
+            next_cue: 1,
+            transition: Some(AmbienceTransitionRuntime {
+                started_at_tick: 500,
+                duration_ticks: 250,
+                from_color: 0x2964,
+                to_color: 0,
+            }),
+        }),
+    };
 
     engine
 }
@@ -79,6 +106,10 @@ fn engine_nested_owner_fields_round_trip() {
     );
     assert_eq!(json["control"]["frame_counter"], 0x1122_3344u32);
     assert_eq!(json["ai"]["standard_view_polygon_radius"], 321);
+    assert_eq!(
+        json["mission_domain"]["state"]["runtime_features"]["timed_mission"]["elapsed_ticks"],
+        321
+    );
     assert_eq!(json["script_domains"]["mission_ui"]["force_check"], true);
     assert!(!object.contains_key("mission"));
     assert!(!object.contains_key("frame_counter"));

@@ -1,9 +1,9 @@
-//! Browser boundary for custom-mission Lua support.
+//! Feature/target boundary for custom-mission Lua support.
 //!
 //! `mlua` supports WebAssembly through Emscripten, while the game uses
-//! `wasm32-unknown-unknown` with wasm-bindgen. Keep ordinary browser missions
-//! available and reject Spellforge launches explicitly until those targets
-//! can be reconciled.
+//! `wasm32-unknown-unknown` with wasm-bindgen. Native builds also make the
+//! sizeable bundled Luau C++ toolchain opt-in. Keep ordinary missions
+//! available and reject Spellforge launches explicitly when Lua is absent.
 
 use robin_engine::natives::{ScriptEffects, ScriptState};
 
@@ -17,9 +17,9 @@ pub struct LuaSession {
 #[derive(Debug, thiserror::Error)]
 pub enum SpellforgeSessionError {
     #[error(
-        "Spellforge mission `{mission}` cannot start in the browser: mlua does not support the wasm-bindgen target"
+        "Spellforge mission `{mission}` cannot start because Lua support is unavailable in this build; rebuild a native client with `--features lua`"
     )]
-    UnsupportedBrowser { mission: String },
+    UnsupportedBuild { mission: String },
 }
 
 pub fn validate_launch_mode(
@@ -33,7 +33,7 @@ pub fn validate_launch_mode(
     else {
         return Ok(());
     };
-    Err(SpellforgeSessionError::UnsupportedBrowser {
+    Err(SpellforgeSessionError::UnsupportedBuild {
         mission: pending.rhm_basename.clone(),
     })
 }
@@ -44,7 +44,7 @@ impl LuaSession {
         _mods_root: &std::path::Path,
     ) -> Result<Option<Self>, SpellforgeSessionError> {
         if launch.requires_spellforge {
-            return Err(SpellforgeSessionError::UnsupportedBrowser {
+            return Err(SpellforgeSessionError::UnsupportedBuild {
                 mission: launch.rhm_basename.clone(),
             });
         }
@@ -66,7 +66,7 @@ impl LuaSession {
         )>,
         _initialization_seed: i32,
     ) -> Result<(), SpellforgeSessionError> {
-        Err(SpellforgeSessionError::UnsupportedBrowser {
+        Err(SpellforgeSessionError::UnsupportedBuild {
             mission: self.mission_basename.clone(),
         })
     }

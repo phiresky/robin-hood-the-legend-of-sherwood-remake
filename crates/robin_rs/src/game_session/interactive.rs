@@ -5,13 +5,17 @@
 //! interactive process session; deterministic persistence remains in the
 //! engine snapshot owned by [`super::runtime::MissionWorld`].
 
+use super::debriefing::LostSherwoodGateState;
 use super::modal_state::ActiveModal;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
     LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
+use super::sherwood_flow::SherwoodCampaignFlow;
+use super::terminal_debriefing::TerminalDebriefingState;
 use super::tick::tick_audio;
+use super::ui_task_state::ActiveUiTask;
 use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{CornerButtonSprites, CornerHudLayout, CornerTooltipTracker};
@@ -130,9 +134,13 @@ pub(super) struct MissionResources {
 /// Stateful menus and overlays which survive across interactive frames.
 pub(super) struct MissionUi {
     pub(super) pause_menu: Option<PauseMenu>,
+    pub(super) active_ui_task: Option<ActiveUiTask>,
     pub(super) active_modal: Option<ActiveModal>,
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
+    pub(super) sherwood_campaign_flow: Option<SherwoodCampaignFlow>,
+    pub(super) terminal_debriefing: Option<TerminalDebriefingState>,
+    pub(super) lost_sherwood_gate: LostSherwoodGateState,
     pub(super) restart_allowed: bool,
 }
 
@@ -140,12 +148,16 @@ impl MissionUi {
     pub(super) fn new(restart_allowed: bool) -> Self {
         Self {
             pause_menu: None,
+            active_ui_task: None,
             active_modal: None,
             console_overlay: ConsoleOverlay::new(),
             // The map model itself is populated lazily when the overlay is
             // first raised, so this empty state always reflects live campaign
             // data rather than mission-bootstrap data.
             campaign_map: CampaignMapState::new(),
+            sherwood_campaign_flow: None,
+            terminal_debriefing: None,
+            lost_sherwood_gate: LostSherwoodGateState::new(),
             restart_allowed,
         }
     }
@@ -203,6 +215,14 @@ impl MissionHud {
 pub(super) struct MissionPresentation {
     pub(super) renderer: Renderer,
     pub(super) sprites: MissionSprites,
+    ambience_backgrounds: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedBackground,
+    )>,
+    ambience_minimaps: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedMinimap,
+    )>,
 }
 
 /// One fixed-tick-late, host-only presentation state. The working engine is
@@ -402,6 +422,14 @@ pub(super) struct MissionRendererConfig {
 /// screen owner has been consumed, making the GPU ownership handoff explicit.
 pub(super) struct InteractiveRendererAssembly {
     renderer: Renderer,
+    ambience_backgrounds: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedBackground,
+    )>,
+    ambience_minimaps: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedMinimap,
+    )>,
 }
 
 impl InteractiveRendererAssembly {
@@ -422,7 +450,11 @@ impl InteractiveRendererAssembly {
             texture_effect_parameters: config.texture_effect_parameters,
             ..robin_engine::graphic_config::GraphicConfig::default()
         });
-        Self { renderer }
+        Self {
+            renderer,
+            ambience_backgrounds: Vec::new(),
+            ambience_minimaps: Vec::new(),
+        }
     }
 
     /// Upload the predecoded map resources before any HUD/input frontend is
@@ -434,8 +466,19 @@ impl InteractiveRendererAssembly {
         host: &mut Host,
         background: Option<robin_engine::engine::level_loading::PreDecodedBackground>,
         minimap: Option<robin_engine::engine::level_loading::PreDecodedMinimap>,
+        ambience_backgrounds: Vec<(
+            robin_engine::engine::Ambiance,
+            robin_engine::engine::level_loading::PreDecodedBackground,
+        )>,
+        ambience_minimaps: Vec<(
+            robin_engine::engine::Ambiance,
+            robin_engine::engine::level_loading::PreDecodedMinimap,
+        )>,
     ) {
+        let initial_ambiance = engine.weather().ambiance;
         if let Some(decoded) = background {
+            self.ambience_backgrounds
+                .push((initial_ambiance, decoded.clone()));
             crate::level_loading_host::apply_background_map(
                 engine,
                 host,
@@ -444,6 +487,8 @@ impl InteractiveRendererAssembly {
             );
         }
         if let Some(map) = minimap.map(|decoded| {
+            self.ambience_minimaps
+                .push((initial_ambiance, decoded.clone()));
             crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded)
         }) {
             host.engine_display.setup_minimap_map(
@@ -453,6 +498,47 @@ impl InteractiveRendererAssembly {
                 f32::from(self.renderer.screen_width()),
                 f32::from(self.renderer.screen_height()),
             );
+        }
+        self.ambience_backgrounds.extend(ambience_backgrounds);
+        self.ambience_minimaps.extend(ambience_minimaps);
+
+        let dynamic_visuals = host
+            .application_context
+            .active_profile_snapshot()
+            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or(true);
+        if !dynamic_visuals && initial_ambiance != engine.initial_mission_ambiance() {
+            let desired = engine.initial_mission_ambiance();
+            if let Some((_, decoded)) = self
+                .ambience_backgrounds
+                .iter()
+                .find(|(ambiance, _)| *ambiance == desired)
+            {
+                crate::level_loading_host::apply_background_map(
+                    engine,
+                    host,
+                    &mut self.renderer,
+                    decoded.clone(),
+                );
+            }
+            if let Some((_, decoded)) = self
+                .ambience_minimaps
+                .iter()
+                .find(|(ambiance, _)| *ambiance == desired)
+            {
+                let map = crate::level_loading_host::apply_minimap(
+                    host,
+                    &mut self.renderer,
+                    decoded.clone(),
+                );
+                host.engine_display.setup_minimap_map(
+                    map.hit_mask,
+                    map.map_size,
+                    map.saved_position,
+                    f32::from(self.renderer.screen_width()),
+                    f32::from(self.renderer.screen_height()),
+                );
+            }
         }
     }
 
@@ -532,7 +618,8 @@ impl InteractiveRendererAssembly {
             ui: MissionUi::new(location != MissionLocation::Sherwood),
             renderer: self.renderer,
             sprites,
-            is_sherwood: game.is_sherwood,
+            ambience_backgrounds: self.ambience_backgrounds,
+            ambience_minimaps: self.ambience_minimaps,
         }
     }
 }
@@ -546,7 +633,14 @@ pub(super) struct InteractiveFrontendAssembly {
     ui: MissionUi,
     pub(super) renderer: Renderer,
     pub(super) sprites: MissionSprites,
-    pub(super) is_sherwood: bool,
+    ambience_backgrounds: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedBackground,
+    )>,
+    ambience_minimaps: Vec<(
+        robin_engine::engine::Ambiance,
+        robin_engine::engine::level_loading::PreDecodedMinimap,
+    )>,
 }
 
 impl InteractiveFrontendAssembly {
@@ -560,6 +654,8 @@ impl InteractiveFrontendAssembly {
             ui,
             mut renderer,
             sprites,
+            ambience_backgrounds,
+            ambience_minimaps,
             ..
         } = self;
         let mut cursor = resources.cursor;
@@ -609,7 +705,12 @@ impl InteractiveFrontendAssembly {
                 pc_action_tooltip: PcActionTooltipTracker::new(),
                 last_cursor_id: robin_engine::resource_ids::RHMOUSE_DEFAULT,
             },
-            presentation: MissionPresentation { renderer, sprites },
+            presentation: MissionPresentation {
+                renderer,
+                sprites,
+                ambience_backgrounds,
+                ambience_minimaps,
+            },
             native_refresh_interpolation: NativeRefreshInterpolation::new(),
         }
     }
@@ -624,6 +725,43 @@ pub(super) struct RenderViewState {
 }
 
 impl MissionPresentation {
+    pub(super) fn apply_ambience_maps(
+        &mut self,
+        engine: &robin_engine::engine::Engine,
+        host: &mut Host,
+        ambiance: robin_engine::engine::Ambiance,
+    ) {
+        if let Some((_, decoded)) = self
+            .ambience_backgrounds
+            .iter()
+            .find(|(candidate, _)| *candidate == ambiance)
+        {
+            crate::level_loading_host::apply_background_map(
+                engine,
+                host,
+                &mut self.renderer,
+                decoded.clone(),
+            );
+        } else {
+            tracing::warn!(?ambiance, "runtime ambience has no predecoded background");
+        }
+        if let Some((_, decoded)) = self
+            .ambience_minimaps
+            .iter()
+            .find(|(candidate, _)| *candidate == ambiance)
+        {
+            let map =
+                crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded.clone());
+            host.engine_display.setup_minimap_map(
+                map.hit_mask,
+                map.map_size,
+                map.saved_position,
+                f32::from(self.renderer.screen_width()),
+                f32::from(self.renderer.screen_height()),
+            );
+        }
+    }
+
     pub(super) fn render_context<'a>(
         &'a mut self,
         resources: &'a MissionResources,
@@ -676,8 +814,10 @@ impl MissionPresentation {
         host: &mut Host,
         gpu: &crate::window::GpuContext,
         shadow_color: u16,
+        ambiance: robin_engine::engine::Ambiance,
+        bypass_fog_sprites_crash: bool,
     ) {
-        host.rebind_frame_holder_shadow_color(shadow_color);
+        host.rebind_frame_holder_ambiance(ambiance, bypass_fog_sprites_crash, shadow_color);
         self.sprites.selection_mark_renderer.load(
             &mut resources.cursor,
             &self.renderer,

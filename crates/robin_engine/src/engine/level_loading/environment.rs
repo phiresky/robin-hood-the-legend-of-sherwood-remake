@@ -104,13 +104,15 @@ impl EngineInner {
             if let Some(sector) =
                 crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
             {
-                assets.material_sectors.register(0, sector);
+                assets
+                    .material_sectors
+                    .register(Some(crate::position_interface::Layer::ZERO), sector);
             }
         }
         for obstacle in &loaded.proto.sight_obstacles {
             let layer = obstacle
                 .projection_area
-                .map_or(u16::MAX, |(_, layer)| layer);
+                .and_then(|(_, layer)| crate::position_interface::Layer::new(layer));
             for &index in &obstacle.material_indices {
                 let Some(raw) = loaded.proto.material_sectors.get(usize::from(index)) else {
                     tracing::error!(
@@ -144,8 +146,8 @@ impl EngineInner {
         }
 
         // Apply mission header
-        self.world.weather.ambiance = Ambiance::from_raw(loaded.mission.header.ambiance);
-        // Install the initial view-polygon radius from the ambiance:
+        self.initialize_mission_runtime_features(loaded);
+        // The runtime initializer installs the initial view-polygon radius:
         // DAY / ATTACK / CUSTOM_1..4 → 400, FOG / NIGHT → 300.  Without
         // this seed, Fog/Night missions whose StartUp script does not
         // call `SetViewRadius(300)` would run with NPCs whose view
@@ -153,8 +155,6 @@ impl EngineInner {
         // vision path, detecting PCs from further away than in the
         // original game.  Script opcodes (engine/script.rs
         // `SetViewRadius`) can still overwrite this.
-        self.ai.standard_view_polygon_radius =
-            self.world.weather.ambiance.default_view_polygon_radius();
         self.mission_domain.state.map_name = loaded.mission.header.map_filename.clone();
         assets.scripts.hiking_path_count = loaded.mission.hiking_paths.len();
 
@@ -446,8 +446,14 @@ impl EngineInner {
                     })
                     .collect();
                 if let Some((sector, layer)) = raw.projection_area {
-                    obs.sector = sector;
-                    obs.layer = layer;
+                    let layer = crate::position_interface::Layer::new(layer).unwrap_or_else(|| {
+                        panic!("projection obstacle {idx} has reserved layer 0xffff")
+                    });
+                    let sector = crate::fast_find_grid::SectorIndex::new(u32::from(sector))
+                        .unwrap_or_else(|| {
+                            panic!("projection obstacle {idx} has reserved sector index")
+                        });
+                    obs.set_projection_area_ref(layer, sector);
                 }
                 // Copy each referenced material sector from the global
                 // material-sector list onto the obstacle.  We resolve
@@ -792,15 +798,21 @@ impl EngineInner {
             use std::collections::BTreeSet;
 
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
+            let runtime_switchable = self
+                .mission_domain
+                .state
+                .runtime_features
+                .ambience_schedule
+                .is_some();
             let mut required_ids = BTreeSet::new();
 
             for raw in &loaded.proto.sound_sources {
-                if (raw.ambience_filter & ambiance_mask) == 0 {
-                    // Source not in this ambiance — push None to preserve indices
+                if !runtime_switchable && raw.ambience_filter & ambiance_mask == 0 {
+                    // Preserve Original source-handle alignment for ordinary
+                    // fixed-ambience levels without loading unused samples.
                     self.feedback.sound_sim.sources.sources_push_none();
                     continue;
                 }
-
                 let source_kind = SoundSourceKind::from_u8(raw.source_kind).ok_or_else(|| {
                     EngineError::MissionLevelStage {
                         stage: "sound sources",
@@ -874,6 +886,7 @@ impl EngineInner {
                     delay_stepping,
                     timer: 0,
                     active: raw.active,
+                    ambience_enabled: (raw.ambience_filter & ambiance_mask) != 0,
                 };
 
                 required_ids.insert(source.id);

@@ -442,7 +442,9 @@ impl TimelineHistory {
         self.pending = Some(PendingFrame { frame, checkpoint });
     }
 
-    /// Start a new journal at an exact externally-adopted pre-tick state.
+    /// Start a new journal at an exact externally adopted pre-tick state.
+    /// Subsequent `begin_frame`/`commit_frame` calls journal immediately even
+    /// if `frame` is between normal periodic checkpoint boundaries.
     pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
         self.clear();
         self.checkpoints.replace_with_anchor(frame, engine);

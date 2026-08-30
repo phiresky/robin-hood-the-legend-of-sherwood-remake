@@ -185,7 +185,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
                 owner,
                 Some(source_sector),
                 vec![GatePathStep {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                 }],
                 GoalShape::Point {
@@ -234,7 +234,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             owner,
             crate::position_interface::SectorHandle::new(64),
             vec![GatePathStep {
-                door_index: DoorIndex(0),
+                door_index: DoorIndex::new(0).expect("valid door index"),
                 direct: true,
             }],
             GoalShape::Point {
@@ -278,7 +278,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             owner,
             crate::position_interface::SectorHandle::new(274),
             vec![GatePathStep {
-                door_index: DoorIndex(3),
+                door_index: DoorIndex::new(3).expect("valid door index"),
                 direct: false,
             }],
             GoalShape::Point {
@@ -325,7 +325,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             owner,
             Some(exact_ordinary_alias),
             vec![GatePathStep {
-                door_index: DoorIndex(3),
+                door_index: DoorIndex::new(3).expect("valid door index"),
                 direct: false,
             }],
             GoalShape::Point {
@@ -362,11 +362,11 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             Some(exact_building_alias),
             vec![
                 GatePathStep {
-                    door_index: DoorIndex(1),
+                    door_index: DoorIndex::new(1).expect("valid door index"),
                     direct: true,
                 },
                 GatePathStep {
-                    door_index: DoorIndex(2),
+                    door_index: DoorIndex::new(2).expect("valid door index"),
                     direct: false,
                 },
             ],
@@ -442,7 +442,7 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
             owner,
             SectorHandle::new(1),
             vec![GatePathStep {
-                door_index: DoorIndex(0),
+                door_index: DoorIndex::new(0).expect("valid door index"),
                 direct: true,
             }],
             GoalShape::Line {
@@ -1037,7 +1037,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
                 owner,
                 crate::position_interface::SectorHandle::new(22),
                 vec![GatePathStep {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct,
                 }],
                 GoalShape::Point {
@@ -1166,7 +1166,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
                 owner,
                 crate::position_interface::SectorHandle::new(22),
                 vec![GatePathStep {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct,
                 }],
                 GoalShape::Point {

@@ -1686,7 +1686,9 @@ fn cursor_for_net(
                             engine.predict_net_crumple_at(
                                 assets,
                                 point,
-                                host.trajectory_preview_layer,
+                                robin_engine::position_interface::Layer::new(
+                                    host.trajectory_preview_layer,
+                                ),
                             )
                         });
                         host.net_crumpled = predicted;

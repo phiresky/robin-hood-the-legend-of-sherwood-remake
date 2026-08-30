@@ -72,6 +72,16 @@ pub struct SimConfig {
     /// the active profile's explicit default-on value.
     #[serde(default)]
     pub sherwood_trading: bool,
+    /// Authoritative opt-out for Rust-authored mission time limits.
+    #[serde(default = "default_enabled")]
+    pub enable_timed_missions: bool,
+    /// Authoritative opt-out for runtime ambience gameplay effects.
+    #[serde(default = "default_enabled")]
+    pub enable_dynamic_ambience: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl SimConfig {
@@ -96,6 +106,8 @@ impl SimConfig {
             amount_of_speaking: 5,
             synchronous_pathfinding: false,
             sherwood_trading: true,
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 

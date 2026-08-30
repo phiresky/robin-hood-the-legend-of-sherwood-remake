@@ -312,6 +312,9 @@ fn convert_source(
         timer: saved.timer,
         // The same member is serialized twice; the second read wins.
         active: saved.active_second,
+        // Legacy saves contain only sources admitted for their fixed
+        // mission ambience.
+        ambience_enabled: true,
     })
 }
 

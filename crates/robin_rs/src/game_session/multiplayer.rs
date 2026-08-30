@@ -5,7 +5,7 @@
 use super::runtime::TimelineFrame;
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
-use crate::sim_timeline::{RestorePolicy, SnapshotHistory, replay_authoritative_frame_profiled};
+use crate::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
@@ -91,7 +91,6 @@ pub(crate) fn drain_net_inputs(
     assets: &LevelAssets,
     rewind_buffer: &mut RewindBuffer,
     peer_hashes: &mut std::collections::BTreeMap<u32, u64>,
-    recent_timeline_history: &mut SnapshotHistory,
 ) -> NetDrainResult {
     use crate::multiplayer::NetEvent;
 
@@ -165,7 +164,6 @@ pub(crate) fn drain_net_inputs(
                 late_inputs.clear();
                 pending_inputs.clear();
                 peer_hashes.clear();
-                recent_timeline_history.clear();
                 *rewind_buffer = RewindBuffer::new();
                 latest_host_clock_sample = None;
                 rewrote_sim_state = true;
@@ -221,7 +219,6 @@ pub(crate) fn drain_net_inputs(
                         Ok(snapshot) => {
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
-                                host.transport.reconnecting = false;
                                 admission_events.push(
                                     MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
                                 );
@@ -238,14 +235,12 @@ pub(crate) fn drain_net_inputs(
                                     rewind_buffer.seed_initial_anchor(frame, &manager.engine);
                                     pending_inputs.clear();
                                     peer_hashes.clear();
-                                    recent_timeline_history.clear();
                                     rewrote_sim_state = true;
                                 }
                             } else {
                                 match Engine::adopt_authoritative_snapshot(snapshot, assets) {
                                     Ok(adopted) => {
                                         manager.engine = adopted;
-                                        host.transport.reconnecting = false;
                                         admission_events.push(
                                             MultiplayerAdmissionEvent::InitialSnapshotAdopted {
                                                 frame,
@@ -270,7 +265,6 @@ pub(crate) fn drain_net_inputs(
                                             pending_inputs.retain(|&queued, _| queued >= adopted);
                                             peer_hashes.retain(|&f, _| f >= frame);
                                         }
-                                        recent_timeline_history.clear();
                                         rewrote_sim_state = true;
                                         if let Some(net) = host.transport.net.as_ref() {
                                             net.send_ready_to_sim(frame);
@@ -296,7 +290,6 @@ pub(crate) fn drain_net_inputs(
                     Ok(snapshot) => match Engine::adopt_authoritative_snapshot(snapshot, assets) {
                         Ok(adopted_engine) => {
                             manager.engine = adopted_engine;
-                            host.transport.reconnecting = false;
                             admission_events
                                 .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
                             let adopted_hash = robin_engine::replay::state_hash(&manager.engine);
@@ -321,7 +314,6 @@ pub(crate) fn drain_net_inputs(
                                 pending_inputs.retain(|&queued, _| queued >= adopted);
                                 peer_hashes.retain(|&f, _| f >= frame);
                             }
-                            recent_timeline_history.clear();
                             rewrote_sim_state = true;
                         }
                         Err(error) => panic!(
@@ -352,6 +344,7 @@ pub(crate) fn drain_net_inputs(
                 frame,
                 start_epoch_ms,
             } => {
+                host.transport.reconnecting = false;
                 tracing::info!(
                     frame,
                     start_epoch_ms,
@@ -361,7 +354,7 @@ pub(crate) fn drain_net_inputs(
                     effective_frame = frame;
                     let adopted = TimelineFrame::from_wire(frame);
                     pending_inputs.retain(|&queued, _| queued >= adopted);
-                    recent_timeline_history.clear();
+                    rewind_buffer.clear_recent_checkpoints();
                     peer_hashes.retain(|&f, _| f >= frame);
                     rewrote_sim_state = true;
                 }
@@ -370,12 +363,119 @@ pub(crate) fn drain_net_inputs(
                     start_epoch_ms,
                 });
             }
-            NetEvent::ModalDismiss { kind, result } => {
-                tracing::debug!(
-                    ?kind,
-                    ?result,
-                    "multiplayer: modal dismissal reached main drain after modal closed"
+            NetEvent::PrepareSnapshotTransition { id, payload } => {
+                assert_ne!(
+                    host.transport.local_seat,
+                    robin_engine::player_command::PlayerId::HOST,
+                    "authoritative host received its own snapshot transition prepare"
                 );
+                assert_eq!(
+                    id.session_id,
+                    net.session_id().unwrap_or_else(|error| {
+                        panic!("snapshot transition is missing session identity: {error}")
+                    }),
+                    "snapshot transition prepare belongs to another session"
+                );
+                assert!(
+                    host.transport.snapshot_transition.is_none(),
+                    "received a second snapshot transition while one is pending"
+                );
+                let payload = match payload {
+                    robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                        mission_id,
+                        save_bytes,
+                    } => {
+                        let save: crate::save_file::GameSaveFile =
+                            serde_json::from_slice(&save_bytes).unwrap_or_else(|error| {
+                                panic!(
+                                    "multiplayer snapshot transition payload is invalid: {error}"
+                                )
+                            });
+                        save.header.validate().unwrap_or_else(|error| {
+                            panic!("multiplayer snapshot transition header is invalid: {error:#}")
+                        });
+                        assert_eq!(
+                            save.header.mission_id, mission_id,
+                            "snapshot transition wire mission differs from its exact payload"
+                        );
+                        crate::main_entry::validate_save_mission(&save, &assets.profile_manager)
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "multiplayer snapshot transition mission is invalid: {error}"
+                                )
+                            });
+                        let reencoded = serde_json::to_vec(&save).unwrap_or_else(|error| {
+                            panic!(
+                                "multiplayer snapshot transition could not be re-encoded: {error}"
+                            )
+                        });
+                        assert_eq!(
+                            reencoded, save_bytes,
+                            "snapshot transition bytes changed during validation"
+                        );
+                        crate::host::PendingSnapshotTransitionPayload::Save {
+                            slot: None,
+                            save: Box::new(save),
+                        }
+                    }
+                    robin_engine::multiplayer::SnapshotTransitionPayload::CampaignExit {
+                        exit_code,
+                        engine_bytes,
+                    } => {
+                        assert_eq!(
+                            exit_code,
+                            robin_engine::game_operation::GameCode::LevelInterrupted,
+                            "campaign transition may only launch the selected mission"
+                        );
+                        let decoded =
+                            Engine::decode_native_snapshot(&engine_bytes).unwrap_or_else(|error| {
+                                panic!("multiplayer campaign snapshot is invalid: {error}")
+                            });
+                        let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
+                            .unwrap_or_else(|error| {
+                                panic!("multiplayer campaign snapshot cannot be adopted: {error}")
+                            });
+                        assert_eq!(
+                            adopted.encode_native_snapshot(),
+                            engine_bytes,
+                            "campaign transition bytes changed during validation"
+                        );
+                        crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                            exit_code,
+                            engine: Some(Box::new(adopted)),
+                        }
+                    }
+                };
+                host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
+                    id,
+                    payload,
+                    committed: false,
+                });
+                host.transport.reconnecting = true;
+                net.acknowledge_snapshot_transition(id)
+                    .unwrap_or_else(|error| {
+                        panic!("failed to acknowledge multiplayer snapshot transition: {error}")
+                    });
+            }
+            NetEvent::CommitSnapshotTransition { id } => {
+                let transition = host
+                    .transport
+                    .snapshot_transition
+                    .as_mut()
+                    .unwrap_or_else(|| {
+                        panic!("snapshot transition commit has no prepared payload")
+                    });
+                assert_eq!(
+                    transition.id, id,
+                    "snapshot transition commit does not match prepared payload"
+                );
+                transition.committed = true;
+                host.transport.reconnecting = true;
+            }
+            event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
+                net.defer_modal_event(event).unwrap_or_else(|error| {
+                    panic!("fatal multiplayer modal routing error: {error}")
+                });
             }
         }
     }
@@ -397,6 +497,10 @@ pub(crate) fn drain_net_inputs(
         late_inputs.extend(indexed.into_iter().map(|(_, input)| input));
 
         let mut needs_rewind = false;
+        let local_is_peer =
+            host.transport.local_seat != robin_engine::player_command::PlayerId::HOST;
+        let mut local_reconnect_reason = None;
+        let mut host_reconnect_reason = None;
         let mut earliest = u32::MAX;
         let mut late_input_count = 0usize;
         for (frame, input) in late_inputs {
@@ -405,16 +509,50 @@ pub(crate) fn drain_net_inputs(
                 earliest = earliest.min(frame);
                 late_input_count += 1;
             } else {
+                let reason = format!(
+                    "input for frame {frame} arrived after rollback horizon {} at local frame {effective_frame}",
+                    rewind_buffer.oldest_cmd_frame()
+                );
                 tracing::error!(
                     target_frame = frame,
                     oldest = rewind_buffer.oldest_cmd_frame(),
-                    "multiplayer: late input below rewind horizon — applying at current frame as degraded fallback"
+                    effective_frame,
+                    player_id = input.player_id.0,
+                    "multiplayer: late input below rewind horizon — requiring a full snapshot reconnect"
                 );
-                pending_inputs
-                    .entry(TimelineFrame::from_wire(effective_frame))
-                    .or_default()
-                    .push(input);
+                if local_is_peer {
+                    local_reconnect_reason.get_or_insert(reason);
+                } else {
+                    assert_ne!(
+                        input.player_id,
+                        robin_engine::player_command::PlayerId::HOST,
+                        "host-authored input fell below the authoritative host rollback horizon"
+                    );
+                    // The server already broadcast this input before the game
+                    // loop discovered that its target predates the host's
+                    // horizon. Defer the reconnect request until any other
+                    // viable late inputs in this batch have been reconstructed
+                    // and the replacement snapshot cache is current.
+                    host_reconnect_reason.get_or_insert(reason);
+                }
             }
+        }
+        if let Some(reason) = local_reconnect_reason {
+            net.reconnect_for_snapshot(host.transport.local_seat, reason.clone())
+                .unwrap_or_else(|error| {
+                    panic!("failed to request multiplayer snapshot reconnect: {error}")
+                });
+            host.transport.reconnecting = true;
+            pending_inputs.clear();
+            admission_events.push(MultiplayerAdmissionEvent::Disconnected);
+            tracing::warn!(
+                %reason,
+                "multiplayer: client suspended until complete disconnect/reconnect and host snapshot adoption"
+            );
+            // Any successful splices above belong to the abandoned local
+            // future. The reconnect snapshot replaces both engine state and
+            // reconstruction history before simulation is released again.
+            needs_rewind = false;
         }
         if needs_rewind {
             let rollback_start = web_time::Instant::now();
@@ -422,7 +560,6 @@ pub(crate) fn drain_net_inputs(
                 effective_frame,
                 assets,
                 rewind_buffer,
-                recent_timeline_history,
                 earliest,
                 late_input_count,
             ) {
@@ -470,21 +607,21 @@ pub(crate) fn drain_net_inputs(
                     "multiplayer rollback timing"
                 );
                 manager.engine = new_engine;
-                recent_timeline_history.truncate_after(earliest);
+                rewind_buffer.truncate_recent_after(earliest);
                 rollback_telemetry = Some(telemetry);
                 rewrote_sim_state = true;
             } else {
-                // The late input was accepted into the authoritative command
-                // journal, so checkpoints after its frame are stale even
-                // when reconstruction cannot currently reach `sim_frame`.
-                recent_timeline_history.truncate_after(earliest);
-                tracing::error!(
-                    earliest_frame = earliest,
-                    target_frame = effective_frame,
-                    late_inputs = late_input_count,
-                    "multiplayer rollback failed: no retained snapshot could reconstruct timeline"
+                panic!(
+                    "multiplayer rollback failed: canonical journal accepted {late_input_count} late input(s) from frame {earliest}, but no retained snapshot can reconstruct authoritative frame {effective_frame}"
                 );
             }
+        }
+        if let Some(reason) = host_reconnect_reason {
+            net.set_initial_snapshot(effective_frame, &manager.engine);
+            net.reconnect_all_for_snapshot(reason)
+                .unwrap_or_else(|error| {
+                    panic!("failed to require multiplayer snapshot reconnect: {error}")
+                });
         }
     }
 
@@ -533,7 +670,6 @@ pub(super) fn drain_mission_network(
         assets,
         &mut timeline.rewind_buffer,
         &mut timeline.peer_hashes,
-        &mut timeline.recent_timeline_history,
     );
     if drain.rewrote_sim_state
         && let Some(checker) = timeline.rollback_checker.as_mut()
@@ -591,8 +727,8 @@ pub(super) fn drain_mission_network(
 
     if host.transport.net.is_some() && (checkpoint_always || drain.rewrote_sim_state) {
         timeline
-            .recent_timeline_history
-            .checkpoint(timeline.frame_number(), &manager.engine);
+            .rewind_buffer
+            .checkpoint_recent(timeline.frame_number(), &manager.engine);
     }
     drain
 }
@@ -600,22 +736,19 @@ pub(super) fn drain_mission_network(
 fn rewind_from_recent_timeline_history(
     target_frame: u32,
     assets: &LevelAssets,
-    rewind_buffer: &RewindBuffer,
-    recent_timeline_history: &mut SnapshotHistory,
+    rewind_buffer: &mut RewindBuffer,
     start_frame: u32,
     late_input_count: usize,
 ) -> Option<(Engine, MultiplayerRollbackTelemetry)> {
     let restore_start = web_time::Instant::now();
-    let mut snapshot = recent_timeline_history
-        .restore(start_frame, RestorePolicy::Exact)
-        .ok()?;
+    let mut snapshot = rewind_buffer.restore_recent(start_frame, RestorePolicy::Exact)?;
     let restore_us = restore_start.elapsed().as_micros();
 
     // Rebuild corrected checkpoints transactionally. A missing command (or
     // any future fallible replay input) must leave the last known-good recent
     // history available to a fallback path rather than publishing a partial
     // reconstruction.
-    let mut corrected_history = recent_timeline_history.clone();
+    let mut corrected_history = rewind_buffer.recent_checkpoints().clone();
     corrected_history.truncate_after(start_frame);
     let mut replay_remember_us = 0;
     let mut replay_command_lookup_us = 0;
@@ -638,7 +771,7 @@ fn rewind_from_recent_timeline_history(
     corrected_history.remember(snapshot.clone());
     replay_remember_us += remember_start.elapsed().as_micros();
     let replay_us = replay_start.elapsed().as_micros();
-    *recent_timeline_history = corrected_history;
+    rewind_buffer.replace_recent_checkpoints(corrected_history);
 
     Some((
         snapshot.engine,
@@ -711,6 +844,24 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 ///
 /// Network failures abort multiplayer startup so the caller can return
 /// to the main menu instead of silently launching a different local game.
+#[cfg(not(feature = "multiplayer"))]
+pub(super) async fn setup_multiplayer_session(
+    _host: &mut Host,
+    args: &crate::main_entry::CliArgs,
+    _authoritative_mission_id: &str,
+    _authoritative_rng_seed: u64,
+    _authoritative_sim_config: robin_engine::engine::SimConfig,
+) -> Result<(), String> {
+    if args.server || args.connect.is_some() || args.join.is_some() {
+        return Err(
+            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "multiplayer")]
 pub(super) async fn setup_multiplayer_session(
     host: &mut Host,
     args: &crate::main_entry::CliArgs,
@@ -744,6 +895,9 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if !args.mp_continue_session {
+                crate::multiplayer::discard_host_session_continuation();
+            }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
                 .application_context
@@ -766,6 +920,9 @@ pub(super) async fn setup_multiplayer_session(
                 publish_browser_links,
             ) {
                 Ok(handle) => {
+                    channels
+                        .install_session_id(handle.session_id())
+                        .map_err(|error| format!("multiplayer: {error}"))?;
                     if publish_browser_links {
                         let content_edition = if crate::main_entry::detect_demo_mode_with_context(
                             &args.global_options,
@@ -850,7 +1007,8 @@ pub(super) async fn setup_multiplayer_session(
                     while (handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat.borrow().is_none()
+                        || handle.assigned_seat().is_none()
+                        || handle.session_id().is_none()
                         || handle.speech_timing_authority().is_none())
                         && web_time::Instant::now() < deadline
                     {
@@ -869,7 +1027,8 @@ pub(super) async fn setup_multiplayer_session(
                     if handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat.borrow().is_none()
+                        || handle.assigned_seat().is_none()
+                        || handle.session_id().is_none()
                         || handle.speech_timing_authority().is_none()
                     {
                         return Err(
@@ -878,6 +1037,12 @@ pub(super) async fn setup_multiplayer_session(
                         );
                     }
                 }
+                let session_id = handle.session_id().ok_or_else(|| {
+                    "multiplayer: Welcome omitted the required session identity".to_string()
+                })?;
+                channels
+                    .install_session_id(session_id)
+                    .map_err(|error| format!("multiplayer: {error}"))?;
                 let welcomed_mission = handle
                     .mission_id()
                     .expect("successful Welcome must include a mission id");
@@ -959,6 +1124,7 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
+#[cfg(feature = "multiplayer")]
 fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
     let saved = args
         .global_options
@@ -973,20 +1139,22 @@ fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result
     ))
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
     cli_override.unwrap_or(saved)
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
     if args.server && args.connect.is_some() {
         return Err("multiplayer host and client modes are mutually exclusive".to_string());
     }
     if let Some(expected) = args.mp_expected_players
-        && !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
+        && !(1..=crate::multiplayer::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
     {
         return Err(format!(
             "multiplayer expected player count must be between 1 and {}",
-            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+            crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
         ));
     }
     let multiplayer = args.server || args.connect.is_some();
@@ -1015,11 +1183,11 @@ mod tests {
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
     use crate::rewind::RewindBuffer;
-    use crate::sim_timeline::{CheckpointPolicy, RestorePolicy, RetentionPolicy, SnapshotHistory};
+    use crate::sim_timeline::RestorePolicy;
     use robin_engine::campaign::Campaign;
     use robin_engine::engine::{Engine, LevelAssets};
     use robin_engine::engine_manager::EngineManager;
-    use robin_engine::player_command::{PlayerCommand, PlayerId};
+    use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
     fn network_drain_fixture() -> (
         Host,
@@ -1115,11 +1283,6 @@ mod tests {
         let mut rewind = RewindBuffer::new();
         let mut hashes = std::collections::BTreeMap::new();
         let mut pending = std::collections::BTreeMap::new();
-        let mut recent = SnapshotHistory::new(
-            CheckpointPolicy::EveryFrame,
-            RetentionPolicy::Latest { capacity: 8 },
-        );
-
         let drain = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1128,7 +1291,6 @@ mod tests {
             &assets,
             &mut rewind,
             &mut hashes,
-            &mut recent,
         );
 
         assert!(drain.rewrote_sim_state);
@@ -1145,78 +1307,103 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_accepts_older_snapshot_and_discards_prediction_future() {
+    fn mid_mission_snapshot_seeds_history_between_sparse_boundaries() {
         let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
-        let mut snapshot = manager.engine.clone();
-        snapshot
-            .advance_frame(
-                &assets,
-                robin_engine::engine::SimulationFrameInput::new(vec![
-                    PlayerCommand::SetAmountOfSpeaking { amount: 7 }.into(),
-                ])
-                .with_hourglass(false),
-            )
-            .expect("snapshot mutation");
-        let snapshot_hash = robin_engine::replay::state_hash(&snapshot);
-
-        incoming
-            .send(NetEvent::Disconnected)
-            .expect("queue disconnect");
-        incoming
-            .send(NetEvent::Reconnected)
-            .expect("queue reconnect");
+        let engine_bytes = manager.engine.encode_native_snapshot();
         incoming
             .send(NetEvent::InitialSnapshot {
-                frame: 3,
-                engine_bytes: snapshot.encode_native_snapshot(),
+                frame: 32,
+                engine_bytes,
             })
-            .expect("queue older replacement snapshot");
-
+            .expect("queue mid-mission snapshot");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::from([(8, 123)]);
-        let mut pending = std::collections::BTreeMap::from([(
-            TimelineFrame::from_wire(9),
-            vec![PlayerCommand::CrouchDown.into()],
-        )]);
-        let mut recent = SnapshotHistory::new(
-            CheckpointPolicy::EveryFrame,
-            RetentionPolicy::Latest { capacity: 8 },
-        );
-        assert!(recent.checkpoint(8, &manager.engine));
+        let mut hashes = std::collections::BTreeMap::new();
+        let mut pending = std::collections::BTreeMap::new();
 
         let drain = drain_net_inputs(
             &mut host,
             &mut manager,
-            8,
+            31,
             &mut pending,
             &assets,
             &mut rewind,
             &mut hashes,
-            &mut recent,
+        );
+        assert_eq!(drain.adopted_frame, Some(32));
+        assert!(matches!(
+            outgoing.recv().expect("ReadyToSim after adoption"),
+            NetOutbound::ReadyToSim { frame: 32 }
+        ));
+
+        rewind.begin_frame(32, &manager.engine, &assets);
+        rewind.end_frame(Vec::new());
+        assert!(rewind.frame_for(32).is_some());
+        assert_eq!(rewind.oldest_cmd_frame(), 32);
+    }
+
+    #[test]
+    fn reconnect_adopts_older_host_snapshot_and_discards_prediction_future() {
+        let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
+        host.transport.reconnecting = true;
+        let engine_bytes = manager.engine.encode_native_snapshot();
+        incoming
+            .send(NetEvent::InitialSnapshot {
+                frame: 30,
+                engine_bytes,
+            })
+            .expect("queue reconnect snapshot");
+        let mut rewind = RewindBuffer::new();
+        let mut hashes = std::collections::BTreeMap::from([(36, 0xBAD5_EED)]);
+        let mut pending = std::collections::BTreeMap::from([(
+            super::TimelineFrame::from_wire(36),
+            vec![PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown)],
+        )]);
+
+        let drain = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            35,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
         );
 
-        assert_eq!(
-            drain.admission_events,
-            [
-                MultiplayerAdmissionEvent::Disconnected,
-                MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 3 },
-            ]
-        );
-        assert_eq!(drain.adopted_frame, Some(3));
+        assert_eq!(drain.adopted_frame, Some(30));
         assert!(drain.rewrote_sim_state);
-        assert!(!host.transport.reconnecting);
-        assert_eq!(
-            robin_engine::replay::state_hash(&manager.engine),
-            snapshot_hash
+        assert!(
+            host.transport.reconnecting,
+            "controls stay disabled until the ready barrier releases"
         );
-        assert!(pending.is_empty());
-        assert!(hashes.is_empty());
-        assert!(recent.restore(8, RestorePolicy::Exact).is_err());
-        assert_eq!(rewind.oldest_reachable_frame(), Some(3));
+        assert!(
+            pending.is_empty(),
+            "old predicted inputs must not cross sessions"
+        );
+        assert!(hashes.is_empty(), "old peer hashes must not cross sessions");
+        assert_eq!(rewind.oldest_reachable_frame(), Some(30));
+        assert!(rewind.restore_recent(30, RestorePolicy::Exact).is_some());
         assert!(matches!(
-            outgoing.recv().expect("ReadyToSim after replacement"),
-            NetOutbound::ReadyToSim { frame: 3 }
+            outgoing
+                .recv()
+                .expect("ReadyToSim after reconnect adoption"),
+            NetOutbound::ReadyToSim { frame: 30 }
         ));
+        incoming
+            .send(NetEvent::BeginSim {
+                frame: 30,
+                start_epoch_ms: 123,
+            })
+            .unwrap();
+        let _ = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            30,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+        );
+        assert!(!host.transport.reconnecting);
     }
 
     #[test]
@@ -1229,11 +1416,6 @@ mod tests {
         let mut rewind = RewindBuffer::new();
         let mut hashes = std::collections::BTreeMap::new();
         let mut pending = std::collections::BTreeMap::new();
-        let mut recent = SnapshotHistory::new(
-            CheckpointPolicy::EveryFrame,
-            RetentionPolicy::Latest { capacity: 8 },
-        );
-
         let _ = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1242,8 +1424,98 @@ mod tests {
             &assets,
             &mut rewind,
             &mut hashes,
-            &mut recent,
         );
+    }
+
+    fn rewind_with_horizon(
+        manager: &EngineManager,
+        assets: &LevelAssets,
+        start: u32,
+        end: u32,
+    ) -> RewindBuffer {
+        let mut rewind = RewindBuffer::new();
+        for frame in start..end {
+            rewind.begin_frame(frame, &manager.engine, assets);
+            rewind.end_frame(Vec::new());
+        }
+        assert_eq!(rewind.oldest_cmd_frame(), start);
+        rewind
+    }
+
+    #[test]
+    fn client_too_old_input_requests_a_complete_snapshot_reconnect() {
+        let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
+        let mut rewind = rewind_with_horizon(&manager, &assets, 25, 35);
+        incoming
+            .send(NetEvent::Input {
+                server_frame: 35,
+                origin_frame: 23,
+                target_frame: 24,
+                input: PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),
+            })
+            .expect("queue stale input");
+        let mut hashes = std::collections::BTreeMap::new();
+        let mut pending = std::collections::BTreeMap::new();
+
+        let drain = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            35,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+        );
+
+        assert!(host.transport.reconnecting);
+        assert!(pending.is_empty());
+        assert_eq!(
+            drain.admission_events,
+            [MultiplayerAdmissionEvent::Disconnected]
+        );
+        assert!(drain.inputs.is_empty());
+        assert!(matches!(
+            outgoing.try_recv().expect("reconnect request"),
+            NetOutbound::ReconnectForSnapshot {
+                player_id: PlayerId(1),
+                reason,
+            } if reason.contains("rollback horizon")
+        ));
+    }
+
+    #[test]
+    fn host_too_old_peer_input_reconnects_every_predicting_client() {
+        let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
+        host.transport.local_seat = PlayerId::HOST;
+        let mut rewind = rewind_with_horizon(&manager, &assets, 25, 35);
+        incoming
+            .send(NetEvent::Input {
+                server_frame: 35,
+                origin_frame: 23,
+                target_frame: 24,
+                input: PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),
+            })
+            .expect("queue stale peer input");
+        let mut hashes = std::collections::BTreeMap::new();
+        let mut pending = std::collections::BTreeMap::new();
+
+        let drain = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            35,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+        );
+
+        assert!(!host.transport.reconnecting);
+        assert!(drain.inputs.is_empty());
+        assert!(matches!(
+            outgoing.try_recv().expect("reconnect-all request"),
+            NetOutbound::ReconnectAllForSnapshot { reason }
+                if reason.contains("rollback horizon")
+        ));
     }
 
     #[test]
@@ -1254,20 +1526,14 @@ mod tests {
             rewind.begin_frame(frame, &manager.engine, &assets);
             rewind.end_frame(Vec::new());
         }
-        let mut recent = SnapshotHistory::new(
-            CheckpointPolicy::EveryFrame,
-            RetentionPolicy::Latest { capacity: 8 },
-        );
         for frame in 1..=3 {
-            assert!(recent.checkpoint(frame, &manager.engine));
+            rewind.checkpoint_recent(frame, &manager.engine);
         }
 
         // Frame 2 has no command entry, so reconstruction from frame 1 to 3
         // must fail after doing some work without truncating frames 2 and 3.
-        assert!(
-            rewind_from_recent_timeline_history(3, &assets, &rewind, &mut recent, 1, 1).is_none()
-        );
-        assert!(recent.restore(2, RestorePolicy::Exact).is_ok());
-        assert!(recent.restore(3, RestorePolicy::Exact).is_ok());
+        assert!(rewind_from_recent_timeline_history(3, &assets, &mut rewind, 1, 1).is_none());
+        assert!(rewind.restore_recent(2, RestorePolicy::Exact).is_some());
+        assert!(rewind.restore_recent(3, RestorePolicy::Exact).is_some());
     }
 }

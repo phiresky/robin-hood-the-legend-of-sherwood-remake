@@ -382,6 +382,7 @@ pub struct GameWindow {
     pub gpu: GpuContext,
     pub surface: SharedSurface,
     pub surface_config: wgpu::SurfaceConfiguration,
+    #[cfg(feature = "gamepad")]
     pub gamepads: Option<gilrs::Gilrs>,
     pub active_gamepad: Option<u32>,
     pub close_requested: bool,
@@ -655,6 +656,7 @@ impl GameWindow {
         }
 
         // Drain gilrs events to GameEvent::Gamepad{Added,Removed,Button,Axis}.
+        #[cfg(feature = "gamepad")]
         if let Some(gilrs) = &mut self.gamepads {
             while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
                 let which = usize::from(id) as u32;
@@ -1041,6 +1043,7 @@ async fn build_game_window_async(
         surface_format,
     };
 
+    #[cfg(feature = "gamepad")]
     let gamepads = match gilrs::Gilrs::new() {
         Ok(g) => Some(g),
         Err(e) => {
@@ -1055,6 +1058,7 @@ async fn build_game_window_async(
         gpu,
         surface: SharedSurface::new(surface),
         surface_config,
+        #[cfg(feature = "gamepad")]
         gamepads,
         active_gamepad: None,
         close_requested: false,
@@ -1971,6 +1975,7 @@ fn physical_key_to_keycode(key: PhysicalKey) -> Keycode {
     }
 }
 
+#[cfg(feature = "gamepad")]
 fn gilrs_button_to_index(b: gilrs::Button) -> Option<u8> {
     use gilrs::Button as B;
     Some(match b {
@@ -1993,6 +1998,7 @@ fn gilrs_button_to_index(b: gilrs::Button) -> Option<u8> {
     })
 }
 
+#[cfg(feature = "gamepad")]
 fn gilrs_axis_to_index(a: gilrs::Axis) -> Option<u8> {
     use gilrs::Axis as A;
     Some(match a {

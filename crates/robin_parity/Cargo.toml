@@ -1,0 +1,35 @@
+[package]
+name = "robin_parity"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "original_parity_replay"
+path = "src/bin/original_parity_replay.rs"
+
+[features]
+default = []
+# Interactive visualization, frame-zero screenshots, and the HTTP debugger use
+# the complete game client. Corpus validation stays CPU-only by default.
+client = ["dep:robin_rs"]
+
+[dependencies]
+base64 = "0.23"
+bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
+fs2 = "0.4"
+png = "0.18"
+robin_assets.workspace = true
+robin_engine.workspace = true
+robin_rs = { path = "../robin_rs", optional = true }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde-value = "0.7"
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+zstd.workspace = true
+
+[lints]
+workspace = true
