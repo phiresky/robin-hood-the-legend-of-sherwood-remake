@@ -7,7 +7,6 @@
 
 use super::debriefing::LostSherwoodGateState;
 use super::modal_state::ActiveModal;
-use super::quickload_flow::QuickLoadConfirmationFlow;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
@@ -138,7 +137,6 @@ pub(super) struct MissionUi {
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
     pub(super) sherwood_campaign_flow: Option<SherwoodCampaignFlow>,
-    pub(super) quickload_confirmation: Option<QuickLoadConfirmationFlow>,
     pub(super) terminal_debriefing: Option<TerminalDebriefingState>,
     pub(super) lost_sherwood_gate: LostSherwoodGateState,
     pub(super) restart_allowed: bool,
@@ -156,7 +154,6 @@ impl MissionUi {
             // data rather than mission-bootstrap data.
             campaign_map: CampaignMapState::new(),
             sherwood_campaign_flow: None,
-            quickload_confirmation: None,
             terminal_debriefing: None,
             lost_sherwood_gate: LostSherwoodGateState::new(),
             restart_allowed,

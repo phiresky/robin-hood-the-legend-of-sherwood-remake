@@ -780,7 +780,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             || game.persistent.campaign_map_active
             || ui.sherwood_campaign_flow.is_some()
             || ui.active_ui_task.is_some()
-            || ui.quickload_confirmation.is_some()
             || ui
                 .lost_sherwood_gate
                 .blocks_mission(game.is_sherwood, &manager.engine);
@@ -1249,7 +1248,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()))
             || ui.terminal_debriefing.is_some()
             || (ui.sherwood_campaign_flow.is_some() && host.transport.net.is_none())
-            || ui.quickload_confirmation.is_some()
             || ui
                 .lost_sherwood_gate
                 .blocks_mission(game.is_sherwood, &manager.engine);

@@ -1366,7 +1366,6 @@ impl InteractiveFrameSimulation {
         // refuse if a modal dialog is queued so the user doesn't step
         // past it.
         let campaign_ui_blocked = ui.sherwood_campaign_flow.is_some()
-            || ui.quickload_confirmation.is_some()
             || ui
                 .lost_sherwood_gate
                 .blocks_mission(game.is_sherwood, &manager.engine);
