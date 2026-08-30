@@ -385,11 +385,27 @@ impl EngineInner {
         if !self.tactical_unit_is_selected(soldier) {
             return;
         }
+        self.prepare_direct_tactical_combat_command(soldier);
+    }
+
+    /// Re-establish direct control for an automatic combat step even when the
+    /// player changed selection after planning it. Admission already captured
+    /// a controllable tactical actor; execution only fizzles if that actor is
+    /// no longer living and tactically controllable.
+    pub(super) fn prepare_queued_tactical_combat_command(&mut self, soldier: EntityId) -> bool {
+        if !self.is_tactically_controllable(soldier) {
+            return false;
+        }
+        self.prepare_direct_tactical_combat_command(soldier);
+        true
+    }
+
+    fn prepare_direct_tactical_combat_command(&mut self, soldier: EntityId) {
         self.stop_owner(soldier, crate::sequence::SequencePriority::Preference);
         let ai = self
             .get_entity_mut(soldier)
             .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("selected allied soldier {soldier:?} has no enemy AI"));
+            .unwrap_or_else(|| panic!("selected tactical unit {soldier:?} has no enemy AI"));
         ai.pending_sword_strike_consideration = false;
         ai.base.outbox.actor.orders.clear();
     }
@@ -687,7 +703,7 @@ impl EngineInner {
             .expect("0-to-15 direction must fit u16");
     }
 
-    fn tactical_formation_slots(
+    pub(crate) fn tactical_formation_slots(
         &self,
         assets: &LevelAssets,
         soldiers: &[EntityId],
@@ -937,6 +953,36 @@ impl EngineInner {
                 },
             );
         }
+    }
+
+    /// Install the direct-control state paired with one recorded tactical move.
+    /// The movement route itself is launched by the QA replay path.
+    pub(crate) fn prepare_queued_tactical_move(
+        &mut self,
+        soldier: EntityId,
+        destination: MapPoint,
+        formation: TacticalFormation,
+    ) -> bool {
+        if !self.is_tactically_controllable(soldier) {
+            return false;
+        }
+        self.replace_authored_tactical_patrol(soldier);
+        self.set_tactical_ai_locked(soldier, true);
+        let stance = self.initial_tactical_stance(soldier);
+        self.players.tactical.orders.insert(
+            soldier,
+            TacticalUnitOrder {
+                stance,
+                formation,
+                duty: TacticalDuty::Hold {
+                    anchor: destination,
+                },
+                last_destination: destination,
+                path_fallback: None,
+                deploy_destination: None,
+            },
+        );
+        true
     }
 
     pub(crate) fn set_tactical_stance(&mut self, soldiers: &[EntityId], stance: CombatStance) {

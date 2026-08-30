@@ -934,9 +934,43 @@ impl EngineInner {
                     } else {
                         *action
                     };
+                self.players.seats[seat].planned_shield_target = None;
+            }
+            SelectPlannedShieldProtected {
+                actor,
+                protected_pc,
+            } => {
+                let planned = self.players.seats[seat].planned_action;
+                if !self.players.seats[seat].selection.contains(actor)
+                    || !matches!(
+                        planned,
+                        crate::profiles::Action::Shield | crate::profiles::Action::BigShield
+                    )
+                {
+                    tracing::warn!(
+                        ?actor,
+                        ?protected_pc,
+                        ?planned,
+                        "ignored invalid planned shield protectee"
+                    );
+                    return;
+                }
+                let valid = self
+                    .get_entity(*protected_pc)
+                    .and_then(crate::element::Entity::pc_data)
+                    .is_some_and(|pc| pc.life_points > 0);
+                if !valid {
+                    tracing::warn!(
+                        ?protected_pc,
+                        "ignored unavailable planned shield protectee"
+                    );
+                    return;
+                }
+                self.players.seats[seat].planned_shield_target = Some((*actor, *protected_pc));
             }
             CancelPlannedAction => {
                 self.players.seats[seat].planned_action = crate::profiles::Action::NoAction;
+                self.players.seats[seat].planned_shield_target = None;
             }
             CancelAction { pc_id } => {
                 self.set_pc_action_from_message(
@@ -2333,6 +2367,7 @@ impl EngineInner {
                 Some(actor)
             }
             QaReplayCommand::Move { .. }
+            | QaReplayCommand::TacticalMove { .. }
             | QaReplayCommand::GroundTarget { .. }
             | QaReplayCommand::DropAle { .. } => None,
         };
@@ -2355,7 +2390,8 @@ impl EngineInner {
                 danger_point_layer,
                 ..
             } => (*danger_point, *danger_point_layer),
-            QaReplayCommand::Move { destination, .. } => (
+            QaReplayCommand::Move { destination, .. }
+            | QaReplayCommand::TacticalMove { destination, .. } => (
                 self.world.fast_grid.convert_2d_to_3d(
                     *destination,
                     crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
@@ -2428,6 +2464,75 @@ impl EngineInner {
     ) {
         use PlayerCommand::*;
 
+        if let MoveTacticalUnits {
+            formation,
+            soldiers,
+            destination,
+            running,
+        } = command
+        {
+            let valid: Vec<_> = soldiers
+                .iter()
+                .copied()
+                .filter(|soldier| self.is_tactically_controllable(*soldier))
+                .collect();
+            let leaders = self.players.seats[seat].selection.clone();
+            let slots = self.tactical_formation_slots(
+                assets,
+                &valid,
+                &leaders,
+                *destination,
+                *formation,
+                false,
+            );
+            for (actor, slot) in slots {
+                let outcome = self
+                    .plan_recorded_group_move(assets, &[actor], slot, None, None, None)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| {
+                        panic!("tactical queue planner returned no result for {actor:?}")
+                    });
+                let plan = match outcome {
+                    PlannedRecordedGroupMoveOutcome::Resolved(plan) => plan,
+                    PlannedRecordedGroupMoveOutcome::Unauthorized { actor } => {
+                        tracing::warn!(
+                            ?actor,
+                            ?slot,
+                            "planned tactical move has no authorized destination"
+                        );
+                        continue;
+                    }
+                };
+                let route = plan.route.clone();
+                let before_len = self.players.auto_queues.len(actor);
+                self.record_resolved_group_move_step_in_store(
+                    actor,
+                    plan.destination,
+                    *running,
+                    plan.route,
+                    Some(action),
+                    assets,
+                    QuickActionRecordingStore::Automatic,
+                );
+                let step = self
+                    .players
+                    .auto_queues
+                    .last_step_mut(actor)
+                    .unwrap_or_else(|| panic!("tactical queue step for {actor:?} disappeared"));
+                step.replay = crate::macro_store::QaReplayCommand::TacticalMove {
+                    destination: plan.destination,
+                    running: *running,
+                    route,
+                    formation: *formation,
+                };
+                self.finish_automatic_quick_action_capture(
+                    sim, display, assets, actor, before_len, command,
+                );
+            }
+            return;
+        }
+
         if let GroupMove {
             actors,
             destination,
@@ -2482,7 +2587,8 @@ impl EngineInner {
             | LaunchSelfAbility { actor, .. }
             | LaunchScrollRead { actor, .. }
             | EnterSwordfight { actor, .. }
-            | SwordStrikeCmd { actor, .. } => vec![*actor],
+            | SwordStrikeCmd { actor, .. }
+            | RaiseShieldWithDanger { actor, .. } => vec![*actor],
             CrouchDown | StandUp => self.players.seats[seat].selection.clone(),
             _ => {
                 tracing::warn!(?command, "Shift queue rejected unsupported player command");
@@ -2504,6 +2610,9 @@ impl EngineInner {
             self.finish_automatic_quick_action_capture(
                 sim, display, assets, actor, before_len, command,
             );
+        }
+        if matches!(command, RaiseShieldWithDanger { .. }) {
+            self.players.seats[seat].planned_shield_target = None;
         }
     }
 
@@ -2611,9 +2720,8 @@ impl EngineInner {
             retired, entry,
             "automatic queue front changed during replay"
         );
-        // TODO(ui): give the independent auto-queue strip its own falling
-        // animation state. The deterministic queue contents already shift
-        // here; only the cosmetic easing remains shared with manual QA UI.
+        // The host observes the shorter independent queue on its next draw and
+        // starts that actor portrait's own falling-strip easing.
         let _ = display;
     }
 
@@ -2905,6 +3013,27 @@ impl EngineInner {
                     }
                     continue;
                 }
+                crate::macro_store::QaReplayCommand::TacticalMove {
+                    destination,
+                    running,
+                    route,
+                    formation,
+                } => {
+                    if !self.prepare_queued_tactical_move(pc, destination, formation) {
+                        return false;
+                    }
+                    self.launch_recorded_group_move_qa(
+                        pc,
+                        destination,
+                        running,
+                        route,
+                        step_index + 1 == step_count,
+                    );
+                    if step_index + 1 == step_count {
+                        posture_recovery_embedded = true;
+                    }
+                    continue;
+                }
                 crate::macro_store::QaReplayCommand::Interaction {
                     target,
                     command,
@@ -3024,6 +3153,12 @@ impl EngineInner {
                     if self.get_entity(target).is_none() {
                         return false;
                     }
+                    if replay_store == QuickActionRecordingStore::Automatic
+                        && !self.get_entity(pc).is_some_and(Entity::is_pc)
+                        && !self.prepare_queued_tactical_combat_command(pc)
+                    {
+                        return false;
+                    }
                     PlayerCommand::EnterSwordfight {
                         actor: pc,
                         target,
@@ -3041,6 +3176,12 @@ impl EngineInner {
                     // See Interaction arm — whole-sequence abort on
                     // target-gone.
                     if self.get_entity(target).is_none() {
+                        return false;
+                    }
+                    if replay_store == QuickActionRecordingStore::Automatic
+                        && !self.get_entity(pc).is_some_and(Entity::is_pc)
+                        && !self.prepare_queued_tactical_combat_command(pc)
+                    {
                         return false;
                     }
                     PlayerCommand::SwordStrikeCmd {
@@ -3469,7 +3610,7 @@ impl EngineInner {
         steps: &[crate::macro_store::QuickActionStep],
     ) -> bool {
         use crate::macro_store::QaReplayCommand;
-        if !self.get_entity(pc).is_some_and(Entity::is_pc) {
+        if !self.get_entity(pc).is_some_and(Entity::is_pc) && !self.is_tactically_controllable(pc) {
             return false;
         }
         if steps.is_empty() {
@@ -3537,7 +3678,9 @@ impl EngineInner {
             if is_swordfighting
                 && !matches!(
                     &step.replay,
-                    QaReplayCommand::Move { .. } | QaReplayCommand::PostureToggle { .. }
+                    QaReplayCommand::Move { .. }
+                        | QaReplayCommand::TacticalMove { .. }
+                        | QaReplayCommand::PostureToggle { .. }
                 )
             {
                 return false;
@@ -4615,6 +4758,8 @@ impl EngineInner {
     ) {
         use crate::element::Entity;
         use crate::order::OrderType;
+
+        self.prepare_tactical_player_combat_command(pc_id);
 
         // VIP gate
         let target_is_vip = self
@@ -6729,6 +6874,56 @@ mod tests {
                 .expect("test PC")
                 .current_action,
             Action::NoAction
+        );
+    }
+
+    #[test]
+    fn planned_shield_first_click_is_per_seat_hashed_state_and_cancel_clears_it() {
+        let (mut engine, assets, actor) = setup_pc_engine(&[(Action::Shield, 0)]);
+        let protected = spawn_pc_at(&mut engine, 80.0, 30.0);
+        engine.players.seats[0].selection.push(actor);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SelectPlannedAction {
+                pc_id: actor,
+                action: Action::Shield,
+            },
+        );
+        let before = robin_util::state_hash::compute(&engine.players.seats[0]);
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SelectPlannedShieldProtected {
+                actor,
+                protected_pc: protected,
+            },
+        );
+        assert_eq!(
+            engine.planned_shield_protected_for_seat(crate::player_command::PlayerId::HOST, actor),
+            Some(protected)
+        );
+        assert_ne!(
+            before,
+            robin_util::state_hash::compute(&engine.players.seats[0])
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::CancelPlannedAction,
+        );
+        assert_eq!(
+            engine.planned_shield_protected_for_seat(crate::player_command::PlayerId::HOST, actor),
+            None
         );
     }
 

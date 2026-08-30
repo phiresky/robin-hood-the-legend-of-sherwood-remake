@@ -201,6 +201,7 @@ pub mod hud_text;
 pub mod level_loading_host;
 pub mod shader_preset;
 pub mod shipping_mission;
+pub mod touch_plan_hud;
 /// Host-side runtime state used by the game loop and developer tooling.
 ///
 /// Engine and asset types are intentionally not re-exported from this crate;

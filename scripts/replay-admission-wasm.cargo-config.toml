@@ -1,0 +1,7 @@
+# Extra link policy for the minimal, non-threaded replay-admission wasm only.
+# 384 MiB / 64 KiB = 6144 pages. Never use this config for the game module.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "link-arg=--max-memory=402653184",
+]
+

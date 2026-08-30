@@ -97,6 +97,28 @@ mod tests {
     }
 
     #[test]
+    fn seat_fixture_rejects_missing_planned_shield_prompt() {
+        let mut encoded = serde_json::to_value(PlayerRuntime::new()).expect("serialize players");
+        encoded
+            .get_mut("seats")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|seats| seats.first_mut())
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("seat zero is a JSON object")
+            .remove("planned_shield_target");
+
+        let error = match serde_json::from_value::<PlayerRuntime>(encoded) {
+            Ok(_) => panic!("current seat state requires its planned shield prompt"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("missing field `planned_shield_target`")
+        );
+    }
+
+    #[test]
     fn automatic_queue_json_and_bitcode_roundtrip_and_participates_in_player_state_hash() {
         let pc = EntityId::Pc(crate::entity_id::PcId(1));
         let mut queued = PlayerRuntime::new();

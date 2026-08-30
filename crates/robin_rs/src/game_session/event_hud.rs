@@ -16,6 +16,7 @@ pub(super) struct InputModifiers {
     pub(super) ctrl: bool,
     pub(super) shift: bool,
     pub(super) alt: bool,
+    pub(super) plan: bool,
 }
 
 /// Owned input data handed from event/HUD collection to the live-action phase.
@@ -125,12 +126,18 @@ fn plan_step_shortcuts(
     }
 }
 
-fn input_modifiers(keys: &std::collections::BTreeSet<winit::keyboard::KeyCode>) -> InputModifiers {
+fn input_modifiers(
+    keys: &std::collections::BTreeSet<winit::keyboard::KeyCode>,
+    plan_binding_held: bool,
+    touch_plan_latched: bool,
+    plan_enabled: bool,
+) -> InputModifiers {
     use winit::keyboard::KeyCode;
     InputModifiers {
         ctrl: keys.contains(&KeyCode::ControlLeft) || keys.contains(&KeyCode::ControlRight),
         shift: keys.contains(&KeyCode::ShiftLeft) || keys.contains(&KeyCode::ShiftRight),
         alt: keys.contains(&KeyCode::AltLeft) || keys.contains(&KeyCode::AltRight),
+        plan: plan_enabled && (plan_binding_held || touch_plan_latched),
     }
 }
 
@@ -280,6 +287,48 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     }
 
     let input_suppressed = runtime.replay_player.is_some() || rewind_active;
+    if !input_suppressed
+        && host.plan_quick_actions
+        && crate::touch_plan_hud::platform_has_touch_planning_hud()
+    {
+        let screen_width = presentation.renderer.screen_width();
+        let pressed = events.iter().any(|event| {
+            matches!(
+                *event,
+                GameEvent::MouseDown(x, y, 1, _)
+                    if crate::touch_plan_hud::hit_test(screen_width, x, y)
+            )
+        });
+        if pressed {
+            host.touch_plan_quick_actions = !host.touch_plan_quick_actions;
+            host.touch_plan_pointer_captured = true;
+            if !host.touch_plan_quick_actions {
+                dispatch_local_command(
+                    host,
+                    &mut manager.engine,
+                    &mut frame.commands,
+                    assets,
+                    &PlayerCommand::CancelPlannedAction,
+                );
+            }
+        }
+        if host.touch_plan_pointer_captured {
+            let released = events
+                .iter()
+                .any(|event| matches!(event, GameEvent::MouseUp(_, _, 1)));
+            events.retain(|event| {
+                !matches!(
+                    event,
+                    GameEvent::MouseDown(_, _, 1, _)
+                        | GameEvent::MouseUp(_, _, 1)
+                        | GameEvent::MouseMove { .. }
+                )
+            });
+            if released {
+                host.touch_plan_pointer_captured = false;
+            }
+        }
+    }
     if !input_suppressed {
         let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine, &host.engine_display);
         let zoom_hit = events.iter().find_map(|event| {
@@ -302,6 +351,18 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         }
     }
 
+    let planning_active = {
+        let keys = &input.threaded.keyboard_state().keys;
+        input_modifiers(
+            keys,
+            input
+                .translator
+                .is_binding_held(crate::input_translator::GameKey::PlanQuickActions, keys),
+            host.touch_plan_quick_actions,
+            host.plan_quick_actions,
+        )
+        .plan
+    };
     if !game.is_sherwood && !input_suppressed {
         let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
         for event in &events {
@@ -343,7 +404,21 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
             if let GameEvent::MouseDown(mx, my, 1, _) = *event
                 && let Some(button) = hud.stature_layout.hit_test(mx, my, stature_enable)
             {
-                let command = button.as_command();
+                let command = if planning_active {
+                    PlayerCommand::QueueQuickAction {
+                        action: robin_engine::profiles::Action::NoAction,
+                        command: match button {
+                            StatureButton::Up => {
+                                robin_engine::player_command::QueuedQuickActionCommand::StandUp
+                            }
+                            StatureButton::Down => {
+                                robin_engine::player_command::QueuedQuickActionCommand::CrouchDown
+                            }
+                        },
+                    }
+                } else {
+                    button.as_command()
+                };
                 dispatch_local_command(
                     host,
                     &mut manager.engine,
@@ -351,9 +426,11 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                     assets,
                     &command,
                 );
-                match button {
-                    StatureButton::Up => game.stature_focus.latch_stand_up(stature),
-                    StatureButton::Down => game.stature_focus.latch_crouch_down(stature),
+                if !planning_active {
+                    match button {
+                        StatureButton::Up => game.stature_focus.latch_stand_up(stature),
+                        StatureButton::Down => game.stature_focus.latch_crouch_down(stature),
+                    }
                 }
             }
         }
@@ -415,7 +492,15 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     } else {
         Vec::new()
     };
-    let modifiers = input_modifiers(&input.threaded.keyboard_state().keys);
+    let keys = &input.threaded.keyboard_state().keys;
+    let modifiers = input_modifiers(
+        keys,
+        input
+            .translator
+            .is_binding_held(crate::input_translator::GameKey::PlanQuickActions, keys),
+        host.touch_plan_quick_actions,
+        host.plan_quick_actions,
+    );
     host.input.is_alt = modifiers.alt;
 
     handle_console_overlay_events(
@@ -540,11 +625,12 @@ mod tests {
             .collect();
 
         assert_eq!(
-            input_modifiers(&keys),
+            input_modifiers(&keys, false, false, true),
             InputModifiers {
                 ctrl: true,
                 shift: true,
                 alt: true,
+                plan: false,
             }
         );
     }

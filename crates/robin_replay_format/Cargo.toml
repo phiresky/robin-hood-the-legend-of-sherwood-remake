@@ -1,0 +1,17 @@
+[package]
+name = "robin_replay_format"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_replay_format"
+
+[dependencies]
+base64 = "0.23"
+bitcode.workspace = true
+robin_engine.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+zstd.workspace = true
+

@@ -535,7 +535,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v67** (2026-08-30, advanced combat gestures): adds authoritative
 ///   composite-gesture and quality-damage rules plus resolved gesture state in
 ///   commands, quick actions, active sequences, and active sweeps.
-pub const SAVE_FORMAT_VERSION: u32 = 67;
+/// - **v68** (2026-08-30, completed planned actions): adds per-seat planned
+///   shield protectees and deterministic tactical queue formations to the
+///   complete tactical-control and automatic-queue snapshot.
+pub const SAVE_FORMAT_VERSION: u32 = 68;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -869,8 +872,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_combat_gesture_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 67);
+    fn save_format_version_includes_completed_planning_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 68);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

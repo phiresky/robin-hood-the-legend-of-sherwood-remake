@@ -226,6 +226,7 @@ impl EngineInner {
         }
         self.players.seats[seat].selection.clear();
         self.players.seats[seat].selected_action = Action::NoAction;
+        self.players.seats[seat].planned_shield_target = None;
         let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
@@ -267,6 +268,7 @@ impl EngineInner {
         }
         self.players.seats[seat].selection.clear();
         self.players.seats[seat].selected_action = Action::NoAction;
+        self.players.seats[seat].planned_shield_target = None;
     }
 
     /// Remove a single PC from the selection.
@@ -278,6 +280,12 @@ impl EngineInner {
         let was_last = self.players.seats[0].selection.len() == 1
             && self.players.seats[0].selection.contains(&id);
         self.players.seats[0].selection.retain(|&x| x != id);
+        if self.players.seats[0]
+            .planned_shield_target
+            .is_some_and(|(actor, _)| actor == id)
+        {
+            self.players.seats[0].planned_shield_target = None;
+        }
         if was_last {
             self.players.seats[0].selected_action = Action::NoAction;
         }

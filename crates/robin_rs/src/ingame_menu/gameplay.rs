@@ -40,6 +40,7 @@ pub(crate) const MORE_COMBAT_GESTURES_OPTION_INDEX: usize = 38;
 pub(crate) const GESTURE_QUALITY_DAMAGE_OPTION_INDEX: usize = 39;
 pub(crate) const COMBAT_GESTURE_GUIDE_OPTION_INDEX: usize = 40;
 pub(crate) const COMBAT_GESTURE_COACH_OPTION_INDEX: usize = 41;
+pub(crate) const PLAN_QUICK_ACTIONS_OPTION_INDEX: usize = 42;
 
 /// Toggle rows shown on the screen, in display order.
 pub(crate) const OPTION_LABELS: &[&str] = &[
@@ -85,6 +86,7 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Gesture Quality Damage",
     "Show Combat Gesture Guide",
     "Combat Gesture Coach",
+    "Plan Quick Actions",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -130,6 +132,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Scale sword damage to the recognized gesture's deterministic quality tier.",
     "Show reference paths for the additional combat gestures while swordfighting.",
     "Briefly show the recognized or nearest gesture and its quality after drawing.",
+    "Allow the rebindable Plan modifier and touch HUD to queue quick actions.",
 ];
 
 pub(crate) fn option_tooltip(index: usize) -> &'static str {
@@ -539,6 +542,7 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         COMBAT_GESTURE_COACH_OPTION_INDEX => {
             config.combat_gesture_coach = !config.combat_gesture_coach
         }
+        PLAN_QUICK_ACTIONS_OPTION_INDEX => config.plan_quick_actions = !config.plan_quick_actions,
         _ => {}
     }
 }
@@ -590,6 +594,7 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         GESTURE_QUALITY_DAMAGE_OPTION_INDEX => config.gesture_quality_damage,
         COMBAT_GESTURE_GUIDE_OPTION_INDEX => config.show_combat_gesture_guide,
         COMBAT_GESTURE_COACH_OPTION_INDEX => config.combat_gesture_coach,
+        PLAN_QUICK_ACTIONS_OPTION_INDEX => config.plan_quick_actions,
         _ => false,
     }
 }
@@ -604,7 +609,7 @@ mod tests {
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
-        assert_eq!(standalone_visible_option_range(3), 36..42);
+        assert_eq!(standalone_visible_option_range(3), 36..43);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -659,6 +664,7 @@ mod tests {
                 "Gesture Quality Damage",
                 "Show Combat Gesture Guide",
                 "Combat Gesture Coach",
+                "Plan Quick Actions",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -700,6 +706,7 @@ mod tests {
             &config,
             COMBAT_GESTURE_COACH_OPTION_INDEX
         ));
+        assert!(is_option_selected(&config, PLAN_QUICK_ACTIONS_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -769,6 +776,9 @@ mod tests {
         assert_eq!(config.autosave_enabled, autosave_enabled);
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
+
+        apply_option_toggle(&mut config, PLAN_QUICK_ACTIONS_OPTION_INDEX);
+        assert!(!config.plan_quick_actions);
 
         let autosave_enabled = config.autosave_enabled;
         apply_option_toggle(&mut config, DETAILED_SAVE_METADATA_OPTION_INDEX);

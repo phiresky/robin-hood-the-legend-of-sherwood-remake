@@ -80,6 +80,7 @@ pub(super) fn handle_mouse_input(
     pause_menu: Option<&PauseMenu>,
     pause_closed_this_frame: bool,
     shift_held: bool,
+    planning_held: bool,
     ctrl_held: bool,
 ) {
     let engine = &mut manager.engine;
@@ -135,14 +136,21 @@ pub(super) fn handle_mouse_input(
                 }
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
                     on_left_mouse_down(
-                        engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
+                        engine,
+                        host,
+                        assets,
+                        frame_cmds,
+                        mx,
+                        my,
+                        clicks,
+                        planning_held,
                     );
                 }
                 GameEvent::MouseDown(mx, my, 3, clicks) => {
-                    on_right_mouse_down(engine, host, mx, my, clicks, shift_held);
+                    on_right_mouse_down(engine, host, mx, my, clicks, planning_held);
                 }
                 GameEvent::MouseMove { x, y, .. } => {
-                    on_mouse_move(engine, host, assets, frame_cmds, x, y, shift_held);
+                    on_mouse_move(engine, host, assets, frame_cmds, x, y, planning_held);
                 }
                 GameEvent::MouseUp(mx, my, 1) => {
                     on_left_mouse_up(
@@ -156,6 +164,7 @@ pub(super) fn handle_mouse_input(
                         mx,
                         my,
                         shift_held,
+                        planning_held,
                         ctrl_held,
                     );
                 }
@@ -170,7 +179,7 @@ pub(super) fn handle_mouse_input(
                         screen_height,
                         mx,
                         my,
-                        shift_held,
+                        planning_held,
                     );
                 }
                 _ => {}
@@ -221,7 +230,7 @@ fn on_left_mouse_down(
     mx: i32,
     my: i32,
     clicks: u8,
-    shift_held: bool,
+    planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
@@ -274,7 +283,7 @@ fn on_left_mouse_down(
             //   - Apple / Stone / Hit / HitHard / Heal /
             //     Lever / Strangle → fire the matching
             //     drag action (see `resolve_action_drag`).
-            let selected_action = if shift_held {
+            let selected_action = if planning_held {
                 engine.planned_action_for_seat(local_seat)
             } else {
                 engine.selected_action_for_seat(local_seat)
@@ -305,7 +314,7 @@ fn on_left_mouse_down(
                 | Action::Heal
                 | Action::Lever
                 | Action::Strangle
-                    if !shift_held =>
+                    if !planning_held =>
                 {
                     let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
                     dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
@@ -332,7 +341,7 @@ fn on_right_mouse_down(
     _mx: i32,
     _my: i32,
     clicks: u8,
-    shift_held: bool,
+    planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
@@ -343,7 +352,7 @@ fn on_right_mouse_down(
         // focus this frame blocks the deselection-drag
         // from starting.
         let cancelling_planned_action =
-            shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
+            planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
         let guard_ok = !cancelling_planned_action
             && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
@@ -369,7 +378,7 @@ fn on_mouse_move(
     frame_cmds: &mut FrameCommands,
     x: i32,
     y: i32,
-    shift_held: bool,
+    planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
@@ -432,7 +441,7 @@ fn on_mouse_move(
         // minimap captures the drag — and when
         // `ignore_next_drag` has suppressed this drag
         // cycle.
-        if !shift_held
+        if !planning_held
             && host.input.left_mouse_down
             && !host.engine_display.minimap().drag_start()
             && !host.input.ignore_next_drag
@@ -470,6 +479,7 @@ fn on_left_mouse_up(
     mx: i32,
     my: i32,
     shift_held: bool,
+    planning_held: bool,
     ctrl_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
@@ -574,7 +584,15 @@ fn on_left_mouse_up(
 
             if let Some(hit) = portrait_hit {
                 if on_portrait_click(
-                    engine, host, assets, frame_cmds, &hit, is_double, shift_held, ctrl_held,
+                    engine,
+                    host,
+                    assets,
+                    frame_cmds,
+                    &hit,
+                    is_double,
+                    shift_held,
+                    planning_held,
+                    ctrl_held,
                 ) {
                     // `true` mirrors the original `continue`:
                     // the click was fully consumed, skip the
@@ -583,7 +601,16 @@ fn on_left_mouse_up(
                 }
             } else {
                 on_world_click(
-                    engine, host, assets, frame_cmds, mx, my, shift_held, ctrl_held, is_double,
+                    engine,
+                    host,
+                    assets,
+                    frame_cmds,
+                    mx,
+                    my,
+                    shift_held,
+                    planning_held,
+                    ctrl_held,
+                    is_double,
                 );
             }
         }
@@ -611,6 +638,7 @@ fn on_portrait_click(
     hit: &ui_panel::PortraitHit,
     is_double: bool,
     shift_held: bool,
+    planning_held: bool,
     ctrl_held: bool,
 ) -> bool {
     let local_seat = host.transport.local_seat;
@@ -767,7 +795,7 @@ fn on_portrait_click(
         // commits that action on the portrait's PC.
         let mut portrait_action_handled = macro_stop_handled;
         if !hit.is_burned && !is_double && !macro_stop_handled {
-            let selected_action = if shift_held {
+            let selected_action = if planning_held {
                 engine.planned_action_for_seat(local_seat)
             } else {
                 engine.selected_action_for_seat(local_seat)
@@ -793,7 +821,7 @@ fn on_portrait_click(
                             let cmds = crate::game_input::queue_shift_click_commands(
                                 cmds,
                                 selected_action,
-                                shift_held,
+                                planning_held,
                             );
                             dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
@@ -806,6 +834,22 @@ fn on_portrait_click(
                     }
                 }
                 Action::Shield | Action::BigShield => {
+                    if planning_held {
+                        if let Some(&shielder_id) = engine.hero_selection(local_seat).first() {
+                            dispatch_local_command(
+                                host,
+                                engine,
+                                frame_cmds,
+                                assets,
+                                &PlayerCommand::SelectPlannedShieldProtected {
+                                    actor: shielder_id,
+                                    protected_pc: pc_id,
+                                },
+                            );
+                            return true;
+                        }
+                        return false;
+                    }
                     // While the engine is mid-prompt
                     // for the shield's protected
                     // target, the same-click commit
@@ -835,7 +879,7 @@ fn on_portrait_click(
                             let cmds = crate::game_input::queue_shift_click_commands(
                                 cmds,
                                 selected_action,
-                                shift_held,
+                                planning_held,
                             );
                             dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
                             tracing::info!(
@@ -948,13 +992,13 @@ fn on_portrait_click(
                         return false;
                     };
                     let dispatched = portrait_action_dispatchable(
-                        shift_held,
+                        planning_held,
                         profile_action,
                         engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
                     );
                     if dispatched {
                         let planned_action = profile_action;
-                        let cmd = if shift_held {
+                        let cmd = if planning_held {
                             PlayerCommand::SelectPlannedAction {
                                 pc_id,
                                 action: planned_action,
@@ -1096,6 +1140,7 @@ fn on_world_click(
     mx: i32,
     my: i32,
     shift_held: bool,
+    planning_held: bool,
     ctrl_held: bool,
     is_double: bool,
 ) {
@@ -1152,16 +1197,23 @@ fn on_world_click(
         // Resolve swordfight first, then regular click
         let mut cmds = crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
         if cmds.is_empty() {
-            cmds = crate::game_input::resolve_left_click(
-                host, engine, assets, map_pt, shift_held, ctrl_held, is_double,
+            cmds = crate::game_input::resolve_left_click_with_planning(
+                host,
+                engine,
+                assets,
+                map_pt,
+                shift_held,
+                planning_held,
+                ctrl_held,
+                is_double,
             );
         }
-        let queued_action = if shift_held {
+        let queued_action = if planning_held {
             engine.planned_action_for_seat(host.transport.local_seat)
         } else {
             Action::NoAction
         };
-        cmds = crate::game_input::queue_shift_click_commands(cmds, queued_action, shift_held);
+        cmds = crate::game_input::queue_shift_click_commands(cmds, queued_action, planning_held);
         dispatch_local_commands(host, engine, frame_cmds, assets, &cmds);
     }
 }
@@ -1179,14 +1231,14 @@ fn on_right_mouse_up(
     screen_height: u16,
     mx: i32,
     my: i32,
-    shift_held: bool,
+    planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     let right_double_click = std::mem::take(&mut host.right_double_click_pending);
     {
         host.input.right_mouse_down = false;
 
-        if shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
+        if planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
             let cmd = PlayerCommand::CancelPlannedAction;
             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
             host.input.cancel_multi_unselection();
@@ -1195,6 +1247,7 @@ fn on_right_mouse_up(
             host.input.multi_unselection_active = false;
             host.input.multi_selection_active = false;
             host.input.draw_multi_selection = false;
+            host.touch_plan_quick_actions = false;
             return;
         }
 

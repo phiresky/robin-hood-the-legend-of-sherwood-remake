@@ -83,10 +83,12 @@ pub struct ReplayHeader {
 /// diplomacy state, player-coalition policy, faction statistics, and runtime
 /// relationship commands. Version 25 adds the authoritative composite-gesture
 /// and quality-damage rules plus resolved technique and quality state across
-/// commands, quick actions, active sequences, and active sweeps. There is
+/// commands, quick actions, active sequences, and active sweeps. Version 26
+/// adds per-seat planned shield prompts and deterministic tactical queue
+/// formations to the completed planned quick-action payloads. There is
 /// deliberately no Rust-schema compatibility adapter; earlier incompatible
 /// layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 25;
+pub const REPLAY_SCHEMA_VERSION: u32 = 26;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -792,8 +794,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_combat_gesture_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 25);
+    fn replay_schema_version_includes_completed_planning_state() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 26);
     }
 
     fn unique_replay_path(label: &str) -> String {

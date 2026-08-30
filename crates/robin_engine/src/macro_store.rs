@@ -136,6 +136,14 @@ pub enum QaReplayCommand {
         /// quick action. Required from SAVE55/NET21/REPLAY14 onward.
         route: RecordedQaMoveRoute,
     },
+    /// Exact per-unit destination produced by the tactical formation planner.
+    #[serde(rename = "AlliedMove")]
+    TacticalMove {
+        destination: MapPoint,
+        running: bool,
+        route: RecordedQaMoveRoute,
+        formation: crate::tactical_control::TacticalFormation,
+    },
     /// Interaction with a specific target entity (attack, heal, tie, …).
     ///
     /// `double_click` records whether the input was a left-double-click
@@ -625,6 +633,14 @@ impl AutoQueueStore {
         }
     }
 
+    pub(crate) fn last_step_mut(&mut self, actor: EntityId) -> Option<&mut QuickActionStep> {
+        self.entries
+            .iter_mut()
+            .find(|(id, _)| *id == actor)
+            .and_then(|(_, queue)| queue.last_mut())
+            .map(|entry| &mut entry.step)
+    }
+
     pub fn set_last_titbit(&mut self, pc: EntityId, titbit: crate::titbit::TitbitId) {
         let queue = self
             .entries
@@ -659,7 +675,9 @@ impl AutoQueueStore {
             .map(|(_, queue)| queue)?;
         let index = queue.len().checked_sub(1)?;
         match &mut queue[index].step.replay {
-            QaReplayCommand::Move { running, .. } | QaReplayCommand::DropAle { running, .. } => {
+            QaReplayCommand::Move { running, .. }
+            | QaReplayCommand::TacticalMove { running, .. }
+            | QaReplayCommand::DropAle { running, .. } => {
                 *running = true;
                 Some(index)
             }
