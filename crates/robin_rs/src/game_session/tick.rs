@@ -219,27 +219,9 @@ pub(super) fn drain_steps(
             }
             crate::http_server::StepKind::SetPaused { .. } => None,
         };
-        if let Some(policy) = modal_policy.as_ref()
-            && host.transport.net.is_some()
-        {
-            if host.transport.local_seat != PlayerId::HOST {
-                step.respond_err(
-                    "manual stepping is disabled for multiplayer clients; only explicit synchronized host automation is allowed",
-                );
-                continue;
-            }
-            if !policy.synchronized_multiplayer {
-                step.respond_err(
-                    "manual stepping is disabled in multiplayer; retry on the host with synchronized_multiplayer=true",
-                );
-                continue;
-            }
-            if host.transport.reconnecting {
-                step.respond_err(
-                    "multiplayer snapshot synchronization is still in progress; wait for the ready barrier",
-                );
-                continue;
-            }
+        if let Err(error) = validate_multiplayer_step_request(host, &kind) {
+            step.respond_err(error);
+            continue;
         }
         if let Some(policy) = modal_policy.as_ref()
             && let Err(error) = resolve_local_ui(policy)
@@ -454,6 +436,45 @@ pub(super) fn drain_steps(
             }
         }
     }
+}
+
+fn validate_multiplayer_step_request(
+    host: &Host,
+    kind: &crate::http_server::StepKind,
+) -> Result<(), String> {
+    if host.transport.net.is_none() {
+        return Ok(());
+    }
+    let policy = match kind {
+        crate::http_server::StepKind::SetPaused { .. } => {
+            return Err(
+                "manual pause is disabled in multiplayer; use explicit synchronized host timeline movement"
+                    .to_string(),
+            );
+        }
+        crate::http_server::StepKind::Forward { modal_policy, .. }
+        | crate::http_server::StepKind::Back { modal_policy, .. }
+        | crate::http_server::StepKind::GoToFrame { modal_policy, .. } => modal_policy,
+    };
+    if host.transport.local_seat != PlayerId::HOST {
+        return Err(
+            "manual stepping is disabled for multiplayer clients; only explicit synchronized host automation is allowed"
+                .to_string(),
+        );
+    }
+    if !policy.synchronized_multiplayer {
+        return Err(
+            "manual stepping is disabled in multiplayer; retry on the host with synchronized_multiplayer=true"
+                .to_string(),
+        );
+    }
+    if host.transport.reconnecting {
+        return Err(
+            "multiplayer snapshot synchronization is still in progress; wait for the ready barrier"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn begin_synchronized_step_resync(
@@ -971,6 +992,45 @@ mod tests {
             engine_bytes.as_slice(),
             manager.engine.encode_native_snapshot().as_slice()
         );
+    }
+
+    #[test]
+    fn multiplayer_rejects_local_pause_and_requires_explicit_host_sync() {
+        let (net, _incoming, _outgoing, _cursor, _snapshot) =
+            crate::multiplayer::NetChannels::new();
+        let mut host = Host::default();
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(net);
+
+        let pause_error = validate_multiplayer_step_request(
+            &host,
+            &crate::http_server::StepKind::SetPaused { paused: true },
+        )
+        .expect_err("one peer must not pause a multiplayer timeline");
+        assert!(pause_error.contains("manual pause is disabled"));
+
+        let ordinary = crate::http_server::StepKind::Forward {
+            n: 1,
+            modal_policy: crate::http_server::StepModalPolicy::default(),
+        };
+        let ordinary_error = validate_multiplayer_step_request(&host, &ordinary)
+            .expect_err("ordinary multiplayer stepping must be rejected");
+        assert!(ordinary_error.contains("synchronized_multiplayer=true"));
+
+        let synchronized = crate::http_server::StepKind::Forward {
+            n: 1,
+            modal_policy: crate::http_server::StepModalPolicy {
+                synchronized_multiplayer: true,
+                ..Default::default()
+            },
+        };
+        validate_multiplayer_step_request(&host, &synchronized)
+            .expect("the host may explicitly synchronize automation");
+
+        host.transport.local_seat = PlayerId(1);
+        let client_error = validate_multiplayer_step_request(&host, &synchronized)
+            .expect_err("a client must never own timeline movement");
+        assert!(client_error.contains("multiplayer clients"));
     }
 
     #[test]

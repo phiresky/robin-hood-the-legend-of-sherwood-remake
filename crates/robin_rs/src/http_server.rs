@@ -199,7 +199,8 @@ pub enum HttpPayload {
         modal_policy: StepModalPolicy,
     },
     /// `POST /set-paused` / `robin.call("set-paused", {paused})` —
-    /// toggle the mission loop's manual pause flag.
+    /// toggle the single-player mission loop's manual pause flag. Live
+    /// multiplayer rejects local pause changes.
     SetPaused { paused: bool },
     /// `GET /get-replay` — snapshot the current recorder's byte
     /// stream.  Served from an in-memory mirror populated by the
@@ -1961,8 +1962,9 @@ pub enum StepKind {
         target: u32,
         modal_policy: StepModalPolicy,
     },
-    /// Toggle the mission loop's manual pause flag. Queued with
-    /// scrubbing so pause/play and seek requests apply in caller order.
+    /// Toggle the single-player mission loop's manual pause flag. Queued with
+    /// scrubbing so pause/play and seek requests apply in caller order; live
+    /// multiplayer rejects this instead of desynchronizing one peer.
     SetPaused { paused: bool },
 }
 

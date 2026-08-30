@@ -382,7 +382,13 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         step_forward_repeat_at_ms,
         step_back_repeat_at_ms,
     );
-    if let Some(paused) = step_shortcuts.manual_pause {
+    // Keyboard stepping is a local debugger affordance. In multiplayer the
+    // authoritative clock must never be stopped by one participant merely
+    // pressing Period/Comma/Enter; synchronized host automation is routed
+    // through the HTTP step policy instead.
+    if host.transport.net.is_none()
+        && let Some(paused) = step_shortcuts.manual_pause
+    {
         *manual_pause = paused;
     }
 

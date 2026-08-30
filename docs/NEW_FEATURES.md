@@ -380,6 +380,8 @@ A list of which additional features we have added, which ones we might still wan
   UI explicitly. Ordinary keyboard/HTTP timeline movement is disabled during
   multiplayer; explicit host automation must opt into synchronized stepping,
   after which every peer reconnects from the resulting authoritative snapshot.
+  Local keyboard and HTTP pause changes are rejected in multiplayer so one peer
+  cannot stop only its own timeline.
 
 - **Host-authoritative multiplayer session transitions.** Load, Restart,
   QuickLoad, and Sherwood campaign launch use a prepare/ready/commit barrier.
