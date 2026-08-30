@@ -41,6 +41,20 @@ use robin_engine::sprite as engine_sprite;
 use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
 use std::collections::HashSet;
 
+/// Whether a render is the single 25 Hz presentation boundary or an
+/// additional display-refresh sample of the same fixed tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) enum RenderCadence {
+    FixedTick,
+    DisplayRefresh,
+}
+
+impl RenderCadence {
+    fn advances_transients(self) -> bool {
+        self == Self::FixedTick
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct PatrolRouteOverlay {
     points: Vec<engine_coordinates::MapPoint>,
@@ -339,7 +353,15 @@ fn render_screenshot_rgba(
     let captured = if request.full_map {
         capture_wide_map_rgba(engine, display, host, assets, &scratch_dev, ctx)
     } else {
-        render_frame(engine, display, host, assets, &scratch_dev, ctx);
+        render_frame(
+            engine,
+            display,
+            host,
+            assets,
+            &scratch_dev,
+            ctx,
+            RenderCadence::DisplayRefresh,
+        );
         ctx.renderer
             .capture_frame_rgba()
             .ok_or_else(|| "renderer returned no framebuffer".to_owned())
@@ -378,7 +400,15 @@ pub(super) fn capture_save_thumbnail(
     let saved_sherwood = ctx.sherwood_tooltip.clone();
     let saved_pc_action = ctx.pc_action_tooltip.clone();
 
-    render_frame(engine, display, host, assets, dev, ctx);
+    render_frame(
+        engine,
+        display,
+        host,
+        assets,
+        dev,
+        ctx,
+        RenderCadence::DisplayRefresh,
+    );
 
     let thumb = match ctx.renderer.capture_frame_rgba() {
         Some((w, h, rgba)) => {
@@ -574,7 +604,15 @@ fn capture_wide_map_rgba(
         .set_screen_size(level_w as f32, render_h as f32);
     ctx.renderer.resize(level_w as u16, render_h as u16);
 
-    render_frame(engine, display, host, assets, dev, ctx);
+    render_frame(
+        engine,
+        display,
+        host,
+        assets,
+        dev,
+        ctx,
+        RenderCadence::DisplayRefresh,
+    );
     let captured = ctx.renderer.capture_frame_rgba();
 
     ctx.renderer.resize(saved_renderer_w, saved_renderer_h);
@@ -974,6 +1012,7 @@ pub(super) fn render_frame(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
+    cadence: RenderCadence,
 ) {
     // Rendering only reads the zoom presentation prepared at the update
     // boundary. A missing or stale snapshot is an ordering error, never a
@@ -1133,7 +1172,7 @@ pub(super) fn render_frame(
     // `SideEffects::pending_mark_pc_ids` → `apply_side_effects`.  All
     // contributions accumulate into the shared list and the render
     // pass drains it below.
-    {
+    if cadence.advances_transients() {
         let mp = threaded_input.position();
         let sw = renderer.screen_width();
         let sh = renderer.screen_height();
@@ -1177,10 +1216,8 @@ pub(super) fn render_frame(
     // Draws coloured outline masks for selected PCs and the hovered
     // entity (focused by the cursor).
     render_selection_outlines_gpu(host, engine, assets, renderer);
-    // One-frame Mark() consumption: clear after the outline pass
-    // has observed the list — the mark is drained right after the
-    // forced outline is drawn.
-    host.input.marked_pc_ids.clear();
+    // One-frame Mark() consumption happens after the last display-refresh
+    // sample, so every presentation of this fixed tick sees the same marks.
 
     // ── GPU phase: combat status bars ─────────────────────────
     // Red life + blue stamina bars below swordfighting PCs, their
@@ -1260,7 +1297,12 @@ pub(super) fn render_frame(
     }
 
     // ── GPU phase: multi-selection rubber band box ──
-    crate::game_render::draw_multi_selection_box(host, engine, renderer);
+    crate::game_render::draw_multi_selection_box(
+        host,
+        engine,
+        renderer,
+        cadence.advances_transients(),
+    );
 
     // ── GPU phase: swordfight mouse-trail ──
     // While dragging during a swordfight, draw the recorded polyline
@@ -1311,8 +1353,10 @@ pub(super) fn render_frame(
     // leaving Sherwood (or losing the requirements strip mid-frame)
     // clears the idle timer; the block below re-arms it when the
     // cursor is actually over a slot.
-    requirements_tooltip.update(None);
-    blazon_tooltip.update(None);
+    if cadence.advances_transients() {
+        requirements_tooltip.update(None);
+        blazon_tooltip.update(None);
+    }
     {
         let campaign = engine.campaign();
         let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
@@ -1330,7 +1374,9 @@ pub(super) fn render_frame(
             let sw = renderer.screen_width();
             let hovered_slot =
                 crate::ui_panel::hit_test_blazon_bar(sw, &bb, mp.x as i32, mp.y as i32);
-            blazon_tooltip.update(hovered_slot);
+            if cadence.advances_transients() {
+                blazon_tooltip.update(hovered_slot);
+            }
             if let Some(slot_idx) = blazon_tooltip.ready_slot()
                 && let Some(kind) = crate::ui_panel::blazon_bar_slot_kinds(&bb)
                     .get(slot_idx)
@@ -1382,7 +1428,9 @@ pub(super) fn render_frame(
             let mp = threaded_input.position();
             let sw = renderer.screen_width();
             let hovered_slot = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
-            requirements_tooltip.update(hovered_slot);
+            if cadence.advances_transients() {
+                requirements_tooltip.update(hovered_slot);
+            }
             if let Some(slot_idx) = requirements_tooltip.ready_slot()
                 && let Some(slot) = req.slots.get(slot_idx)
                 && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
@@ -1436,7 +1484,9 @@ pub(super) fn render_frame(
         // text swaps with mode (Sherwood vs in-mission, regular vs
         // men-to-blazon) — `sherwood_button_tooltip_mt_id` owns that
         // 3-way switch.
-        sherwood_tooltip.update(hovered_btn);
+        if cadence.advances_transients() {
+            sherwood_tooltip.update(hovered_btn);
+        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
             let is_sherwood = game.is_sherwood;
@@ -1462,7 +1512,9 @@ pub(super) fn render_frame(
         // pause-menu flow — but we still clear the tooltip tracker
         // so a hover accrued in Sherwood doesn't leak across a mode
         // change.
-        sherwood_tooltip.update(None);
+        if cadence.advances_transients() {
+            sherwood_tooltip.update(None);
+        }
     }
 
     // Zoom HUD buttons (ZoomUp / ZoomDown) on the lower panel. All button
@@ -1554,7 +1606,9 @@ pub(super) fn render_frame(
         // Uses the geometric hit-test so the tooltip still appears
         // when the arrow is disabled (hover is tied to the widget
         // rect, not its enable state).
-        stature_tooltip.update(stature_geom_hovered);
+        if cadence.advances_transients() {
+            stature_tooltip.update(stature_geom_hovered);
+        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
             stature_hud::draw_tooltip(
@@ -1572,7 +1626,9 @@ pub(super) fn render_frame(
             );
         }
 
-        corner_tooltip.update(hovered_btn);
+        if cadence.advances_transients() {
+            corner_tooltip.update(hovered_btn);
+        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
             && let Some(btn) = corner_tooltip.ready_button()
         {
@@ -1626,7 +1682,9 @@ pub(super) fn render_frame(
             }
             _ => None,
         });
-        pc_action_tooltip.update(hovered_action_btn);
+        if cadence.advances_transients() {
+            pc_action_tooltip.update(hovered_action_btn);
+        }
         if pc_action_tooltip.ready_button().is_some()
             && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
         {
@@ -1709,7 +1767,9 @@ pub(super) fn render_frame(
 
         // AI log dump for the selected NPC.  Logged via
         // `tracing::trace!` rather than rendered on-screen as titbits.
-        engine.display_ai_log_for_selected(host.selected_view_element);
+        if cadence.advances_transients() {
+            engine.display_ai_log_for_selected(host.selected_view_element);
+        }
 
         // Transient centered-banner message driven by
         // `DisplayMessage` / `message_delay`.  Renders while the
@@ -1737,8 +1797,10 @@ pub(super) fn render_frame(
     // Pump host-side deferred console output into the overlay's history
     // so those lines surface in the scrollback even though they
     // originate outside the dispatcher.
-    drain_pending_console_output(console_overlay, host);
-    console_overlay.tick_animation();
+    if cadence.advances_transients() {
+        drain_pending_console_output(console_overlay, host);
+        console_overlay.tick_animation();
+    }
     if console_overlay.is_visible() {
         let console_font = menu_resources.and_then(|r| r.label_font());
         console_overlay.render(renderer, console_font);
@@ -1766,10 +1828,8 @@ pub(super) fn render_frame(
         cursor_shadow_color,
     );
 
-    // The increment-cursor flag gates animation advancement.
-    if host.input.increment_cursor_animation {
-        cursor_renderer.advance_animation();
-    }
+    // Cursor animation advances once after all display-refresh samples of
+    // this fixed tick, keeping every sampled composition visually coherent.
 
     // ── GPU phase: rewind indicator ──
     // Transparent "◀◀" glyph in the top-right corner while
@@ -1843,6 +1903,19 @@ pub(super) fn draw_rewind_icon(
 mod tests {
     use super::*;
     use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    #[test]
+    fn display_refresh_cadence_never_advances_render_transients() {
+        assert!(RenderCadence::FixedTick.advances_transients());
+        assert!(!RenderCadence::DisplayRefresh.advances_transients());
+
+        let encoded = serde_json::to_string(&RenderCadence::DisplayRefresh)
+            .expect("serialize render cadence");
+        assert_eq!(
+            serde_json::from_str::<RenderCadence>(&encoded).expect("deserialize render cadence"),
+            RenderCadence::DisplayRefresh
+        );
+    }
 
     #[test]
     fn print_screen_modifier_request_priority_matches_reference() {

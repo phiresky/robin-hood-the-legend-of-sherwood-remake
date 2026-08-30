@@ -43,6 +43,7 @@ const OPTION_LABELS: &[&str] = &[
     "All Enemies Stashed Tracker",
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
+    "Touch Camera Gestures",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -217,7 +218,7 @@ pub async fn show_gameplay(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {
@@ -248,6 +249,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         }
         13 => config.show_achievement_badges = !config.show_achievement_badges,
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
+        15 => config.touch_camera_gestures = !config.touch_camera_gestures,
         _ => {}
     }
 }
@@ -272,6 +274,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         12 => config.show_all_enemies_one_building_tracker,
         13 => config.show_achievement_badges,
         14 => config.show_achievement_debrief,
+        15 => config.touch_camera_gestures,
         _ => false,
     }
 }
@@ -300,6 +303,7 @@ mod tests {
                 "All Enemies Stashed Tracker",
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
+                "Touch Camera Gestures",
             ]
         );
 
@@ -309,6 +313,10 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
+        assert!(!is_option_selected(&config, 6));
+        assert!(is_option_selected(&config, 13));
+        assert!(is_option_selected(&config, 14));
+        assert!(is_option_selected(&config, 15));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -333,5 +341,38 @@ mod tests {
             config.campaign_presentation,
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
+
+        let achievement_settings = (
+            config.clean_hands_npc_kills_invalidate,
+            config.show_detailed_xp,
+            config.show_speedrun_tracker,
+            config.show_clean_hands_tracker,
+            config.show_ghost_tracker,
+            config.show_pile_o_bones_tracker,
+            config.show_all_enemies_one_building_tracker,
+            config.show_achievement_badges,
+            config.show_achievement_debrief,
+        );
+        apply_option_toggle(&mut config, 15);
+        assert!(!config.touch_camera_gestures);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+        assert_eq!(
+            achievement_settings,
+            (
+                config.clean_hands_npc_kills_invalidate,
+                config.show_detailed_xp,
+                config.show_speedrun_tracker,
+                config.show_clean_hands_tracker,
+                config.show_ghost_tracker,
+                config.show_pile_o_bones_tracker,
+                config.show_all_enemies_one_building_tracker,
+                config.show_achievement_badges,
+                config.show_achievement_debrief,
+            )
+        );
+        assert!(!is_option_selected(&config, 15));
     }
 }

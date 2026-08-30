@@ -942,6 +942,14 @@ impl Renderer {
             .present(&self.gpu, &mut self.pipelines, &self.resources);
     }
 
+    /// Re-present the last completed logical frame. Unlike [`Self::present`],
+    /// this performs no pass-1 composition and therefore cannot repeat game,
+    /// UI, tooltip, fade, cursor, or post-render side effects.
+    pub fn present_cached(&mut self) -> bool {
+        self.frame
+            .present_cached(&self.gpu, &mut self.pipelines, &self.resources)
+    }
+
     pub fn configure_surface_size(&mut self, width: u32, height: u32) {
         self.frame.configure_surface_size(&self.gpu, width, height);
     }
@@ -965,6 +973,16 @@ impl Renderer {
             self.resize(logical_width, logical_height);
         }
         changed
+    }
+
+    pub fn configure_native_refresh_presentation(
+        &mut self,
+        enabled: bool,
+        surface_width: u32,
+        surface_height: u32,
+    ) {
+        self.frame
+            .configure_present_mode(&self.gpu, enabled, surface_width, surface_height);
     }
 
     /// Cross the flush boundary and present in one shot. Loading/menu screens

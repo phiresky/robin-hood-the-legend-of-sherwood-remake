@@ -371,12 +371,12 @@ pub(crate) async fn show_select_player(
 
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
         if let Some(cursor) = cursor.as_mut() {
-            cursor.cursor.advance_animation();
+            cursor.cursor.advance_ui_animation();
             cursor.draw(renderer, transform, &input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -727,7 +727,7 @@ async fn run_name_prompt(
     input_widget.set_max_length(MAX_PLAYER_NAME_LENGTH);
     input_widget.set_text(&trimmed_initial);
     input_widget.enter_edit_mode();
-    let mut caret_timer: u32 = 0;
+    let mut caret_started_at_ms = crate::window::process_uptime_ms();
     let mut difficulty = initial_difficulty.unwrap_or(DifficultyLevel::Medium);
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
@@ -822,48 +822,48 @@ async fn run_name_prompt(
                     ..
                 } => {
                     input_widget.backspace();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Delete,
                     ..
                 } => {
                     input_widget.delete_char();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Left,
                     ..
                 } => {
                     input_widget.move_caret_left();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Right,
                     ..
                 } => {
                     input_widget.move_caret_right();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Home,
                     ..
                 } => {
                     input_widget.move_caret_home();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::End,
                     ..
                 } => {
                     input_widget.move_caret_end();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::TextInput { .. } => {
                     // Text input flows through the widget below via
                     // `ModalInputState::as_widget_input().text_input`;
                     // reset the caret blink so the insertion is visible.
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
@@ -1036,11 +1036,12 @@ async fn run_name_prompt(
             draw_fallback_panel(renderer, transform, &input_rect);
         }
 
-        // `caret_timer` ticks every frame (~60 Hz); toggle caret every
-        // ~500 ms (matches the save/load picker's timing). The caret
+        // Toggle the caret every ~500 ms regardless of display refresh rate
+        // (matching the save/load picker's timing). The caret
         // is inserted at its char offset inside the buffer — widget
         // `caret_offset` tracks chars, so we split on char boundaries.
-        let show_caret = (caret_timer / 30).is_multiple_of(2);
+        let caret_elapsed_ms = crate::window::process_uptime_ms().wrapping_sub(caret_started_at_ms);
+        let show_caret = (caret_elapsed_ms / 500).is_multiple_of(2);
         let display = if show_caret {
             let text = &input_widget.edit_text;
             let byte_idx = text
@@ -1083,13 +1084,12 @@ async fn run_name_prompt(
             }
         }
         if let Some(cursor) = cursor.as_mut() {
-            cursor.cursor.advance_animation();
+            cursor.cursor.advance_ui_animation();
             cursor.draw(renderer, transform, &input_state);
         }
 
         renderer.present();
-        caret_timer = caret_timer.wrapping_add(1);
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     };
     crate::window::stop_text_input();
     outcome
