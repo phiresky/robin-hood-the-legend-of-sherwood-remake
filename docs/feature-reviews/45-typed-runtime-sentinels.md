@@ -2,17 +2,19 @@
 
 ## Decision summary
 
-- **Owner decision requested:** Accept the revised implementation, then
-  reconcile it onto rolling `main` before merging.
-- **Implementation status:** Complete at `b938d6734` on
+- **Owner decision:** **Accepted.**
+- **Implementation status:** The reviewed implementation is complete at
+  `b938d6734`; its documentation checkpoint is `21bbcb6ce`. It is now
+  semantically reconciled with exact rolling-main commit `26d42fd57` on
   `codex/accepted-45-typed-runtime-sentinels`.
 - **Verification confidence:** High for typed state, strict serialization,
   Original-save adoption, replay/rollback/network round trips, and engine
   behavior covered by automated tests. Medium for an authentic shipping-data
   gameplay smoke test, which has not been performed on this final branch.
-- **Direct-merge status:** **Not safe as-is.** The branch and rolling `main`
-  independently consumed the same save/replay/network version numbers for
-  different layouts. The exact reconciliation plan is below.
+- **Direct-merge status:** **Ready to merge.** Schema collisions were resolved
+  by assigning the integrated typed layout save v62, replay v22, and network
+  protocol v30. Join-ticket schema v3 and web-content manifest schema v2 are
+  unchanged.
 
 This is an internal correctness and maintainability change. It does not add a
 visual or gameplay option, so the project's settings-toggle requirement does
@@ -167,17 +169,26 @@ They remain unchanged until their semantics are independently proven.
 
 ## Verification evidence
 
-Validation was run on the exact final code commit `b938d6734`:
+Validation was run first on reviewed checkpoint `b938d6734`, then repeated on
+the reconciled branch after merging exact rolling-main commit `26d42fd57`:
 
 - `cargo test -p robin_engine` passed:
-  - 4,067 unit tests;
+  - 4,153 unit tests on the integrated feature set;
   - 8 engine-facade integration tests;
   - 3 geometry guardrail tests;
   - 3 method-footgun tests;
   - 1 `r007` probe test;
   - one documentation example remained intentionally ignored.
+- Post-reconciliation typed-boundary filters passed 22 `typed` tests, 12
+  `slot_zero` tests, and 3 `current_serde` tests.
+- `cargo test -p robin_engine multiplayer::tests::` passed all 9 selected
+  wire-format and authoritative-state tests.
 - `cargo test -p robin_rs save_file` passed all 23 selected save-file tests.
 - `cargo build --bin robin` passed for the required native binary.
+- The browser invitation suite passed all 9 tests, including an exact
+  network-protocol-v30 assertion, and `pnpm typecheck` passed.
+- The `wasm32-unknown-unknown` `wasm-dev` build passed with the same protocol
+  and typed state.
 - `cargo fmt --all` and `git diff --check` passed.
 
 Focused coverage within those suites includes:
@@ -197,58 +208,59 @@ Focused coverage within those suites includes:
 - brawl absent-target behavior and ordering-sensitive purse/titbit effects;
 - exact hiking/pathfinder and duplicated-public-sector fixture behavior.
 
-The build reports two pre-existing non-fatal warnings: an unused
-`clear_layer_goal` helper and an `unused_mut` in the shipping-datadir asset
-code. The local `sccache` server also stopped repeatedly, so compilation fell
-back to local work; this did not affect correctness.
+The native build reports inherited non-fatal warnings for an unused
+`clear_layer_goal` helper, an `unused_mut` in shipping-datadir asset code, an
+unused native-server entry point, and an unconstructed shared compressed-
+payload variant. The local `sccache` server also stopped repeatedly, so
+compilation fell back to local work; this did not affect correctness.
 
-## Current-main schema collision and reconciliation plan
+## Current-main schema reconciliation
 
 Feature 45 forked at `6509ddc`, where the native boundaries were save v57,
-replay v17, and network protocol v24. This branch advances them to **58/18/25**
-for the typed runtime layout.
+replay v17, and network protocol v24. Its isolated implementation initially
+advanced them to 58/18/25 for the typed runtime layout.
 
-Rolling `main` independently used **58/18/25** for per-mission achievement
-state and then advanced further for other accepted deterministic changes. At
-the time of this review document, `main` is
-`25c30b354cea6422b1c4361f4b1e8a4ef3b66db4` and uses:
+Rolling `main` independently used 58/18/25 for per-mission achievement state
+and then advanced for browser multiplayer, item rebalancing, localization,
+trading, autosaves, and authoritative difficulty. The accepted reconciliation
+was performed only after Feature 16 landed. Exact pre-Feature-45 main commit
+`26d42fd570a180d62aa25bbd14fcca3c722701e0` uses save v61, replay v21, and
+network protocol v29.
 
-| Boundary | Feature 45 branch | Current `main` | Required integrated value now |
+| Boundary | Isolated Feature 45 | Pre-Feature-45 `main` | Reconciled branch |
 | --- | ---: | ---: | ---: |
-| Native save | 58 | 60 | 61 |
-| Replay | 18 | 20 | 21 |
-| Multiplayer protocol | 25 | 27 | 28 |
+| Native save | 58 | 61 | **62** |
+| Replay | 18 | 21 | **22** |
+| Multiplayer protocol | 25 | 29 | **30** |
 
-Therefore a direct merge that merely accepts `main`'s constants would label a
-new typed layout with an already-shipped schema number. A direct merge that
-takes Feature 45's constants would regress versions and collide even more
-obviously. Neither is acceptable.
+Join-ticket schema v3 and web-content manifest schema v2 did not change: their
+serialized layouts are independent of the engine snapshot. The signed browser
+ticket now binds network protocol v30, and both its TypeScript decoder and
+current multiplayer documentation were advanced with the Rust protocol.
 
-After owner acceptance, integration must:
+The reconciliation did the following:
 
-1. Merge/rebase the latest rolling `main` into this branch and resolve the
+1. Merged latest rolling `main` and resolved the
    overlapping AI, rollback snapshot, save, replay, multiplayer, and renderer
-   edits semantically.
-2. Set each boundary to `max(latest-main, feature-branch) + 1`. With the exact
-   `main` captured above that is **save 61, replay 21, protocol 28**. If `main`
-   advances before reconciliation, use the then-current maximum plus one
-   instead of the numbers in this table.
-3. Update version history comments and exact-version tests to state that the
-   new version combines all rolling-main fields with typed runtime sentinel
-   state.
-4. Keep the exact-match fail-closed behavior. Do not add a v58/18/25 adapter:
+   edits additively. Browser authentication/session bounds, item and trading
+   state, localization, autosaves, difficulty, and parity replay behavior are
+   all retained alongside typed sentinels.
+2. Assigned each independently changed boundary
+   `max(pre-feature-main, isolated-feature) + 1`: save 62, replay 22, and
+   network protocol 30.
+3. Updated version-history comments, exact-version tests, browser ticket
+   decoding, and current documentation to describe that integrated layout.
+4. Kept exact-match fail-closed behavior. There is no v58/18/25 adapter:
    those numbers describe two incompatible development layouts and cannot be
    disambiguated reliably from the version alone.
-5. Rerun the full `robin_engine` suite, focused `robin_rs` save tests, required
-   native build, formatting, and diff checks on the reconciled commit. Add
-   focused tests for any rolling-main snapshot fields touched during conflict
-   resolution.
-6. Run one authentic C++ v48 import smoke test and one shipping-data native
-   launch before final merge; neither changes the no-old-Rust-migration policy.
+5. Re-ran the engine, save, native, network, browser, and WASM gates listed
+   above. Integration compile failures exposed and corrected the remaining
+   three typed boundaries: distraction `NoiseOrigin`, projectile optional
+   layer propagation, and net-crumple preview layer conversion.
 
-No reconciliation has been performed in this review branch, by design, so the
-owner can judge the Feature 45 delta independently before the integration
-commit is produced.
+The next independently changing replay layout must therefore use replay v23;
+it must not reuse v22. No additional save or network bump is needed unless it
+changes those layouts too.
 
 ## Risks and known limitations
 
@@ -268,22 +280,20 @@ commit is produced.
 - Maximum integer values used as genuine Original protocol remain unchanged,
   including selected animation and ammunition states. A global search-and-
   replace would be incorrect.
-- Integration conflicts are expected because rolling accepted features changed
-  `rollback_safe`, save/replay/network schemas, and some renderer/gameplay
-  surfaces after the branch fork. Conflict resolution must preserve both sides'
-  fields and tests, not select one entire file version.
+- Integration conflicts occurred because rolling accepted features changed
+  `rollback_safe`, save/replay/network schemas, and renderer/gameplay surfaces
+  after the fork. They were resolved additively and tested; no entire-file side
+  was selected over the other.
 - Old native Rust saves, replays, and peers intentionally stop working at this
   boundary. Only explicit Original C++ import remains supported.
 
 ## Review recommendation
 
-**ACCEPT THE REVISION, THEN RECONCILE AND MERGE.**
+**MERGE THE ACCEPTED, RECONCILED REVISION.**
 
 The implementation removes the ambiguous runtime sentinels identified in the
 feature list, preserves live entity slot zero, retains Original pointer-level
 sector semantics, keeps legacy encodings at explicit import/asset boundaries,
-and passes the full engine plus required save/build validation. It should not
-be merged at `b938d6734` unchanged only because rolling `main` has since
-consumed the same schema numbers for unrelated layouts. The required
-post-acceptance reconciliation is mechanical in policy but must be tested as a
-new integrated schema.
+and passes the integrated engine, save, native, browser, and WASM validation.
+The branch now carries a unique exact-match schema for each changed boundary
+and is suitable for immediate merge.
