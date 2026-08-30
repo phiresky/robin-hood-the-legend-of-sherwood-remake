@@ -1173,14 +1173,14 @@ impl Campaign {
     #[must_use]
     pub fn add_pc_experience(
         &mut self,
-        profile_idx: usize,
+        character_idx: usize,
         skill: crate::pc_status::SkillName,
         xp: u32,
     ) -> bool {
         let character_count = self.characters.len();
-        let desc = self.characters.get_mut(profile_idx).unwrap_or_else(|| {
+        let desc = self.characters.get_mut(character_idx).unwrap_or_else(|| {
             panic!(
-                "PC experience references missing campaign character {profile_idx}; campaign has {character_count} characters"
+                "PC experience references missing campaign character {character_idx}; campaign has {character_count} characters"
             )
         });
         let prev_capacity = desc.status.human_status.skill(skill).capacity;

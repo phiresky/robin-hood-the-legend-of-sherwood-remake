@@ -416,6 +416,36 @@ fn make_engine() -> EngineInner {
 }
 
 #[test]
+fn kill_experience_uses_exact_campaign_description_not_profile_number() {
+    let mut engine = make_engine();
+    engine.mission_domain.campaign.characters[0].character_profile_idx =
+        Some(crate::profiles::CharacterProfileIdx(1));
+
+    let mut attacker = make_pc(WorldPoint3D::ZERO, None);
+    attacker.pc_data_mut().unwrap().profile_index = crate::profiles::CharacterProfileIdx(1);
+    let attacker = engine.add_entity(attacker);
+    let victim = engine.add_entity(make_soldier(WorldPoint3D::new(10.0, 0.0, 0.0), None));
+
+    // Original RHElementActorPC updates the PcDescription reached through its
+    // mpDescription/mpStatus pointer. Profile number 1 living in campaign slot
+    // 0 is valid and occurs in archived interactive replays.
+    engine.award_bow_kill_xp(attacker);
+    engine.award_sword_kill_xp(&LevelAssets::default(), attacker, victim);
+
+    let status = &engine.mission_domain.campaign.characters[0]
+        .status
+        .human_status;
+    assert_eq!(
+        status.bow.experience,
+        crate::bow_shot::BOW_KILL_EXPERIENCE_POINTS
+    );
+    assert_eq!(
+        status.hand_to_hand.experience,
+        crate::combat::SWORD_KILL_EXPERIENCE_POINTS
+    );
+}
+
+#[test]
 fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
     let mut engine = make_engine();
     let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
