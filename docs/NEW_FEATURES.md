@@ -334,7 +334,21 @@ A list of which additional features we have added, which ones we might still wan
   bootstrapped through the BitTorrent Mainline DHT, so games are discovered
   with no broker, master server, or configuration. The current design is
   predictive rollback netcode rather than strict "wait for every peer before
-  ticking" lockstep. Browser clients are pending iroh wasm support.
+  ticking" lockstep.
+
+- **Authenticated browser multiplayer**. A native host can publish a
+  30-minute, fragment-only `rhmp3` invitation for
+  `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
+  relay-over-WebSocket transport with the unchanged protocol-25 game wire,
+  prove a durable non-extractable identity through an isolated typed signer,
+  and reclaim only their parked seat generation. Demo and Full joins fail
+  before boot unless the ticket-selected engine artifact, exact native
+  Data/locale closure, and every browser package byte agree. Reconnect adopts
+  an authoritative replacement snapshot even when it predates the abandoned
+  prediction future, then clears future inputs/hashes/history. Only the host
+  records the canonical server-ordered replay. Relay observability is stated
+  in the invitation UI, and browser-link publication is a default-on persisted
+  privacy setting that can be disabled without affecting native iroh play.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its

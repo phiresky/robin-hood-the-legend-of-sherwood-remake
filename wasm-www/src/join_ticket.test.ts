@@ -9,7 +9,7 @@ import {
 } from './join_ticket.ts';
 
 const NOW = 2_000_000_000;
-const DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v2\0');
+const DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v3\0');
 
 function base64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString('base64url');
@@ -36,6 +36,7 @@ async function signedTicket(
         issued_at_epoch_s: NOW,
         expires_at_epoch_s: NOW + browserJoinTicketConstants.invitationLifetimeSeconds,
         content_edition: 'demo',
+        content_identity_sha256: '01'.repeat(32),
         mission_id: 'Dem_Lei_MP',
         mission_profile_id: 4,
         expected_players: 2,
@@ -47,7 +48,7 @@ async function signedTicket(
     message.set(payloadBytes, DOMAIN.byteLength);
     const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', keys.privateKey, message));
     return {
-        code: `rhmp2-${base64Url(payloadBytes)}.${base64Url(signature)}`,
+        code: `rhmp3-${base64Url(payloadBytes)}.${base64Url(signature)}`,
         payload,
     };
 }
@@ -63,12 +64,12 @@ test('accepts any canonical signed HTTPS relay and exact ticket', async () => {
 
 test('rejects payload tampering and non-canonical relay URLs', async () => {
     const signed = await signedTicket();
-    const parts = signed.code.slice('rhmp2-'.length).split('.');
+    const parts = signed.code.slice('rhmp3-'.length).split('.');
     const payloadBytes = Buffer.from(parts[0] as string, 'base64url');
     const missionOffset = payloadBytes.indexOf('Dem_Lei_MP');
     assert.notEqual(missionOffset, -1);
     payloadBytes[missionOffset] = 'X'.charCodeAt(0);
-    const tampered = `rhmp2-${payloadBytes.toString('base64url')}.${parts[1]}`;
+    const tampered = `rhmp3-${payloadBytes.toString('base64url')}.${parts[1]}`;
     await assert.rejects(verifyBrowserJoinTicket(tampered, NOW), /signature is invalid/);
 
     const nonCanonical = await signedTicket({ relay_url: 'https://RELAY.example.invalid/' });
@@ -108,8 +109,8 @@ test('scrubs invitation fragment without changing query parameters', () => {
         },
     });
     const code = captureAndScrubBrowserJoinCode(
-        new URL('https://game.example/play?binaries-base=local#join=rhmp2-public.ticket'),
+        new URL('https://game.example/play?binaries-base=local#join=rhmp3-public.ticket'),
     );
-    assert.equal(code, 'rhmp2-public.ticket');
+    assert.equal(code, 'rhmp3-public.ticket');
     assert.deepEqual(calls, ['/play?binaries-base=local']);
 });

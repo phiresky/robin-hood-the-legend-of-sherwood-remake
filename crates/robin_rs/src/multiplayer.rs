@@ -90,6 +90,7 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
     }
 }
 
+pub mod content_identity;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod identity;
 pub mod join_ticket;

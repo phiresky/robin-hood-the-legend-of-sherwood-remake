@@ -12,7 +12,7 @@ export type MultiplayerBuildManifest = {
     readonly netProtocol: number;
     readonly ticketSchema: number;
     readonly multiplayerContent: {
-        readonly schema: 1;
+        readonly schema: 2;
         readonly demo: RemoteDemoContent;
         readonly full: { readonly manifestSha256: string } | null;
     };
@@ -22,6 +22,7 @@ type RemoteDemoContent = {
     readonly url: string;
     readonly sha256: string;
     readonly byteLength: number;
+    readonly nativeContentSha256: string;
 };
 
 type LocalContentFile = {
@@ -32,9 +33,10 @@ type LocalContentFile = {
 };
 
 type LocalContentManifest = {
-    readonly schema: 1;
+    readonly schema: 2;
     readonly edition: 'full';
     readonly engine_version: string;
+    readonly native_content_sha256: string;
     readonly datadir: Omit<LocalContentFile, 'kind'>;
     readonly files: readonly LocalContentFile[];
 };
@@ -87,7 +89,9 @@ function canonicalPath(value: unknown, label: string): string {
 }
 
 function parseDemoContent(value: unknown): RemoteDemoContent {
-    const object = exactObject(value, 'Demo multiplayer content', ['url', 'sha256', 'byteLength']);
+    const object = exactObject(value, 'Demo multiplayer content', [
+        'url', 'sha256', 'byteLength', 'nativeContentSha256',
+    ]);
     const url = String(object.url ?? '');
     let parsed: URL;
     try {
@@ -102,6 +106,10 @@ function parseDemoContent(value: unknown): RemoteDemoContent {
         url,
         sha256: sha256String(object.sha256, 'Demo multiplayer content digest'),
         byteLength: safeInteger(object.byteLength, 'Demo multiplayer content byte length', 1),
+        nativeContentSha256: sha256String(
+            object.nativeContentSha256,
+            'Demo native content identity',
+        ),
     };
 }
 
@@ -124,7 +132,7 @@ export function parseMultiplayerBuildManifest(
     const content = exactObject(object.multiplayerContent, 'multiplayer content catalog', [
         'schema', 'demo', 'full',
     ]);
-    if (content.schema !== 1) throw new Error('unsupported multiplayer content catalog schema');
+    if (content.schema !== 2) throw new Error('unsupported multiplayer content catalog schema');
     const full = content.full === null ? null : exactObject(content.full, 'Full content binding', [
         'manifestSha256',
     ]);
@@ -134,7 +142,7 @@ export function parseMultiplayerBuildManifest(
         netProtocol: ticket.payload.net_protocol,
         ticketSchema: ticket.payload.schema,
         multiplayerContent: {
-            schema: 1,
+            schema: 2,
             demo: parseDemoContent(content.demo),
             full: full === null ? null : {
                 manifestSha256: sha256String(full.manifestSha256, 'Full content manifest digest'),
@@ -202,14 +210,18 @@ function parseLocalManifest(bytes: Uint8Array<ArrayBuffer>, engineVersion: strin
         throw new Error('Full content manifest is not JSON');
     }
     const object = exactObject(raw, 'Full content manifest', [
-        'schema', 'edition', 'engine_version', 'datadir', 'files',
+        'schema', 'edition', 'engine_version', 'native_content_sha256', 'datadir', 'files',
     ]);
     if (JSON.stringify(object) !== text) {
         throw new Error('Full content manifest is not canonical JSON');
     }
-    if (object.schema !== 1 || object.edition !== 'full' || object.engine_version !== engineVersion) {
+    if (object.schema !== 2 || object.edition !== 'full' || object.engine_version !== engineVersion) {
         throw new Error('Full content manifest does not match this engine and edition');
     }
+    const nativeContentSha256 = sha256String(
+        object.native_content_sha256,
+        'Full native content identity',
+    );
     if (!Array.isArray(object.files) || object.files.length === 0) {
         throw new Error('Full content manifest must list its exact package files');
     }
@@ -227,9 +239,10 @@ function parseLocalManifest(bytes: Uint8Array<ArrayBuffer>, engineVersion: strin
     const total = datadir.byte_length + files.reduce((sum, file) => sum + file.byte_length, 0);
     if (total > MAX_CONTENT_PACKAGE_BYTES) throw new Error('Full content package exceeds 2 GiB');
     return {
-        schema: 1,
+        schema: 2,
         edition: 'full',
         engine_version: engineVersion,
+        native_content_sha256: nativeContentSha256,
         datadir: {
             path: datadir.path,
             byte_length: datadir.byte_length,
@@ -284,6 +297,9 @@ async function loadExactFull(
         throw new Error('Full content manifest is not the exact build-authorized manifest');
     }
     const manifest = parseLocalManifest(manifestBytes, ticket.payload.engine_version);
+    if (manifest.native_content_sha256 !== ticket.payload.content_identity_sha256) {
+        throw new Error('Selected Full package does not match the native host content closure');
+    }
     const expectedPaths = new Set([
         'robinhood-web-content.json',
         manifest.datadir.path,
@@ -320,6 +336,12 @@ export async function prepareMultiplayerContent(
     requestFullFolder: () => Promise<FileList>,
 ): Promise<PreparedMultiplayerContent> {
     if (ticket.payload.content_edition === 'demo') {
+        if (
+            build.multiplayerContent.demo.nativeContentSha256
+            !== ticket.payload.content_identity_sha256
+        ) {
+            throw new Error('Demo browser content does not match the native host content closure');
+        }
         return await fetchExactDemo(build.multiplayerContent.demo);
     }
     const full = build.multiplayerContent.full;

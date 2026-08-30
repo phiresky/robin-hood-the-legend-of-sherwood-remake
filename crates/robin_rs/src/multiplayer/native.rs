@@ -174,6 +174,7 @@ impl ServerHandle {
     pub fn browser_join_ticket(
         &self,
         content_edition: super::join_ticket::BrowserContentEdition,
+        content_identity_sha256: String,
         mission_profile_id: Option<u32>,
         expected_players: u32,
     ) -> Result<super::join_ticket::BrowserJoinTicket, String> {
@@ -183,6 +184,7 @@ impl ServerHandle {
             self.session_id,
             current_epoch_ms() / 1000,
             content_edition,
+            content_identity_sha256,
             self.mission_id.clone(),
             mission_profile_id,
             expected_players,

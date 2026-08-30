@@ -1,8 +1,8 @@
 //! Canonical, host-signed browser multiplayer invitations.
 //!
 //! A ticket is public bootstrap data, not a bearer authentication secret. Its
-//! signature binds the exact host endpoint, HTTPS relay, build, content
-//! edition, mission, session, and 30-minute invitation window. iroh still
+//! signature binds the exact host endpoint, HTTPS relay, build, native
+//! content closure, edition, mission, session, and 30-minute invitation window. iroh still
 //! authenticates the endpoint at connection time.
 
 use base64::Engine as _;
@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use super::NET_PROTOCOL_VERSION;
 
-pub const JOIN_CODE_PREFIX: &str = "rhmp2-";
-pub const JOIN_TICKET_SCHEMA: u32 = 2;
+pub const JOIN_CODE_PREFIX: &str = "rhmp3-";
+pub const JOIN_TICKET_SCHEMA: u32 = 3;
 pub const IROH_RELAY_TRANSPORT: &str = "iroh-relay-websocket";
 pub const MAX_JOIN_CODE_BYTES: usize = 16 * 1024;
 pub const INVITATION_LIFETIME_SECS: u64 = 30 * 60;
@@ -21,7 +21,7 @@ pub const MAX_CLOCK_SKEW_SECS: u64 = 2 * 60;
 pub const DEFAULT_BROWSER_URL: &str = "https://robinhood.phiresky.xyz/";
 pub const MAX_MULTIPLAYER_PLAYERS: u32 = 4;
 
-const SIGNING_DOMAIN: &[u8] = b"robinhood/browser-join-ticket/v2\0";
+const SIGNING_DOMAIN: &[u8] = b"robinhood/browser-join-ticket/v3\0";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -44,6 +44,7 @@ pub struct BrowserJoinTicketPayload {
     pub issued_at_epoch_s: u64,
     pub expires_at_epoch_s: u64,
     pub content_edition: BrowserContentEdition,
+    pub content_identity_sha256: String,
     pub mission_id: String,
     pub mission_profile_id: Option<u32>,
     pub expected_players: u32,
@@ -73,6 +74,7 @@ impl BrowserJoinTicket {
         session_id: [u8; 32],
         issued_at_epoch_s: u64,
         content_edition: BrowserContentEdition,
+        content_identity_sha256: String,
         mission_id: String,
         mission_profile_id: Option<u32>,
         expected_players: u32,
@@ -103,6 +105,7 @@ impl BrowserJoinTicket {
             issued_at_epoch_s,
             expires_at_epoch_s,
             content_edition,
+            content_identity_sha256,
             mission_id,
             mission_profile_id,
             expected_players,
@@ -330,6 +333,10 @@ fn validate_static_payload(payload: &BrowserJoinTicketPayload) -> Result<(), Str
             "browser invitation lifetime must be exactly {INVITATION_LIFETIME_SECS} seconds"
         ));
     }
+    super::content_identity::validate_sha256(
+        &payload.content_identity_sha256,
+        "browser content identity",
+    )?;
     robin_engine::multiplayer::validate_mission_id(&payload.mission_id)
         .map_err(|error| format!("invalid browser mission id: {error}"))?;
     if !(1..=MAX_MULTIPLAYER_PLAYERS).contains(&payload.expected_players) {
@@ -346,6 +353,8 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 2_000_000_000;
+    const CONTENT_IDENTITY: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn ticket() -> BrowserJoinTicket {
         let key = SecretKey::from_bytes(&[7; 32]);
@@ -357,6 +366,7 @@ mod tests {
             [9; 32],
             NOW,
             BrowserContentEdition::Demo,
+            CONTENT_IDENTITY.to_string(),
             "Dem_Lei_MP".to_string(),
             Some(4),
             2,
@@ -447,6 +457,7 @@ mod tests {
             [9; 32],
             NOW,
             BrowserContentEdition::Full,
+            CONTENT_IDENTITY.to_string(),
             "M01".into(),
             None,
             2,
@@ -467,6 +478,7 @@ mod tests {
             [9; 32],
             NOW,
             BrowserContentEdition::Full,
+            CONTENT_IDENTITY.to_string(),
             "M01".into(),
             None,
             2,

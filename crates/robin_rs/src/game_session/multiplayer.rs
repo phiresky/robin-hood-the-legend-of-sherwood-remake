@@ -766,9 +766,17 @@ pub(super) async fn setup_multiplayer_session(
                         } else {
                             crate::multiplayer::join_ticket::BrowserContentEdition::Full
                         };
+                        let content_identity_sha256 =
+                            crate::multiplayer::content_identity::active_content_identity()
+                                .map_err(|error| {
+                                    format!(
+                                        "multiplayer: cannot publish an exact browser content invitation: {error}"
+                                    )
+                                })?;
                         let ticket = handle
                             .browser_join_ticket(
                                 content_edition,
+                                content_identity_sha256.clone(),
                                 args.mp_mission_profile_id,
                                 args.mp_expected_players.unwrap_or(1),
                             )
@@ -787,6 +795,7 @@ pub(super) async fn setup_multiplayer_session(
                             %share_url,
                             relay = %ticket.payload().relay_url,
                             ?content_edition,
+                            %content_identity_sha256,
                             "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
                         );
                         host.pending_console_output.push(format!(

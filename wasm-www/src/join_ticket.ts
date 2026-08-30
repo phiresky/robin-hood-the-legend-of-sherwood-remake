@@ -1,8 +1,8 @@
-const JOIN_CODE_PREFIX = 'rhmp2-';
-const JOIN_TICKET_SCHEMA = 2;
+const JOIN_CODE_PREFIX = 'rhmp3-';
+const JOIN_TICKET_SCHEMA = 3;
 const NET_PROTOCOL_VERSION = 25;
 const TRANSPORT = 'iroh-relay-websocket';
-const SIGNING_DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v2\0');
+const SIGNING_DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v3\0');
 const MAX_JOIN_CODE_BYTES = 16 * 1024;
 const INVITATION_LIFETIME_SECONDS = 30 * 60;
 const MAX_CLOCK_SKEW_SECONDS = 2 * 60;
@@ -19,6 +19,7 @@ const TICKET_KEYS = [
     'issued_at_epoch_s',
     'expires_at_epoch_s',
     'content_edition',
+    'content_identity_sha256',
     'mission_id',
     'mission_profile_id',
     'expected_players',
@@ -38,6 +39,7 @@ export type BrowserJoinTicketPayload = {
     readonly issued_at_epoch_s: number;
     readonly expires_at_epoch_s: number;
     readonly content_edition: BrowserContentEdition;
+    readonly content_identity_sha256: string;
     readonly mission_id: string;
     readonly mission_profile_id: number | null;
     readonly expected_players: number;
@@ -137,6 +139,11 @@ function parseCanonicalPayload(bytes: Uint8Array): BrowserJoinTicketPayload {
     const relayUrl = requireString('relay URL', object.relay_url, 2048);
     const sessionId = requireString('session id', object.session_id, 64);
     const missionId = requireString('mission id', object.mission_id, 255);
+    const contentIdentity = requireString(
+        'content identity',
+        object.content_identity_sha256,
+        64,
+    );
 
     if (schema !== JOIN_TICKET_SCHEMA) fail(`unsupported schema ${schema}`);
     if (object.transport !== TRANSPORT) fail(`unsupported transport ${String(object.transport)}`);
@@ -153,6 +160,9 @@ function parseCanonicalPayload(bytes: Uint8Array): BrowserJoinTicketPayload {
     }
     if (object.content_edition !== 'demo' && object.content_edition !== 'full') {
         fail('content edition must be demo or full');
+    }
+    if (!/^[0-9a-f]{64}$/.test(contentIdentity)) {
+        fail('content identity must be a lowercase SHA-256 digest');
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(missionId) || missionId.includes('..')) {
         fail('mission id must be one safe basename');

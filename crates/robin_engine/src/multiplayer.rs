@@ -3,10 +3,9 @@
 //! This module defines the platform-pure layer of multiplayer
 //! infrastructure: the wire-format enums (`NetMsg`, `NetEvent`,
 //! `NetOutbound`), the cross-thread channel bundle (`NetChannels`), and
-//! the protocol constants.  The actual transport (websocket I/O via
-//! `tungstenite` on native, `web_sys::WebSocket` on wasm) lives in
-//! `robin_rs::multiplayer::{native, wasm}` and feeds events into these
-//! channels.
+//! the protocol constants. The actual iroh transport (native
+//! QUIC/direct/relay, browser relay-over-WebSocket) lives in
+//! `robin_rs::multiplayer::{native, wasm}` and feeds events into these channels.
 //!
 //! `EngineManager` (this crate) owns a `NetChannels` and uses it to
 //! route locally-sourced player commands over the wire and drain
@@ -579,7 +578,13 @@ mod tests {
 
     #[test]
     fn browser_seat_proof_is_domain_and_endpoint_bound() {
+        const DOMAIN: &[u8] = b"robinhood/browser-seat-proof/v1\0";
         let proof = browser_seat_proof_message([1; 32], [2; 32], [3; 32]);
+        assert_eq!(proof.len(), DOMAIN.len() + 96);
+        assert_eq!(&proof[..DOMAIN.len()], DOMAIN);
+        assert_eq!(&proof[DOMAIN.len()..DOMAIN.len() + 32], &[1; 32]);
+        assert_eq!(&proof[DOMAIN.len() + 32..DOMAIN.len() + 64], &[2; 32]);
+        assert_eq!(&proof[DOMAIN.len() + 64..], &[3; 32]);
         assert_ne!(proof, browser_seat_proof_message([9; 32], [2; 32], [3; 32]));
         assert_ne!(proof, browser_seat_proof_message([1; 32], [9; 32], [3; 32]));
         assert_ne!(proof, browser_seat_proof_message([1; 32], [2; 32], [9; 32]));
