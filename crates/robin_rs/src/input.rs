@@ -319,9 +319,18 @@ impl ThreadedInput {
                 GameEvent::WindowFocusChanged(false) => {
                     self.clear_position();
                 }
+                GameEvent::TouchTransformStart { .. } => {
+                    // A touch contact must not leave the synthetic mouse parked
+                    // on an edge and continue keyboard-style edge scrolling.
+                    self.clear_position();
+                }
                 GameEvent::Resized(..)
                 | GameEvent::TextInput { .. }
                 | GameEvent::ViewportPan { .. }
+                | GameEvent::PointerCancel
+                | GameEvent::TouchMotionStop
+                | GameEvent::TouchTransform { .. }
+                | GameEvent::TouchTransformEnd { .. }
                 | GameEvent::MenuToggleRequested
                 | GameEvent::PauseRequested
                 | GameEvent::GamepadAdded { .. }

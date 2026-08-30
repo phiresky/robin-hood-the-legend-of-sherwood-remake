@@ -68,7 +68,21 @@ pub(super) struct FrameState {
     /// of `(layer, idx)` beats a hash map.
     atlas_bg_slots: Vec<(u32, u32)>,
     blit_vbo: Option<wgpu::Buffer>,
+    cached_present_vbo: Option<wgpu::Buffer>,
+    cached_present: Option<CachedPresentation>,
+    native_refresh_presentation: bool,
     pub(super) frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+}
+
+/// Fully postprocessed frame retained between fixed simulation ticks. This is
+/// deliberately downstream of RetroArch feedback/history passes: display-rate
+/// repeats sample this immutable texture and cannot advance shader history.
+struct CachedPresentation {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
 }
 
 impl FrameState {
@@ -78,10 +92,39 @@ impl FrameState {
         pipelines: &mut PipelineStore,
         resources: &GpuResources,
     ) {
+        let _ = self.present_impl(gpu, pipelines, resources, true);
+    }
+
+    /// Present the already-composited logical render target again without
+    /// executing game rendering or consuming any queued draw/state. This is
+    /// the side-effect-free presentation primitive used between 25 Hz ticks.
+    pub(super) fn present_cached(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &mut PipelineStore,
+        resources: &GpuResources,
+    ) -> bool {
+        self.present_impl(gpu, pipelines, resources, false)
+    }
+
+    fn present_impl(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &mut PipelineStore,
+        resources: &GpuResources,
+        compose_logical_frame: bool,
+    ) -> bool {
         let present_start = web_time::Instant::now();
+        if !compose_logical_frame
+            && (!self.native_refresh_presentation || self.cached_present.is_none())
+        {
+            return false;
+        }
         let presentation_frame_count = self.presentation_frame_count;
-        self.push_implicit_base_quad();
-        self.upload_queue_geometry(gpu);
+        if compose_logical_frame {
+            self.push_implicit_base_quad();
+            self.upload_queue_geometry(gpu);
+        }
 
         // Acquire swapchain frame. A suboptimal frame is still presented
         // this cycle; the reconfigure must wait until the acquired texture
@@ -96,13 +139,17 @@ impl FrameState {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.reconfigure_surface(gpu);
-                self.clear_recording();
-                return;
+                if compose_logical_frame {
+                    self.clear_recording();
+                }
+                return false;
             }
             status => {
                 tracing::warn!("get_current_texture: {status:?}");
-                self.clear_recording();
-                return;
+                if compose_logical_frame {
+                    self.clear_recording();
+                }
+                return false;
             }
         };
         let swap_view = frame
@@ -110,26 +157,31 @@ impl FrameState {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let swap_w = frame.texture.width();
         let swap_h = frame.texture.height();
+        if compose_logical_frame && self.native_refresh_presentation {
+            self.ensure_cached_presentation(gpu, resources, swap_w, swap_h);
+        }
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("present"),
             });
 
-        self.encode_scene_to_rt(&mut encoder, pipelines, resources);
-        if let Some(ui_start) = self.ui_layer_start
-            && ui_start < self.queued.len()
-        {
-            self.encode_pass_range_to_target(
-                &mut encoder,
-                pipelines,
-                resources,
-                ui_start,
-                self.queued.len(),
-                &self.ui_target_view,
-                &self.ui_stencil_view,
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-            );
+        if compose_logical_frame {
+            self.encode_scene_to_rt(&mut encoder, pipelines, resources);
+            if let Some(ui_start) = self.ui_layer_start
+                && ui_start < self.queued.len()
+            {
+                self.encode_pass_range_to_target(
+                    &mut encoder,
+                    pipelines,
+                    resources,
+                    ui_start,
+                    self.queued.len(),
+                    &self.ui_target_view,
+                    &self.ui_stencil_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
+            }
         }
 
         // ── Pass 2: blit RT into swapchain with letterbox ──
@@ -211,20 +263,29 @@ impl FrameState {
             bytemuck::bytes_of(&screen_swap),
         );
 
+        let presentation_target = if self.native_refresh_presentation {
+            &self
+                .cached_present
+                .as_ref()
+                .expect("native-refresh presentation cache was not created")
+                .view
+        } else {
+            &swap_view
+        };
         let (scale_mode, texture_effect) = presentation_profile(
             self.ui_only_frame,
             pipelines.scale_mode,
             pipelines.texture_effect,
         );
         let multipass_upscale = GpuUpscale::is_multipass_mode(scale_mode, texture_effect);
-        let multipass_rendered = if multipass_upscale {
+        let multipass_rendered = if compose_logical_frame && multipass_upscale {
             pipelines
                 .gpu_upscale
                 .render_multipass(
                     scale_mode,
                     &mut encoder,
                     &self.render_target_texture,
-                    &swap_view,
+                    presentation_target,
                     [swap_w, swap_h],
                     [dx, dy, dst_w, dst_h],
                     Some(presentation_frame_count),
@@ -241,7 +302,7 @@ impl FrameState {
         } else {
             false
         };
-        if !multipass_rendered {
+        if compose_logical_frame && !multipass_rendered {
             // Shader-based upscalers (sharp-bilinear, bicubic, lanczos,
             // CUT3, scale2x/3x, xBR) want their own pipeline + uniforms.
             // Build the per-frame source bind group + uniform write here
@@ -288,7 +349,7 @@ impl FrameState {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("blit RT → swapchain"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &swap_view,
+                    view: presentation_target,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -324,15 +385,26 @@ impl FrameState {
             }
         }
 
-        if self
-            .ui_layer_start
-            .is_some_and(|start| start < self.queued.len())
+        if compose_logical_frame
+            && self
+                .ui_layer_start
+                .is_some_and(|start| start < self.queued.len())
         {
             pipelines.gpu_upscale.render_ui_overlay(
                 &mut encoder,
                 &self.ui_target_texture,
-                &swap_view,
+                presentation_target,
                 [dx as f32, dy as f32, dst_w, dst_h],
+            );
+        }
+        if self.native_refresh_presentation {
+            self.encode_cached_present_to_swapchain(
+                gpu,
+                pipelines,
+                &mut encoder,
+                &swap_view,
+                swap_w,
+                swap_h,
             );
         }
 
@@ -343,22 +415,148 @@ impl FrameState {
             self.reconfigure_surface(gpu);
         }
 
-        // Frame stats captured before the per-frame clears below.
-        let draws_this_frame = self.queued.len();
-        let uploads_this_frame = upload_counter::take_count();
-        let present_us = present_start.elapsed().as_micros() as u64;
-        present_time_record(present_us);
-
         // Frame done — clear queues and reset GPU phase for next frame.
-        self.clear_recording();
+        if compose_logical_frame {
+            let draws_this_frame = self.queued.len();
+            let uploads_this_frame = upload_counter::take_count();
+            let present_us = present_start.elapsed().as_micros() as u64;
+            present_time_record(present_us);
+            self.clear_recording();
+            log_fps(
+                draws_this_frame,
+                uploads_this_frame,
+                bind_counter::take_count(),
+                bind_counter::take_draw_calls(),
+                resources.sprite_atlas.stats(),
+            );
+        }
+        true
+    }
 
-        log_fps(
-            draws_this_frame,
-            uploads_this_frame,
-            bind_counter::take_count(),
-            bind_counter::take_draw_calls(),
-            resources.sprite_atlas.stats(),
+    fn ensure_cached_presentation(
+        &mut self,
+        gpu: &GpuContext,
+        resources: &GpuResources,
+        width: u32,
+        height: u32,
+    ) {
+        if self
+            .cached_present
+            .as_ref()
+            .is_some_and(|cached| cached.width == width && cached.height == height)
+        {
+            return;
+        }
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fully postprocessed presentation cache"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: gpu.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = make_tex_bg(
+            &gpu.device,
+            &resources.bgl_tex,
+            &view,
+            &resources.sampler,
+            "fully postprocessed presentation cache bg",
         );
+        self.cached_present = Some(CachedPresentation {
+            _texture: texture,
+            view,
+            bind_group,
+            width,
+            height,
+        });
+    }
+
+    fn encode_cached_present_to_swapchain(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &PipelineStore,
+        encoder: &mut wgpu::CommandEncoder,
+        swap_view: &wgpu::TextureView,
+        swap_w: u32,
+        swap_h: u32,
+    ) {
+        let verts = [
+            QuadVertex {
+                pos: [0.0, 0.0],
+                uv: [0.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, 0.0],
+                uv: [1.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [0.0, swap_h as f32],
+                uv: [0.0, 1.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [0.0, swap_h as f32],
+                uv: [0.0, 1.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, 0.0],
+                uv: [1.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, swap_h as f32],
+                uv: [1.0, 1.0],
+                tint: [1.0; 4],
+            },
+        ];
+        if self.cached_present_vbo.is_none() {
+            self.cached_present_vbo = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cached presentation vbo"),
+                size: std::mem::size_of_val(&verts) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let vbo = self
+            .cached_present_vbo
+            .as_ref()
+            .expect("cached presentation vbo was not created");
+        gpu.queue.write_buffer(vbo, 0, bytemuck::cast_slice(&verts));
+        let cached = self
+            .cached_present
+            .as_ref()
+            .expect("cached presentation requested before a completed frame");
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("cached presentation → swapchain"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: swap_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&pipelines.blit_pipeline);
+        pass.set_bind_group(0, &self.swap_screen_bg, &[]);
+        pass.set_bind_group(1, &cached.bind_group, &[]);
+        pass.set_vertex_buffer(0, vbo.slice(..));
+        pass.draw(0..6, 0..1);
     }
 
     pub(super) fn dimensions(&self) -> (u16, u16) {
@@ -478,6 +676,9 @@ impl FrameState {
             width,
             height,
         );
+        let native_refresh_presentation = surface_config
+            .as_ref()
+            .is_some_and(|config| config.present_mode == wgpu::PresentMode::Fifo);
 
         Self {
             width,
@@ -510,6 +711,9 @@ impl FrameState {
             frame_texture_bgs: Vec::new(),
             atlas_bg_slots: Vec::new(),
             blit_vbo: None,
+            cached_present_vbo: None,
+            cached_present: None,
+            native_refresh_presentation,
             frozen_scene: None,
         }
     }
@@ -655,6 +859,32 @@ impl FrameState {
             }
             config.width = width;
             config.height = height;
+            self.reconfigure_surface(gpu);
+        }
+    }
+
+    pub(super) fn configure_present_mode(
+        &mut self,
+        gpu: &GpuContext,
+        enabled: bool,
+        surface_width: u32,
+        surface_height: u32,
+    ) {
+        self.native_refresh_presentation = enabled;
+        if !enabled {
+            self.cached_present = None;
+        }
+        if let Some(config) = &mut self.surface_config {
+            // GameWindow owns resize events. Synchronize its authoritative
+            // physical dimensions before reconfiguring so changing present
+            // mode cannot restore this renderer's older config clone.
+            config.width = surface_width.max(1);
+            config.height = surface_height.max(1);
+            config.present_mode = if enabled {
+                wgpu::PresentMode::Fifo
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            };
             self.reconfigure_surface(gpu);
         }
     }

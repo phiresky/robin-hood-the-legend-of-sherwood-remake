@@ -72,9 +72,9 @@ pub struct ReplayHeader {
 /// Version 17 requires the full-fidelity campaign history and practice-return
 /// snapshot. There is deliberately no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-/// Version 18 adds authoritative Sherwood trading configuration, commands,
-/// and receipts to deterministic replay state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 18;
+/// Version 18 adds deterministic achievement tracker state. Version 19 adds
+/// authoritative Sherwood trading configuration, commands, and receipts.
+pub const REPLAY_SCHEMA_VERSION: u32 = 19;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -780,8 +780,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 18);
+    fn replay_schema_version_identifies_achievements_and_trading() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 19);
     }
 
     fn unique_replay_path(label: &str) -> String {

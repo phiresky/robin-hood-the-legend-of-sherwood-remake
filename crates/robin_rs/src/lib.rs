@@ -17,6 +17,7 @@ use std::sync::{Mutex, Once, OnceLock};
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod auto_update;
+pub(crate) mod touch_input;
 pub mod version;
 
 static TRACING_INIT: Once = Once::new();
@@ -163,6 +164,7 @@ fn compose_env_filter(s: &str) -> String {
 // ──────────────────────────────────────────────────────────────────
 // Host-local modules (files in robin_rs/src/)
 // ──────────────────────────────────────────────────────────────────
+pub mod achievement_hud;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod app_effect;

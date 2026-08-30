@@ -1044,6 +1044,11 @@ pub enum PlayerCommand {
     SetReusableCloaks {
         enabled: bool,
     },
+    /// Toggle deterministic NPC-on-NPC Clean Hands invalidation. Appended to
+    /// preserve every current-main bitcode variant index.
+    SetCleanHandsNpcKillsInvalidate {
+        enabled: bool,
+    },
 }
 
 /// Deserialize an explicitly present optional value.

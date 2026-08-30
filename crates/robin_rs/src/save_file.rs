@@ -466,10 +466,12 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-/// - **v58** (2026-08-30, authoritative Sherwood trading): records the
+/// - **v58** (2026-08-30, per-mission achievements): records deterministic
+///   achievement tracker state and its campaign-history evidence.
+/// - **v59** (2026-08-30, authoritative Sherwood trading): records the
 ///   deterministic trading rule, exact sale commands, receipts, campaign
 ///   ransom, and production-item inventory state.
-pub const SAVE_FORMAT_VERSION: u32 = 58;
+pub const SAVE_FORMAT_VERSION: u32 = 59;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -729,8 +731,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_includes_authoritative_sherwood_trading() {
-        assert_eq!(SAVE_FORMAT_VERSION, 58);
+    fn save_format_version_requires_achievements_and_authoritative_trading() {
+        assert_eq!(SAVE_FORMAT_VERSION, 59);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

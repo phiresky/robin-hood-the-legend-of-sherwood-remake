@@ -12,8 +12,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::achievement::{
-    AchievementRunContext, AchievementSet, AchievementUnlockDecision, AchievementUnlockPolicy,
-    MissionAchievementResults,
+    AchievementAggregationInput, AchievementAggregationPolicy, AchievementAggregationSummary,
+    AchievementEvaluation, AchievementId, AchievementRunContext, AchievementSet,
+    AchievementUnlockDecision, AchievementUnlockPolicy, MissionAchievementResults,
 };
 use crate::engine::SimConfig;
 use crate::mission_stat::MissionStat;
@@ -22,7 +23,7 @@ use crate::profiles::ProfileManager;
 
 /// Schema of the per-mission history embedded in a native campaign.
 pub const CAMPAIGN_HISTORY_SCHEMA_VERSION: u16 = 2;
-pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 2;
+pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 3;
 
 #[repr(u8)]
 #[derive(
@@ -639,6 +640,78 @@ pub struct LifetimeMissionAttempt {
     attempt: MissionAttempt,
 }
 
+/// Frozen identity of one completed canonical campaign path.
+///
+/// Attempts remain the only achievement-evidence source. This envelope stores
+/// only the fact that the Original completion boundary was crossed and the
+/// exact successful path which AllRequiredMissions must evaluate. A later
+/// practice replay may add evidence for those IDs but cannot rewrite the set.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct LifetimeCampaignAchievementEnvelope {
+    campaign_run_id: u64,
+    completion_sequence: u64,
+    required_mission_ids: Vec<u32>,
+}
+
+impl LifetimeCampaignAchievementEnvelope {
+    pub const fn campaign_run_id(&self) -> u64 {
+        self.campaign_run_id
+    }
+
+    pub const fn completion_sequence(&self) -> u64 {
+        self.completion_sequence
+    }
+
+    pub fn required_mission_ids(&self) -> &[u32] {
+        &self.required_mission_ids
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.campaign_run_id == 0 {
+            return Err("completed campaign achievement envelope has run ID zero".to_owned());
+        }
+        if self.completion_sequence == 0 {
+            return Err(format!(
+                "completed campaign achievement envelope {} has sequence zero",
+                self.campaign_run_id
+            ));
+        }
+        if self.required_mission_ids.is_empty() {
+            return Err(format!(
+                "completed campaign achievement envelope {} has no required missions",
+                self.campaign_run_id
+            ));
+        }
+        if self.required_mission_ids.iter().any(|&id| id == 0) {
+            return Err(format!(
+                "completed campaign achievement envelope {} contains mission ID zero",
+                self.campaign_run_id
+            ));
+        }
+        if self
+            .required_mission_ids
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(format!(
+                "completed campaign achievement envelope {} mission IDs are not strictly sorted and unique",
+                self.campaign_run_id
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl LifetimeMissionAttempt {
     pub const fn campaign_run_id(&self) -> u64 {
         self.campaign_run_id
@@ -673,6 +746,9 @@ impl LifetimeMissionAttempt {
 pub struct ProfileCampaignHistory {
     schema_version: u16,
     attempts: Vec<LifetimeMissionAttempt>,
+    /// Frozen completed paths used for lifetime AllRequiredMissions badges.
+    /// This field is mandatory: obsolete Rust profile schemas fail closed.
+    completed_campaigns: Vec<LifetimeCampaignAchievementEnvelope>,
 }
 
 impl Default for ProfileCampaignHistory {
@@ -680,6 +756,7 @@ impl Default for ProfileCampaignHistory {
         Self {
             schema_version: PROFILE_HISTORY_SCHEMA_VERSION,
             attempts: Vec::new(),
+            completed_campaigns: Vec::new(),
         }
     }
 }
@@ -690,6 +767,7 @@ pub enum ProfileHistoryPromotionError {
     MissingCampaignRunId { stored_attempts: usize },
     MissingMissionProfile { mission_index: usize },
     ConflictingAttempt(MissionAttemptKey),
+    ConflictingCampaignEnvelope { campaign_run_id: u64 },
 }
 
 impl std::fmt::Display for ProfileHistoryPromotionError {
@@ -713,6 +791,10 @@ impl std::fmt::Display for ProfileHistoryPromotionError {
                 "lifetime campaign attempt {} in run {} conflicts with its canonical campaign record",
                 key.sequence, key.campaign_run_id
             ),
+            Self::ConflictingCampaignEnvelope { campaign_run_id } => write!(
+                formatter,
+                "completed campaign envelope for run {campaign_run_id} conflicts with its canonical path"
+            ),
         }
     }
 }
@@ -728,6 +810,9 @@ impl ProfileCampaignHistory {
         &self.attempts
     }
 
+    pub fn completed_campaigns(&self) -> &[LifetimeCampaignAchievementEnvelope] {
+        &self.completed_campaigns
+    }
     pub fn totals(&self) -> CampaignHistoryTotals {
         let mut totals = CampaignHistoryTotals::default();
         for entry in &self.attempts {
@@ -736,15 +821,116 @@ impl ProfileCampaignHistory {
         totals
     }
 
-    pub fn eligible_badges(&self) -> AchievementSet {
-        self.attempts
-            .iter()
-            .fold(AchievementSet::empty(), |mut badges, entry| {
-                if let Some(attestation) = entry.attempt.achievement_attestation {
-                    badges.union_with(attestation.decision.eligible_earned);
+    pub fn achievement_aggregation(&self) -> AchievementAggregationSummary {
+        AchievementAggregationSummary::from_inputs(|id| {
+            let mut any_earned_missions = std::collections::BTreeSet::new();
+            let mut any_unverifiable_missions = std::collections::BTreeSet::new();
+            for entry in &self.attempts {
+                if entry.attempt.outcome != MissionAttemptOutcome::Won {
+                    continue;
                 }
-                badges
-            })
+                if entry
+                    .attempt
+                    .achievement_attestation
+                    .is_some_and(|attestation| attestation.decision.eligible_earned.contains(id))
+                {
+                    any_earned_missions.insert(entry.mission_id);
+                } else if lifetime_attempt_evidence_incomplete(&entry.attempt, id) {
+                    any_unverifiable_missions.insert(entry.mission_id);
+                }
+            }
+            for mission_id in &any_earned_missions {
+                any_unverifiable_missions.remove(mission_id);
+            }
+
+            let mut best_required = 0_u32;
+            let mut best_earned = 0_u32;
+            let mut best_unverifiable = 0_u32;
+            let mut best_category = 0_u8;
+            let mut have_envelope = false;
+            for envelope in &self.completed_campaigns {
+                let required = u32::try_from(envelope.required_mission_ids.len())
+                    .expect("lifetime campaign required mission count exceeds u32");
+                let mut earned = 0_u32;
+                let mut unverifiable = 0_u32;
+                for &mission_id in &envelope.required_mission_ids {
+                    let matching = self.attempts.iter().filter(|entry| {
+                        entry.campaign_run_id == envelope.campaign_run_id
+                            && entry.mission_id == mission_id
+                            && entry.attempt.outcome == MissionAttemptOutcome::Won
+                    });
+                    let matching = matching.collect::<Vec<_>>();
+                    if matching.iter().any(|entry| {
+                        entry
+                            .attempt
+                            .achievement_attestation
+                            .is_some_and(|attestation| {
+                                attestation.decision.eligible_earned.contains(id)
+                            })
+                    }) {
+                        earned = earned
+                            .checked_add(1)
+                            .expect("lifetime earned mission count exceeds u32");
+                    } else if matching.is_empty()
+                        || matching
+                            .iter()
+                            .any(|entry| lifetime_attempt_evidence_incomplete(&entry.attempt, id))
+                    {
+                        unverifiable = unverifiable
+                            .checked_add(1)
+                            .expect("lifetime unverifiable mission count exceeds u32");
+                    }
+                }
+                let category = if required != 0 && earned == required && unverifiable == 0 {
+                    3
+                } else if unverifiable != 0 {
+                    2
+                } else {
+                    1
+                };
+                let better_fraction = u64::from(earned) * u64::from(best_required)
+                    > u64::from(best_earned) * u64::from(required);
+                let better = !have_envelope
+                    || category > best_category
+                    || (category == best_category && better_fraction)
+                    || (category == best_category
+                        && !better_fraction
+                        && earned == best_earned
+                        && unverifiable < best_unverifiable);
+                if better {
+                    have_envelope = true;
+                    best_category = category;
+                    best_required = required;
+                    best_earned = earned;
+                    best_unverifiable = unverifiable;
+                }
+            }
+
+            let (earned_missions, required_missions, unverifiable_missions) =
+                match id.aggregation_policy() {
+                    AchievementAggregationPolicy::AllRequiredMissions => {
+                        (best_earned, best_required, best_unverifiable)
+                    }
+                    AchievementAggregationPolicy::AnyMissionOnce => (
+                        u32::from(!any_earned_missions.is_empty()),
+                        u32::from(!self.attempts.is_empty()),
+                        u32::from(
+                            any_earned_missions.is_empty() && !any_unverifiable_missions.is_empty(),
+                        ),
+                    ),
+                };
+            AchievementAggregationInput {
+                envelope_complete: have_envelope,
+                envelope_unverifiable: false,
+                earned_missions,
+                required_missions,
+                unverifiable_missions,
+            }
+        })
+    }
+
+    pub fn eligible_badges(&self) -> AchievementSet {
+        self.achievement_aggregation().earned()
     }
 
     pub fn eligible_badges_for_mission(&self, mission_id: u32) -> AchievementSet {
@@ -847,6 +1033,58 @@ impl ProfileCampaignHistory {
         }
         self.attempts
             .sort_by_key(|entry| (entry.campaign_run_id, entry.attempt.sequence()));
+
+        if campaign.achievement_envelope_complete(profiles) {
+            match self
+                .completed_campaigns
+                .iter()
+                .find(|envelope| envelope.campaign_run_id == campaign_run_id)
+            {
+                Some(existing) => {
+                    let required_mission_ids = campaign
+                        .required_achievement_mission_ids_through(
+                            profiles,
+                            existing.completion_sequence,
+                        )
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    if existing.required_mission_ids != required_mission_ids {
+                        return Err(ProfileHistoryPromotionError::ConflictingCampaignEnvelope {
+                            campaign_run_id,
+                        });
+                    }
+                }
+                None => {
+                    let completion_sequence = campaign
+                        .missions
+                        .iter()
+                        .flat_map(|mission| mission.attempt_history().attempts())
+                        .filter(|attempt| attempt.kind() == MissionAttemptKind::Campaign)
+                        .map(MissionAttempt::sequence)
+                        .max()
+                        .expect(
+                            "completed native campaign has no ordinary mission attempt sequence",
+                        );
+                    let required_mission_ids = campaign
+                        .required_achievement_mission_ids_through(profiles, completion_sequence)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    assert!(
+                        !required_mission_ids.is_empty(),
+                        "completed campaign run {campaign_run_id} has no required canonical missions"
+                    );
+                    self.completed_campaigns
+                        .push(LifetimeCampaignAchievementEnvelope {
+                            campaign_run_id,
+                            completion_sequence,
+                            required_mission_ids,
+                        });
+                    self.completed_campaigns
+                        .sort_by_key(|envelope| envelope.campaign_run_id);
+                    added += 1;
+                }
+            }
+        }
         Ok(added)
     }
 
@@ -866,7 +1104,55 @@ impl ProfileCampaignHistory {
             }
             previous_key = Some(key);
         }
+        if self
+            .completed_campaigns
+            .iter()
+            .any(|envelope| envelope.validate().is_err())
+            || self
+                .completed_campaigns
+                .windows(2)
+                .any(|pair| pair[0].campaign_run_id >= pair[1].campaign_run_id)
+        {
+            return Err(self.schema_version);
+        }
+        for envelope in &self.completed_campaigns {
+            let completion_exists = self.attempts.iter().any(|entry| {
+                entry.campaign_run_id == envelope.campaign_run_id
+                    && entry.attempt.sequence() == envelope.completion_sequence
+                    && entry.attempt.kind() == MissionAttemptKind::Campaign
+            });
+            let every_requirement_has_path_win =
+                envelope.required_mission_ids.iter().all(|&mission_id| {
+                    self.attempts.iter().any(|entry| {
+                        entry.campaign_run_id == envelope.campaign_run_id
+                            && entry.mission_id == mission_id
+                            && entry.attempt.sequence() <= envelope.completion_sequence
+                            && entry.attempt.kind() == MissionAttemptKind::Campaign
+                            && entry.attempt.outcome() == MissionAttemptOutcome::Won
+                    })
+                });
+            if !completion_exists || !every_requirement_has_path_win {
+                return Err(self.schema_version);
+            }
+        }
         Ok(())
+    }
+}
+
+fn lifetime_attempt_evidence_incomplete(attempt: &MissionAttempt, id: AchievementId) -> bool {
+    if attempt.outcome != MissionAttemptOutcome::Won {
+        return false;
+    }
+    if attempt.source == MissionAttemptSource::OriginalSaveImport {
+        return true;
+    }
+    let Some(results) = attempt.achievements else {
+        return true;
+    };
+    match results.evaluation(id) {
+        AchievementEvaluation::Unverifiable => true,
+        AchievementEvaluation::Failed => false,
+        AchievementEvaluation::Earned => attempt.achievement_attestation.is_none(),
     }
 }
 
@@ -900,6 +1186,82 @@ impl CampaignHistoryTotals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn aggregation_profiles() -> ProfileManager {
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 1,
+            mission_name: "Sherwood".into(),
+            mission_type: crate::profiles::MissionType::Hq,
+            ..Default::default()
+        });
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 0x3141,
+            mission_name: "Field One".into(),
+            mission_type: crate::profiles::MissionType::Historical,
+            ..Default::default()
+        });
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 0x4948,
+            mission_name: "H12".into(),
+            mission_type: crate::profiles::MissionType::Historical,
+            ..Default::default()
+        });
+        profiles
+    }
+
+    fn aggregation_campaign(profiles: &ProfileManager) -> crate::campaign::Campaign {
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions = profiles
+            .missions
+            .iter()
+            .enumerate()
+            .map(|(index, _)| crate::mission::Mission {
+                profile_idx: Some(index as u32),
+                ..crate::mission::Mission::new()
+            })
+            .collect();
+        campaign
+    }
+
+    fn achievement_result(
+        id: AchievementId,
+        evaluation: AchievementEvaluation,
+    ) -> MissionAchievementResults {
+        let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
+        tracker.record_evaluation(id, evaluation).unwrap();
+        *tracker.finalize_success()
+    }
+
+    fn record_attested_win(
+        campaign: &mut crate::campaign::Campaign,
+        profiles: &ProfileManager,
+        mission_index: usize,
+        id: AchievementId,
+        evaluation: AchievementEvaluation,
+        run_id: u64,
+    ) {
+        campaign.missions[mission_index].status = crate::mission::MissionStatus::Won;
+        campaign.current_mission_idx = Some(mission_index);
+        campaign.record_mission_attempt(
+            mission_index,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(run_id),
+            60,
+            SimConfig::default(),
+            &MissionStat::default(),
+            Some(achievement_result(id, evaluation)),
+        );
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+                profiles,
+            )
+            .unwrap();
+    }
 
     #[test]
     fn original_save_attempts_preserve_unknowns_instead_of_faking_zeroes() {
@@ -940,6 +1302,40 @@ mod tests {
 
         assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 0);
         assert!(lifetime.attempts().is_empty());
+        assert!(lifetime.completed_campaigns().is_empty());
+    }
+
+    #[test]
+    fn first_native_terminal_archives_original_attempts_without_synthesizing_import_identity() {
+        let profiles = aggregation_profiles();
+        let mut campaign = aggregation_campaign(&profiles);
+        campaign.missions[2].status = crate::mission::MissionStatus::Won;
+        campaign.reconstruct_original_save_history(&[]);
+
+        let mut lifetime = ProfileCampaignHistory::default();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 0);
+        assert!(lifetime.attempts().is_empty());
+
+        record_attested_win(
+            &mut campaign,
+            &profiles,
+            1,
+            AchievementId::Ghost,
+            AchievementEvaluation::Earned,
+            0xace,
+        );
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 3);
+        assert_eq!(lifetime.attempts().len(), 2);
+        assert_eq!(lifetime.completed_campaigns().len(), 1);
+        assert_eq!(lifetime.completed_campaigns()[0].campaign_run_id(), 0xace);
+        assert_eq!(
+            lifetime
+                .achievement_aggregation()
+                .get(AchievementId::Ghost)
+                .status,
+            crate::achievement::AchievementAggregationStatus::Unverifiable,
+            "the imported won mission remains an honest evidence gap"
+        );
     }
 
     #[test]
@@ -1032,6 +1428,249 @@ mod tests {
     }
 
     #[test]
+    fn practice_replay_fills_frozen_lifetime_envelope_and_survives_campaign_replacement() {
+        let profiles = aggregation_profiles();
+        let mut campaign = aggregation_campaign(&profiles);
+        let run_id = 0x55aa;
+        record_attested_win(
+            &mut campaign,
+            &profiles,
+            1,
+            AchievementId::Ghost,
+            AchievementEvaluation::Earned,
+            run_id,
+        );
+        record_attested_win(
+            &mut campaign,
+            &profiles,
+            2,
+            AchievementId::Ghost,
+            AchievementEvaluation::Failed,
+            run_id,
+        );
+
+        let mut lifetime = ProfileCampaignHistory::default();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 3);
+        assert_eq!(lifetime.completed_campaigns().len(), 1);
+        let completion_sequence = lifetime.completed_campaigns()[0].completion_sequence();
+        assert_eq!(
+            lifetime
+                .achievement_aggregation()
+                .get(AchievementId::Ghost)
+                .status,
+            crate::achievement::AchievementAggregationStatus::MissingRequirements
+        );
+
+        campaign.select_next_mission(Some(2), &profiles);
+        campaign.snapshot_with_simulation(9, SimConfig::default());
+        campaign.current_mission_idx = Some(2);
+        campaign.record_mission_attempt(
+            2,
+            MissionAttemptOutcome::Won,
+            Some(200),
+            Some(run_id),
+            40,
+            SimConfig::default(),
+            &MissionStat::default(),
+            Some(achievement_result(
+                AchievementId::Ghost,
+                AchievementEvaluation::Earned,
+            )),
+        );
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+                &profiles,
+            )
+            .unwrap();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 1);
+        assert_eq!(lifetime.completed_campaigns().len(), 1);
+        assert_eq!(
+            lifetime.completed_campaigns()[0].completion_sequence(),
+            completion_sequence
+        );
+        assert!(
+            lifetime
+                .achievement_aggregation()
+                .earned()
+                .contains(AchievementId::Ghost)
+        );
+
+        let replacement_campaign = aggregation_campaign(&profiles);
+        assert!(
+            replacement_campaign
+                .achievement_aggregation(&profiles)
+                .earned()
+                .is_empty()
+        );
+        assert!(
+            lifetime
+                .achievement_aggregation()
+                .earned()
+                .contains(AchievementId::Ghost),
+            "replacing/resetting the campaign must not erase the profile archive"
+        );
+
+        let json = serde_json::to_string(&lifetime).unwrap();
+        let from_json: ProfileCampaignHistory = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_json, lifetime);
+        let bytes = bitcode::encode(&lifetime);
+        let from_bitcode: ProfileCampaignHistory = bitcode::decode(&bytes).unwrap();
+        assert_eq!(from_bitcode, lifetime);
+    }
+
+    #[test]
+    fn ordinary_wins_after_completion_do_not_rewrite_the_frozen_path() {
+        let profiles = aggregation_profiles();
+        let run_id = 0x44;
+        let mut campaign = aggregation_campaign(&profiles);
+        record_attested_win(
+            &mut campaign,
+            &profiles,
+            2,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Earned,
+            run_id,
+        );
+
+        let mut lifetime = ProfileCampaignHistory::default();
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 2);
+        let frozen = lifetime.completed_campaigns()[0].clone();
+        assert_eq!(frozen.required_mission_ids(), &[0x4948]);
+
+        record_attested_win(
+            &mut campaign,
+            &profiles,
+            1,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Failed,
+            run_id,
+        );
+        assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 1);
+        assert_eq!(
+            lifetime.completed_campaigns(),
+            std::slice::from_ref(&frozen)
+        );
+        assert!(
+            lifetime
+                .achievement_aggregation()
+                .earned()
+                .contains(AchievementId::CleanHands),
+            "ordinary attempts after the first completed-envelope promotion do not expand it"
+        );
+    }
+
+    #[test]
+    fn invalid_completed_envelope_is_rejected_during_profile_schema_validation() {
+        let mut history = ProfileCampaignHistory::default();
+        history
+            .completed_campaigns
+            .push(LifetimeCampaignAchievementEnvelope {
+                campaign_run_id: 7,
+                completion_sequence: 2,
+                required_mission_ids: vec![42, 42],
+            });
+        assert_eq!(
+            history.validate_schema(),
+            Err(PROFILE_HISTORY_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn duplicate_campaign_run_envelopes_are_rejected_during_schema_validation() {
+        let mut history = ProfileCampaignHistory::default();
+        for completion_sequence in [2, 3] {
+            history
+                .completed_campaigns
+                .push(LifetimeCampaignAchievementEnvelope {
+                    campaign_run_id: 7,
+                    completion_sequence,
+                    required_mission_ids: vec![42],
+                });
+        }
+        assert_eq!(
+            history.validate_schema(),
+            Err(PROFILE_HISTORY_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn lifetime_all_required_uses_one_satisfied_run_and_never_cross_run_union() {
+        let profiles = aggregation_profiles();
+        let mut lifetime = ProfileCampaignHistory::default();
+
+        let mut first = aggregation_campaign(&profiles);
+        record_attested_win(
+            &mut first,
+            &profiles,
+            1,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Earned,
+            11,
+        );
+        record_attested_win(
+            &mut first,
+            &profiles,
+            2,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Failed,
+            11,
+        );
+        lifetime.promote_campaign(&first, &profiles).unwrap();
+
+        let mut second = aggregation_campaign(&profiles);
+        record_attested_win(
+            &mut second,
+            &profiles,
+            1,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Failed,
+            22,
+        );
+        record_attested_win(
+            &mut second,
+            &profiles,
+            2,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Earned,
+            22,
+        );
+        lifetime.promote_campaign(&second, &profiles).unwrap();
+        assert_eq!(
+            lifetime
+                .achievement_aggregation()
+                .get(AchievementId::CleanHands)
+                .status,
+            crate::achievement::AchievementAggregationStatus::MissingRequirements,
+            "per-mission lifetime union must not mix evidence across campaign run IDs"
+        );
+
+        let mut third = aggregation_campaign(&profiles);
+        record_attested_win(
+            &mut third,
+            &profiles,
+            2,
+            AchievementId::CleanHands,
+            AchievementEvaluation::Earned,
+            33,
+        );
+        lifetime.promote_campaign(&third, &profiles).unwrap();
+        let progress = lifetime
+            .achievement_aggregation()
+            .get(AchievementId::CleanHands);
+        assert_eq!(
+            progress.status,
+            crate::achievement::AchievementAggregationStatus::Earned
+        );
+        assert_eq!(
+            (progress.earned_missions, progress.required_missions),
+            (1, 1)
+        );
+    }
+
+    #[test]
     fn native_campaign_promotion_is_idempotent_and_lifetime_scoped() {
         let mut profiles = ProfileManager::new();
         profiles.missions.push(crate::profiles::MissionProfile {
@@ -1075,7 +1714,7 @@ mod tests {
         let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
         tracker
             .record_evaluation(
-                crate::achievement::AchievementId::Ghost,
+                crate::achievement::AchievementId::PileOBones,
                 crate::achievement::AchievementEvaluation::Earned,
             )
             .unwrap();
@@ -1106,13 +1745,14 @@ mod tests {
                 campaign.latest_mission_attempt_key().unwrap(),
                 AchievementUnlockPolicy::default(),
                 AchievementRunContext::default(),
+                &profiles,
             )
             .unwrap();
         assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 1);
         assert!(
             lifetime
                 .eligible_badges()
-                .contains(crate::achievement::AchievementId::Ghost)
+                .contains(crate::achievement::AchievementId::PileOBones)
         );
         assert_eq!(lifetime.promote_campaign(&campaign, &profiles).unwrap(), 0);
     }

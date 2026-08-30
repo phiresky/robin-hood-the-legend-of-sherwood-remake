@@ -295,4 +295,3 @@ which conflicts with decoding sprites on first draw.
   `robin_assets::late_sprites`, where grids arrive *after* mission
   start. The hit test is also called only after an AABB rejection, so it
   runs a handful of times per mouse move, not per pixel per frame.
-
