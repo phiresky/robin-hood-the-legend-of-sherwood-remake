@@ -44,6 +44,7 @@ bitcode.workspace = true
 zstd.workspace = true
 base64 = "0.23"
 sha2 = "0.11"
+hex = "0.4"
 # Zip-backed custom missions are compiled on wasm too. Browser builds do not
 # currently mount host paths, but the shared picker/launch code still needs the
 # archive reader and in-memory overlay types to type-check.

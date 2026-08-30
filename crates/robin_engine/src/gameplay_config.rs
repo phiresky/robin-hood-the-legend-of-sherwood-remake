@@ -306,6 +306,13 @@ pub struct GameplayConfig {
     /// Calculation and storage remain active when hidden.
     #[serde(default)]
     pub show_achievement_debrief: bool,
+
+    /// Keep three rotating recovery points during ordinary single-player
+    /// missions. Autosave persistence is host-only and deliberately excluded
+    /// from deterministic simulation state.
+    #[serde(default = "enabled_by_default")]
+    #[state_hash(skip)]
+    pub autosave_enabled: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -322,6 +329,7 @@ impl Default for GameplayConfig {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
             enable_unbinding: true,
+            autosave_enabled: true,
             touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
@@ -352,6 +360,7 @@ impl GameplayConfig {
             fix_hard_reaction_times: false,
             control_tactical_units: false,
             enable_unbinding: true,
+            autosave_enabled: true,
             touch_camera_gestures: true,
             show_production_forecast: true,
             reusable_cloaks: false,
@@ -388,6 +397,7 @@ mod tests {
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
+        assert!(config.autosave_enabled);
         assert!(config.touch_camera_gestures);
         assert!(!config.clean_hands_npc_kills_invalidate);
         assert!(!config.show_detailed_xp);
@@ -417,6 +427,25 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str(r#"{"control_allied_soldiers":true}"#)
             .expect("legacy gameplay config");
         assert!(config.control_tactical_units);
+    }
+
+    #[test]
+    fn autosave_is_independent_default_on_and_not_hashed() {
+        use robin_util::state_hash::compute;
+
+        let enabled = GameplayConfig::default();
+        let disabled = GameplayConfig {
+            autosave_enabled: false,
+            ..enabled
+        };
+        assert!(enabled.autosave_enabled);
+        assert!(!disabled.autosave_enabled);
+        assert_eq!(compute(&enabled), compute(&disabled));
+
+        let json = serde_json::to_string(&disabled).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.autosave_enabled);
     }
 
     #[test]

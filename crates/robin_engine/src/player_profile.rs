@@ -651,6 +651,7 @@ mod tests {
         );
         assert!(!restored.gameplay_config.noise_distraction_feedback);
         assert!(restored.gameplay_config.enable_unbinding);
+        assert!(restored.gameplay_config.autosave_enabled);
         assert!(!restored.gameplay_config.reusable_cloaks);
     }
 

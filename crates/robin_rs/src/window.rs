@@ -18,9 +18,10 @@
 //!   whatever the handler has buffered without awaiting.  The yield
 //!   point lives in [`yield_to_runtime`] / [`sleep_ms`] (used by every
 //!   per-frame pacing sleep), which the game calls inside its main
-//!   loop.  On wasm the yield routes through `setTimeout(0)` so
-//!   accumulated keyboard/mouse events get a chance to fire; on native
-//!   the game runs on its own thread and the yield is a no-op.
+//!   loop. On wasm the yield races `setTimeout` with a page-lifecycle wake,
+//!   so input can fire while visibility changes can trigger capture before
+//!   hidden-page timer throttling; on native the game runs on its own thread
+//!   and the yield is a no-op.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -76,7 +77,7 @@ fn process_uptime() -> web_time::Duration {
 /// thread, so they don't need cooperative scheduling.
 pub async fn yield_to_runtime() {
     #[cfg(target_arch = "wasm32")]
-    gloo_timers::future::TimeoutFuture::new(0).await;
+    browser_wait_for_timer_or_lifecycle(0).await;
 }
 
 /// Wait for the browser compositor's next display refresh. Native wgpu FIFO
@@ -102,15 +103,87 @@ pub async fn yield_to_display_refresh() {
 
 /// Async sleep used by every per-frame pacing point in the game loop.
 /// Native: blocks the dedicated game thread via [`std::thread::sleep`].
-/// Wasm: yields via `setTimeout(<ms>)`.
+/// Wasm: yields via `setTimeout(<ms>)`, unless a lifecycle autosave edge wakes
+/// it first.
 pub async fn sleep_ms(ms: u64) {
     #[cfg(target_arch = "wasm32")]
     {
         let ms_u32 = ms.min(u32::MAX as u64) as u32;
-        gloo_timers::future::TimeoutFuture::new(ms_u32).await;
+        browser_wait_for_timer_or_lifecycle(ms_u32).await;
     }
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::sleep(Duration::from_millis(ms));
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static BROWSER_LIFECYCLE_WAKE_RX: std::cell::RefCell<Option<async_channel::Receiver<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn browser_wait_for_timer_or_lifecycle(ms: u32) {
+    use futures::{FutureExt as _, pin_mut, select};
+    let wake = BROWSER_LIFECYCLE_WAKE_RX.with(|slot| slot.borrow().clone());
+    let Some(wake) = wake else {
+        gloo_timers::future::TimeoutFuture::new(ms).await;
+        return;
+    };
+    let timer = gloo_timers::future::TimeoutFuture::new(ms).fuse();
+    let lifecycle = wake.recv().fuse();
+    pin_mut!(timer, lifecycle);
+    select! {
+        _ = timer => {},
+        _ = lifecycle => {},
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_browser_lifecycle_autosave(requested: Arc<AtomicBool>) -> Result<(), String> {
+    use wasm_bindgen::JsCast as _;
+    use wasm_bindgen::closure::Closure;
+
+    let window = web_sys::window().ok_or("browser window is unavailable")?;
+    let document = window.document().ok_or("browser document is unavailable")?;
+    let (wake_tx, wake_rx) = async_channel::bounded(1);
+    BROWSER_LIFECYCLE_WAKE_RX.with(|slot| {
+        if slot.borrow().is_some() {
+            return Err("browser lifecycle autosave listener was installed twice".to_owned());
+        }
+        *slot.borrow_mut() = Some(wake_rx);
+        Ok(())
+    })?;
+
+    let visibility_requested = requested.clone();
+    let visibility_wake = wake_tx.clone();
+    let visibility = Closure::<dyn FnMut()>::new(move || {
+        let hidden = web_sys::window()
+            .and_then(|window| window.document())
+            .is_some_and(|document| document.hidden());
+        if hidden {
+            visibility_requested.store(true, Ordering::Release);
+            let _ = visibility_wake.try_send(());
+        }
+    });
+    document
+        .add_event_listener_with_callback("visibilitychange", visibility.as_ref().unchecked_ref())
+        .map_err(|error| format!("installing visibilitychange autosave listener: {error:?}"))?;
+    visibility.forget();
+
+    let pagehide_requested = requested.clone();
+    let pagehide = Closure::<dyn FnMut()>::new(move || {
+        pagehide_requested.store(true, Ordering::Release);
+        let _ = wake_tx.try_send(());
+    });
+    window
+        .add_event_listener_with_callback("pagehide", pagehide.as_ref().unchecked_ref())
+        .map_err(|error| format!("installing pagehide autosave listener: {error:?}"))?;
+    pagehide.forget();
+
+    if document.hidden() {
+        requested.store(true, Ordering::Release);
+    }
+    Ok(())
 }
 
 /// Pace a UI-owned render loop. Vsync presentation is itself the clock when
@@ -227,6 +300,10 @@ enum HostMsg {
     SurfaceReady {
         window: Arc<Window>,
     },
+    /// Native window focus loss is an autosave boundary. Browser page
+    /// lifecycle events signal the same atomic directly because a throttled
+    /// page may not run another winit event drain first.
+    LifecycleAutosave,
 }
 
 #[cfg(target_os = "android")]
@@ -316,6 +393,7 @@ pub struct GameWindow {
     last_emitted_cursor: Option<(i32, i32)>,
     events_rx: async_channel::Receiver<HostMsg>,
     cmd_tx: async_channel::Sender<HostCmd>,
+    lifecycle_autosave_requested: Arc<AtomicBool>,
     /// Ordered polling batches separated by synthetic touch releases. A tap
     /// release is held until the next poll, while later input may join that
     /// release's batch only until the next release barrier.
@@ -381,6 +459,19 @@ impl PresentationRect {
 }
 
 impl GameWindow {
+    /// Peek without consuming: a transient save/load boundary must not lose a
+    /// browser background request before a snapshot can safely be captured.
+    pub(crate) fn lifecycle_autosave_requested(&self) -> bool {
+        self.lifecycle_autosave_requested.load(Ordering::Acquire)
+    }
+
+    /// Acknowledge only after the snapshot was accepted by persistence, or
+    /// after policy deliberately excludes this session from autosaving.
+    pub(crate) fn acknowledge_lifecycle_autosave_request(&self) {
+        self.lifecycle_autosave_requested
+            .store(false, Ordering::Release);
+    }
+
     /// Clear and present the swapchain surface directly, without the
     /// logical renderer. Used by pre-engine wait loops that need to keep the
     /// native/browser window visibly painted before a Renderer exists.
@@ -477,6 +568,10 @@ impl GameWindow {
                         }
                         Err(e) => tracing::error!("recreate surface: {e}"),
                     }
+                }
+                HostMsg::LifecycleAutosave => {
+                    self.lifecycle_autosave_requested
+                        .store(true, Ordering::Release);
                 }
                 HostMsg::DeferredEvent(event) => {
                     // Preserve channel order after the synthetic tap-up
@@ -806,6 +901,7 @@ async fn build_game_window_async(
     logical_h: u32,
     events_rx: async_channel::Receiver<HostMsg>,
     cmd_tx: async_channel::Sender<HostCmd>,
+    lifecycle_autosave_requested: Arc<AtomicBool>,
 ) -> Result<GameWindow, String> {
     let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     // Native: PRIMARY (Vulkan / Metal / DX12).  Wasm: WebGPU + WebGL2
@@ -970,6 +1066,7 @@ async fn build_game_window_async(
         last_emitted_cursor: None,
         events_rx,
         cmd_tx,
+        lifecycle_autosave_requested,
         deferred_event_batches: VecDeque::new(),
     })
 }
@@ -1213,6 +1310,7 @@ impl ApplicationHandler for AppHandler {
         let output = self.touch.cancel_all();
         self.emit_touch_outputs(output);
         self.send_pause_request();
+        let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
         let _ = self
             .events_tx
             .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(false)));
@@ -1351,6 +1449,7 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::Focused(focused) => {
                 if !focused {
+                    let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
                     let output = self.touch.cancel_all();
                     self.emit_touch_outputs(output);
                 }
@@ -1502,6 +1601,9 @@ where
 
     let (events_tx, events_rx) = async_channel::unbounded::<HostMsg>();
     let (cmd_tx, cmd_rx) = async_channel::unbounded::<HostCmd>();
+    let lifecycle_autosave_requested = Arc::new(AtomicBool::new(false));
+    #[cfg(target_arch = "wasm32")]
+    install_browser_lifecycle_autosave(lifecycle_autosave_requested.clone())?;
     #[cfg(target_os = "android")]
     {
         *android_back_tx().lock().expect("android back tx poisoned") = Some(events_tx.clone());
@@ -1524,6 +1626,7 @@ where
     let cmd_tx_for_game = cmd_tx.clone();
     let cmd_tx_for_exit = cmd_tx.clone();
     let (exit_code_tx, _exit_code_rx) = std::sync::mpsc::channel::<i32>();
+    let lifecycle_for_game = lifecycle_autosave_requested.clone();
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut handler = AppHandler {
@@ -1566,6 +1669,7 @@ where
                 logical_h,
                 events_rx_for_game.clone(),
                 cmd_tx_for_game.clone(),
+                lifecycle_for_game.clone(),
             )
             .await
             {
@@ -1604,6 +1708,7 @@ where
                 logical_h,
                 events_rx_for_game,
                 cmd_tx_for_game,
+                lifecycle_for_game,
             )
             .await
             {

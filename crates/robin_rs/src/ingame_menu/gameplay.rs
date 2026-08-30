@@ -44,6 +44,7 @@ const OPTION_LABELS: &[&str] = &[
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
     "Touch Camera Gestures",
+    "Rotating Autosaves",
     "Apple Combat Interrupt",
     "Reliable Wasp Acquisition",
     "Stone Ground Distraction",
@@ -78,6 +79,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show achievement badges in campaign presentations.",
     "Include achievement details in mission debriefs.",
     "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
+    "Keep rotating campaign and mission autosaves according to the autosave policy.",
     "Let direct apple hits interrupt active swordfights.",
     "Increase initial wasp acquisition from 50 to 75 world units.",
     "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
@@ -312,42 +314,43 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         13 => config.show_achievement_badges = !config.show_achievement_badges,
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
         15 => config.touch_camera_gestures = !config.touch_camera_gestures,
-        16 => {
+        16 => config.autosave_enabled = !config.autosave_enabled,
+        17 => {
             config.item_gameplay.apple_combat_interrupt =
                 !config.item_gameplay.apple_combat_interrupt
         }
-        17 => {
+        18 => {
             config.item_gameplay.wasp_reliable_acquisition =
                 !config.item_gameplay.wasp_reliable_acquisition
         }
-        18 => {
+        19 => {
             config.item_gameplay.stone_ground_distraction =
                 !config.item_gameplay.stone_ground_distraction
         }
-        19 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
-        20 => {
+        20 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        21 => {
             config.item_gameplay.net_selective_immunity =
                 !config.item_gameplay.net_selective_immunity
         }
-        21 => {
+        22 => {
             config.item_gameplay.ale_reliable_distraction =
                 !config.item_gameplay.ale_reliable_distraction
         }
-        22 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
-        23 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
-        24 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
-        25 => {
+        23 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        24 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        25 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
+        26 => {
             config.item_previews.stone_distraction_area =
                 !config.item_previews.stone_distraction_area
         }
-        26 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
-        27 => {
+        27 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        28 => {
             config.item_previews.net_crumple_prediction =
                 !config.item_previews.net_crumple_prediction
         }
-        28 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
-        29 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
-        30 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        29 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        30 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        31 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -373,21 +376,22 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         13 => config.show_achievement_badges,
         14 => config.show_achievement_debrief,
         15 => config.touch_camera_gestures,
-        16 => config.item_gameplay.apple_combat_interrupt,
-        17 => config.item_gameplay.wasp_reliable_acquisition,
-        18 => config.item_gameplay.stone_ground_distraction,
-        19 => config.item_gameplay.stone_longer_range,
-        20 => config.item_gameplay.net_selective_immunity,
-        21 => config.item_gameplay.ale_reliable_distraction,
-        22 => config.noise_distraction_feedback,
-        23 => config.item_previews.apple_effect,
-        24 => config.item_previews.stone_direct_effect,
-        25 => config.item_previews.stone_distraction_area,
-        26 => config.item_previews.net_capture_area,
-        27 => config.item_previews.net_crumple_prediction,
-        28 => config.item_previews.ale_effect,
-        29 => config.item_previews.purse_effect,
-        30 => config.item_previews.wasp_area,
+        16 => config.autosave_enabled,
+        17 => config.item_gameplay.apple_combat_interrupt,
+        18 => config.item_gameplay.wasp_reliable_acquisition,
+        19 => config.item_gameplay.stone_ground_distraction,
+        20 => config.item_gameplay.stone_longer_range,
+        21 => config.item_gameplay.net_selective_immunity,
+        22 => config.item_gameplay.ale_reliable_distraction,
+        23 => config.noise_distraction_feedback,
+        24 => config.item_previews.apple_effect,
+        25 => config.item_previews.stone_direct_effect,
+        26 => config.item_previews.stone_distraction_area,
+        27 => config.item_previews.net_capture_area,
+        28 => config.item_previews.net_crumple_prediction,
+        29 => config.item_previews.ale_effect,
+        30 => config.item_previews.purse_effect,
+        31 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -417,6 +421,7 @@ mod tests {
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
                 "Touch Camera Gestures",
+                "Rotating Autosaves",
                 "Apple Combat Interrupt",
                 "Reliable Wasp Acquisition",
                 "Stone Ground Distraction",
@@ -447,7 +452,7 @@ mod tests {
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
         assert!(is_option_selected(&config, 16));
-        assert!(is_option_selected(&config, 30));
+        assert!(is_option_selected(&config, 31));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -506,12 +511,43 @@ mod tests {
         );
         assert!(!is_option_selected(&config, 15));
 
-        apply_option_toggle(&mut config, 19);
+        let autosave_enabled = config.autosave_enabled;
+        apply_option_toggle(&mut config, 20);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(config.item_gameplay.net_selective_immunity);
-        apply_option_toggle(&mut config, 20);
+        apply_option_toggle(&mut config, 21);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(!config.item_gameplay.net_selective_immunity);
         assert!(config.item_gameplay.ale_reliable_distraction);
+        assert_eq!(config.autosave_enabled, autosave_enabled);
+    }
+
+    #[test]
+    fn autosave_has_an_independent_gameplay_toggle() {
+        let mut config = GameplayConfig::default();
+        let before = config;
+        assert_eq!(OPTION_LABELS[16], "Rotating Autosaves");
+        assert!(is_option_selected(&config, 16));
+        apply_option_toggle(&mut config, 16);
+        assert!(!is_option_selected(&config, 16));
+        assert_eq!(
+            config.fix_hard_reaction_times,
+            before.fix_hard_reaction_times
+        );
+        assert_eq!(config.control_tactical_units, before.control_tactical_units);
+        assert_eq!(config.enable_unbinding, before.enable_unbinding);
+        assert_eq!(
+            config.show_production_forecast,
+            before.show_production_forecast
+        );
+        assert_eq!(config.reusable_cloaks, before.reusable_cloaks);
+        assert_eq!(config.campaign_presentation, before.campaign_presentation);
+        assert_eq!(config.touch_camera_gestures, before.touch_camera_gestures);
+        assert_eq!(config.item_gameplay, before.item_gameplay);
+        assert_eq!(config.item_previews, before.item_previews);
+        assert_eq!(
+            config.noise_distraction_feedback,
+            before.noise_distraction_feedback
+        );
     }
 }
