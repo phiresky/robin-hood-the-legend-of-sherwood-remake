@@ -50,6 +50,19 @@ A list of which additional features we have added, which ones we might still wan
   replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
   closed instead of being decoded as plausible achievement evidence.
 
+- **Rotating autosaves.** Single-player missions create interruption-safe
+  recovery points at mission boundaries, when the native window or browser page
+  is backgrounded, and every five minutes of active gameplay. One ordered
+  writer commits an immutable full save payload before publishing a separate
+  manifest, retains exactly the newest three generations, drains accepted work
+  during clean shutdown, and removes unpublished crash leftovers on recovery.
+  Browser records use the same portable JSON value model inside compressed,
+  SHA-256-checked storage envelopes; lifecycle events wake the game before
+  hidden-page timer throttling and urgent snapshots publish synchronously.
+  Autosaves appear only in Load lists and cannot be manually overwritten or
+  deleted. The independent Gameplay option is enabled by default. Multiplayer,
+  replay playback, and headless automation never autosave.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -500,7 +513,6 @@ A list of which additional features we have added, which ones we might still wan
 - More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
-- Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
 - throw something skill that makes a noise somewhere else so guards run there
 - Cloaking (implemented, optional): selected heroes whose sprite profile has

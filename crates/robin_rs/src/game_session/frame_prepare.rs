@@ -147,6 +147,8 @@ fn apply_post_save_ui_state(
         let text = match kind {
             SaveBannerKind::Saved => "Game saved.",
             SaveBannerKind::Loaded => "Game loaded.",
+            SaveBannerKind::Autosaved => "Game autosaved.",
+            SaveBannerKind::AutosaveFailed => "Autosave failed - check the log.",
         };
         // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
         // MT_MSG_GAME_LOADED once the localized text ownership is explicit.
@@ -802,6 +804,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let services = &mut *self.services;
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
+        let args = services.args;
+        let window = &mut *services.window;
         let PreparationPhaseState {
             mut frame,
             mp_clock_pause,
@@ -838,11 +842,39 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // The Game state machine queues save/load intents on the
         // callbacks; `perform_pending_save_load` then flushes them to
         // disk with live engine access.
+        callbacks.poll_autosaves();
         let exit_code = game.process_operation(manager.engine.campaign(), profiles, callbacks);
-        let pending_thumbnail = if callbacks
+        let lifecycle_autosave = window.lifecycle_autosave_requested();
+        let mission_id = current_mission_id(manager.engine.campaign(), profiles);
+        let autosave_allowed = crate::autosave::session_allows_autosave(
+            callbacks.autosave_enabled(),
+            host.transport.net.is_some(),
+            runtime.replay_player.is_some(),
+            args.headless,
+        );
+        let snapshot_available = callbacks
+            .pending
+            .as_ref()
+            .is_none_or(SaveLoadRequest::writes_save_payload);
+        if lifecycle_autosave && !autosave_allowed {
+            // This session is excluded by policy, rather than temporarily
+            // unable to capture. Do not retain a stale browser lifecycle edge
+            // that could fire after returning to an eligible session.
+            window.acknowledge_lifecycle_autosave_request();
+        }
+        let autosave_reason = callbacks.plan_autosave(
+            autosave_allowed,
+            snapshot_available,
+            mission_id,
+            u64::from(runtime.frame_number()),
+            lifecycle_autosave,
+            exit_code.is_some(),
+        );
+        let pending_thumbnail = if (callbacks
             .pending
             .as_ref()
             .is_some_and(|request| request.writes_save_payload())
+            || autosave_reason.is_some())
             && !host.skip_render
             && !modal_rendered_this_frame
         {
@@ -889,6 +921,20 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         } else {
             None
         };
+        if let Some(reason) = autosave_reason {
+            let accepted = callbacks.enqueue_autosave(
+                host,
+                game,
+                &manager.engine,
+                mission_id,
+                profiles,
+                pending_thumbnail.clone(),
+                reason,
+            );
+            if accepted && lifecycle_autosave {
+                window.acknowledge_lifecycle_autosave_request();
+            }
+        }
         if let Some(exit_code) = exit_code {
             // `RHGame::GameLoop` applies transition sound/input changes
             // before returning its terminal code. Execute them here so
