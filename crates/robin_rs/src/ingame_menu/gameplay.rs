@@ -26,6 +26,9 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
+const ID_PREVIOUS_PAGE: u32 = 302;
+const ID_NEXT_PAGE: u32 = 303;
+const STANDALONE_OPTIONS_PER_PAGE: usize = 12;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
 pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
@@ -130,6 +133,99 @@ pub(crate) fn option_tooltip(index: usize) -> &'static str {
         .unwrap_or_else(|| panic!("gameplay option tooltip index {index} is out of range"))
 }
 
+fn standalone_page_count() -> usize {
+    OPTION_LABELS
+        .len()
+        .div_ceil(STANDALONE_OPTIONS_PER_PAGE)
+        .max(1)
+}
+
+fn standalone_visible_option_range(page: usize) -> std::ops::Range<usize> {
+    let page = page.min(standalone_page_count() - 1);
+    let start = page * STANDALONE_OPTIONS_PER_PAGE;
+    start..(start + STANDALONE_OPTIONS_PER_PAGE).min(OPTION_LABELS.len())
+}
+
+fn build_standalone_frame(
+    resources: &IngameMenuResources,
+    page: usize,
+    sherwood_trading_editable: bool,
+) -> FrameWnd {
+    let (btn_w, btn_h) = resources.button_dimensions();
+    let ok_label = resources.menu_text.get(MT_BTN_OK);
+    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
+    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
+
+    let visible = standalone_visible_option_range(page);
+    let rows_per_column = visible.len().div_ceil(2);
+    let (field_w, field_h) = resources.input_field_dimensions();
+    let mut frame = FrameWnd::default();
+    frame.enabled = true;
+    frame.input_enabled = true;
+
+    for (visible_index, option_index) in visible.enumerate() {
+        let x = if visible_index < rows_per_column {
+            30
+        } else {
+            320
+        };
+        let y = 100
+            + i32::try_from(visible_index % rows_per_column).expect("gameplay option row fits i32")
+                * (field_h + 2);
+        frame.add_widget_absolute(widget_bridge::make_button_enabled(
+            ID_OPT_BASE + option_index as u32,
+            OPTION_LABELS[option_index],
+            option_index != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
+            x,
+            y,
+            field_w,
+            field_h,
+        ));
+        frame
+            .widget_mut(ID_OPT_BASE + option_index as u32)
+            .expect("new gameplay option widget")
+            .base_mut()
+            .set_tooltip_text(option_tooltip(option_index));
+    }
+
+    frame.add_widget_absolute(widget_bridge::make_button_enabled(
+        ID_PREVIOUS_PAGE,
+        "Previous Page",
+        page > 0,
+        30,
+        388,
+        btn_w,
+        btn_h,
+    ));
+    frame.add_widget_absolute(widget_bridge::make_button_enabled(
+        ID_NEXT_PAGE,
+        "Next Page",
+        page + 1 < standalone_page_count(),
+        30,
+        417,
+        btn_w,
+        btn_h,
+    ));
+    frame.add_widget_absolute(widget_bridge::make_button(
+        ID_OK,
+        &bottom[0].label,
+        bottom[0].x,
+        bottom[0].y,
+        bottom[0].w,
+        bottom[0].h,
+    ));
+    frame.add_widget_absolute(widget_bridge::make_button(
+        ID_CANCEL,
+        &bottom[1].label,
+        bottom[1].x,
+        bottom[1].y,
+        bottom[1].w,
+        bottom[1].h,
+    ));
+    frame
+}
+
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
 pub async fn show_gameplay(
@@ -164,6 +260,7 @@ pub async fn show_gameplay(
 pub struct GameplayScreenState {
     working: GameplayConfig,
     original: GameplayConfig,
+    page: usize,
     frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
@@ -185,67 +282,8 @@ impl GameplayScreenState {
 
         let working = *config;
 
-        // ── OK / Cancel (bottom-right) ─────────────────────────────────
-        let (btn_w, btn_h) = resources.button_dimensions();
-        let ok_label = resources.menu_text.get(MT_BTN_OK);
-        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-        let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-        let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
-
-        // ── Option toggle buttons stacked from (30,100) ───────────────
-        let (field_w, field_h) = resources.input_field_dimensions();
-        let rows_per_column = OPTION_LABELS.len().div_ceil(2);
-        let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
-            .iter()
-            .enumerate()
-            .map(|(i, label)| super::layout::MenuButton {
-                label: label.to_string(),
-                enabled: true,
-                x: if i < rows_per_column { 30 } else { 320 },
-                y: 100
-                    + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
-                        * (field_h + 2),
-                w: field_w,
-                h: field_h,
-            })
-            .collect();
-
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
-
-        for (i, mb) in opt_layout.iter().enumerate() {
-            frame.add_widget_absolute(widget_bridge::make_button_enabled(
-                ID_OPT_BASE + i as u32,
-                &mb.label,
-                i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
-                mb.x,
-                mb.y,
-                mb.w,
-                mb.h,
-            ));
-            frame
-                .widget_mut(ID_OPT_BASE + i as u32)
-                .expect("new gameplay option widget")
-                .base_mut()
-                .set_tooltip_text(option_tooltip(i));
-        }
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_OK,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        let page = 0;
+        let frame = build_standalone_frame(resources, page, sherwood_trading_editable);
 
         let mut input_state = ModalInputState::new();
         input_state.seed_mouse_from_window(event_pump, transform);
@@ -253,12 +291,17 @@ impl GameplayScreenState {
         Self {
             working,
             original: *config,
+            page,
             frame,
             input_state,
             tooltip: TooltipState::new(),
             transform,
             sherwood_trading_editable,
         }
+    }
+
+    fn rebuild_page(&mut self, resources: &IngameMenuResources) {
+        self.frame = build_standalone_frame(resources, self.page, self.sherwood_trading_editable);
     }
 
     pub fn tick(
@@ -306,6 +349,14 @@ impl GameplayScreenState {
                     outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
                 ID_CANCEL => outcome = Some(ModalScreenOutcome::Cancelled),
+                ID_PREVIOUS_PAGE if self.page > 0 => {
+                    self.page -= 1;
+                    self.rebuild_page(resources);
+                }
+                ID_NEXT_PAGE if self.page + 1 < standalone_page_count() => {
+                    self.page += 1;
+                    self.rebuild_page(resources);
+                }
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
                     let index = (id - ID_OPT_BASE) as usize;
                     if index != SHERWOOD_TRADING_OPTION_INDEX || self.sherwood_trading_editable {
@@ -349,7 +400,9 @@ impl GameplayScreenState {
                 );
             }
         }
-        if let Some(font) = resources.label_font_any() {
+        if self.frame.widget(ID_OPT_BASE + 5).is_some()
+            && let Some(font) = resources.label_font_any()
+        {
             render_text_virt_font(
                 renderer,
                 font,
@@ -358,6 +411,16 @@ impl GameplayScreenState {
                 30,
                 335,
             );
+        }
+
+        for id in [ID_PREVIOUS_PAGE, ID_NEXT_PAGE] {
+            if let Some(w) = self.frame.widget(id) {
+                widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+            }
+        }
+        if let Some(font) = resources.label_font_any() {
+            let page_label = format!("Page {} / {}", self.page + 1, standalone_page_count());
+            render_text_virt_font(renderer, font, self.transform, &page_label, 30, 362);
         }
 
         if let Some(w) = self.frame.widget(ID_OK) {
@@ -524,6 +587,20 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_pages_cover_every_gameplay_option_once() {
+        assert_eq!(standalone_page_count(), 4);
+        assert_eq!(standalone_visible_option_range(0), 0..12);
+        assert_eq!(standalone_visible_option_range(1), 12..24);
+        assert_eq!(standalone_visible_option_range(2), 24..36);
+        assert_eq!(standalone_visible_option_range(3), 36..40);
+
+        let covered: Vec<_> = (0..standalone_page_count())
+            .flat_map(standalone_visible_option_range)
+            .collect();
+        assert_eq!(covered, (0..OPTION_LABELS.len()).collect::<Vec<_>>());
+    }
 
     #[test]
     fn gameplay_rows_preserve_independent_setting_mappings() {

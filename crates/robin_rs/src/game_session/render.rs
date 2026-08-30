@@ -1356,8 +1356,6 @@ pub(super) fn render_frame(
         trail.render(&mut host.mouse_way, renderer);
     }
 
-    crate::combat_gesture_overlay::render(host, engine, renderer, hud_fonts);
-
     // ── GPU phase: per-PC macro dotted chains (world space) ──
     // Walks each PC's recorded macro slots and draws a dotted
     // polyline from the PC through its titbit waypoints.  Advances
@@ -1370,6 +1368,8 @@ pub(super) fn render_frame(
     // gameplay image. Everything after this boundary is screen-space UI and
     // is composited sharply after scaling/presentation effects.
     renderer.begin_ui_layer();
+
+    crate::combat_gesture_overlay::render(host, engine, renderer, hud_fonts);
 
     // ── GPU phase: UI panel, minimap ──
     let panel_mouse = threaded_input.position();

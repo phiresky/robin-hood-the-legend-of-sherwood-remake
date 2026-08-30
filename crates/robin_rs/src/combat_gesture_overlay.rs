@@ -18,12 +18,7 @@ use robin_engine::player_command::CompositeSwordTechnique;
 pub fn render(host: &mut Host, engine: &Engine, renderer: &mut Renderer, fonts: Option<&HudFonts>) {
     let swordfighting =
         crate::game_input::is_selected_unit_swordfighting(engine, host.transport.local_seat);
-    if !swordfighting {
-        host.gesture_coach_feedback = None;
-        return;
-    }
-
-    if host.gameplay_config.show_combat_gesture_guide {
+    if swordfighting && host.gameplay_config.show_combat_gesture_guide {
         let facing = first_selected_swordfighter_direction(engine, host)
             .unwrap_or(ScreenVec::new(0.0, -1.0));
         render_guide(
@@ -43,9 +38,9 @@ pub fn render(host: &mut Host, engine: &Engine, renderer: &mut Renderer, fonts: 
 
 fn first_selected_swordfighter_direction(engine: &Engine, host: &Host) -> Option<ScreenVec> {
     engine
-        .seat_selection(host.transport.local_seat)
+        .hero_selection(host.transport.local_seat)
         .iter()
-        .chain(engine.allied_selection(host.transport.local_seat))
+        .chain(engine.tactical_selection(host.transport.local_seat))
         .filter_map(|id| engine.get_entity(*id))
         .find(|entity| {
             entity
@@ -126,14 +121,22 @@ fn render_coach(host: &mut Host, renderer: &mut Renderer, fonts: Option<&HudFont
     }
 
     let (lo, hi) = feedback.bounds;
-    let width = ((hi.x - lo.x).abs().round() as i32).clamp(44, 180);
+    let quality = feedback.quality.permille();
+    let label = format!("{}  {}%", pattern_label(feedback.pattern), quality / 10);
+    let label_width = fonts
+        .map(|fonts| fonts.tooltip_font.text_width(&label) + 8)
+        .unwrap_or(44);
+    let max_width = (renderer.screen_width() as i32 - 4).max(1);
+    let width = ((hi.x - lo.x).abs().round() as i32)
+        .max(label_width)
+        .max(44)
+        .min(max_width);
     let height = ((hi.y - lo.y).abs().round() as i32).clamp(44, 160);
     let x = (lo.x.round() as i32).clamp(2, (renderer.screen_width() as i32 - width - 2).max(2));
     let y =
         (lo.y.round() as i32 - 18).clamp(2, (renderer.screen_height() as i32 - height - 20).max(2));
-    let quality = feedback.quality.permille();
     let color = match quality {
-        800..=1000 => 0x07E0,
+        750..=1000 => 0x07E0,
         500..=799 => 0xFFE0,
         _ => 0xF800,
     };
@@ -148,13 +151,7 @@ fn render_coach(host: &mut Host, renderer: &mut Renderer, fonts: Option<&HudFont
         color,
         feedback.template_rotation,
     );
-    draw_label(
-        renderer,
-        fonts,
-        &format!("{}  {}%", pattern_label(feedback.pattern), quality / 10),
-        x + 4,
-        y + 2,
-    );
+    draw_label(renderer, fonts, &label, x + 4, y + 2);
 }
 
 fn draw_template(
