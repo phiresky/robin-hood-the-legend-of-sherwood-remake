@@ -573,6 +573,8 @@ mod tests {
         ));
         assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
         assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
+        assert!(is_option_selected(&config, DIPLOMACY_OPTION_INDEX));
+        assert!(is_option_selected(&config, NPC_FACTION_WARS_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -676,5 +678,7 @@ mod tests {
             config.noise_distraction_feedback,
             before.noise_distraction_feedback
         );
+        assert_eq!(config.diplomacy, before.diplomacy);
+        assert_eq!(config.npc_faction_wars, before.npc_faction_wars);
     }
 }
