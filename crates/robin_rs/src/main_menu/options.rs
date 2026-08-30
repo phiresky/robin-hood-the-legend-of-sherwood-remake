@@ -111,7 +111,7 @@ pub(crate) async fn show_main_menu_options(
         event_pump.set_logical_resolution_policy(&graphic);
         renderer.sync_window_size(event_pump);
     }
-    renderer.set_shader_preset(graphic.shader_preset.clone());
+    renderer.apply_upscale_config(&graphic);
     event_pump.set_native_refresh_presentation(graphic.native_refresh_presentation);
     renderer.configure_native_refresh_presentation(
         graphic.native_refresh_presentation,

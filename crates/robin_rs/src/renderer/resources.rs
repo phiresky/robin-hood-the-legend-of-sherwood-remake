@@ -7,9 +7,10 @@ use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
 use crate::ui::AlphaMask;
 use crate::window::GpuContext;
 
+use super::atlas::SpriteAtlas;
 use super::{
-    BackgroundTexture, CachedSprite, FontAtlas, ManagedSurface, MaskAlpha, OUTLINE_PAD,
-    SpriteCacheKey, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg, outline_cache_key,
+    BackgroundTexture, FontAtlas, ManagedSurface, MaskAlpha, OUTLINE_PAD, SpriteCacheKey,
+    SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg, outline_cache_key,
     rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba, sprite_rgba_for_upload,
     upload_counter, upload_rgba_texture,
 };
@@ -18,6 +19,9 @@ pub(super) struct GpuResources {
     pub(super) managed_surfaces: HashMap<u32, ManagedSurface>,
     next_id: u32,
     pub(super) bit_depth: u16,
+    /// Shared textures every decoded sprite frame is packed into.
+    pub(super) sprite_atlas: SpriteAtlas,
+    /// `(bank_id, variant, shadow) → sub-rect of a `sprite_atlas` layer.
     pub(super) sprite_cache: SpriteTextureCache,
     pub(super) mask_alpha_cache: HashMap<u32, MaskAlpha>,
     pub(super) background_texture: Option<BackgroundTexture>,
@@ -48,8 +52,19 @@ impl GpuResources {
             shadow_color: shadow_color as u32,
             shadow_alpha,
         };
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
+        if let Some(entry) = self.sprite_cache.entries.get(&key) {
+            return Some(entry.dimensions());
+        }
+        // A still-streaming sprite must not enter the permanent cache as a
+        // blank texture — skip the draw; it pops in once its grid lands.
+        if frame_holder.sprite_pixels_pending(bank_id) {
+            let skips = robin_assets::late_sprites::note_skipped_draw();
+            tracing::debug!(
+                bank_id,
+                skips,
+                "skipped draw: sprite pixels still streaming"
+            );
+            return None;
         }
         let w = frame_holder.sprite_width(bank_id);
         let h = frame_holder.sprite_height(bank_id);
@@ -64,31 +79,35 @@ impl GpuResources {
             shadow_alpha,
             self.bit_depth,
         );
-        let (texture, view) = upload_rgba_texture(
-            gpu,
-            &rgba,
-            w as u32,
-            h as u32,
-            &format!("sprite {bank_id:?}/{variant:?}"),
-        );
-        let bind_group = make_tex_bg(
-            &gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite bg",
-        );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: w,
-                height: h,
-            },
-        );
+        let residency = self.place_sprite(gpu, w, h, &rgba);
+        self.sprite_cache.entries.insert(key, residency);
         Some((w, h))
+    }
+
+    /// Pack one decoded RGBA frame into the shared atlas.
+    ///
+    /// `rgba` is uploaded verbatim — no colour conversion of any kind —
+    /// which is what kept this pixel-identical to the one-texture-per-
+    /// sprite path it replaced.
+    fn place_sprite(
+        &mut self,
+        gpu: &GpuContext,
+        width: u16,
+        height: u16,
+        rgba: &[u8],
+    ) -> SpriteResidency {
+        // Counted where the per-sprite `upload_rgba_texture` used to be,
+        // so the `uploads/f` FPS line stays comparable across the
+        // migration.
+        upload_counter::inc("sprite atlas insert");
+        SpriteResidency(self.sprite_atlas.insert(
+            gpu,
+            &self.bgl_tex,
+            &self.sampler,
+            width,
+            height,
+            rgba,
+        ))
     }
 
     /// Build the GPU cache for the edge-map outline used by the
@@ -105,8 +124,18 @@ impl GpuResources {
         _shadow_level: u16,
     ) -> Option<(u16, u16)> {
         let key = outline_cache_key(bank_id, variant, shadow_color);
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
+        if let Some(entry) = self.sprite_cache.entries.get(&key) {
+            return Some(entry.dimensions());
+        }
+        // See `ensure_sprite_cached`: never cache a still-streaming sprite.
+        if frame_holder.sprite_pixels_pending(bank_id) {
+            let skips = robin_assets::late_sprites::note_skipped_draw();
+            tracing::debug!(
+                bank_id,
+                skips,
+                "skipped draw: sprite pixels still streaming"
+            );
+            return None;
         }
 
         let w = frame_holder.sprite_width(bank_id);
@@ -133,30 +162,8 @@ impl GpuResources {
             TRANSPARENT_COLOR_KEY_16,
             shadow_color,
         );
-        let (texture, view) = upload_rgba_texture(
-            gpu,
-            &rgba,
-            outline_w as u32,
-            h as u32,
-            &format!("sprite outline {bank_id:?}/{variant:?}"),
-        );
-        let bind_group = make_tex_bg(
-            &gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite outline bg",
-        );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: outline_w as u16,
-                height: h,
-            },
-        );
+        let residency = self.place_sprite(gpu, outline_w as u16, h, &rgba);
+        self.sprite_cache.entries.insert(key, residency);
         Some((outline_w as u16, h))
     }
 
@@ -326,6 +333,7 @@ impl GpuResources {
             managed_surfaces: HashMap::new(),
             next_id: 2,
             bit_depth: 16,
+            sprite_atlas: SpriteAtlas::default(),
             sprite_cache: SpriteTextureCache::default(),
             mask_alpha_cache: HashMap::new(),
             background_texture: None,

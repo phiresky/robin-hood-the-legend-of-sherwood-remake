@@ -39,7 +39,38 @@ pub(super) fn capture_frame_rgba(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("capture frame"),
         });
+    let queued_draws = frame.queued.len();
     frame.encode_pass1_to_rt(&mut encoder, pipelines, resources);
+    // `present` reports these per second, but a screenshot/offscreen
+    // capture never goes through `present` — and for the full-map
+    // exporter this pass *is* the whole scene, so it is the one place
+    // the real sprite draw/bind counts can be observed.
+    let atlas = resources.sprite_atlas.stats();
+    // Distinct bank frames vs. cache entries: the gap is the cost of
+    // keying the cache on (shadow_color, shadow_alpha) as well as the
+    // frame, i.e. the same art baked twice at two shadow levels. It is
+    // the only duplication a shader-side shadow resolve could remove,
+    // so it is worth seeing next to the occupancy.
+    let entries = resources.sprite_cache.entries.len();
+    let distinct_frames = resources
+        .sprite_cache
+        .entries
+        .keys()
+        .map(|k| (k.bank_id, k.variant))
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    tracing::info!(
+        target: "fps",
+        "capture {w}x{h}  quads={queued_draws}  drawcalls={}  binds={}  \
+         atlas={}L/{:.1}MiB/{:.0}%occ/{:.0}%pack/{}spr  cache={entries}e/{distinct_frames}f",
+        super::bind_counter::take_draw_calls(),
+        super::bind_counter::take_count(),
+        atlas.layers,
+        atlas.bytes() as f32 / (1024.0 * 1024.0),
+        atlas.occupancy() * 100.0,
+        atlas.packing_efficiency() * 100.0,
+        atlas.sprites,
+    );
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &frame.render_target_texture,

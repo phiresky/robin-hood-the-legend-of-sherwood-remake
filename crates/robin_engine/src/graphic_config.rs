@@ -41,6 +41,17 @@ pub struct GraphicConfig {
     /// RetroArch `.slangp` preset when `scale_mode == RetroArch`.
     #[serde(default = "default_shader_preset")]
     pub shader_preset: String,
+    /// Post-scaling presentation effect. Kept separate from the upscaler so
+    /// CRT simulation can be combined with any scaling algorithm or disabled
+    /// without changing the selected scaler.
+    #[serde(default)]
+    pub texture_effect: TextureEffect,
+    /// User-tunable controls shared by the bundled upscalers.
+    #[serde(default)]
+    pub upscale_parameters: UpscaleParameters,
+    /// User-tunable controls for the selected presentation effect.
+    #[serde(default)]
+    pub texture_effect_parameters: TextureEffectParameters,
     /// Apply the generated fog/night sprite variant to every Day-based world
     /// sprite that the original game leaves untinted. Animation assets that
     /// already contain ambiance-specific pixels are left untouched.
@@ -118,6 +129,22 @@ pub enum TextureScaleMode {
     Scale3x,
     /// GPU-shader xBR level 1 (Hyllian). Same RADV crash.
     XbrLv1,
+    /// Clean-room, free-scale ScaleNX family with a separate artifact-removal
+    /// pass. The integer kernel is selected from the presentation ratio.
+    ScaleNx,
+    /// Clean-room HQx-style edge-aware scaler. This uses the published HQx
+    /// colour-difference model, without incorporating LGPL/GPL source code.
+    Hqx,
+    /// Clean-room free-scale xBRZ-style diagonal edge reconstruction.
+    Xbrz,
+    /// Three-pass super-xBR-style edge reconstruction and de-ringing.
+    SuperXbr,
+    /// Anime4K v4 mode A: restore degraded lines, then upscale.
+    Anime4kA,
+    /// Anime4K v4 mode B: soft restore with stronger ringing suppression.
+    Anime4kB,
+    /// Anime4K v4 mode C: denoising upscale for already-clean artwork.
+    Anime4kC,
     /// User-selected upstream libretro `.slangp` preset.
     RetroArch,
 }
@@ -135,6 +162,13 @@ impl TextureScaleMode {
                 | Self::Scale2x
                 | Self::Scale3x
                 | Self::XbrLv1
+                | Self::ScaleNx
+                | Self::Hqx
+                | Self::Xbrz
+                | Self::SuperXbr
+                | Self::Anime4kA
+                | Self::Anime4kB
+                | Self::Anime4kC
                 | Self::RetroArch
         )
     }
@@ -152,8 +186,29 @@ impl TextureScaleMode {
             Self::Scale2x => "Scale2x",
             Self::Scale3x => "Scale3x",
             Self::XbrLv1 => "xBR lv1",
+            Self::ScaleNx => "ScaleNX",
+            Self::Hqx => "HQx-style",
+            Self::Xbrz => "xBRZ-style",
+            Self::SuperXbr => "Super-xBR-style",
+            Self::Anime4kA => "Anime line A (v4 layout)",
+            Self::Anime4kB => "Anime line B (v4 layout)",
+            Self::Anime4kC => "Anime line C (v4 layout)",
             Self::RetroArch => "RetroArch Shader",
         }
+    }
+
+    /// Bundled modes that use the reusable multi-pass presentation runner.
+    pub fn uses_builtin_chain(self) -> bool {
+        matches!(
+            self,
+            Self::ScaleNx
+                | Self::Hqx
+                | Self::Xbrz
+                | Self::SuperXbr
+                | Self::Anime4kA
+                | Self::Anime4kB
+                | Self::Anime4kC
+        )
     }
 
     /// All modes in UI order (sharp → soft → shader-based).  Scale2x
@@ -169,8 +224,117 @@ impl TextureScaleMode {
         Self::Bicubic,
         Self::Lanczos,
         Self::Cut3,
+        Self::ScaleNx,
+        Self::Hqx,
+        Self::Xbrz,
+        Self::SuperXbr,
+        Self::Anime4kA,
+        Self::Anime4kB,
+        Self::Anime4kC,
         Self::RetroArch,
     ];
+}
+
+/// Presentation-only texture effect applied after scaling and before the
+/// screen-space UI is composited.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextureEffect {
+    #[default]
+    None,
+    /// Lightweight aperture-grille CRT profile, inspired by the controls of
+    /// CRT Guest but implemented independently in WGSL.
+    CrtGuest,
+    /// Higher-cost slot-mask, bloom, curvature and beam profile, inspired by
+    /// the feature set of CRT Royale but implemented independently in WGSL.
+    CrtRoyale,
+}
+
+impl TextureEffect {
+    pub const ALL: &'static [Self] = &[Self::None, Self::CrtGuest, Self::CrtRoyale];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::CrtGuest => "CRT Guest-class",
+            Self::CrtRoyale => "CRT Royale-class",
+        }
+    }
+}
+
+/// Quantized controls avoid platform-specific float serialization while
+/// retaining 101 useful UI positions. Values are percentages in `0..=100`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct UpscaleParameters {
+    pub strength: u8,
+    pub edge_threshold: u8,
+    pub artifact_removal: u8,
+}
+
+impl Default for UpscaleParameters {
+    fn default() -> Self {
+        Self {
+            strength: 70,
+            edge_threshold: 35,
+            artifact_removal: 50,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct TextureEffectParameters {
+    pub scanlines: u8,
+    pub phosphor_mask: u8,
+    pub bloom: u8,
+    pub curvature: u8,
+    pub temporal_flicker: u8,
+}
+
+impl Default for TextureEffectParameters {
+    fn default() -> Self {
+        Self {
+            scanlines: 55,
+            phosphor_mask: 35,
+            bloom: 20,
+            curvature: 8,
+            temporal_flicker: 0,
+        }
+    }
 }
 
 fn default_scale_mode() -> TextureScaleMode {
@@ -202,6 +366,9 @@ impl Default for GraphicConfig {
             hardware_cursor: true,
             scale_mode: TextureScaleMode::default(),
             shader_preset: default_shader_preset(),
+            texture_effect: TextureEffect::default(),
+            upscale_parameters: UpscaleParameters::default(),
+            texture_effect_parameters: TextureEffectParameters::default(),
             apply_fog_to_all_sprites: true,
             adaptive_widescreen: true,
             native_refresh_presentation: true,
@@ -296,6 +463,13 @@ mod tests {
         assert!(cfg.apply_fog_to_all_sprites);
         assert!(cfg.adaptive_widescreen);
         assert!(cfg.native_refresh_presentation);
+        assert_eq!(cfg.scale_mode, TextureScaleMode::Linear);
+        assert_eq!(cfg.texture_effect, TextureEffect::None);
+        assert_eq!(cfg.upscale_parameters, UpscaleParameters::default());
+        assert_eq!(
+            cfg.texture_effect_parameters,
+            TextureEffectParameters::default()
+        );
     }
 
     #[test]
@@ -322,6 +496,10 @@ mod tests {
         cfg.set_resolution(1280.0, 720.0);
         cfg.toggle_fullscreen();
         cfg.apply_fog_to_all_sprites = true;
+        cfg.scale_mode = TextureScaleMode::Anime4kB;
+        cfg.texture_effect = TextureEffect::CrtRoyale;
+        cfg.upscale_parameters.strength = 85;
+        cfg.texture_effect_parameters.temporal_flicker = 20;
 
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: GraphicConfig = serde_json::from_str(&json).unwrap();
@@ -333,6 +511,10 @@ mod tests {
         assert!(restored.apply_fog_to_all_sprites);
         assert!(restored.adaptive_widescreen);
         assert!(restored.native_refresh_presentation);
+        assert_eq!(restored.scale_mode, TextureScaleMode::Anime4kB);
+        assert_eq!(restored.texture_effect, TextureEffect::CrtRoyale);
+        assert_eq!(restored.upscale_parameters.strength, 85);
+        assert_eq!(restored.texture_effect_parameters.temporal_flicker, 20);
     }
 
     #[test]
@@ -365,6 +547,26 @@ mod tests {
         let mut cfg = GraphicConfig::default();
         cfg.adaptive_widescreen = false;
         assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1024, 768));
+    }
+
+    #[test]
+    fn profiles_before_presentation_effects_receive_stable_defaults() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        let object = json
+            .as_object_mut()
+            .expect("graphics config serializes as an object");
+        object.remove("texture_effect");
+        object.remove("upscale_parameters");
+        object.remove("texture_effect_parameters");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert_eq!(restored.texture_effect, TextureEffect::None);
+        assert_eq!(restored.upscale_parameters, UpscaleParameters::default());
+        assert_eq!(
+            restored.texture_effect_parameters,
+            TextureEffectParameters::default()
+        );
     }
 
     #[test]

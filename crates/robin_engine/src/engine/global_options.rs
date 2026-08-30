@@ -39,6 +39,10 @@ pub struct SimConfig {
     /// Enable the post-port player interaction for releasing tied NPCs.
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
+    /// Enable the deterministic reusable-cloak extension for this session.
+    /// Missing state predates the extension and retains Original behavior.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -60,6 +64,7 @@ impl SimConfig {
             difficulty,
             fix_hard_reaction_times: true,
             enable_unbinding: true,
+            reusable_cloaks: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -210,10 +215,15 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("enable_unbinding");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("reusable_cloaks");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
         assert!(config.enable_unbinding);
+        assert!(!config.reusable_cloaks);
     }
 }

@@ -461,7 +461,12 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   sequence point Seeks require explicit live-versus-Original route
 ///   provenance. Obsolete Rust saves are rejected instead of re-running
 ///   spatial placement or silently re-enabling reconstructed gate search.
-pub const SAVE_FORMAT_VERSION: u32 = 56;
+/// - **v56** (2026-08-28, human actor control): changes authoritative player
+///   control state and its native snapshot layout.
+/// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
+///   append-only attempt schema and exact practice-return snapshot. Earlier
+///   Rust save layouts are rejected rather than migrated.
+pub const SAVE_FORMAT_VERSION: u32 = 57;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,8 +654,14 @@ impl GameSaveFile {
         )
         .with_context(|| format!("parsing save header {}", path.display()))?;
         header.validate()?;
-        serde_json::from_value(document)
-            .with_context(|| format!("parsing save payload {}", path.display()))
+        let save: Self = serde_json::from_value(document)
+            .with_context(|| format!("parsing save payload {}", path.display()))?;
+        save.engine
+            .campaign()
+            .validate_history_schema()
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("validating campaign history {}", path.display()))?;
+        Ok(save)
     }
 }
 
@@ -715,8 +726,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_resolved_moves_and_point_seek_provenance() {
-        assert_eq!(SAVE_FORMAT_VERSION, 56);
+    fn save_format_version_requires_full_fidelity_campaign_history() {
+        assert_eq!(SAVE_FORMAT_VERSION, 57);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -956,6 +967,31 @@ mod tests {
         assert_eq!(
             message,
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 46")
+        );
+    }
+
+    #[test]
+    fn read_rejects_previous_rust_campaign_schema_at_header() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("previous_rust_save.json");
+        let old_save = serde_json::json!({
+            "header": {
+                "magic": SAVE_MAGIC,
+                "version": 56,
+                "mission_id": 1,
+                "timestamp_unix": 0,
+                "display_text": "Previous Rust Save"
+            },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("previous Rust campaign schema must be rejected");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 56")
         );
     }
 

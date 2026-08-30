@@ -146,10 +146,13 @@ web-sys = { version = "0.3", features = [
     "Document",
     "Element",
     "GainNode",
+    "Headers",
     "HtmlElement",
     "HtmlCanvasElement",
     "Location",
     "Performance",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
     "Response",
     "Storage",
     "StereoPannerNode",
@@ -166,6 +169,7 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 
 [dev-dependencies]
 qoi = "0.4"
+naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 robin_engine = { workspace = true, features = ["test-helpers"] }
 # The parity-native v67 wire format is authoritative and remains on 0.6.9.
 # Only the parity example needs it; production game formats use the workspace
@@ -174,7 +178,10 @@ bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"]
 fs2 = "0.4"
 
 [features]
-default = ["native-fs", "audio", "video"]
+# Desktop's standard build includes RetroArch preset support. Browser and
+# Android packaging already use --no-default-features and therefore keep the
+# native-only C++ shader toolchain out of those targets.
+default = ["native-fs", "audio", "video", "retroarch-shaders"]
 android = ["audio"]
 audio = ["dep:kira", "dep:mint"]
 # Cutscene video playback (Intro/Outro.ogg).  Pulls in ffmpeg-next,
@@ -186,9 +193,8 @@ video = ["dep:ffmpeg-next", "audio"]
 # `dirs` crate.  Disabled on wasm where saves/replays go through a
 # browser-side mechanism instead of OS data dirs.
 native-fs = ["dep:dirs"]
-# RetroArch .slangp shader-preset support via librashader.  Off by default:
-# librashader pulls in glslang + SPIRV-Cross (C++), which on windows-gnu
-# makes the exe depend on libstdc++-6.dll.
+# RetroArch .slangp shader-preset support via librashader. This pulls in
+# glslang + SPIRV-Cross (C++); Windows GNU packages must ship libstdc++-6.dll.
 retroarch-shaders = ["dep:librashader"]
 # Browser worker-pool build: parallel VQ sprite decode at mission install via
 # wasm-bindgen-rayon.  Requires the atomics/shared-memory build produced by

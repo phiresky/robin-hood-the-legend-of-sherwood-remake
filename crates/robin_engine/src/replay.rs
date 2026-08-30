@@ -64,15 +64,15 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 15 combines the completed native
+/// On-disk replay schema version. Version 15 combined the completed native
 /// bitcode campaign/compact encoding with the strict full-frame boundary:
 /// every admitted [`SimulationFrameInput`] and host control is explicit,
 /// serialized command chains are non-recursive, stored movement actions carry
-/// exact routes, and point-Seek state carries explicit route provenance. Two
-/// incompatible pre-merge formats independently used version 14, so neither is
-/// accepted by this build. There is deliberately no Rust-schema compatibility
-/// adapter: earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 16;
+/// exact routes, and point-Seek state carries explicit route provenance.
+/// Version 17 requires the full-fidelity campaign history and practice-return
+/// snapshot. There is deliberately no Rust-schema compatibility adapter:
+/// earlier incompatible layouts are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 17;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 16);
+        assert_eq!(REPLAY_SCHEMA_VERSION, 17);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -878,8 +878,8 @@ mod tests {
     }
 
     #[test]
-    fn every_pre_merge_jsonl_schema_is_rejected() {
-        for version in [10, 12, 13, 14] {
+    fn every_obsolete_rust_jsonl_schema_is_rejected() {
+        for version in [10, 12, 13, 14, 16] {
             let input = format!(
                 "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
             );
@@ -1136,6 +1136,7 @@ mod tests {
         let commands = vec![
             PlayerCommand::SetAmountOfSpeaking { amount: 9 },
             PlayerCommand::SetUnbindingEnabled { enabled: false },
+            PlayerCommand::SetReusableCloaks { enabled: false },
         ];
         let mut recorder = ReplayRecorder::new(
             &path,
@@ -1160,6 +1161,7 @@ mod tests {
         live.apply_local_commands(&mut live_display, &mut live_input, &assets, &commands);
         assert_eq!(live.control.sim_config.amount_of_speaking, 9);
         assert!(!live.control.sim_config.enable_unbinding);
+        assert!(!live.control.sim_config.reusable_cloaks);
 
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
@@ -1180,6 +1182,7 @@ mod tests {
 
         assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
         assert!(!replayed.control.sim_config.enable_unbinding);
+        assert!(!replayed.control.sim_config.reusable_cloaks);
         assert_eq!(state_hash(&live), state_hash(&replayed));
         let _ = std::fs::remove_file(path);
     }

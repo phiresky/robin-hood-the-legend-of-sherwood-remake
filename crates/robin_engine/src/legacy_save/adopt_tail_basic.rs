@@ -165,6 +165,11 @@ impl LegacyTailBasicAdoptionPlan {
         runtime.overall_villain_alert_status = self.global_ai.overall_villain_alert_status;
         runtime.saved_random_seed = self.global_ai.saved_random_seed;
         engine.mission_domain.mission_stat = self.mission_stat;
+        // Original v48 stores no historical achievement evidence. Keep the
+        // imported run computable, but never fabricate prior cleanliness,
+        // sightings, or body arrangements as successful evidence.
+        engine.mission_domain.achievements =
+            crate::achievement::MissionAchievementState::from_incomplete_legacy_import();
     }
 }
 

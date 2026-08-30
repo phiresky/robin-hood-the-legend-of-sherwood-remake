@@ -55,6 +55,14 @@ pub const MT_STR_PRESERVED_LIFES: usize = 243;
 pub const MT_STR_PLAYING_TIME: usize = 258;
 pub const MT_WORD_NOTHING: usize = 329;
 
+// Rust-port extension strings. They intentionally live outside the original
+// Start.sxt range: hosts can supply localized overrides while legacy tables
+// fall through to the registered English strings.
+pub const MT_STR_PRODUCTION_FORECAST_SELECTED: usize = 1_000;
+pub const MT_STR_PRODUCTION_FORECAST_RATE: usize = 1_001;
+pub const MT_STR_PRODUCTION_FORECAST_LINE: usize = 1_002;
+pub const MT_STR_PRODUCTION_FORECAST_SPECIALIST: usize = 1_003;
+
 // ─── Host-supplied menu-text lookup ────────────────────────────────
 
 /// Abstract lookup over the campaign menu-text table.
@@ -231,6 +239,28 @@ pub struct ScoreInfo {
     pub play_time_seconds: u32,
 }
 
+/// Selected production cycle displayed by the forecast panel.
+///
+/// `None` duration means no mission has been committed yet; the presenter
+/// then uses an exact one-hour rate instead of guessing which mission the
+/// player intends to choose.
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ProductionForecastCycle {
+    pub mission_name: Option<String>,
+    pub duration_seconds: Option<u16>,
+}
+
 impl SherwoodStat {
     /// Assemble the full Sherwood debriefing text.
     ///
@@ -245,6 +275,21 @@ impl SherwoodStat {
         profiles: &ProfileManager,
         score_info: &ScoreInfo,
         menu_text: &dyn MenuTextLookup,
+    ) -> String {
+        self.get_text_with_forecast(sectors, characters, profiles, score_info, menu_text, None)
+    }
+
+    /// Assemble the Sherwood report and, when requested, a compact live item
+    /// production panel. Forecast arithmetic remains owned by
+    /// [`SectorProduction::forecast`].
+    pub fn get_text_with_forecast(
+        &self,
+        sectors: &[SectorProduction],
+        characters: &[PcDescription],
+        profiles: &ProfileManager,
+        score_info: &ScoreInfo,
+        menu_text: &dyn MenuTextLookup,
+        forecast_cycle: Option<&ProductionForecastCycle>,
     ) -> String {
         let mut text = String::new();
 
@@ -279,10 +324,80 @@ impl SherwoodStat {
             text.push('\n');
             text.push_str(&production);
         }
+        if let Some(cycle) = forecast_cycle {
+            text.push('\n');
+            Self::append_forecast_text(sectors, characters, profiles, cycle, menu_text, &mut text);
+        }
         text.push('\n');
 
         Self::append_score_text(score_info, menu_text, &mut text);
         text
+    }
+
+    /// Append the item-only production projection. The original campaign has
+    /// no raw-material inventory, which is reported explicitly rather than
+    /// inventing hidden recipe requirements.
+    fn append_forecast_text(
+        sectors: &[SectorProduction],
+        characters: &[PcDescription],
+        profiles: &ProfileManager,
+        cycle: &ProductionForecastCycle,
+        menu_text: &dyn MenuTextLookup,
+        out: &mut String,
+    ) {
+        let (cycle_seconds, heading) = match cycle.duration_seconds {
+            Some(seconds) => {
+                let mission_name = cycle
+                    .mission_name
+                    .as_deref()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("?");
+                let template = menu_text.get(MT_STR_PRODUCTION_FORECAST_SELECTED);
+                (
+                    seconds,
+                    substitute_printf(&template, &[mission_name, &seconds_to_time(seconds.into())]),
+                )
+            }
+            None => {
+                let seconds = 3_600;
+                let template = menu_text.get(MT_STR_PRODUCTION_FORECAST_RATE);
+                (
+                    seconds,
+                    substitute_printf(&template, &[&seconds_to_time(seconds.into())]),
+                )
+            }
+        };
+        out.push_str(&heading);
+        out.push('\n');
+
+        for sector in sectors
+            .iter()
+            .filter(|sector| PRODUCTION_TYPES.contains(&sector.prod_type))
+        {
+            let specialist = find_specialist(sector, characters, profiles).is_some();
+            let forecast = sector.forecast(cycle_seconds, specialist);
+            let item = menu_text.get(bonus_text_id(sector.prod_type));
+            let specialist_suffix = if specialist {
+                menu_text.get(MT_STR_PRODUCTION_FORECAST_SPECIALIST)
+            } else {
+                String::new()
+            };
+            let template = menu_text.get(MT_STR_PRODUCTION_FORECAST_LINE);
+            let values = [
+                item,
+                forecast.current_stock.to_string(),
+                forecast.storage_capacity.to_string(),
+                forecast.produced.to_string(),
+                forecast.overflow.to_string(),
+                forecast.worker_count.to_string(),
+                specialist_suffix,
+                forecast.speed.to_string(),
+                forecast.raw_materials_required.to_string(),
+            ];
+            let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+            out.push_str(&substitute_printf(&template, &refs));
+            out.push('\n');
+        }
     }
 
     /// Format the item-production line for a single sector.
@@ -445,6 +560,19 @@ mod tests {
             map.insert(MT_STR_DB_S16, "Play time: %s");
             map.insert(MT_STR_DB_C01, "with");
             map.insert(MT_STR_DB_C02, "led by %s");
+            map.insert(
+                MT_STR_PRODUCTION_FORECAST_SELECTED,
+                "Next production — %s (%s cycle):",
+            );
+            map.insert(
+                MT_STR_PRODUCTION_FORECAST_RATE,
+                "Production rate (%s; select mission):",
+            );
+            map.insert(
+                MT_STR_PRODUCTION_FORECAST_LINE,
+                "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
+            );
+            map.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
             map.insert(MT_STR_DB_BONUS_ARROW, "arrows");
             map.insert(MT_STR_DB_BONUS_APPLE, "apples");
             map.insert(MT_STR_DB_BONUS_WASP_NEST, "wasp nests");
@@ -528,6 +656,57 @@ mod tests {
 
         let s = make_sector(Type::MakeWaspNest, 5, vec![]);
         assert_eq!(SherwoodStat::get_ammo_text(&s, &text), "5 wasp nests");
+    }
+
+    #[test]
+    fn selected_cycle_forecast_reports_live_inputs_stock_capacity_and_overflow() {
+        let text = FakeMenuText::english();
+        let (characters, profiles) = make_party(&["Peasant", "Robin des bois"]);
+        let mut sector = make_sector(Type::MakeArrow, 0, vec![0, 1]);
+        sector.speed = 100;
+        sector.amount = 9;
+        sector.production_points = vec![
+            crate::sector_production::Point::default(),
+            crate::sector_production::Point::default(),
+        ];
+        let mut out = String::new();
+        SherwoodStat::append_forecast_text(
+            &[sector],
+            &characters,
+            &profiles,
+            &ProductionForecastCycle {
+                mission_name: Some("Nottingham".to_string()),
+                duration_seconds: Some(60),
+            },
+            &text,
+            &mut out,
+        );
+
+        assert!(out.contains("Next production — Nottingham (00:01 cycle):"));
+        assert!(out.contains("arrows: stock 9/10; +18; overflow 17"));
+        assert!(out.contains("input 2 workers + specialist at speed 100"));
+        assert!(out.contains("raw materials 0"));
+    }
+
+    #[test]
+    fn unselected_cycle_reports_an_exact_hourly_rate_without_guessing_a_mission() {
+        let text = FakeMenuText::english();
+        let (characters, profiles) = make_party(&["Peasant"]);
+        let mut sector = make_sector(Type::MakeStone, 0, vec![0]);
+        sector.speed = 100;
+        sector.production_points = vec![crate::sector_production::Point::default(); 100];
+        let mut out = String::new();
+        SherwoodStat::append_forecast_text(
+            &[sector],
+            &characters,
+            &profiles,
+            &ProductionForecastCycle::default(),
+            &text,
+            &mut out,
+        );
+
+        assert!(out.contains("Production rate (01:00; select mission):"));
+        assert!(out.contains("stones: stock 0/500; +360; overflow 0"));
     }
 
     #[test]
