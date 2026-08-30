@@ -366,7 +366,12 @@ impl PopupScrollModalState {
                 self.rebuild_page_widgets();
                 return None;
             }
-            return Some(self.finish(DialogResult::Completed, false, modal_net));
+            if let Some(net) = modal_net
+                && !net.publish(DialogResult::Completed)
+            {
+                return None;
+            }
+            return Some(self.finish(DialogResult::Completed, true, modal_net));
         }
         None
     }

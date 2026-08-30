@@ -15,8 +15,8 @@
 
 use super::identity::{GAME_ALPN, bind_endpoint, game_secret_key, parse_connect_addr};
 use super::{
-    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent, NetMsg,
-    NetOutbound, decode_msg, encode_msg,
+    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, MultiplayerSessionId, NET_PROTOCOL_VERSION,
+    NetEvent, NetMsg, NetOutbound, decode_msg, encode_msg,
 };
 use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
@@ -123,6 +123,7 @@ pub struct ServerHandle {
     /// `(local_seat, mission_seed)` the server is operating with.
     pub local_seat: PlayerId,
     pub mission_seed: u64,
+    session_id: MultiplayerSessionId,
     endpoint_id: EndpointId,
     endpoint_addr: EndpointAddr,
     cancellation: Arc<AtomicBool>,
@@ -131,6 +132,10 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
+    pub fn session_id(&self) -> MultiplayerSessionId {
+        self.session_id
+    }
+
     /// The stable public id peers dial to reach this server.
     pub fn endpoint_id(&self) -> EndpointId {
         self.endpoint_id
@@ -242,6 +247,7 @@ struct ServerContext {
     mission_id: String,
     mission_seed: u64,
     sim_config: robin_engine::engine::SimConfig,
+    session_id: MultiplayerSessionId,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
     cancellation: Arc<AtomicBool>,
@@ -300,6 +306,7 @@ pub fn start_server_with_key(
     initial_snapshot: InitialSnapshot,
     expected_players: u32,
 ) -> std::io::Result<ServerHandle> {
+    let session_id = MultiplayerSessionId(rand::random());
     let cancellation = Arc::new(AtomicBool::new(false));
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (bridge_thread, outgoing_async_rx) = spawn_outgoing_bridge(
@@ -315,6 +322,7 @@ pub fn start_server_with_key(
         mission_id,
         mission_seed,
         sim_config,
+        session_id,
         frame_cursor,
         initial_snapshot,
         cancellation: Arc::clone(&cancellation),
@@ -374,6 +382,7 @@ pub fn start_server_with_key(
     Ok(ServerHandle {
         local_seat: PlayerId::HOST,
         mission_seed,
+        session_id,
         endpoint_id,
         endpoint_addr,
         cancellation,
@@ -487,12 +496,34 @@ async fn run_server_outgoing_pump(
                 };
                 announce_begin_sim(&context, begin);
             }
-            NetOutbound::ModalDismiss { kind, result } => {
-                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
-                    kind: kind.clone(),
-                    result,
-                });
-                broadcast_msg(&context, NetMsg::ModalDismiss { kind, result });
+            NetOutbound::ModalProposal { .. } => {
+                tracing::error!("multiplayer host attempted to send a client-only modal proposal");
+            }
+            NetOutbound::ModalDecision {
+                instance,
+                kind,
+                result,
+                decision_frame,
+            } => {
+                if instance.session_id != context.session_id {
+                    tracing::error!(
+                        ?instance,
+                        "multiplayer host rejected a modal decision for another session"
+                    );
+                    continue;
+                }
+                if let Err(error) = broadcast_msg_required(
+                    &context,
+                    NetMsg::ModalDecision {
+                        instance,
+                        kind,
+                        result,
+                        decision_frame,
+                    },
+                ) {
+                    tracing::error!(%error, "authoritative modal broadcast failed");
+                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                }
             }
         }
     }
@@ -531,6 +562,25 @@ fn broadcast_msg(context: &ServerContext, msg: NetMsg) {
     for sender in to_send {
         let _ = sender.send(msg.clone());
     }
+}
+
+/// Queue an authoritative message for every currently connected peer. A
+/// closed writer queue is a fatal session split, not a best-effort diagnostic.
+fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Result<(), String> {
+    let to_send: Vec<(u8, UnboundedSender<NetMsg>)> = {
+        let peers = context.peers.lock();
+        peers
+            .senders
+            .iter()
+            .map(|(seat, sender)| (*seat, sender.clone()))
+            .collect()
+    };
+    for (seat, sender) in to_send {
+        sender.send(msg.clone()).map_err(|_| {
+            format!("authoritative multiplayer send queue for seat {seat} is closed")
+        })?;
+    }
+    Ok(())
 }
 
 /// Send a [`NetMsg::BroadcastInput`] to every peer plus echo it into
@@ -653,6 +703,7 @@ async fn handle_incoming_peer(
             sender
                 .send(NetMsg::Welcome {
                     your_seat: assigned_seat,
+                    session_id: context.session_id,
                     mission_id: context.mission_id.clone(),
                     mission_seed: context.mission_seed,
                     sim_config: context.sim_config,
@@ -792,12 +843,32 @@ async fn run_server_peer_reader(
             Some(NetMsg::Note(s)) => {
                 tracing::info!(?seat, note = %s, "peer note");
             }
-            Some(NetMsg::ModalDismiss { kind, result }) => {
-                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
-                    kind: kind.clone(),
-                    result,
-                });
-                broadcast_msg(context, NetMsg::ModalDismiss { kind, result });
+            Some(NetMsg::ModalProposal {
+                instance,
+                kind,
+                result,
+                requested_frame,
+            }) => {
+                if instance.session_id != context.session_id {
+                    return Err(format!(
+                        "peer {seat:?} submitted a modal proposal for another session"
+                    ));
+                }
+                context
+                    .incoming_tx
+                    .send(NetEvent::ModalProposal {
+                        from: seat,
+                        instance,
+                        kind,
+                        result,
+                        requested_frame,
+                    })
+                    .map_err(|_| "host modal proposal channel is closed".to_string())?;
+            }
+            Some(NetMsg::ModalDecision { .. }) => {
+                return Err(format!(
+                    "peer {seat:?} attempted an authoritative modal decision"
+                ));
             }
             Some(NetMsg::ReadyToSim { frame }) => {
                 let begin = {
@@ -822,6 +893,7 @@ pub struct ClientHandle {
     /// Seat assigned by the server.  `None` until the handshake
     /// completes.  Game loop reads this to set `host.local_seat`.
     pub assigned_seat: Arc<Mutex<Option<PlayerId>>>,
+    session_id: MultiplayerSessionId,
     /// Mission RNG seed announced by the server in `Welcome`.  The
     /// client adopts this seed for its engine init so the local sim
     /// rolls match the host's.
@@ -833,6 +905,10 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub fn session_id(&self) -> Option<MultiplayerSessionId> {
+        Some(self.session_id)
+    }
+
     pub fn mission_seed(&self) -> Option<u64> {
         self.mission_seed
     }
@@ -921,7 +997,7 @@ pub fn connect_client(
             }
         })?;
 
-    let (your_seat, mission_id, mission_seed, sim_config) = match handshake_rx.recv() {
+    let (your_seat, session_id, mission_id, mission_seed, sim_config) = match handshake_rx.recv() {
         Ok(Ok(result)) => result,
         Ok(Err(err)) => {
             cancellation.store(true, Ordering::Release);
@@ -945,6 +1021,7 @@ pub fn connect_client(
 
     Ok(ClientHandle {
         assigned_seat,
+        session_id,
         mission_seed: Some(mission_seed),
         mission_sim_config: Some(sim_config),
         mission_id: Some(mission_id),
@@ -973,6 +1050,7 @@ async fn handshake_async(
     (
         ClientSession,
         PlayerId,
+        MultiplayerSessionId,
         String,
         u64,
         robin_engine::engine::SimConfig,
@@ -1001,6 +1079,7 @@ async fn handshake_async(
     match read_frame(&mut recv).await? {
         Some(NetMsg::Welcome {
             your_seat,
+            session_id,
             mission_id,
             mission_seed,
             sim_config,
@@ -1019,6 +1098,7 @@ async fn handshake_async(
                     recv,
                 },
                 your_seat,
+                session_id,
                 mission_id,
                 mission_seed,
                 sim_config,
@@ -1039,6 +1119,7 @@ async fn handshake_or_cancel(
         (
             ClientSession,
             PlayerId,
+            MultiplayerSessionId,
             String,
             u64,
             robin_engine::engine::SimConfig,
@@ -1078,7 +1159,16 @@ async fn run_client_io_async(
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
-        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+        Result<
+            (
+                PlayerId,
+                MultiplayerSessionId,
+                String,
+                u64,
+                robin_engine::engine::SimConfig,
+            ),
+            String,
+        >,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
@@ -1114,11 +1204,20 @@ async fn run_client_io_inner(
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
-        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+        Result<
+            (
+                PlayerId,
+                MultiplayerSessionId,
+                String,
+                u64,
+                robin_engine::engine::SimConfig,
+            ),
+            String,
+        >,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let (mut session, your_seat, mission_id, mission_seed, sim_config) = {
+    let (mut session, your_seat, session_id, mission_id, mission_seed, sim_config) = {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut backoff = std::time::Duration::from_millis(50);
         loop {
@@ -1159,6 +1258,7 @@ async fn run_client_io_inner(
     });
     let _ = initial_handshake_tx.send(Ok((
         your_seat,
+        session_id,
         mission_id.clone(),
         mission_seed,
         sim_config,
@@ -1193,7 +1293,21 @@ async fn run_client_io_inner(
                 return;
             };
             match handshake {
-                Ok((new_session, new_seat, new_mission_id, new_seed, new_config)) => {
+                Ok((
+                    new_session,
+                    new_seat,
+                    new_session_id,
+                    new_mission_id,
+                    new_seed,
+                    new_config,
+                )) => {
+                    if new_session_id != session_id {
+                        let _ = incoming_tx.send(NetEvent::Fatal(format!(
+                            "reconnect joined a different multiplayer session {:?}; expected {:?}",
+                            new_session_id, session_id
+                        )));
+                        return;
+                    }
                     if let Err(message) = validate_reconnect_state(
                         &mission_id,
                         mission_seed,
@@ -1262,7 +1376,12 @@ async fn run_session_async(
     let reader = async {
         loop {
             match read_frame(&mut recv).await {
-                Ok(Some(msg)) => handle_client_wire_msg(incoming_tx, msg),
+                Ok(Some(msg)) => {
+                    if let Err(error) = handle_client_wire_msg(incoming_tx, msg) {
+                        let _ = incoming_tx.send(NetEvent::Fatal(error.clone()));
+                        return SessionEnd::Drop(error);
+                    }
+                }
                 Ok(None) => return SessionEnd::Graceful,
                 Err(e) => return SessionEnd::Drop(e),
             }
@@ -1299,7 +1418,7 @@ async fn sleep_or_cancel(duration: Duration, cancellation: &AtomicBool) -> bool 
     }
 }
 
-fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
+fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) -> Result<(), String> {
     match msg {
         NetMsg::BroadcastInput {
             server_frame,
@@ -1307,12 +1426,14 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
             target_frame,
             input,
         } => {
-            let _ = incoming_tx.send(NetEvent::Input {
-                server_frame,
-                origin_frame,
-                target_frame,
-                input,
-            });
+            incoming_tx
+                .send(NetEvent::Input {
+                    server_frame,
+                    origin_frame,
+                    target_frame,
+                    input,
+                })
+                .map_err(|_| "client network event channel is closed".to_string())?;
         }
         NetMsg::Note(s) => {
             let _ = incoming_tx.send(NetEvent::Note(s));
@@ -1348,13 +1469,29 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
                 start_epoch_ms,
             });
         }
-        NetMsg::ModalDismiss { kind, result } => {
-            let _ = incoming_tx.send(NetEvent::ModalDismiss { kind, result });
+        NetMsg::ModalDecision {
+            instance,
+            kind,
+            result,
+            decision_frame,
+        } => {
+            incoming_tx
+                .send(NetEvent::ModalDecision {
+                    instance,
+                    kind,
+                    result,
+                    decision_frame,
+                })
+                .map_err(|_| "client modal decision channel is closed".to_string())?;
+        }
+        NetMsg::ModalProposal { .. } => {
+            return Err("server sent a client-only modal proposal".to_string());
         }
         other => {
             tracing::debug!(?other, "ignoring unexpected wire message");
         }
     }
+    Ok(())
 }
 
 async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> Result<(), String> {
@@ -1381,8 +1518,25 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
         NetOutbound::ReadyToSim { frame } => {
             write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
         }
-        NetOutbound::ModalDismiss { kind, result } => {
-            write_frame(send, &NetMsg::ModalDismiss { kind, result }).await?;
+        NetOutbound::ModalProposal {
+            instance,
+            kind,
+            result,
+            requested_frame,
+        } => {
+            write_frame(
+                send,
+                &NetMsg::ModalProposal {
+                    instance,
+                    kind,
+                    result,
+                    requested_frame,
+                },
+            )
+            .await?;
+        }
+        NetOutbound::ModalDecision { .. } => {
+            return Err("client attempted an authoritative modal decision".to_string());
         }
     }
     Ok(())

@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 24;
+pub const NET_PROTOCOL_VERSION: u32 = 25;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -58,6 +58,55 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// recorder's `frame % 25 == 0` cadence (one hash per simulated
 /// second at 25 Hz) so the same sampling point is reused.
 pub const STATE_HASH_INTERVAL: u32 = 25;
+
+/// Unpredictable identity for one host process's multiplayer mission session.
+///
+/// Modal traffic carries this value so a delayed packet from an earlier host
+/// lifecycle can never resolve a UI surface in a replacement session.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
+pub struct MultiplayerSessionId(pub [u8; 16]);
+
+/// Stable identity for one occurrence of a multiplayer modal.
+///
+/// `opened_frame` identifies the authoritative timeline boundary at which the
+/// modal appeared. `occurrence` distinguishes repeated instances of the same
+/// [`ModalKind`], including repeated unkeyed Sherwood reports.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
+pub struct ModalInstanceId {
+    pub session_id: MultiplayerSessionId,
+    pub opened_frame: u32,
+    pub occurrence: u64,
+}
+
+/// Client request retained for host presentation. Requests are advisory and
+/// never resolve a modal without a later [`NetMsg::ModalDecision`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisibleModalRequest {
+    pub from: PlayerId,
+    pub instance: ModalInstanceId,
+    pub kind: ModalKind,
+    pub result: DialogResult,
+    pub requested_frame: u32,
+}
+
+#[derive(Debug)]
+struct ModalOccurrenceState {
+    kind: ModalKind,
+    next_occurrence: u64,
+    active: Option<ModalInstanceId>,
+}
+
+#[derive(Debug, Default)]
+struct ModalSyncState {
+    session_id: Option<MultiplayerSessionId>,
+    occurrences: Vec<ModalOccurrenceState>,
+    inbox: std::collections::VecDeque<NetEvent>,
+    visible_requests: std::collections::VecDeque<VisibleModalRequest>,
+}
 
 /// One on-the-wire message.  Encoded as a bitcode binary blob inside
 /// each WebSocket frame.
@@ -73,6 +122,7 @@ pub enum NetMsg {
     /// initialise its sim deterministically.
     Welcome {
         your_seat: PlayerId,
+        session_id: MultiplayerSessionId,
         mission_id: String,
         mission_seed: u64,
         sim_config: crate::engine::SimConfig,
@@ -117,12 +167,22 @@ pub enum NetMsg {
     /// Server → all peers: every expected player is loaded and ready;
     /// begin simulating `frame` at this wall-clock timestamp.
     BeginSim { frame: u32, start_epoch_ms: u64 },
-    /// Either direction: a blocking modal was dismissed.  This is
-    /// immediate UI synchronization rather than a sim-frame command,
-    /// because modal loops block the normal per-frame command drain.
-    ModalDismiss {
+    /// Client → server: a visible request for the host to choose this result.
+    /// A proposal is never a vote and never changes local modal state.
+    ModalProposal {
+        instance: ModalInstanceId,
         kind: ModalKind,
         result: DialogResult,
+        requested_frame: u32,
+    },
+    /// Server → clients: the sole authoritative result for one exact modal
+    /// occurrence. `decision_frame` is the host timeline frame on which the
+    /// decision was made and recorded.
+    ModalDecision {
+        instance: ModalInstanceId,
+        kind: ModalKind,
+        result: DialogResult,
+        decision_frame: u32,
     },
 }
 
@@ -166,10 +226,21 @@ pub enum NetEvent {
     InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
     /// The server released the multiplayer start barrier.
     BeginSim { frame: u32, start_epoch_ms: u64 },
-    /// A peer dismissed a blocking modal.
-    ModalDismiss {
+    /// A client asked the host to choose a modal result. Presentation may show
+    /// this request, but only a host decision can close the modal.
+    ModalProposal {
+        from: PlayerId,
+        instance: ModalInstanceId,
         kind: ModalKind,
         result: DialogResult,
+        requested_frame: u32,
+    },
+    /// The host chose the result for one exact modal occurrence.
+    ModalDecision {
+        instance: ModalInstanceId,
+        kind: ModalKind,
+        result: DialogResult,
+        decision_frame: u32,
     },
 }
 
@@ -193,9 +264,17 @@ pub enum NetOutbound {
     ReadyToSim {
         frame: u32,
     },
-    ModalDismiss {
+    ModalProposal {
+        instance: ModalInstanceId,
         kind: ModalKind,
         result: DialogResult,
+        requested_frame: u32,
+    },
+    ModalDecision {
+        instance: ModalInstanceId,
+        kind: ModalKind,
+        result: DialogResult,
+        decision_frame: u32,
     },
 }
 
@@ -211,6 +290,7 @@ pub struct NetChannels {
     /// reads it and sends `NetMsg::InitialSnapshot` to each new peer
     /// immediately after `Welcome`.
     pub initial_snapshot: InitialSnapshot,
+    modal_sync: Mutex<ModalSyncState>,
 }
 
 impl NetChannels {
@@ -236,6 +316,7 @@ impl NetChannels {
                 deferred_events,
                 frame_cursor: Arc::clone(&cursor),
                 initial_snapshot: Arc::clone(&snapshot),
+                modal_sync: Mutex::new(ModalSyncState::default()),
             },
             in_tx,
             out_rx,
@@ -305,6 +386,162 @@ impl NetChannels {
         self.frame_cursor.store(frame, Ordering::Relaxed);
     }
 
+    pub fn current_frame(&self) -> u32 {
+        self.frame_cursor.load(Ordering::Relaxed)
+    }
+
+    /// Install the host-generated session identity learned during Welcome.
+    /// Reinstalling the same identity on reconnect is idempotent; changing it
+    /// in-place is a fatal session mismatch.
+    pub fn install_session_id(&self, session_id: MultiplayerSessionId) -> Result<(), String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
+        match sync.session_id {
+            Some(current) if current != session_id => Err(format!(
+                "multiplayer session identity changed from {current:?} to {session_id:?}"
+            )),
+            Some(_) => Ok(()),
+            None => {
+                sync.session_id = Some(session_id);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn session_id(&self) -> Result<MultiplayerSessionId, String> {
+        self.modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?
+            .session_id
+            .ok_or_else(|| "multiplayer session identity is not installed".to_string())
+    }
+
+    /// Return the stable token for the currently open occurrence of `kind`, or
+    /// allocate the next occurrence when this is a newly opened modal.
+    pub fn open_modal_instance(&self, kind: &ModalKind) -> Result<ModalInstanceId, String> {
+        let opened_frame = self.frame_cursor.load(Ordering::Relaxed);
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
+        let session_id = sync
+            .session_id
+            .ok_or_else(|| "multiplayer session identity is not installed".to_string())?;
+        if let Some(state) = sync
+            .occurrences
+            .iter_mut()
+            .find(|state| state.kind == *kind)
+        {
+            if let Some(instance) = state.active {
+                return Ok(instance);
+            }
+            state.next_occurrence = state
+                .next_occurrence
+                .checked_add(1)
+                .ok_or_else(|| "multiplayer modal occurrence counter overflowed".to_string())?;
+            let instance = ModalInstanceId {
+                session_id,
+                opened_frame,
+                occurrence: state.next_occurrence,
+            };
+            state.active = Some(instance);
+            return Ok(instance);
+        }
+        let instance = ModalInstanceId {
+            session_id,
+            opened_frame,
+            occurrence: 1,
+        };
+        sync.occurrences.push(ModalOccurrenceState {
+            kind: kind.clone(),
+            next_occurrence: 1,
+            active: Some(instance),
+        });
+        Ok(instance)
+    }
+
+    pub fn complete_modal_instance(
+        &self,
+        kind: &ModalKind,
+        instance: ModalInstanceId,
+    ) -> Result<(), String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
+        let state = sync
+            .occurrences
+            .iter_mut()
+            .find(|state| state.kind == *kind)
+            .ok_or_else(|| format!("no multiplayer modal occurrence exists for {kind:?}"))?;
+        if state.active != Some(instance) {
+            return Err(format!(
+                "multiplayer modal completion mismatch for {kind:?}: active={:?}, completed={instance:?}",
+                state.active
+            ));
+        }
+        state.active = None;
+        Ok(())
+    }
+
+    /// Route a modal event out of the ordinary simulation drain and into the
+    /// presentation-side modal inbox.
+    pub fn defer_modal_event(&self, event: NetEvent) -> Result<(), String> {
+        if !matches!(
+            event,
+            NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }
+        ) {
+            return Err("attempted to route a non-modal event into the modal inbox".to_string());
+        }
+        self.modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?
+            .inbox
+            .push_back(event);
+        Ok(())
+    }
+
+    pub fn try_recv_modal_event(&self) -> Result<NetEvent, std::sync::mpsc::TryRecvError> {
+        if let Ok(mut sync) = self.modal_sync.lock()
+            && let Some(event) = sync.inbox.pop_front()
+        {
+            return Ok(event);
+        }
+        self.try_recv_transport_event()
+    }
+
+    pub fn record_visible_modal_request(&self, request: VisibleModalRequest) -> Result<(), String> {
+        self.modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?
+            .visible_requests
+            .push_back(request);
+        Ok(())
+    }
+
+    pub fn take_visible_modal_requests(
+        &self,
+        instance: ModalInstanceId,
+    ) -> Result<Vec<VisibleModalRequest>, String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
+        let mut matched = Vec::new();
+        let mut retained = std::collections::VecDeque::new();
+        while let Some(request) = sync.visible_requests.pop_front() {
+            if request.instance == instance {
+                matched.push(request);
+            } else {
+                retained.push_back(request);
+            }
+        }
+        sync.visible_requests = retained;
+        Ok(matched)
+    }
+
     /// Push a locally-produced [`PlayerCommand`] onto the wire.
     pub fn send_input(&self, cmd: PlayerCommand) {
         let origin_frame = self.frame_cursor.load(Ordering::Relaxed);
@@ -330,13 +567,43 @@ impl NetChannels {
         });
     }
 
-    /// Broadcast an immediate modal dismissal.  This bypasses the
-    /// normal frame-delayed input stream because modal UI blocks the
-    /// frame loop that would otherwise drain those inputs.
-    pub fn send_modal_dismiss(&self, kind: ModalKind, result: DialogResult) {
-        let _ = self
-            .outgoing
-            .send(NetOutbound::ModalDismiss { kind, result });
+    /// Submit a visible client request without changing local modal state.
+    /// Channel closure is an authoritative session failure and is propagated.
+    pub fn propose_modal_dismiss(
+        &self,
+        instance: ModalInstanceId,
+        kind: ModalKind,
+        result: DialogResult,
+    ) -> Result<(), String> {
+        let requested_frame = self.frame_cursor.load(Ordering::Relaxed);
+        self.outgoing
+            .send(NetOutbound::ModalProposal {
+                instance,
+                kind,
+                result,
+                requested_frame,
+            })
+            .map_err(|_| "multiplayer modal proposal channel is closed".to_string())
+    }
+
+    /// Publish the host's sole authoritative result for an exact modal.
+    /// Channel closure is returned so the caller keeps the modal open instead
+    /// of applying a local-only result.
+    pub fn decide_modal_dismiss(
+        &self,
+        instance: ModalInstanceId,
+        kind: ModalKind,
+        result: DialogResult,
+    ) -> Result<(), String> {
+        let decision_frame = self.frame_cursor.load(Ordering::Relaxed);
+        self.outgoing
+            .send(NetOutbound::ModalDecision {
+                instance,
+                kind,
+                result,
+                decision_frame,
+            })
+            .map_err(|_| "multiplayer modal decision channel is closed".to_string())
     }
 }
 
@@ -355,11 +622,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_full_fidelity_campaign_history() {
-        // Version 24 carries the required append-only campaign history and
-        // exact practice-return snapshot. Older peers fail during the
-        // handshake before attempting to decode incompatible snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 24);
+    fn protocol_version_includes_identified_host_modal_decisions() {
+        // Version 25 replaces the bidirectional unkeyed ModalDismiss with
+        // session/instance/frame-tagged proposal and decision messages.
+        assert_eq!(NET_PROTOCOL_VERSION, 25);
     }
 
     #[test]
@@ -397,6 +663,7 @@ mod tests {
         };
         let welcome = NetMsg::Welcome {
             your_seat: PlayerId(2),
+            session_id: MultiplayerSessionId([7; 16]),
             mission_id: "Dem_Lei_MP".into(),
             mission_seed: 42,
             sim_config: crate::engine::SimConfig::default(),
@@ -412,6 +679,7 @@ mod tests {
                 },
                 NetMsg::Welcome {
                     your_seat,
+                    session_id,
                     mission_id,
                     mission_seed,
                     sim_config,
@@ -421,6 +689,7 @@ mod tests {
                 assert_eq!(protocol_version, NET_PROTOCOL_VERSION);
                 assert_eq!(nickname, "alice");
                 assert_eq!(your_seat, PlayerId(2));
+                assert_eq!(session_id, MultiplayerSessionId([7; 16]));
                 assert_eq!(mission_id, "Dem_Lei_MP");
                 assert_eq!(mission_seed, 42);
                 assert_eq!(sim_config, crate::engine::SimConfig::default());
@@ -428,6 +697,76 @@ mod tests {
             }
             _ => panic!("wrong variants"),
         }
+    }
+
+    #[test]
+    fn modal_proposal_and_decision_roundtrip_with_exact_identity() {
+        let instance = ModalInstanceId {
+            session_id: MultiplayerSessionId([9; 16]),
+            opened_frame: 120,
+            occurrence: 3,
+        };
+        let kind = ModalKind::Dialog { dialog_id: 44 };
+        let proposal = decode_msg(&encode_msg(&NetMsg::ModalProposal {
+            instance,
+            kind: kind.clone(),
+            result: DialogResult::Aborted,
+            requested_frame: 123,
+        }))
+        .expect("decode proposal");
+        let decision = decode_msg(&encode_msg(&NetMsg::ModalDecision {
+            instance,
+            kind: kind.clone(),
+            result: DialogResult::Completed,
+            decision_frame: 125,
+        }))
+        .expect("decode decision");
+
+        assert!(matches!(
+            proposal,
+            NetMsg::ModalProposal {
+                instance: decoded,
+                kind: ModalKind::Dialog { dialog_id: 44 },
+                result: DialogResult::Aborted,
+                requested_frame: 123,
+            } if decoded == instance
+        ));
+        assert!(matches!(
+            decision,
+            NetMsg::ModalDecision {
+                instance: decoded,
+                kind: ModalKind::Dialog { dialog_id: 44 },
+                result: DialogResult::Completed,
+                decision_frame: 125,
+            } if decoded == instance
+        ));
+    }
+
+    #[test]
+    fn modal_instances_are_stable_until_completed_and_session_bound() {
+        let (channels, _incoming, _outgoing, _cursor, _snapshot) = NetChannels::new();
+        let session = MultiplayerSessionId([3; 16]);
+        channels.install_session_id(session).unwrap();
+        channels.publish_frame(17);
+        let kind = ModalKind::SherwoodReport;
+
+        let first = channels.open_modal_instance(&kind).unwrap();
+        assert_eq!(channels.open_modal_instance(&kind).unwrap(), first);
+        channels.complete_modal_instance(&kind, first).unwrap();
+        channels.publish_frame(20);
+        let second = channels.open_modal_instance(&kind).unwrap();
+
+        assert_eq!(first.session_id, session);
+        assert_eq!(first.opened_frame, 17);
+        assert_eq!(first.occurrence, 1);
+        assert_eq!(second.opened_frame, 20);
+        assert_eq!(second.occurrence, 2);
+        assert_ne!(first, second);
+        assert!(
+            channels
+                .install_session_id(MultiplayerSessionId([4; 16]))
+                .is_err()
+        );
     }
 
     #[test]

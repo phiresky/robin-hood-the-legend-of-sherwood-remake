@@ -19,12 +19,17 @@ use std::sync::mpsc::{Receiver, Sender};
 /// [`super::MultiplayerRuntime`] compiles on wasm.
 pub struct ClientHandle {
     pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
+    pub session_id: Rc<RefCell<Option<robin_engine::multiplayer::MultiplayerSessionId>>>,
     pub mission_seed: Rc<RefCell<Option<u64>>>,
     pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
     pub mission_id: Rc<RefCell<Option<String>>>,
 }
 
 impl ClientHandle {
+    pub fn session_id(&self) -> Option<robin_engine::multiplayer::MultiplayerSessionId> {
+        *self.session_id.borrow()
+    }
+
     pub fn mission_seed(&self) -> Option<u64> {
         *self.mission_seed.borrow()
     }

@@ -342,12 +342,10 @@ pub(crate) fn drain_net_inputs(
                     start_epoch_ms,
                 });
             }
-            NetEvent::ModalDismiss { kind, result } => {
-                tracing::debug!(
-                    ?kind,
-                    ?result,
-                    "multiplayer: modal dismissal reached main drain after modal closed"
-                );
+            event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
+                net.defer_modal_event(event).unwrap_or_else(|error| {
+                    panic!("fatal multiplayer modal routing error: {error}")
+                });
             }
         }
     }
@@ -729,6 +727,9 @@ pub(super) async fn setup_multiplayer_session(
                 args.mp_expected_players.unwrap_or(1),
             ) {
                 Ok(handle) => {
+                    channels
+                        .install_session_id(handle.session_id())
+                        .map_err(|error| format!("multiplayer: {error}"))?;
                     tracing::info!(
                         endpoint_id = %handle.endpoint_id(),
                         nickname = %nickname,
@@ -753,6 +754,12 @@ pub(super) async fn setup_multiplayer_session(
             NetChannels::new();
         match connect_client(addr, nickname.clone(), in_tx, out_rx) {
             Ok(handle) => {
+                let session_id = handle.session_id().ok_or_else(|| {
+                    "multiplayer: Welcome omitted the required session identity".to_string()
+                })?;
+                channels
+                    .install_session_id(session_id)
+                    .map_err(|error| format!("multiplayer: {error}"))?;
                 #[cfg(target_arch = "wasm32")]
                 {
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);

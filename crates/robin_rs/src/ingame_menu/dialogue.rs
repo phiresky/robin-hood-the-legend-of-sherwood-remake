@@ -705,33 +705,48 @@ impl DialogueModalState {
         }
 
         if self.aborted {
+            if let Some(net) = modal_net
+                && !net.publish(DialogResult::Aborted)
+            {
+                self.aborted = false;
+                self.render(renderer, resources, cursor);
+                renderer.present();
+                return None;
+            }
             return Some(self.finish(
                 sound,
                 sound_config,
                 audio,
                 DialogResult::Aborted,
-                false,
+                true,
                 modal_net,
             ));
         }
 
         if advance {
+            if self.sentence_idx + 1 >= self.sentences.len() {
+                if let Some(net) = modal_net
+                    && !net.publish(DialogResult::Completed)
+                {
+                    self.render(renderer, resources, cursor);
+                    renderer.present();
+                    return None;
+                }
+                return Some(self.finish(
+                    sound,
+                    sound_config,
+                    audio,
+                    DialogResult::Completed,
+                    true,
+                    modal_net,
+                ));
+            }
             if !sound.is_dialog_finished()
                 && let Some(backend) = audio.as_deref_mut()
             {
                 sound.close_dialog(backend);
             }
             self.sentence_idx += 1;
-            if self.sentence_idx >= self.sentences.len() {
-                return Some(self.finish(
-                    sound,
-                    sound_config,
-                    audio,
-                    DialogResult::Completed,
-                    false,
-                    modal_net,
-                ));
-            }
             start_sentence(
                 sound,
                 &mut audio,
