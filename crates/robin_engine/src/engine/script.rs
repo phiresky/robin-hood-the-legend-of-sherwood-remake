@@ -4145,10 +4145,18 @@ impl EngineInner {
                     // callback A. Pre-existing sibling stimuli and owner work
                     // belong after CMD_CHANGE_WAY's explicit tail B; work A
                     // creates remains visible and settles depth-first here.
-                    let boundary_handles = owner_boundary_positions
+                    let mut boundary_handles = owner_boundary_positions
                         .iter()
                         .map(|(handle, _)| *handle)
                         .collect::<Vec<_>>();
+                    if !boundary_handles.contains(&owner.index()) {
+                        // Original CMD_CHANGE_WAY always reads mpMe through
+                        // GetPosition independently of the surrounding
+                        // actor-boundary snapshot. A focused continuation may
+                        // therefore have no frozen entity views while its
+                        // owner still needs exact live mutation tracking.
+                        boundary_handles.push(owner.index());
+                    }
                     let raw_positions_before_callback = collect_raw_owner_boundary_positions(
                         self,
                         boundary_handles.iter().copied(),
