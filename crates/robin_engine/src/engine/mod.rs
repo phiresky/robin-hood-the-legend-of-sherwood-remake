@@ -5299,6 +5299,14 @@ impl EngineInner {
         self.orders.pending_path_requests.retain_not_owned_by(id);
     }
 
+    /// Retire a replaced PC from Original's live party registry without
+    /// deleting its corpse or its portrait-order entry.
+    pub(crate) fn retire_replaced_pc(&mut self, id: EntityId) {
+        self.world
+            .original_pc_registry_ids
+            .retain(|&pc_id| pc_id != id);
+    }
+
     /// Number of live entities.
     pub fn entity_count(&self) -> usize {
         self.world.entities.occupied().count()

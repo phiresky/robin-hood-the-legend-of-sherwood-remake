@@ -1439,6 +1439,7 @@ impl EngineInner {
                 &mut ai.global,
                 std::sync::Arc::make_mut(&mut world.fast_grid),
             )
+            .with_pc_registry(&world.original_pc_registry_ids)
             .with_world_views(
                 assets.static_sight_obstacles.as_slice(),
                 &world.dynamic_sight_obstacles,

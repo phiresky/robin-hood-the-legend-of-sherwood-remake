@@ -231,6 +231,9 @@ impl EngineInner {
             },
         });
         let new_id = self.add_entity(entity);
+        if let Some(dead_id) = dead_pc {
+            self.retire_replaced_pc(dead_id);
+        }
 
         // Register the new PC as a visible enemy for every NPC.
         self.add_detectable_for_all_npc(new_id, DetectableType::Enemy);
