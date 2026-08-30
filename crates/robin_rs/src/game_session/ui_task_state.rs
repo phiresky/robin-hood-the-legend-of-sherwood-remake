@@ -1041,7 +1041,11 @@ impl OptionsTaskState {
         };
         self.selected = self.selected.min(self.rows.len().saturating_sub(1));
         let (button_w, button_h) = resources.button_dimensions();
-        let row_h = button_h.min(34);
+        let row_h = if self.page == OptionsPage::Shortcuts && self.rows.len() > 12 {
+            27
+        } else {
+            button_h.min(34)
+        };
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
