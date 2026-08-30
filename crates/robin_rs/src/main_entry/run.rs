@@ -30,6 +30,7 @@ pub async fn run_rust_game(
     let application_context =
         application_context.with_options(args.global_options.options().clone());
     let mut run_args = args.clone();
+    super::cli::resolve_join_ticket(&mut run_args)?;
     run_args.global_options = application_context.clone();
     let args = &run_args;
 
@@ -401,6 +402,7 @@ pub async fn run_rust_game(
                 }
                 mp_args.mp_start_at_epoch_ms = launch.start_at_epoch_ms;
                 mp_args.mp_expected_players = Some(launch.expected_players);
+                mp_args.mp_mission_profile_id = Some(launch.mission_id);
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
@@ -566,6 +568,7 @@ pub async fn run_rust_game_headless(
     let application_context =
         application_context.with_options(args.global_options.options().clone());
     let mut run_args = args.clone();
+    super::cli::resolve_join_ticket(&mut run_args)?;
     run_args.global_options = application_context.clone();
     let args = &run_args;
 

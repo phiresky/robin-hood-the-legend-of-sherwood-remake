@@ -21,6 +21,8 @@ mod cli;
 mod init;
 mod run;
 
+#[cfg(target_arch = "wasm32")]
+pub use cli::set_pending_browser_join;
 pub use cli::{
     CliArgs, PendingLuaMission, RHREC_EXT, parse_cli, parse_cli_from, try_parse_cli_from,
 };

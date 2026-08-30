@@ -3,10 +3,9 @@
 //! This module defines the platform-pure layer of multiplayer
 //! infrastructure: the wire-format enums (`NetMsg`, `NetEvent`,
 //! `NetOutbound`), the cross-thread channel bundle (`NetChannels`), and
-//! the protocol constants.  The actual transport (websocket I/O via
-//! `tungstenite` on native, `web_sys::WebSocket` on wasm) lives in
-//! `robin_rs::multiplayer::{native, wasm}` and feeds events into these
-//! channels.
+//! the protocol constants. The actual iroh transport (native
+//! QUIC/direct/relay, browser relay-over-WebSocket) lives in
+//! `robin_rs::multiplayer::{native, wasm}` and feeds events into these channels.
 //!
 //! `EngineManager` (this crate) owns a `NetChannels` and uses it to
 //! route locally-sourced player commands over the wire and drain
@@ -69,7 +68,7 @@ pub const STATE_HASH_INTERVAL: u32 = 25;
 #[derive(
     Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
 )]
-pub struct MultiplayerSessionId(pub [u8; 16]);
+pub struct MultiplayerSessionId(pub [u8; 32]);
 
 /// Stable identity for a host-authored outer-mission transition.
 #[derive(
@@ -134,6 +133,79 @@ struct ModalSyncState {
     visible_requests: std::collections::VecDeque<VisibleModalRequest>,
 }
 
+/// Browser-only durable seat claim. The IndexedDB-held private key signs a
+/// session/host/ephemeral-transport binding; only the public key and signature
+/// cross the wire. Native clients rely directly on iroh's durable endpoint id.
+#[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct BrowserPeerAuth {
+    pub join_code: String,
+    pub durable_public_key: [u8; 32],
+    pub signature: Vec<u8>,
+}
+
+pub const MAX_DISPLAY_NAME_BYTES: usize = 256;
+pub const MAX_DISPLAY_NAME_CHARS: usize = 64;
+pub const MAX_MISSION_ID_BYTES: usize = 256;
+pub const MAX_JOIN_CODE_BYTES: usize = 16 * 1024;
+pub const MAX_NOTE_BYTES: usize = 4 * 1024;
+pub const MAX_REJECT_REASON_BYTES: usize = 1024;
+pub const MAX_SNAPSHOT_FRAME_BYTES: usize = 128 * 1024 * 1024;
+
+pub fn validate_display_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty()
+        || name.trim() != name
+        || name.len() > MAX_DISPLAY_NAME_BYTES
+        || name.chars().count() > MAX_DISPLAY_NAME_CHARS
+        || name.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '\u{061c}'
+                        | '\u{200b}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'..='\u{206f}'
+                        | '\u{feff}'
+                )
+        })
+    {
+        return Err(
+            "multiplayer display name must contain 1..=64 safe, unpadded characters and at most 256 UTF-8 bytes",
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_mission_id(mission_id: &str) -> Result<(), &'static str> {
+    if mission_id.is_empty()
+        || mission_id.trim() != mission_id
+        || mission_id.len() > MAX_MISSION_ID_BYTES
+        || mission_id.contains(['/', '\\'])
+        || mission_id == "."
+        || mission_id == ".."
+        || !mission_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err("multiplayer mission id must be a safe 1..=256 byte basename");
+    }
+    Ok(())
+}
+
+/// Exact byte string signed by the browser's non-extractable durable key.
+pub fn browser_seat_proof_message(
+    session_id: [u8; 32],
+    host_endpoint_id: [u8; 32],
+    transport_endpoint_id: [u8; 32],
+) -> Vec<u8> {
+    const DOMAIN: &[u8] = b"robinhood/browser-seat-proof/v1\0";
+    let mut message = Vec::with_capacity(DOMAIN.len() + 96);
+    message.extend_from_slice(DOMAIN);
+    message.extend_from_slice(&session_id);
+    message.extend_from_slice(&host_endpoint_id);
+    message.extend_from_slice(&transport_endpoint_id);
+    message
+}
+
 /// One on-the-wire message.  Encoded as a bitcode binary blob inside
 /// each WebSocket frame.
 #[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -142,6 +214,7 @@ pub enum NetMsg {
     Hello {
         protocol_version: u32,
         nickname: String,
+        browser_auth: Option<BrowserPeerAuth>,
     },
     /// Server → client: handshake response.  Tells the client which
     /// seat it owns and gives it the mission seed it must use to
@@ -157,6 +230,9 @@ pub enum NetMsg {
         speech_timing_locale: Option<String>,
         host_nickname: String,
     },
+    /// Server → client: an understood opening request was rejected. A typed
+    /// reason survives the relay path instead of becoming an opaque QUIC close.
+    Reject { reason: String },
     /// Client → server: an input the client wants applied this tick,
     /// tagged with the sender's local frame at dispatch time.  The
     /// server uses `origin_frame` as a lower bound when assigning the
@@ -773,18 +849,80 @@ impl NetChannels {
     }
 }
 
-/// Encode a [`NetMsg`] as a binary WebSocket payload.
+/// Encode a [`NetMsg`] as a binary iroh-stream payload.
 pub fn encode_msg(msg: &NetMsg) -> Vec<u8> {
     bitcode::encode(msg)
 }
 
-/// Decode a binary WebSocket payload into a [`NetMsg`].
+/// Decode and structurally validate a binary iroh-stream payload.
 pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
     let message: NetMsg = bitcode::decode(bytes).map_err(|error| error.to_string())?;
-    if let NetMsg::Welcome { sim_config, .. } = &message {
-        sim_config
-            .validate()
-            .map_err(|error| format!("host sent invalid simulation configuration: {error}"))?;
+    match &message {
+        NetMsg::Hello {
+            nickname,
+            browser_auth,
+            ..
+        } => {
+            validate_display_name(nickname)
+                .map_err(|error| format!("invalid peer display name: {error}"))?;
+            if let Some(auth) = browser_auth {
+                if auth.join_code.len() > MAX_JOIN_CODE_BYTES
+                    || auth.durable_public_key == [0; 32]
+                    || auth.signature.len() != 64
+                {
+                    return Err("invalid bounded browser seat authentication".to_string());
+                }
+            }
+        }
+        NetMsg::Welcome {
+            your_seat,
+            mission_id,
+            host_nickname,
+            session_id,
+            sim_config,
+            ..
+        } => {
+            if your_seat.0 == 0 || session_id.0 == [0; 32] {
+                return Err("host sent invalid seat/session identity".to_string());
+            }
+            validate_mission_id(mission_id)
+                .map_err(|error| format!("host sent invalid mission id: {error}"))?;
+            validate_display_name(host_nickname)
+                .map_err(|error| format!("invalid host display name: {error}"))?;
+            sim_config
+                .validate()
+                .map_err(|error| format!("host sent invalid simulation configuration: {error}"))?;
+        }
+        NetMsg::Reject { reason }
+            if reason.is_empty() || reason.len() > MAX_REJECT_REASON_BYTES =>
+        {
+            return Err("invalid multiplayer rejection reason".to_string());
+        }
+        NetMsg::Note(note) if note.len() > MAX_NOTE_BYTES => {
+            return Err("multiplayer note exceeds its string limit".to_string());
+        }
+        NetMsg::InitialSnapshot { engine_bytes, .. }
+            if engine_bytes.len() > MAX_SNAPSHOT_FRAME_BYTES =>
+        {
+            return Err("multiplayer snapshot exceeds its decoded size limit".to_string());
+        }
+        NetMsg::ReconnectRequired { reason }
+            if reason.is_empty() || reason.len() > MAX_REJECT_REASON_BYTES =>
+        {
+            return Err("invalid multiplayer reconnect reason".to_string());
+        }
+        NetMsg::PrepareSnapshotTransition { payload, .. } => {
+            let bytes = match payload {
+                SnapshotTransitionPayload::Save { save_bytes, .. } => save_bytes,
+                SnapshotTransitionPayload::CampaignExit { engine_bytes, .. } => engine_bytes,
+            };
+            if bytes.len() > MAX_SNAPSHOT_FRAME_BYTES {
+                return Err(
+                    "multiplayer transition snapshot exceeds its decoded size limit".into(),
+                );
+            }
+        }
+        _ => {}
     }
     Ok(message)
 }
@@ -796,8 +934,9 @@ mod tests {
     #[test]
     fn protocol_version_includes_snapshot_transition_barrier() {
         // Version 29 adds the exact-byte prepare/ready/commit transition on
-        // top of version 28's canonical speech-timing locale and version 27's
-        // resolved difficulty, achievements, and authoritative trading.
+        // top of version 28's browser authentication/content admission,
+        // canonical speech timing, resolved difficulty, achievements, and
+        // authoritative trading.
         // Older peers fail before decoding incompatible snapshot/input bytes.
         assert_eq!(NET_PROTOCOL_VERSION, 29);
     }
@@ -834,10 +973,11 @@ mod tests {
         let hello = NetMsg::Hello {
             protocol_version: NET_PROTOCOL_VERSION,
             nickname: "alice".into(),
+            browser_auth: None,
         };
         let welcome = NetMsg::Welcome {
             your_seat: PlayerId(2),
-            session_id: MultiplayerSessionId([7; 16]),
+            session_id: MultiplayerSessionId([7; 32]),
             mission_id: "Dem_Lei_MP".into(),
             mission_seed: 42,
             sim_config: crate::engine::SimConfig::default(),
@@ -851,6 +991,7 @@ mod tests {
                 NetMsg::Hello {
                     protocol_version,
                     nickname,
+                    browser_auth,
                 },
                 NetMsg::Welcome {
                     your_seat,
@@ -864,8 +1005,9 @@ mod tests {
             ) => {
                 assert_eq!(protocol_version, NET_PROTOCOL_VERSION);
                 assert_eq!(nickname, "alice");
+                assert!(browser_auth.is_none());
                 assert_eq!(your_seat, PlayerId(2));
-                assert_eq!(session_id, MultiplayerSessionId([7; 16]));
+                assert_eq!(session_id, MultiplayerSessionId([7; 32]));
                 assert_eq!(mission_id, "Dem_Lei_MP");
                 assert_eq!(mission_seed, 42);
                 assert_eq!(sim_config, crate::engine::SimConfig::default());
@@ -879,7 +1021,7 @@ mod tests {
     #[test]
     fn modal_proposal_and_decision_roundtrip_with_exact_identity() {
         let instance = ModalInstanceId {
-            session_id: MultiplayerSessionId([9; 16]),
+            session_id: MultiplayerSessionId([9; 32]),
             opened_frame: 120,
             occurrence: 3,
         };
@@ -922,7 +1064,7 @@ mod tests {
     #[test]
     fn modal_instances_are_stable_until_completed_and_session_bound() {
         let (channels, _incoming, _outgoing, _cursor, _snapshot) = NetChannels::new();
-        let session = MultiplayerSessionId([3; 16]);
+        let session = MultiplayerSessionId([3; 32]);
         channels.install_session_id(session).unwrap();
         channels.publish_frame(17);
         let kind = ModalKind::SherwoodReport;
@@ -941,7 +1083,7 @@ mod tests {
         assert_ne!(first, second);
         assert!(
             channels
-                .install_session_id(MultiplayerSessionId([4; 16]))
+                .install_session_id(MultiplayerSessionId([4; 32]))
                 .is_err()
         );
     }
@@ -961,7 +1103,7 @@ mod tests {
     #[test]
     fn snapshot_transition_roundtrips_exact_bytes() {
         let id = SnapshotTransitionId {
-            session_id: MultiplayerSessionId([8; 16]),
+            session_id: MultiplayerSessionId([8; 32]),
             sequence: 3,
         };
         let bytes = vec![0, 1, 2, 3, 254, 255];
@@ -996,7 +1138,7 @@ mod tests {
     #[test]
     fn host_transition_api_queues_exact_save_and_campaign_bytes() {
         let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
-        let session_id = MultiplayerSessionId([11; 16]);
+        let session_id = MultiplayerSessionId([11; 32]);
         channels.install_session_id(session_id).unwrap();
 
         let save_bytes = vec![9, 8, 7, 6];
@@ -1036,6 +1178,34 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_unsafe_or_oversized_wire_strings() {
+        for nickname in ["", " padded", "bidi\u{202e}name"] {
+            let encoded = encode_msg(&NetMsg::Hello {
+                protocol_version: NET_PROTOCOL_VERSION,
+                nickname: nickname.to_string(),
+                browser_auth: None,
+            });
+            assert!(decode_msg(&encoded).is_err());
+        }
+        let encoded = encode_msg(&NetMsg::Note("x".repeat(MAX_NOTE_BYTES + 1)));
+        assert!(decode_msg(&encoded).is_err());
+    }
+
+    #[test]
+    fn browser_seat_proof_is_domain_and_endpoint_bound() {
+        const DOMAIN: &[u8] = b"robinhood/browser-seat-proof/v1\0";
+        let proof = browser_seat_proof_message([1; 32], [2; 32], [3; 32]);
+        assert_eq!(proof.len(), DOMAIN.len() + 96);
+        assert_eq!(&proof[..DOMAIN.len()], DOMAIN);
+        assert_eq!(&proof[DOMAIN.len()..DOMAIN.len() + 32], &[1; 32]);
+        assert_eq!(&proof[DOMAIN.len() + 32..DOMAIN.len() + 64], &[2; 32]);
+        assert_eq!(&proof[DOMAIN.len() + 64..], &[3; 32]);
+        assert_ne!(proof, browser_seat_proof_message([9; 32], [2; 32], [3; 32]));
+        assert_ne!(proof, browser_seat_proof_message([1; 32], [9; 32], [3; 32]));
+        assert_ne!(proof, browser_seat_proof_message([1; 32], [2; 32], [9; 32]));
+    }
+
+    #[test]
     fn quit_updates_roundtrip_the_resolved_difficulty() {
         let msg = NetMsg::Input {
             origin_frame: 73,
@@ -1072,12 +1242,13 @@ mod tests {
         sim_config.difficulty = crate::player_profile::DifficultyLevel::custom(rules).unwrap();
         let msg = NetMsg::Welcome {
             your_seat: PlayerId(1),
-            session_id: MultiplayerSessionId([19; 16]),
+            session_id: MultiplayerSessionId([19; 32]),
             mission_id: "custom".to_owned(),
             mission_seed: 19,
             sim_config,
             speech_timing_locale: Some("en-US".to_owned()),
             host_nickname: "host".to_owned(),
+            session_id: [19; 32],
         };
 
         let decoded = decode_msg(&encode_msg(&msg)).expect("decode custom Welcome");
@@ -1100,12 +1271,13 @@ mod tests {
         sim_config.difficulty = crate::player_profile::DifficultyLevel::Custom(rules);
         let message = NetMsg::Welcome {
             your_seat: PlayerId(1),
-            session_id: MultiplayerSessionId([1; 16]),
+            session_id: MultiplayerSessionId([1; 32]),
             mission_id: "invalid".to_owned(),
             mission_seed: 1,
             sim_config,
             speech_timing_locale: None,
             host_nickname: "host".to_owned(),
+            session_id: [1; 32],
         };
 
         let error = decode_msg(&encode_msg(&message)).unwrap_err();

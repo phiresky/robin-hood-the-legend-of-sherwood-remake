@@ -79,9 +79,9 @@ pub(crate) struct MultiplayerRollbackTelemetry {
 ///
 /// Also folds `AssignedLocalSeat` events (late seat-assignment
 /// races) into `host.transport.local_seat` and logs other diagnostic events.
-/// Native disconnects remain synchronized only while the transport's real
-/// reconnect loop is active. Browser disconnects arrive as `Fatal` because
-/// wasm has no reconnect implementation.
+/// Native and browser disconnects remain synchronized only while their real
+/// transport reconnect loops are active. Both abandon the old prediction
+/// future and wait for an authoritative replacement snapshot.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_net_inputs(
     host: &mut Host,
@@ -151,19 +151,22 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    tracing::warn!(
-                        "multiplayer: peer disconnected — transport will auto-reconnect; \
-                         simulation is held until an authoritative snapshot arrives"
-                    );
-                    host.transport.reconnecting = true;
-                    admission_events.push(MultiplayerAdmissionEvent::Disconnected);
-                }
-                #[cfg(target_arch = "wasm32")]
-                panic!(
-                    "fatal multiplayer session error: browser transport disconnected and automatic reconnect is unavailable"
+                tracing::warn!(
+                    "multiplayer: peer disconnected — transport will auto-reconnect; \
+                     simulation is held until an authoritative snapshot arrives"
                 );
+                host.transport.reconnecting = true;
+                admission_events.push(MultiplayerAdmissionEvent::Disconnected);
+                // Everything derived from the disconnected process's future
+                // is invalid. Events already drained from that generation
+                // occur before Disconnected and are removed here; events from
+                // the replacement stream arrive afterward.
+                late_inputs.clear();
+                pending_inputs.clear();
+                peer_hashes.clear();
+                *rewind_buffer = RewindBuffer::new();
+                latest_host_clock_sample = None;
+                rewrote_sim_state = true;
             }
             NetEvent::Reconnected => {
                 tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
@@ -874,6 +877,7 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
                 .application_context
                 .canonical_speech_timing_locale()
@@ -892,11 +896,65 @@ pub(super) async fn setup_multiplayer_session(
                 frame_cursor,
                 snapshot_slot,
                 args.mp_expected_players.unwrap_or(1),
+                publish_browser_links,
             ) {
                 Ok(handle) => {
                     channels
                         .install_session_id(handle.session_id())
                         .map_err(|error| format!("multiplayer: {error}"))?;
+                    if publish_browser_links {
+                        let content_edition = if crate::main_entry::detect_demo_mode_with_context(
+                            &args.global_options,
+                        )
+                        .is_some()
+                        {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Demo
+                        } else {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Full
+                        };
+                        let content_identity_sha256 =
+                            crate::multiplayer::content_identity::active_content_identity()
+                                .map_err(|error| {
+                                    format!(
+                                        "multiplayer: cannot publish an exact browser content invitation: {error}"
+                                    )
+                                })?;
+                        let ticket = handle
+                            .browser_join_ticket(
+                                content_edition,
+                                content_identity_sha256.clone(),
+                                args.mp_mission_profile_id,
+                                args.mp_expected_players.unwrap_or(1),
+                            )
+                            .map_err(|error| {
+                                format!("multiplayer: browser invitation unavailable: {error}")
+                            })?;
+                        let browser_base =
+                            std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
+                                crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
+                            });
+                        let share_url = ticket.share_url(&browser_base).map_err(|error| {
+                            format!("multiplayer: browser share URL unavailable: {error}")
+                        })?;
+                        tracing::info!(
+                            browser_join_code = %ticket.encode(),
+                            %share_url,
+                            relay = %ticket.payload().relay_url,
+                            ?content_edition,
+                            %content_identity_sha256,
+                            "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
+                        );
+                        host.pending_console_output.push(format!(
+                            "Browser join code (expires after 30 minutes if unused): {}",
+                            ticket.encode()
+                        ));
+                        host.pending_console_output
+                            .push(format!("Browser join link: {share_url}"));
+                        host.pending_console_output.push(format!(
+                            "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
+                            ticket.payload().relay_url
+                        ));
+                    }
                     tracing::info!(
                         endpoint_id = %handle.endpoint_id(),
                         nickname = %nickname,
@@ -922,28 +980,34 @@ pub(super) async fn setup_multiplayer_session(
             NetChannels::new();
         match connect_client(addr, nickname.clone(), in_tx, out_rx) {
             Ok(handle) => {
-                let session_id = handle.session_id().ok_or_else(|| {
-                    "multiplayer: Welcome omitted the required session identity".to_string()
-                })?;
-                channels
-                    .install_session_id(session_id)
-                    .map_err(|error| format!("multiplayer: {error}"))?;
                 #[cfg(target_arch = "wasm32")]
                 {
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
                     while (handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat.borrow().is_none()
+                        || handle.assigned_seat().is_none()
+                        || handle.session_id().is_none()
                         || handle.speech_timing_authority().is_none())
                         && web_time::Instant::now() < deadline
                     {
+                        if let Some(error) = handle.startup_error() {
+                            return Err(format!(
+                                "multiplayer: browser relay startup failed: {error}"
+                            ));
+                        }
                         crate::window::sleep_ms(10).await;
+                    }
+                    if let Some(error) = handle.startup_error() {
+                        return Err(format!(
+                            "multiplayer: browser relay startup failed: {error}"
+                        ));
                     }
                     if handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat.borrow().is_none()
+                        || handle.assigned_seat().is_none()
+                        || handle.session_id().is_none()
                         || handle.speech_timing_authority().is_none()
                     {
                         return Err(
@@ -952,9 +1016,19 @@ pub(super) async fn setup_multiplayer_session(
                         );
                     }
                 }
+                let session_id = handle.session_id().ok_or_else(|| {
+                    "multiplayer: Welcome omitted the required session identity".to_string()
+                })?;
+                channels
+                    .install_session_id(session_id)
+                    .map_err(|error| format!("multiplayer: {error}"))?;
                 let welcomed_mission = handle
                     .mission_id()
                     .expect("successful Welcome must include a mission id");
+                let assigned_seat = handle
+                    .assigned_seat()
+                    .expect("successful Welcome must assign a local seat");
+                host.transport.local_seat = assigned_seat;
                 if welcomed_mission != authoritative_mission_id {
                     return Err(format!(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
@@ -1029,12 +1103,47 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
+fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
+    let saved = args
+        .global_options
+        .active_profile_snapshot()
+        .map(|profile| profile.multiplayer_config.publish_browser_join_links)
+        .map_err(|error| {
+            format!("multiplayer: cannot read browser publication preference: {error}")
+        })?;
+    Ok(resolve_publication_preference(
+        args.mp_browser_join_links,
+        saved,
+    ))
+}
+
+fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
+    cli_override.unwrap_or(saved)
+}
+
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
+    if args.server && args.connect.is_some() {
+        return Err("multiplayer host and client modes are mutually exclusive".to_string());
+    }
+    if let Some(expected) = args.mp_expected_players
+        && !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
+    {
+        return Err(format!(
+            "multiplayer expected player count must be between 1 and {}",
+            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+        ));
+    }
     let multiplayer = args.server || args.connect.is_some();
     let replay = args.replay.is_some() || args.replay_data.is_some();
     if multiplayer && replay {
         return Err(
             "multiplayer cannot be combined with replay playback; Welcome mission/seed/SimConfig must be the sole frame-0 authority"
+                .to_string(),
+        );
+    }
+    if args.connect.is_some() && args.record.is_some() {
+        return Err(
+            "multiplayer peers cannot choose a replay output; only the host records the canonical ordered session"
                 .to_string(),
         );
     }
@@ -1044,8 +1153,8 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
 #[cfg(test)]
 mod tests {
     use super::{
-        MultiplayerAdmissionEvent, drain_net_inputs, rewind_from_recent_timeline_history,
-        validate_multiplayer_launch_args,
+        MultiplayerAdmissionEvent, TimelineFrame, drain_net_inputs, resolve_publication_preference,
+        rewind_from_recent_timeline_history, validate_multiplayer_launch_args,
     };
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
@@ -1088,6 +1197,42 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
+
+        let peer_recording = crate::main_entry::CliArgs {
+            connect: Some("127.0.0.1:7878".to_string()),
+            record: Some("peer-is-not-canonical.rhrec.jsonl".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            validate_multiplayer_launch_args(&peer_recording)
+                .unwrap_err()
+                .contains("only the host records")
+        );
+    }
+
+    #[test]
+    fn browser_publication_cli_override_precedes_saved_preference() {
+        assert!(resolve_publication_preference(None, true));
+        assert!(!resolve_publication_preference(None, false));
+        assert!(resolve_publication_preference(Some(true), false));
+        assert!(!resolve_publication_preference(Some(false), true));
+    }
+
+    #[test]
+    fn multiplayer_launch_rejects_ambiguous_mode_and_player_count() {
+        let both = crate::main_entry::CliArgs {
+            server: true,
+            connect: Some("host".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&both).is_err());
+
+        let too_many = crate::main_entry::CliArgs {
+            server: true,
+            mp_expected_players: Some(5),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&too_many).is_err());
     }
 
     #[test]

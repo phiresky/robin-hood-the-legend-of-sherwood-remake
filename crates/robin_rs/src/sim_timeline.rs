@@ -330,6 +330,16 @@ impl SnapshotHistory {
         true
     }
 
+    /// Replace the retained timeline with one exact whole-state adoption
+    /// boundary, even when that frame is outside the periodic checkpoint
+    /// cadence. Reconnect snapshots are new authoritative timelines; making
+    /// their frame an explicit anchor avoids fabricating commands between the
+    /// nearest periodic frame and the adopted state.
+    pub fn replace_with_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.snapshots.clear();
+        self.snapshots.push_back(SimSnapshot::new(frame, engine));
+    }
+
     /// Retain an already-cloned eligible checkpoint.
     pub fn remember(&mut self, snapshot: SimSnapshot) {
         assert!(
@@ -349,23 +359,6 @@ impl SnapshotHistory {
                 self.snapshots.pop_back();
             }
         }
-        self.snapshots.push_back(snapshot);
-        prune_by_policy(
-            &mut self.snapshots,
-            |snapshot| snapshot.frame,
-            self.retention_policy,
-        );
-    }
-
-    /// Install the first replay anchor even when its frame is not selected by
-    /// the periodic checkpoint policy. Whole-state adoption can occur at any
-    /// frame; waiting for the next periodic boundary would leave the command
-    /// journal temporarily unreplayable.
-    fn remember_initial_anchor(&mut self, snapshot: SimSnapshot) {
-        assert!(
-            self.snapshots.is_empty(),
-            "initial timeline anchor requires an empty checkpoint history"
-        );
         self.snapshots.push_back(snapshot);
         prune_by_policy(
             &mut self.snapshots,
@@ -449,18 +442,12 @@ impl TimelineHistory {
         self.pending = Some(PendingFrame { frame, checkpoint });
     }
 
-    /// Seed an empty history at an externally adopted pre-tick state.
+    /// Start a new journal at an exact externally adopted pre-tick state.
     /// Subsequent `begin_frame`/`commit_frame` calls journal immediately even
     /// if `frame` is between normal periodic checkpoint boundaries.
     pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
-        assert!(
-            self.checkpoints.oldest_frame().is_none()
-                && self.commands.is_empty()
-                && self.pending.is_none(),
-            "initial timeline anchor can only seed an empty history"
-        );
-        self.checkpoints
-            .remember_initial_anchor(SimSnapshot::new(frame, engine));
+        self.clear();
+        self.checkpoints.replace_with_anchor(frame, engine);
     }
 
     /// Commit the open frame. Returns `false` only while the history has no

@@ -9,6 +9,7 @@
     "build:shell": "tsc --noEmit && vite build && node scripts/inline-dist-index.mjs",
     "strip:wasm": "node scripts/optimize-wasm.mjs dist/assets",
     "strip:wasm-pkg": "node scripts/optimize-wasm.mjs pkg",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

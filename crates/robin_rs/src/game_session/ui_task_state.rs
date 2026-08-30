@@ -24,6 +24,7 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 use robin_engine::graphic_config::{GraphicConfig, TextureScaleMode};
+use robin_engine::multiplayer_config::MultiplayerConfig;
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sound_config::SoundConfig;
@@ -40,6 +41,7 @@ pub(super) struct OptionsTaskResult {
     pub(super) profile_id: u32,
     pub(super) graphic_config: GraphicConfig,
     pub(super) gameplay_config: GameplayConfig,
+    pub(super) multiplayer_config: MultiplayerConfig,
     pub(super) sound_config: SoundConfig,
     pub(super) key_config: KeyConfig,
     pub(super) custom_key_config: KeyConfig,
@@ -252,6 +254,8 @@ enum OptionsPage {
     Sounds,
     Shortcuts,
     Gameplay,
+    #[cfg(not(target_arch = "wasm32"))]
+    MultiplayerPrivacy,
 }
 
 #[derive(Clone)]
@@ -261,17 +265,21 @@ enum PageSnapshot {
     Sounds(SoundConfig),
     Shortcuts(KeyConfig, KeyConfig),
     Gameplay(GameplayConfig),
+    #[cfg(not(target_arch = "wasm32"))]
+    MultiplayerPrivacy(MultiplayerConfig),
 }
 
 pub(super) struct OptionsTaskState {
     profile_id: u32,
     graphic: GraphicConfig,
     gameplay: GameplayConfig,
+    multiplayer: MultiplayerConfig,
     sound: SoundConfig,
     keys: KeyConfig,
     custom_keys: KeyConfig,
     original_graphic: GraphicConfig,
     original_gameplay: GameplayConfig,
+    original_multiplayer: MultiplayerConfig,
     original_sound: SoundConfig,
     original_keys: Vec<Option<KeyCode>>,
     original_amount_of_speaking: u16,
@@ -299,6 +307,7 @@ impl OptionsTaskState {
         profile_id: u32,
         graphic: GraphicConfig,
         gameplay: GameplayConfig,
+        multiplayer: MultiplayerConfig,
         sound: SoundConfig,
         keys: KeyConfig,
         custom_keys: KeyConfig,
@@ -316,11 +325,13 @@ impl OptionsTaskState {
             profile_id,
             original_graphic: graphic.clone(),
             original_gameplay: gameplay,
+            original_multiplayer: multiplayer,
             original_sound: sound,
             original_keys,
             original_amount_of_speaking: sound.amount_of_speaking,
             graphic,
             gameplay,
+            multiplayer,
             sound,
             keys,
             custom_keys,
@@ -474,18 +485,29 @@ impl OptionsTaskState {
                 1 => self.enter_page(OptionsPage::Sounds, resources),
                 2 => self.enter_page(OptionsPage::Shortcuts, resources),
                 3 => self.enter_page(OptionsPage::Gameplay, resources),
-                4 => {
-                    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+                #[cfg(not(target_arch = "wasm32"))]
+                4 => self.enter_page(OptionsPage::MultiplayerPrivacy, resources),
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    any(target_os = "windows", target_os = "linux", target_os = "macos")
+                ))]
+                5 => {
                     crate::datadir_locator::change_datadir_interactive();
-                    #[cfg(not(any(
-                        target_os = "windows",
-                        target_os = "linux",
-                        target_os = "macos"
-                    )))]
+                }
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    any(target_os = "windows", target_os = "linux", target_os = "macos")
+                ))]
+                6 => return Some(self.finish()),
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    not(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+                ))]
+                5 => return Some(self.finish()),
+                #[cfg(target_arch = "wasm32")]
+                4 => {
                     return Some(self.finish());
                 }
-                #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-                5 => return Some(self.finish()),
                 _ => {}
             },
             OptionsPage::Graphics => match index {
@@ -510,6 +532,13 @@ impl OptionsTaskState {
                 index if index == crate::ingame_menu::gameplay::OPTION_LABELS.len() + 1 => {
                     self.restore_page(resources)
                 }
+                _ => {}
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            OptionsPage::MultiplayerPrivacy => match index {
+                0 => self.adjust_selected(1, resources),
+                1 => self.accept_page(resources),
+                2 => self.restore_page(resources),
                 _ => {}
             },
             OptionsPage::Shortcuts => {
@@ -621,6 +650,11 @@ impl OptionsTaskState {
             {
                 crate::ingame_menu::gameplay::apply_option_toggle(&mut self.gameplay, index)
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            (OptionsPage::MultiplayerPrivacy, 0) => {
+                self.multiplayer.publish_browser_join_links =
+                    !self.multiplayer.publish_browser_join_links;
+            }
             _ => return,
         }
         self.rebuild_frame(resources);
@@ -634,6 +668,8 @@ impl OptionsTaskState {
                 PageSnapshot::Shortcuts(self.keys.clone(), self.custom_keys.clone())
             }
             OptionsPage::Gameplay => PageSnapshot::Gameplay(self.gameplay),
+            #[cfg(not(target_arch = "wasm32"))]
+            OptionsPage::MultiplayerPrivacy => PageSnapshot::MultiplayerPrivacy(self.multiplayer),
             OptionsPage::Hub => PageSnapshot::None,
         };
         self.page = page;
@@ -666,6 +702,8 @@ impl OptionsTaskState {
                 self.custom_keys = custom;
             }
             PageSnapshot::Gameplay(value) => self.gameplay = value,
+            #[cfg(not(target_arch = "wasm32"))]
+            PageSnapshot::MultiplayerPrivacy(value) => self.multiplayer = value,
             PageSnapshot::None => {}
         }
         self.page = OptionsPage::Hub;
@@ -692,11 +730,13 @@ impl OptionsTaskState {
         let key_config_changed = key_vec(&self.keys) != self.original_keys;
         let changed = !graphic_eq(&self.graphic, &self.original_graphic)
             || self.gameplay != self.original_gameplay
+            || self.multiplayer != self.original_multiplayer
             || !sound_eq(&self.sound, &self.original_sound);
         UiTaskOutcome::OptionsAccepted(OptionsTaskResult {
             profile_id: self.profile_id,
             graphic_config: self.graphic.clone(),
             gameplay_config: self.gameplay,
+            multiplayer_config: self.multiplayer,
             sound_config: self.sound,
             key_config: self.keys.clone(),
             custom_key_config: self.custom_keys.clone(),
@@ -717,6 +757,8 @@ impl OptionsTaskState {
                     resources.menu_text.get(MT_BTN_SHORTCUTS),
                     "Gameplay".to_string(),
                 ];
+                #[cfg(not(target_arch = "wasm32"))]
+                labels.push("Multiplayer / Privacy".to_string());
                 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                 labels.push("Game Data Folder".to_string());
                 labels.push(resources.menu_text.get(MT_BTN_BACK));
@@ -788,6 +830,15 @@ impl OptionsTaskState {
                 ]);
                 labels
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            OptionsPage::MultiplayerPrivacy => vec![
+                toggle_label(
+                    "Publish Browser Join Links",
+                    self.multiplayer.publish_browser_join_links,
+                ),
+                resources.menu_text.get(MT_BTN_OK),
+                resources.menu_text.get(MT_BTN_CANCEL),
+            ],
             OptionsPage::Shortcuts => {
                 let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
                 let mut labels = (0..visible)
@@ -902,6 +953,8 @@ impl OptionsTaskState {
             OptionsPage::Sounds => resources.menu_text.get(MT_TTL_SOUNDS),
             OptionsPage::Shortcuts => resources.menu_text.get(MT_BTN_SHORTCUTS),
             OptionsPage::Gameplay => "Gameplay".to_string(),
+            #[cfg(not(target_arch = "wasm32"))]
+            OptionsPage::MultiplayerPrivacy => "Multiplayer / Privacy".to_string(),
         };
         if let Some(font) = resources.title_font_any() {
             render_text_virt_font(renderer, font, self.transform, &title, 20, 20);
@@ -910,6 +963,10 @@ impl OptionsTaskState {
             let help = match self.page {
                 OptionsPage::Hub => "Select a settings page.",
                 OptionsPage::Shortcuts => "Click a binding, then press a key. Mouse wheel scrolls.",
+                #[cfg(not(target_arch = "wasm32"))]
+                OptionsPage::MultiplayerPrivacy => {
+                    "Applies to the next hosted game; traffic remains end-to-end encrypted."
+                }
                 _ => "Click a value or use Left/Right. OK accepts; Cancel restores.",
             };
             render_text_virt_font(renderer, font, self.transform, help, 24, 76);

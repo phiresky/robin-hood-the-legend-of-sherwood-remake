@@ -15,15 +15,18 @@ wire protocol is version 29; older protocol compatibility is unsupported.
 - `SeatState` stores deterministic per-player selection, quick groups,
   connection/nickname state, follow target, locker state and alt-lock.
 - Disconnect preserves a seat's selection and quick groups. Reconnecting with
-  the same nickname reclaims the parked seat.
+  the same authenticated native endpoint or durable browser owner reclaims the
+  parked seat; nicknames are presentation only.
 
 Local input must use `PlayerInput::new(local_seat, command)`. The host-only
 constructor is for single-player and explicitly host-owned paths.
 
 ## Transport
 
-All game-session traffic runs over iroh (peer-to-peer QUIC with relay
-fallback and hole punching). Peers are addressed by iroh endpoint id — the
+All game-session traffic runs over iroh. Native peers use QUIC with relay
+fallback and hole punching; browsers use iroh's relay-over-WebSocket path and
+only the HTTPS relay disclosed in the signed invitation. Peers are addressed
+by iroh endpoint id — the
 public half of a persistent per-install key stored next to the save data
 (`multiplayer_identity.key`). Because the id is derived from the stored key,
 a host's connect address is known before its endpoint is even bound, which is
@@ -32,8 +35,37 @@ bind address, port forwarding, or NAT configuration anywhere. Endpoint ids
 resolve through two layered address-lookup systems: the n0 DNS/pkarr default
 and publish/resolve on the BitTorrent Mainline DHT
 (`iroh-mainline-address-lookup`), so lookups keep working even without any
-hosted discovery infrastructure. Each session uses one bidirectional QUIC
-stream per peer carrying length-prefixed frames.
+hosted discovery infrastructure. Each session uses one bidirectional stream
+per peer carrying class-tagged, length-prefixed frames. The browser applies
+the same directional allocation limits as native before decoding a body.
+
+### Browser invitations, identity, and content
+
+- Browser-link publication is a persisted Multiplayer/Privacy setting. It is
+  on by default and can be overridden per host launch. Disabling it leaves
+  native iroh play available without requiring relay readiness.
+- A canonical `rhmp3` invitation is signed by the host endpoint key, valid for
+  first redemption for exactly 30 minutes, and binds protocol 29, the full
+  engine commit, mission/session, expected seats, one disclosed canonical
+  HTTPS relay, Demo/Full edition, and the native host's exact content-closure
+  SHA-256. The URL stores the public ticket in its fragment; the stable shell
+  captures and erases it before its first request.
+- The browser's durable seat key is an IndexedDB-held, non-extractable Ed25519
+  private key on the isolated `identity.robinhood.phiresky.xyz` origin. That
+  origin exposes only typed status, redemption, and seat-proof operations.
+  The proof binds session, host endpoint, and the page's ephemeral iroh
+  endpoint; there is no generic signing operation.
+- Demo bytes must match their exact length, SHA-256, and native source-closure
+  identity. Full owners select a local package whose canonical schema-2
+  manifest binds the source Data/locale closure and every transformed
+  datadir, split mission, and audio byte. Missing, extra, stale, or mismatched
+  content stops before game boot. Retail assets are never uploaded.
+- Operators compute the catalog/ticket closure with
+  `cargo run --example content_identity -- <installation>/Data`. The Full web
+  conversion recipe embeds the same value automatically.
+- Relays can observe participant IP addresses, connection timing, and byte
+  counts. Gameplay remains end-to-end encrypted; the invitation/log/UI states
+  this rather than implying relay anonymity.
 
 ## Matchmaking
 
@@ -54,8 +86,9 @@ signing them with the game identity key is a known TODO.
 `robin_engine::multiplayer` contains platform-neutral protocol types,
 `NetChannels`, the shared frame cursor and the snapshot handoff. The native
 iroh transport and identity live in
-`robin_rs::multiplayer::{native, identity}`; `robin_rs::multiplayer::wasm` is
-currently a stub (browser multiplayer is pending iroh wasm support).
+`robin_rs::multiplayer::{native, identity}`; the relay-only browser client
+lives in `robin_rs::multiplayer::wasm`. Canonical ticket and content-closure
+code is shared across the platform boundary.
 Mission-loop admission, input scheduling, rollback, hash comparison and modal
 synchronization live in `robin_rs::game_session::multiplayer`. The graphical
 and true-headless drivers use the same network drain and timeline admission
@@ -71,14 +104,15 @@ host viewport policy.
 
 ## Protocol 29
 
-Messages are bitcode-encoded binary frames, length-prefixed on a single
-bidirectional QUIC stream per peer. The handshake rejects a different
-protocol version.
+Messages are bitcode-encoded binary frames, class-tagged and length-prefixed
+on a single bidirectional iroh stream per peer. The handshake rejects a
+different protocol version.
 
 | Direction | Message | Purpose |
 | --- | --- | --- |
-| client → server | `Hello { protocol_version, nickname }` | open or resume a session |
+| client → server | `Hello { protocol_version, nickname, browser_auth }` | open or resume a session; browser auth carries the signed ticket and durable seat proof |
 | server → client | `Welcome { your_seat, session_id, mission_id, mission_seed, sim_config, speech_timing_locale, host_nickname }` | authoritative session identity, mission construction, speech timing, and seat assignment |
+| server → client | `Reject { reason }` | typed fail-loud admission rejection |
 | client → server | `Input { origin_frame, command }` | propose a local command |
 | server → peers | `BroadcastInput { server_frame, origin_frame, target_frame, input }` | globally ordered, scheduled input |
 | server → peers | `StateHash { frame, hash, clock_frame, ms_until_next_frame }` | desync detection and pacing sample |
@@ -142,13 +176,15 @@ must not be repaired by silently adopting a new default Engine.
 - True-headless hosts perform the same local-seat bootstrap and frame-zero
   snapshot publication as interactive hosts, then keep the reconnect snapshot
   and host clock samples current while running.
-- Native clients reconnect with exponential backoff and reclaim a seat by
-  nickname. Disconnect immediately returns admission to the snapshot-wait
+- Native clients reconnect with exponential backoff and reclaim their parked
+  owner generation. Browser clients reconnect with the same ephemeral iroh
+  endpoint and durable session/host/transport proof. Disconnect immediately
+  returns admission to the snapshot-wait
   state; simulation and headless HTTP timeline steps remain held until the
-  replacement snapshot and `BeginSim` are accepted. Inputs queued only in the
-  disconnected process are not guaranteed to survive transport loss.
-- Browser clients are currently unsupported: the transport is iroh-only and
-  iroh's wasm (relay-over-WebSocket) support has not been wired in yet.
+  replacement snapshot and `BeginSim` are accepted. A replacement snapshot
+  may be older than the abandoned prediction future; adoption clears queued
+  inputs, hashes, rewind anchors, and dense history before seeding the new
+  exact timeline anchor. Ordinary stale snapshots remain ignored.
 
 ## Modal authority and mission transitions
 
@@ -174,6 +210,15 @@ authoritative load input.
 - `--connect ENDPOINT_ID` joins a host by its endpoint id.
 - `--mp-expected-players N` configures the start barrier for direct launches.
 - `--mp-nickname NAME` supplies the stable reconnect identity/overlay label.
+- `--mp-browser-join-links true|false` overrides the saved browser-link
+  publication preference for this hosted game.
+- `--join RHMP3_TICKET` consumes a canonical host-signed invitation. The web
+  shell installs it internally after authenticating and scrubbing it.
+
+Only the host records the canonical server-ordered multiplayer replay. A
+connecting peer cannot select `--record`, and the browser peer's replay RPC
+fails with `no active replay recording` instead of publishing a competing
+history.
 
 The in-game multiplayer menu needs no flags or environment: it joins the
 serverless matchmaking swarm automatically (see **Matchmaking** above).
@@ -205,6 +250,15 @@ matching increments and verify:
 For meaningful gameplay coverage, replay the same recorded command stream on
 both peers; stepping empty frames proves clock/snapshot agreement but not the
 full command surface.
+
+The live browser driver is `wasm-www/scripts/live-relay-e2e.mjs`. It requires
+a native host with its loopback HTTP API, a fresh `rhmp3` ticket, and Chrome
+already listening on a remote-debugging port. It asserts relay-WebSocket
+welcome, authoritative input delivery, a forced transport loss, a progressed
+replacement snapshot, post-reconnect input, host replay availability, and
+browser-peer replay refusal. Production QA additionally requires the isolated
+signer origin and exact ticket-selected `/wasm/<commit>` and content catalog
+to be deployed.
 
 ## Remaining work
 

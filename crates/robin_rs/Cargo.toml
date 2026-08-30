@@ -25,6 +25,7 @@ enum-map = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde_urlencoded = "0.7"
+url = "2"
 serde-value = "0.7"
 tracing.workspace = true
 thiserror.workspace = true
@@ -171,6 +172,9 @@ gloo-render = "0.3"
 # Enable `crypto.getRandomValues` for the `getrandom` major version
 # used by the wasm dependency graph.
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# Browser endpoints use iroh's built-in relay-over-WebSocket transport. Native
+# discovery remains target-scoped above; browser joins use a signed relay URL.
+iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"] }
 
 [dev-dependencies]
 qoi = "0.4"

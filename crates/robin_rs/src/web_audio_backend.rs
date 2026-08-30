@@ -151,6 +151,14 @@ thread_local! {
 }
 
 async fn fetch_array_buffer(url: &str) -> Result<js_sys::ArrayBuffer, String> {
+    if let Some(preloaded) = url.strip_prefix("robin-preloaded://") {
+        let (_, relative) = preloaded
+            .split_once('/')
+            .ok_or_else(|| format!("preloaded audio URL has no contained relative path: {url}"))?;
+        let bytes = robin_util::asset_fs::read(relative)
+            .map_err(|error| format!("read preloaded audio {relative}: {error}"))?;
+        return Ok(js_sys::Uint8Array::from(bytes.as_slice()).buffer());
+    }
     let window = web_sys::window().ok_or("fetch audio: no window")?;
     let response = JsFuture::from(window.fetch_with_str(url))
         .await

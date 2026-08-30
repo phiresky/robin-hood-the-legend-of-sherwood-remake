@@ -800,6 +800,7 @@ impl InteractiveFrameSimulation {
                                         );
                                     profile.graphic_config = result.graphic_config.clone();
                                     profile.gameplay_config = result.gameplay_config;
+                                    profile.multiplayer_config = result.multiplayer_config;
                                     profile.sound_config = result.sound_config;
                                     if let Err(error) = manager.save() {
                                         tracing::error!(

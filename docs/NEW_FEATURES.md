@@ -459,7 +459,7 @@ A list of which additional features we have added, which ones we might still wan
   than strict "wait for every peer before ticking" lockstep. Inputs older than
   the retained correction horizon now force a complete transport reconnect
   and fresh authoritative snapshot instead of being applied at the wrong
-  frame. Browser clients are pending iroh wasm support.
+  frame.
 
 - **Unified mission timeline and non-blocking multiplayer UI**. Rewind,
   multiplayer correction, and rollback verification share one mission-owned
@@ -493,6 +493,20 @@ A list of which additional features we have added, which ones we might still wan
   non-pausing, but only host-authored campaign commands can mutate simulation
   state. Client modal choices remain visible host proposals; only the host can
   publish the decision that closes a shared modal.
+
+- **Authenticated browser multiplayer**. A native host can publish a
+  30-minute, fragment-only `rhmp3` invitation for
+  `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
+  relay-over-WebSocket transport with the protocol-29 game wire,
+  prove a durable non-extractable identity through an isolated typed signer,
+  and reclaim only their parked seat generation. Demo and Full joins fail
+  before boot unless the ticket-selected engine artifact, exact native
+  Data/locale closure, and every browser package byte agree. Reconnect adopts
+  an authoritative replacement snapshot even when it predates the abandoned
+  prediction future, then clears future inputs/hashes/history. Only the host
+  records the canonical server-ordered replay. Relay observability is stated
+  in the invitation UI, and browser-link publication is a default-on persisted
+  privacy setting that can be disabled without affecting native iroh play.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its

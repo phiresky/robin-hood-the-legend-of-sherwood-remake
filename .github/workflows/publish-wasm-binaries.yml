@@ -2,6 +2,15 @@ name: Publish WASM binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      demo_content_identity_sha256:
+        description: Exact native Demo Data/locale closure digest
+        required: true
+        type: string
+      full_content_manifest_sha256:
+        description: Exact local Full web-content manifest digest (optional)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -79,6 +88,9 @@ jobs:
 
       - name: Stage versioned artifact
         id: stage
+        env:
+          DEMO_CONTENT_IDENTITY_SHA256: ${{ inputs.demo_content_identity_sha256 }}
+          FULL_CONTENT_MANIFEST_SHA256: ${{ inputs.full_content_manifest_sha256 }}
         run: |
           short="$(git rev-parse --short=12 HEAD)"
           commit="$(git rev-parse HEAD)"
@@ -160,12 +172,41 @@ jobs:
           wasm_sha="$(sha256sum "${artifact}/robin_bg.wasm" | cut -d ' ' -f 1)"
           wasm_gzip_sha="$(sha256sum "${artifact}/robin_bg.wasm.gz" | cut -d ' ' -f 1)"
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          demo_url="https://robinhood.phiresky.xyz/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst"
+          curl -fsSL --retry 3 "${demo_url}" -o "${RUNNER_TEMP}/multiplayer-demo.rhdata.zst"
+          demo_sha="$(sha256sum "${RUNNER_TEMP}/multiplayer-demo.rhdata.zst" | cut -d ' ' -f 1)"
+          demo_bytes="$(stat -c %s "${RUNNER_TEMP}/multiplayer-demo.rhdata.zst")"
+          if [[ ! "${DEMO_CONTENT_IDENTITY_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "demo_content_identity_sha256 must be one lowercase SHA-256 digest" >&2
+            exit 1
+          fi
+          if [[ -n "${FULL_CONTENT_MANIFEST_SHA256}" ]]; then
+            if [[ ! "${FULL_CONTENT_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "full_content_manifest_sha256 must be one lowercase SHA-256 digest" >&2
+              exit 1
+            fi
+            full_content="{ \"manifestSha256\": \"${FULL_CONTENT_MANIFEST_SHA256}\" }"
+          else
+            full_content="null"
+          fi
 
           cat > "${artifact}/manifest.json" <<EOF
           {
             "commit": "${commit}",
             "short": "${short}",
             "builtAt": "${built_at}",
+            "netProtocol": 25,
+            "ticketSchema": 3,
+            "multiplayerContent": {
+              "schema": 2,
+              "demo": {
+                "url": "${demo_url}",
+                "sha256": "${demo_sha}",
+                "byteLength": ${demo_bytes},
+                "nativeContentSha256": "${DEMO_CONTENT_IDENTITY_SHA256}"
+              },
+              "full": ${full_content}
+            },
             "files": {
               "js": "robin.js",
               "jsGzip": "robin.js.gz",

@@ -135,7 +135,9 @@ impl RewindBuffer {
     /// periodic frames, but their very next command must still be journaled.
     pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
         self.history.seed_initial_anchor(frame, engine);
-        self.recent_checkpoints.checkpoint(frame, engine);
+        self.recent_checkpoints.replace_with_anchor(frame, engine);
+        self.pending_recent = None;
+        self.session = None;
     }
 
     /// Finalize the frame: commit the pending snapshot (if any), push

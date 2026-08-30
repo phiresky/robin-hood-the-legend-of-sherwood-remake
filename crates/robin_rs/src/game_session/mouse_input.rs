@@ -1535,6 +1535,7 @@ pub(super) fn handle_pause_menu_events(
                     profile.id,
                     profile.graphic_config,
                     gameplay_config,
+                    profile.multiplayer_config,
                     profile.sound_config,
                     host.frontend.key_config.clone(),
                     host.frontend.custom_key_config.clone(),
