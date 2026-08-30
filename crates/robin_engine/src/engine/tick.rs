@@ -2397,11 +2397,11 @@ impl EngineInner {
         let sim = &sim;
 
         // RHGame records parity immediately after PerformHourglass, then its
-        // render pass calls RHElementArrow::Refresh. Reproduce that
-        // between-frame mutation here, before any draw from the next engine
-        // frame. A restored mission starts with no pending pass because its
-        // serialized sprites already crossed the preceding Refresh boundary.
-        self.apply_pending_arrow_refresh(sim);
+        // render pass calls each element's Refresh. Reproduce the resulting
+        // arrow and frame-sound mutations here, before the next engine frame.
+        // A restored mission starts with no pending pass because its serialized
+        // sprites already crossed the preceding Refresh boundary.
+        self.apply_pending_presentation_refresh(sim);
 
         // RHScript::FadeToBlack presents its ramp in a tight loop without
         // calling PerformHourglass. Drain the corresponding presentation
@@ -2582,12 +2582,21 @@ impl EngineInner {
         fx
     }
 
-    pub(crate) fn apply_pending_arrow_refresh(&mut self, sim: &crate::sim_rng::SimulationContext) {
+    /// Apply the sprite mutations performed by the preceding Original
+    /// `RHGame::Refresh`, after its parity snapshot and before the next tick.
+    pub(crate) fn apply_pending_presentation_refresh(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+    ) {
         if !std::mem::take(&mut self.control.arrow_refresh_pending) {
             return;
         }
 
         self.refresh_arrows_for_presentation(sim);
+        {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::FrameSounds);
+            self.dispatch_frame_sounds();
+        }
     }
 
     /// Run the arrow portion of `RHGame::Refresh` immediately.
@@ -2655,9 +2664,9 @@ impl EngineInner {
         let sim = &sim;
 
         // This explicit host stage is defined to run after the first native
-        // Refresh. Cross the same pending arrow boundary before PostInitialize
-        // can consume RNG or inspect sprite state.
-        self.apply_pending_arrow_refresh(sim);
+        // Refresh. Cross the same pending presentation boundary before
+        // PostInitialize can consume RNG or inspect sprite state.
+        self.apply_pending_presentation_refresh(sim);
 
         self.run_post_initialize_if_needed(sim, assets);
         self.drain_pending_immediate_actions_sync(sim, display, assets);
@@ -4129,17 +4138,6 @@ impl EngineInner {
         {
             let _detail = entity_system_detail_guard(EntitySystemDetail::CorpseUpdates);
             self.process_corpse_intersection_updates();
-        }
-
-        // ── Per-frame animation sound dispatch ──────────────────
-        // Now that every sprite has advanced (both movement-driven
-        // and idle/one-shot animations), check each entity's current
-        // sprite frame for an attached sound ID and queue it as an
-        // FX (the `current_sound_id()` block every element type
-        // runs during refresh / execute).
-        {
-            let _detail = entity_system_detail_guard(EntitySystemDetail::FrameSounds);
-            self.dispatch_frame_sounds();
         }
 
         // TODO(original-parity): the followed-target position oracle below

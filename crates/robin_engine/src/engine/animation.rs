@@ -6759,17 +6759,19 @@ impl EngineInner {
         )
     }
 
-    /// Dispatch per-frame animation sound triggers.
+    /// Dispatch animation sound triggers at the deferred presentation boundary.
     ///
-    /// Every animated element type runs a current-sound-id check
-    /// during its tick: when the sprite's current frame has a
+    /// Every animated element type runs a current-sound-id check from its
+    /// `Refresh` method in the Original. That happens after the authoritative
+    /// post-`PerformHourglass` snapshot, so Rust invokes this immediately
+    /// before the next hourglass through the pending presentation refresh.
+    /// When the sprite's current frame has a
     /// non-zero sound ID, an FX sound is queued at the entity's
     /// position (with material for actors and projectiles, without
     /// for scenic FX/objects).
     ///
-    /// Called once per tick, after [`EngineInner::tick_entity_movement`], the
-    /// live actor-slot coordinator, and nonactor animation have advanced all
-    /// sprite frames.
+    /// This must not run inside the entity tick: doing so updates
+    /// `Sprite::last_sound_id` one parity boundary too early.
     pub(super) fn dispatch_frame_sounds(&mut self) {
         use crate::element::GameMaterial;
         use crate::sound_cache::Material;
