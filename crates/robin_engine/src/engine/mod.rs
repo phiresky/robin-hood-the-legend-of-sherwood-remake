@@ -34,6 +34,7 @@ pub mod input;
 pub(crate) mod jump;
 pub mod level_loading;
 pub mod melee;
+mod mission_runtime;
 mod movement;
 mod nets;
 mod patch_effects;

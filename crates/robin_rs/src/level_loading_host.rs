@@ -138,6 +138,13 @@ fn load_terrain_candidate(path: &str) -> Result<Option<Picture>, String> {
 /// references `FrameHolder`.
 pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
     let bypass_fog_sprites_crash = engine.sim_config().bypass_fog_sprites_crash;
+    let visual_ambiance = host
+        .application_context
+        .active_profile_snapshot()
+        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+        .unwrap_or(true)
+        .then_some(engine.weather().ambiance)
+        .unwrap_or_else(|| engine.initial_mission_ambiance());
     let fh = host.frame_holder_mut();
     // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
     // Night and Fog dictionaries regardless of ambiance and skip the
@@ -148,7 +155,7 @@ pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
         fh.drop_variant_dictionaries(SpriteVariant::Fog);
         return;
     }
-    match engine.weather().ambiance {
+    match visual_ambiance {
         // Only Day / Fog / Night have dedicated sprite dictionaries;
         // Attack / Custom1..4 fall through to the Day branch.
         Ambiance::Day
@@ -239,8 +246,15 @@ fn pre_decode_background_map_impl(
 
     let mut picture = None;
     if let Some(dd) = shipping {
-        for key in &shipping_keys {
+        for (candidate_index, key) in shipping_keys.iter().enumerate() {
             if let Some(bytes) = dd.raw_asset(key) {
+                if candidate_index > 0 {
+                    tracing::warn!(
+                        requested_ambiance = ambiance_dir,
+                        fallback = key,
+                        "ambience-specific background is absent; using Day/bare fallback"
+                    );
+                }
                 tracing::info!(
                     "Loading background map from shipping datadir: {} ({} bytes)",
                     key,
@@ -264,8 +278,15 @@ fn pre_decode_background_map_impl(
         }
     }
     if picture.is_none() {
-        for path in &disk_candidates {
+        for (candidate_index, path) in disk_candidates.iter().enumerate() {
             if let Some(loaded) = load_terrain_candidate(path)? {
+                if candidate_index > 0 {
+                    tracing::warn!(
+                        requested_ambiance = ambiance_dir,
+                        fallback = path,
+                        "ambience-specific background is absent; using Day/bare fallback"
+                    );
+                }
                 picture = Some(loaded);
                 break;
             }
@@ -724,8 +745,15 @@ pub fn pre_decode_minimap(
         format!("levels/{}.min", map_name).to_ascii_lowercase(),
     ];
     if let Some(dd) = shipping {
-        for key in &shipping_keys {
+        for (candidate_index, key) in shipping_keys.iter().enumerate() {
             if let Some(bytes) = dd.raw_asset(key) {
+                if candidate_index > 0 {
+                    tracing::warn!(
+                        requested_ambiance = ambiance_dir,
+                        fallback = key,
+                        "ambience-specific minimap is absent; using Day/bare fallback"
+                    );
+                }
                 tracing::info!("Loading minimap from shipping datadir: {key}");
                 match Picture::load_terrain_from_bytes(bytes) {
                     Ok(p) => {
@@ -753,9 +781,16 @@ pub fn pre_decode_minimap(
     ];
 
     let mut picture = None;
-    for path in &candidates {
+    for (candidate_index, path) in candidates.iter().enumerate() {
         match load_terrain_candidate(path) {
             Ok(Some(loaded)) => {
+                if candidate_index > 0 {
+                    tracing::warn!(
+                        requested_ambiance = ambiance_dir,
+                        fallback = path,
+                        "ambience-specific minimap is absent; using Day/bare fallback"
+                    );
+                }
                 picture = Some(loaded);
                 break;
             }

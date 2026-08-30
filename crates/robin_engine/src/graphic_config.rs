@@ -72,6 +72,14 @@ pub struct GraphicConfig {
     /// one-present-per-tick behavior and the non-vsync swapchain mode.
     #[serde(default = "default_native_refresh_presentation")]
     pub native_refresh_presentation: bool,
+
+    /// Show the authored mission timer when its authoring mode allows it.
+    #[serde(default = "default_enabled")]
+    pub show_mission_countdown: bool,
+    /// Present canonical runtime ambience changes locally. Disabling this
+    /// leaves authoritative visibility and sound-source rules untouched.
+    #[serde(default = "default_enabled")]
+    pub dynamic_ambience_visuals: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -353,6 +361,10 @@ fn default_native_refresh_presentation() -> bool {
     true
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
 impl Default for GraphicConfig {
     fn default() -> Self {
         Self {
@@ -372,6 +384,8 @@ impl Default for GraphicConfig {
             apply_fog_to_all_sprites: true,
             adaptive_widescreen: true,
             native_refresh_presentation: true,
+            show_mission_countdown: true,
+            dynamic_ambience_visuals: true,
         }
     }
 }
@@ -463,6 +477,8 @@ mod tests {
         assert!(cfg.apply_fog_to_all_sprites);
         assert!(cfg.adaptive_widescreen);
         assert!(cfg.native_refresh_presentation);
+        assert!(cfg.show_mission_countdown);
+        assert!(cfg.dynamic_ambience_visuals);
         assert_eq!(cfg.scale_mode, TextureScaleMode::Linear);
         assert_eq!(cfg.texture_effect, TextureEffect::None);
         assert_eq!(cfg.upscale_parameters, UpscaleParameters::default());

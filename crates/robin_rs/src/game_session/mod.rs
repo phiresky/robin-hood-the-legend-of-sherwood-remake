@@ -488,6 +488,8 @@ fn simulation_config_for_level_restart(
         checkpoint.item_gameplay = outcome.item_gameplay;
         checkpoint.noise_distraction_feedback = outcome.noise_distraction_feedback;
         checkpoint.sherwood_trading = outcome.sherwood_trading;
+        checkpoint.enable_timed_missions = outcome.enable_timed_missions;
+        checkpoint.enable_dynamic_ambience = outcome.enable_dynamic_ambience;
     }
     checkpoint
 }

@@ -373,10 +373,24 @@ impl MissionBootstrap {
             timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
         }
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
-        let control = MissionControl::new(
-            timeline.initially_paused(),
-            manager.engine.weather().night_color,
-        );
+        let dynamic_visuals = self
+            .host
+            .application_context
+            .active_profile_snapshot()
+            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or(true);
+        let visual_ambiance = if dynamic_visuals {
+            manager.engine.weather().ambiance
+        } else {
+            manager.engine.initial_mission_ambiance()
+        };
+        let visual_shadow = if dynamic_visuals {
+            manager.engine.weather().night_color
+        } else {
+            manager.engine.initial_mission_night_color()
+        };
+        let control =
+            MissionControl::new(timeline.initially_paused(), visual_shadow, visual_ambiance);
         MissionRuntime::new(
             MissionWorld::new(self.host, self.game, manager, assets, self.loaded.dev),
             timeline,
@@ -735,11 +749,17 @@ impl LoadedInteractiveStage {
                 self.bootstrap.loaded.pre_decoded_minimap.take(),
             ),
         };
+        let ambience_backgrounds =
+            std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_backgrounds);
+        let ambience_minimaps =
+            std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_minimaps);
         renderer.upload_maps(
             &self.bootstrap.loaded.engine,
             &mut self.bootstrap.host,
             background,
             minimap,
+            ambience_backgrounds,
+            ambience_minimaps,
         );
         timer.step("map upload");
 

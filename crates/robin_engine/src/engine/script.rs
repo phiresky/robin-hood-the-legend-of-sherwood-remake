@@ -1590,14 +1590,21 @@ impl EngineInner {
                                 .retain(|p| p.source_index as usize != idx);
                             if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = true;
-                                schedule_source_finish(
-                                    &src.source_kind,
-                                    src.id,
-                                    idx,
-                                    self.control.frame_counter,
-                                    &assets.source_durations,
-                                    &mut self.feedback.sound_sim.playing_sources,
-                                );
+                                // An authored ambience may currently exclude
+                                // this source. Preserve the script activation,
+                                // but do not age a one-shot while it is
+                                // inaudible; the ambience cue that makes it
+                                // effective arms its deterministic finish.
+                                if src.is_effectively_active() {
+                                    schedule_source_finish(
+                                        &src.source_kind,
+                                        src.id,
+                                        idx,
+                                        self.control.frame_counter,
+                                        &assets.source_durations,
+                                        &mut self.feedback.sound_sim.playing_sources,
+                                    );
+                                }
                             }
                             self.feedback
                                 .pending_side_effects
@@ -7199,7 +7206,7 @@ mod script_context_tests {
 /// A missing duration means the original cache lookup would return a
 /// zero-length sample and complete it in the sound hourglass. Schedule
 /// that same zero-length result and warn rather than inventing a duration.
-fn schedule_source_finish(
+pub(super) fn schedule_source_finish(
     kind: &crate::sound_source::SoundSourceKind,
     sample_id: u32,
     source_index: usize,
@@ -7291,7 +7298,7 @@ fn schedule_source_finishes_for_all_active(
         let Some(src) = sound_sim.sources.get(i) else {
             continue;
         };
-        if !src.active {
+        if !src.is_effectively_active() {
             continue;
         }
         let kind = src.source_kind;

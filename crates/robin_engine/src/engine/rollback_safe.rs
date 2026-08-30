@@ -2191,6 +2191,7 @@ impl Engine {
                 "delay_stepping": source.delay_stepping,
                 "timer": source.timer,
                 "active": source.active,
+                "ambience_enabled": source.ambience_enabled,
             }));
         }
         Value::Array(result)
@@ -5384,6 +5385,7 @@ mod tests {
         assert_eq!(state[1]["altitude"], 2);
         assert_eq!(state[1]["timer"], 11);
         assert_eq!(state[1]["active"], true);
+        assert_eq!(state[1]["ambience_enabled"], true);
     }
 
     #[test]

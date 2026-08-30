@@ -50,7 +50,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 31;
+pub const NET_PROTOCOL_VERSION: u32 = 32;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -932,14 +932,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_all_version_31_authority_rules() {
-        // Version 31 combines typed nullable runtime handles, exact spatial
+    fn protocol_version_includes_all_version_32_authority_rules() {
+        // Version 32 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
         // rebalanced item rules, deterministic achievements, authoritative
-        // Sherwood trading, and resolved Legendary/Custom difficulty. Older
+        // Sherwood trading, resolved Legendary/Custom difficulty, and
+        // deterministic authored timer/ambience state and commands. Older
         // peers fail before decoding incompatible wire or snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 31);
+        assert_eq!(NET_PROTOCOL_VERSION, 32);
     }
 
     #[test]

@@ -279,6 +279,10 @@ impl TraceSimConfig {
             amount_of_speaking: self.amount_of_speaking,
             synchronous_pathfinding,
             sherwood_trading: false,
+            // Original traces contain no Rust-authored timer or ambience
+            // schedule, so leaving the authoring gates enabled is inert.
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }

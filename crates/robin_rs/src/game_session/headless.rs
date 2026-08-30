@@ -420,7 +420,11 @@ mod tests {
             false,
             true,
         );
-        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let control = MissionControl::new(
+            false,
+            manager.engine.weather().night_color,
+            manager.engine.weather().ambiance,
+        );
         let runtime = MissionRuntime::new(
             MissionWorld::new(
                 host,
@@ -488,7 +492,11 @@ mod tests {
             false,
             true,
         );
-        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let control = MissionControl::new(
+            false,
+            manager.engine.weather().night_color,
+            manager.engine.weather().ambiance,
+        );
         let runtime = MissionRuntime::new(
             MissionWorld::new(
                 host,

@@ -320,6 +320,15 @@ pub struct GameplayConfig {
     #[state_hash(skip)]
     pub autosave_enabled: bool,
 
+    /// Enforce time limits authored by Rust JSON missions.
+    #[serde(default = "enabled_by_default")]
+    pub enable_timed_missions: bool,
+
+    /// Advance authored day/night/fog schedules, including perception and
+    /// ambience-filtered gameplay sound sources.
+    #[serde(default = "enabled_by_default")]
+    pub enable_dynamic_ambience: bool,
+
     /// Show mission/player provenance, relative age, and the expanded
     /// selected-save panel in save/load pickers. Disabling this is strictly a
     /// presentation choice: every native save still stores full provenance.
@@ -361,6 +370,8 @@ impl Default for GameplayConfig {
             show_all_enemies_one_building_tracker: false,
             show_achievement_badges: true,
             show_achievement_debrief: true,
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }
@@ -394,6 +405,8 @@ impl GameplayConfig {
             show_all_enemies_one_building_tracker: false,
             show_achievement_badges: true,
             show_achievement_debrief: true,
+            enable_timed_missions: true,
+            enable_dynamic_ambience: true,
         }
     }
 }
@@ -432,6 +445,8 @@ mod tests {
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree
         );
+        assert!(config.enable_timed_missions);
+        assert!(config.enable_dynamic_ambience);
     }
 
     #[test]

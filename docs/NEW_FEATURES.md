@@ -4,6 +4,20 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Timed missions and runtime ambience.** Hackable JSON missions can author
+  an active-play time limit and ordered Day/Night/Fog ambience cues. Timers
+  pause with single-player/noninteractive simulation gates, stop once victory
+  is achieved, and use the ordinary mission-loss flow at expiry. Ambience cues
+  deterministically change AI perception, light-sector gameplay, filtered
+  sound sources, lighting crossfades, sprite dictionaries, background art and
+  minimaps; missing alternate art warns and falls back to Day. Gameplay and
+  presentation/countdown controls are independently configurable. The hashed,
+  serialized tick/cue/crossfade state is shared by saves, replay, rollback and
+  multiplayer. `mods/timed-ambience-demo/` is a launchable example; authoring
+  rules are documented in `docs/TIMED_MISSIONS_AND_AMBIENCE.md`. This state
+  advances the combined native save, replay, and network schemas to
+  **65 / 23 / 32** respectively.
+
 - **Cooperative pause side screens.** Options (including Graphics, Sounds,
   Shortcuts, and Gameplay), Save/Load,
   overwrite/delete prompts, and Quit confirmation now run as one-frame
@@ -520,7 +534,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-31 game wire,
+  relay-over-WebSocket transport with the protocol-32 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -644,7 +658,6 @@ A list of which additional features we have added, which ones we might still wan
   rows for every declared PC profile: the full Linux data has 10/10 available
   and eligible tracks; the Leicester demo has 5/5 available tracks eligible
   (its CPF also declares five full-game profiles whose RHS files are absent).
-- timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.

@@ -29,6 +29,8 @@ const ID_CANCEL: u32 = 301;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
 pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
+pub(crate) const TIMED_MISSIONS_OPTION_INDEX: usize = 34;
+pub(crate) const DYNAMIC_AMBIENCE_OPTION_INDEX: usize = 35;
 
 /// Toggle rows shown on the screen, in display order.
 pub(crate) const OPTION_LABELS: &[&str] = &[
@@ -66,6 +68,8 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Preview Purse Effect",
     "Preview Wasp Area",
     "Detailed Save Metadata",
+    "Authored Mission Timers",
+    "Dynamic Ambience Gameplay",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -103,6 +107,8 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Explain purse value and money-interest conditions.",
     "Show wasp acquisition range and target eligibility.",
     "Show mission and player provenance, relative age, and expanded save details.",
+    "Enforce time limits authored by Rust JSON missions.",
+    "Advance authored day, night, and fog gameplay schedules.",
 ];
 
 pub(crate) fn option_tooltip(index: usize) -> &'static str {
@@ -434,6 +440,10 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         DETAILED_SAVE_METADATA_OPTION_INDEX => {
             config.detailed_save_metadata = !config.detailed_save_metadata
         }
+        TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions = !config.enable_timed_missions,
+        DYNAMIC_AMBIENCE_OPTION_INDEX => {
+            config.enable_dynamic_ambience = !config.enable_dynamic_ambience
+        }
         _ => {}
     }
 }
@@ -477,6 +487,8 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         31 => config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area,
         DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
+        TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions,
+        DYNAMIC_AMBIENCE_OPTION_INDEX => config.enable_dynamic_ambience,
         _ => false,
     }
 }
@@ -524,6 +536,8 @@ mod tests {
                 "Preview Purse Effect",
                 "Preview Wasp Area",
                 "Detailed Save Metadata",
+                "Authored Mission Timers",
+                "Dynamic Ambience Gameplay",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -545,6 +559,8 @@ mod tests {
             &config,
             DETAILED_SAVE_METADATA_OPTION_INDEX
         ));
+        assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
+        assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);

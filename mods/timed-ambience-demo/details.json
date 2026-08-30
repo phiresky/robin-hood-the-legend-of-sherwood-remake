@@ -1,0 +1,16 @@
+{
+  "slug": "timed-ambience-demo",
+  "title": "The Longest Three Minutes",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 28, 2026",
+  "tags": [
+    "Hackable",
+    "Test",
+    "Timed",
+    "Ambience"
+  ],
+  "description": "Launchable authoring example for a timed mission with deterministic Night, Fog and Day transitions.",
+  "hackable_mission": "TimedAmbienceDemo"
+}

@@ -1469,6 +1469,20 @@ impl EngineInner {
             SetFixHardReactionTimes { enabled } => {
                 self.control.sim_config.fix_hard_reaction_times = *enabled;
             }
+            SetTimedMissionsEnabled { enabled } => {
+                if seat == usize::from(crate::player_command::PlayerId::HOST.0) {
+                    self.control.sim_config.enable_timed_missions = *enabled;
+                } else {
+                    tracing::warn!(seat, "ignored non-host timed-mission setting command");
+                }
+            }
+            SetDynamicAmbienceEnabled { enabled } => {
+                if seat == usize::from(crate::player_command::PlayerId::HOST.0) {
+                    self.control.sim_config.enable_dynamic_ambience = *enabled;
+                } else {
+                    tracing::warn!(seat, "ignored non-host ambience setting command");
+                }
+            }
             SetUnbindingEnabled { enabled } => {
                 self.control.sim_config.enable_unbinding = *enabled;
             }

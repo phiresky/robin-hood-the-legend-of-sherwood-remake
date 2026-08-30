@@ -11,7 +11,7 @@ use crate::game_render::{
     render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
     render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
     render_entities_gpu, render_ground_marks, render_item_effect_preview, render_listen_ping,
-    render_minimap, render_noise_display, render_ransom_amulet_overlay,
+    render_minimap, render_mission_countdown, render_noise_display, render_ransom_amulet_overlay,
     render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
     render_view_cone_overlay,
 };
@@ -1803,6 +1803,7 @@ pub(super) fn render_frame(
         // Renders ransom and amulet values in the top-left corner
         // with a drop-shadow background font.
         render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
+        render_mission_countdown(host, engine, renderer, fonts);
 
         crate::achievement_hud::render_trackers(
             engine,

@@ -1531,6 +1531,9 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.noise_distraction_feedback =
                     engine.sim_config().noise_distraction_feedback;
                 gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
+                gameplay_config.enable_timed_missions = engine.sim_config().enable_timed_missions;
+                gameplay_config.enable_dynamic_ambience =
+                    engine.sim_config().enable_dynamic_ambience;
                 *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
                     event_pump,
                     renderer,

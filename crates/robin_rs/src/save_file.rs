@@ -527,7 +527,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v64** (2026-08-30, multiplayer diagnostic saves): combines mandatory
 ///   provenance with the required diagnostic marker that prevents a local
 ///   multiplayer capture from becoming authoritative transition input.
-pub const SAVE_FORMAT_VERSION: u32 = 64;
+/// - **v65** (2026-08-30, timed missions and runtime ambience): adds authored
+///   timer/ambience configuration and exact in-progress mission runtime state.
+pub const SAVE_FORMAT_VERSION: u32 = 65;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -861,8 +863,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_requires_provenance_and_diagnostic_authority() {
-        assert_eq!(SAVE_FORMAT_VERSION, 64);
+    fn save_format_version_includes_timed_ambience_runtime() {
+        assert_eq!(SAVE_FORMAT_VERSION, 65);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

@@ -2482,7 +2482,9 @@ impl EngineInner {
             let Some(src) = self.feedback.sound_sim.sources.get_mut(i) else {
                 continue;
             };
-            if !src.active || src.source_kind != crate::sound_source::SoundSourceKind::Delayed {
+            if !src.is_effectively_active()
+                || src.source_kind != crate::sound_source::SoundSourceKind::Delayed
+            {
                 continue;
             }
             if src.timer > 0 {
@@ -3138,15 +3140,22 @@ impl EngineInner {
             }
         }
 
-        // ── Increment frame counter ──────────────────────────────
+        let runtime_features_can_advance = !display.background_transform.zoom_to_up
+            && !display.background_transform.zoom_to_down
+            && !self.engine_locked()
+            && simulation_body_allowed;
+        if runtime_features_can_advance && self.tick_mission_runtime_features(assets) {
+            tracing::info!("authored mission time limit expired");
+            self.mission_domain.state.quit_lost = true;
+            self.quit_mission();
+            return Some(GameCode::LevelFailed);
+        }
+
+        // ── Increment the Original universal frame counter ───────
         self.advance_mission_clock();
 
         // ── Skip logic if engine is locked (zoom, sequence, etc) ─
-        if display.background_transform.zoom_to_up
-            || display.background_transform.zoom_to_down
-            || self.engine_locked()
-            || !simulation_body_allowed
-        {
+        if !runtime_features_can_advance {
             return Some(GameCode::LevelInProgress);
         }
 
