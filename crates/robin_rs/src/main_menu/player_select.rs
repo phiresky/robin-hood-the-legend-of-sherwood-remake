@@ -1477,9 +1477,9 @@ async fn show_difficulty_prompt(
         dim_screen(renderer);
         draw_fallback_panel(renderer, transform, &PANEL);
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let title = resources.menu_text.get(MT_PORT_TTL_ADVANCED_DIFFICULTY);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1489,7 +1489,7 @@ async fn show_difficulty_prompt(
             );
         }
 
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             for (index, label) in preset_labels.iter().enumerate() {
                 let x = PRESET_X + index as i32 * (PRESET_W + PRESET_GAP);
                 let marker = if index == preset_index(difficulty) {
@@ -1498,7 +1498,7 @@ async fn show_difficulty_prompt(
                     "[ ]"
                 };
                 let text = format!("{marker} {label}");
-                render_text_virt(renderer, font, transform, &text, x + 4, PRESET_Y + 7);
+                render_text_virt_font(renderer, font, transform, &text, x + 4, PRESET_Y + 7);
             }
 
             let rules = difficulty.rules();
@@ -1512,7 +1512,7 @@ async fn show_difficulty_prompt(
                 let label = resources.menu_text.get(advanced_rule_label_id(row));
                 let value = advanced_rule_value(resources, rules, row);
                 let text = format!("{marker} {label}: {value}");
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -1523,7 +1523,7 @@ async fn show_difficulty_prompt(
             }
             if matches!(difficulty, DifficultyLevel::Custom(_)) {
                 let help = resources.menu_text.get(MT_PORT_STR_DIFFICULTY_HELP);
-                render_text_virt(renderer, font, transform, &help, RULE_X, 390);
+                render_text_virt_font(renderer, font, transform, &help, RULE_X, 390);
             }
         }
 
