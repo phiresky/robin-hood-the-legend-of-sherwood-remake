@@ -35,6 +35,7 @@ pub mod layout;
 pub mod mission_description;
 pub mod mission_state;
 pub mod modal_net;
+pub mod multiplayer_privacy;
 pub mod options;
 pub mod pause;
 pub mod popup_scroll;

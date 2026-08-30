@@ -716,6 +716,7 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let publish_browser_links = resolve_browser_join_publication(args)?;
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
             match start_server(
                 nickname.clone(),
@@ -727,8 +728,53 @@ pub(super) async fn setup_multiplayer_session(
                 frame_cursor,
                 snapshot_slot,
                 args.mp_expected_players.unwrap_or(1),
+                publish_browser_links,
             ) {
                 Ok(handle) => {
+                    if publish_browser_links {
+                        let content_edition = if crate::main_entry::detect_demo_mode_with_context(
+                            &args.global_options,
+                        )
+                        .is_some()
+                        {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Demo
+                        } else {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Full
+                        };
+                        let ticket = handle
+                            .browser_join_ticket(
+                                content_edition,
+                                args.mp_mission_profile_id,
+                                args.mp_expected_players.unwrap_or(1),
+                            )
+                            .map_err(|error| {
+                                format!("multiplayer: browser invitation unavailable: {error}")
+                            })?;
+                        let browser_base =
+                            std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
+                                crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
+                            });
+                        let share_url = ticket.share_url(&browser_base).map_err(|error| {
+                            format!("multiplayer: browser share URL unavailable: {error}")
+                        })?;
+                        tracing::info!(
+                            browser_join_code = %ticket.encode(),
+                            %share_url,
+                            relay = %ticket.payload().relay_url,
+                            ?content_edition,
+                            "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
+                        );
+                        host.pending_console_output.push(format!(
+                            "Browser join code (expires after 30 minutes if unused): {}",
+                            ticket.encode()
+                        ));
+                        host.pending_console_output
+                            .push(format!("Browser join link: {share_url}"));
+                        host.pending_console_output.push(format!(
+                            "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
+                            ticket.payload().relay_url
+                        ));
+                    }
                     tracing::info!(
                         endpoint_id = %handle.endpoint_id(),
                         nickname = %nickname,
@@ -828,7 +874,36 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
+fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
+    let saved = args
+        .global_options
+        .active_profile_snapshot()
+        .map(|profile| profile.multiplayer_config.publish_browser_join_links)
+        .map_err(|error| {
+            format!("multiplayer: cannot read browser publication preference: {error}")
+        })?;
+    Ok(resolve_publication_preference(
+        args.mp_browser_join_links,
+        saved,
+    ))
+}
+
+fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
+    cli_override.unwrap_or(saved)
+}
+
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
+    if args.server && args.connect.is_some() {
+        return Err("multiplayer host and client modes are mutually exclusive".to_string());
+    }
+    if let Some(expected) = args.mp_expected_players
+        && !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
+    {
+        return Err(format!(
+            "multiplayer expected player count must be between 1 and {}",
+            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+        ));
+    }
     let multiplayer = args.server || args.connect.is_some();
     let replay = args.replay.is_some() || args.replay_data.is_some();
     if multiplayer && replay {
@@ -843,8 +918,8 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
 #[cfg(test)]
 mod tests {
     use super::{
-        MultiplayerAdmissionEvent, drain_net_inputs, rewind_from_recent_timeline_history,
-        validate_multiplayer_launch_args,
+        MultiplayerAdmissionEvent, drain_net_inputs, resolve_publication_preference,
+        rewind_from_recent_timeline_history, validate_multiplayer_launch_args,
     };
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
@@ -887,6 +962,31 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
+    }
+
+    #[test]
+    fn browser_publication_cli_override_precedes_saved_preference() {
+        assert!(resolve_publication_preference(None, true));
+        assert!(!resolve_publication_preference(None, false));
+        assert!(resolve_publication_preference(Some(true), false));
+        assert!(!resolve_publication_preference(Some(false), true));
+    }
+
+    #[test]
+    fn multiplayer_launch_rejects_ambiguous_mode_and_player_count() {
+        let both = crate::main_entry::CliArgs {
+            server: true,
+            connect: Some("host".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&both).is_err());
+
+        let too_many = crate::main_entry::CliArgs {
+            server: true,
+            mp_expected_players: Some(5),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&too_many).is_err());
     }
 
     #[test]

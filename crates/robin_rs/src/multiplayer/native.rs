@@ -387,9 +387,10 @@ pub fn start_server(
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
     expected_players: u32,
+    browser_join_enabled: bool,
 ) -> std::io::Result<ServerHandle> {
     let key = game_secret_key().map_err(std::io::Error::other)?;
-    start_server_with_key(
+    start_server_inner(
         key,
         host_nickname,
         mission_id,
@@ -400,6 +401,7 @@ pub fn start_server(
         frame_cursor,
         initial_snapshot,
         expected_players,
+        browser_join_enabled,
     )
 }
 
@@ -417,6 +419,35 @@ pub fn start_server_with_key(
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
     expected_players: u32,
+) -> std::io::Result<ServerHandle> {
+    start_server_inner(
+        key,
+        host_nickname,
+        mission_id,
+        mission_seed,
+        sim_config,
+        incoming_tx,
+        outgoing_rx,
+        frame_cursor,
+        initial_snapshot,
+        expected_players,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_server_inner(
+    key: SecretKey,
+    host_nickname: String,
+    mission_id: String,
+    mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
+    incoming_tx: Sender<NetEvent>,
+    outgoing_rx: Receiver<NetOutbound>,
+    frame_cursor: FrameCursor,
+    initial_snapshot: InitialSnapshot,
+    expected_players: u32,
+    browser_join_enabled: bool,
 ) -> std::io::Result<ServerHandle> {
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;
@@ -474,6 +505,7 @@ pub fn start_server_with_key(
                 outgoing_async_rx,
                 startup_tx,
                 shutdown_rx,
+                browser_join_enabled,
             ));
             if bridge_thread.join().is_err() {
                 tracing::error!("multiplayer server outgoing bridge panicked");
@@ -524,6 +556,7 @@ async fn run_server(
     outgoing_async_rx: UnboundedReceiver<NetOutbound>,
     startup_tx: std::sync::mpsc::SyncSender<Result<(EndpointId, EndpointAddr), String>>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    browser_join_enabled: bool,
 ) {
     let endpoint = match bind_endpoint(key, GAME_ALPN).await {
         Ok(endpoint) => endpoint,
@@ -532,6 +565,27 @@ async fn run_server(
             return;
         }
     };
+    if browser_join_enabled {
+        if tokio::time::timeout(Duration::from_secs(15), endpoint.online())
+            .await
+            .is_err()
+        {
+            endpoint.close().await;
+            let _ = startup_tx.send(Err(
+                "iroh relay did not become reachable within 15 seconds; disable browser join-link publication for a native-only game"
+                    .to_string(),
+            ));
+            return;
+        }
+        if endpoint.addr().relay_urls().next().is_none() {
+            endpoint.close().await;
+            let _ = startup_tx.send(Err(
+                "iroh reported online without a relay URL; a browser invitation cannot be published"
+                    .to_string(),
+            ));
+            return;
+        }
+    }
     let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
 
     let pump = tokio::spawn(run_server_outgoing_pump(

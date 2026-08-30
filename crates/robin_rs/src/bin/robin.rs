@@ -242,6 +242,19 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
     Ok(())
 }
 
+/// Install the already shell-authenticated browser invitation before boot.
+/// Rust repeats the full signature/build/time/relay validation and consumes it
+/// exactly once when constructing the multiplayer mission.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_set_multiplayer_join_ticket(
+    code: String,
+    redeemed: bool,
+) -> Result<(), wasm_bindgen::JsValue> {
+    robin_rs::main_entry::set_pending_browser_join(code, redeemed)
+        .map_err(|error| wasm_bindgen::JsValue::from_str(&error))
+}
+
 /// Register one host-preloaded asset before `wasm_boot` starts the game loop.
 /// The browser loader currently uses this for audio assets that retain a
 /// synchronous read API; mission data uses the asynchronous shipping loader.

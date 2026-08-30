@@ -1463,6 +1463,7 @@ pub(super) async fn handle_pause_menu_events(
                         profile.id,
                         profile.graphic_config,
                         profile.gameplay_config,
+                        profile.multiplayer_config,
                         profile.sound_config,
                     ));
 
@@ -1470,6 +1471,7 @@ pub(super) async fn handle_pause_menu_events(
                         profile_id,
                         mut graphic_config,
                         mut gameplay_config,
+                        mut multiplayer_config,
                         mut sound_config,
                     )) = profile_settings
                     {
@@ -1493,6 +1495,7 @@ pub(super) async fn handle_pause_menu_events(
                             cursor,
                             &mut graphic_config,
                             &mut gameplay_config,
+                            &mut multiplayer_config,
                             &mut sound_config,
                             &mut host.frontend.key_config,
                             &mut host.frontend.custom_key_config,
@@ -1517,6 +1520,7 @@ pub(super) async fn handle_pause_menu_events(
                                         .expect("Options profile disappeared while modal was open");
                                     profile.graphic_config = graphic_config.clone();
                                     profile.gameplay_config = gameplay_config;
+                                    profile.multiplayer_config = multiplayer_config;
                                     profile.sound_config = sound_config;
                                     if let Err(err) = mgr.save() {
                                         tracing::error!(

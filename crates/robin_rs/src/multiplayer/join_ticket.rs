@@ -38,6 +38,7 @@ pub struct BrowserJoinTicketPayload {
     pub net_protocol: u32,
     pub engine_version: String,
     pub host_endpoint_id: String,
+    pub host_public_key: String,
     pub relay_url: String,
     pub session_id: String,
     pub issued_at_epoch_s: u64,
@@ -96,6 +97,7 @@ impl BrowserJoinTicket {
             net_protocol: NET_PROTOCOL_VERSION,
             engine_version: crate::replay_format::ENGINE_VERSION_HASH.to_string(),
             host_endpoint_id: endpoint_addr.id.to_string(),
+            host_public_key: URL_SAFE_NO_PAD.encode(endpoint_addr.id.as_bytes()),
             relay_url,
             session_id: URL_SAFE_NO_PAD.encode(session_id),
             issued_at_epoch_s,
@@ -295,6 +297,9 @@ fn validate_static_payload(payload: &BrowserJoinTicketPayload) -> Result<(), Str
         .map_err(|error| format!("invalid host endpoint id: {error}"))?;
     if endpoint.to_string() != payload.host_endpoint_id {
         return Err("host endpoint id is not canonical".to_string());
+    }
+    if decode_32("host public key", &payload.host_public_key)? != *endpoint.as_bytes() {
+        return Err("host public key does not match the iroh endpoint id".to_string());
     }
     let relay = payload
         .relay_url
