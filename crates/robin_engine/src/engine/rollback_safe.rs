@@ -516,6 +516,16 @@ impl Engine {
         self.inner.live_production_sectors(profiles)
     }
 
+    /// Presentation view of exactly the inventory stacks Sherwood sale
+    /// commands can remove. Unlike mission-exit harvesting, this excludes
+    /// active in-flight arrow projectiles.
+    pub fn live_tradable_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
+        self.inner.live_tradable_production_sectors(profiles)
+    }
+
     fn has_pending_recorded_drop_ale_route(
         &self,
         actor: EntityId,
@@ -3019,6 +3029,20 @@ impl Engine {
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
     fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
+        self.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.mission_start_sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.sim_config.noise_distraction_feedback = false;
+        self.inner
+            .control
+            .mission_start_sim_config
+            .noise_distraction_feedback = false;
+        for (_, entity) in self.inner.world.entities.actors_mut() {
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.ale_reliable_distraction = false;
+            }
+        }
         self.inner.control.rng.replace_original_replay(draws);
     }
 
@@ -3059,11 +3083,15 @@ impl Engine {
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let original_parity = args.original_rng_replay.is_some();
-        let sim_config = if original_parity {
-            super::cloak::preserve_original_cloak_behavior(args.sim_config)
+        let mut sim_config = if original_parity {
+            super::cloak::preserve_original_gameplay_behavior(args.sim_config)
         } else {
             args.sim_config
         };
+        if original_parity {
+            sim_config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+            sim_config.noise_distraction_feedback = false;
+        }
         let mut inner = EngineInner::new_with_campaign(args.campaign);
         inner.control.sim_config = sim_config;
         inner.control.mission_start_rng_seed = args.rng_seed;
@@ -3463,6 +3491,12 @@ impl Engine {
         self.inner
             .apply_frame_commands_with_mode(&sim, assets, &post_commands, command_batch_mode);
 
+        // Post-boundary commands are admitted after the main hourglass has
+        // already drained its effects. Drain their effects explicitly before
+        // the optional PostInitialize stage so acknowledgements are observable
+        // on this transaction even on paused/no-hourglass frames.
+        let post_boundary_events = SimEvents::from(self.inner.feedback.drain_side_effects());
+
         let post_initialize_events = run_post_initialize
             .then(|| self.inner.perform_frame_post_initialize(assets))
             .flatten()
@@ -3475,6 +3509,7 @@ impl Engine {
             frame_after,
             hourglass_ran: run_hourglass,
             events: SimEvents::from(side_effects),
+            post_boundary_events,
             post_initialize_events,
             external_action_results,
             state_hash,
@@ -4153,6 +4188,157 @@ mod tests {
         )
         .expect("construct frame API fixture");
         (engine, assets)
+    }
+
+    fn sherwood_trading_frame_fixture() -> (Engine, LevelAssets) {
+        use crate::element::{ElementBonus, ElementData, ElementKind, Entity, ObjectData};
+        use crate::mission::Mission;
+        use crate::profiles::{Action, MissionLocation, MissionProfile, ProfileManager};
+
+        let mut profiles = ProfileManager::default();
+        profiles.missions.push(MissionProfile {
+            location: MissionLocation::Sherwood,
+            ..MissionProfile::default()
+        });
+        let mut assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission {
+            profile_idx: Some(0),
+            ..Mission::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut engine = Engine::new_for_test_with_simulation(
+            1024.0,
+            768.0,
+            campaign,
+            &mut assets,
+            0x7A4D_E001,
+            SimConfig {
+                sherwood_trading: true,
+                script_enabled: false,
+                ignore_default_loose: true,
+                ..SimConfig::default()
+            },
+        )
+        .expect("construct Sherwood trading frame fixture");
+        engine
+            .inner
+            .world
+            .entities
+            .push(Some(Entity::Bonus(ElementBonus {
+                element: ElementData {
+                    kind: ElementKind::ObjectBonus,
+                    active: true,
+                    ..ElementData::default()
+                },
+                object: ObjectData {
+                    associated_action: Action::Bow,
+                    quantity: 1,
+                    ..ObjectData::default()
+                },
+            })));
+        (engine, assets)
+    }
+
+    #[test]
+    fn paused_post_boundary_trade_delivers_its_receipt_in_the_same_transaction() {
+        use crate::player_command::PlayerCommand;
+        use crate::sector_production::Type;
+        use crate::trading::{TradeOutcome, TradeQuantity};
+
+        let (mut engine, assets) = sherwood_trading_frame_fixture();
+        let output = engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_commands(vec![SimCommand::host(
+                    PlayerCommand::CampaignSellProductionItem {
+                        request_id: 77,
+                        prod_type: Type::MakeArrow,
+                        quantity: TradeQuantity::One,
+                    },
+                )]),
+            )
+            .expect("admit paused modal trade");
+
+        assert!(!output.hourglass_ran);
+        assert!(output.events.side_effects().trade_receipts.is_empty());
+        let receipts = &output.post_boundary_events.side_effects().trade_receipts;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].request_id, 77);
+        assert!(matches!(
+            receipts[0].outcome,
+            TradeOutcome::Sold {
+                units: 1,
+                remaining_stock: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn item_rules_apply_on_the_command_frame_and_survive_native_snapshot() {
+        let (mut engine, assets) = frame_api_fixture();
+        let rules = crate::gameplay_config::ItemGameplayConfig {
+            apple_combat_interrupt: true,
+            wasp_reliable_acquisition: false,
+            stone_ground_distraction: true,
+            stone_longer_range: false,
+            net_selective_immunity: true,
+            ale_reliable_distraction: false,
+        };
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig { config: rules }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("item rules command frame");
+        assert_eq!(engine.sim_config().item_gameplay, rules);
+
+        let restored = Engine::decode_native_snapshot(&engine.encode_native_snapshot())
+            .expect("decode item rules snapshot");
+        assert_eq!(restored.sim_config().item_gameplay, rules);
+    }
+
+    #[test]
+    fn installing_original_parity_replay_forces_classic_item_rules() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::default();
+        engine.inner.control.sim_config.noise_distraction_feedback = true;
+        engine
+            .parity_replay_setup()
+            .replace_rng_draws(vec![0x1234_5678]);
+
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
+
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig {
+                        config: crate::gameplay_config::ItemGameplayConfig::default(),
+                    }
+                    .into(),
+                    PlayerCommand::SetNoiseDistractionFeedback { enabled: true }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("Original-parity settings command frame");
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
     }
 
     #[test]

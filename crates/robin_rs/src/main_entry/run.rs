@@ -30,6 +30,7 @@ pub async fn run_rust_game(
     let application_context =
         application_context.with_options(args.global_options.options().clone());
     let mut run_args = args.clone();
+    super::cli::resolve_join_ticket(&mut run_args)?;
     run_args.global_options = application_context.clone();
     let args = &run_args;
 
@@ -247,16 +248,23 @@ pub async fn run_rust_game(
     }
 
     // ── Full game: outer main menu loop ──
+    let mut reopen_main_options = false;
     loop {
+        let open_options_initially = std::mem::take(&mut reopen_main_options);
         let menu_choice = Box::pin(show_main_menu(
             window,
             &campaign,
             &profiles,
             &application_context,
+            open_options_initially,
         ))
         .await?;
 
         match menu_choice {
+            MainMenuChoice::RedisplayOptions => {
+                reopen_main_options = true;
+                continue;
+            }
             MainMenuChoice::Start => {
                 // Reset campaign for a new game
                 campaign.reset(&profiles, application_context.sim_config().difficulty);
@@ -394,6 +402,7 @@ pub async fn run_rust_game(
                 }
                 mp_args.mp_start_at_epoch_ms = launch.start_at_epoch_ms;
                 mp_args.mp_expected_players = Some(launch.expected_players);
+                mp_args.mp_mission_profile_id = Some(launch.mission_id);
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
@@ -559,6 +568,7 @@ pub async fn run_rust_game_headless(
     let application_context =
         application_context.with_options(args.global_options.options().clone());
     let mut run_args = args.clone();
+    super::cli::resolve_join_ticket(&mut run_args)?;
     run_args.global_options = application_context.clone();
     let args = &run_args;
 

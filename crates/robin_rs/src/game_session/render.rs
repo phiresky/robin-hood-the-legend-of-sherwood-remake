@@ -10,9 +10,10 @@ use crate::game_render::{
     render_bg_animations_gpu, render_combat_status_bars, render_debug_animation_lines,
     render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
     render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
-    render_entities_gpu, render_ground_marks, render_listen_ping, render_minimap,
-    render_noise_display, render_ransom_amulet_overlay, render_selection_outlines_gpu,
-    render_shadow_polygon_sphere_debug, render_trajectory_preview, render_view_cone_overlay,
+    render_entities_gpu, render_ground_marks, render_item_effect_preview, render_listen_ping,
+    render_minimap, render_noise_display, render_ransom_amulet_overlay,
+    render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
+    render_view_cone_overlay,
 };
 use crate::host::Host;
 use crate::host::PrintScreenRequest;
@@ -704,7 +705,7 @@ fn render_display_info_overlay(
     let shadow = fonts.shadow_font.as_ref();
     let text = |renderer: &mut crate::renderer::Renderer, line: &str, x: i32, y: i32| {
         crate::hud_text::render_text_background(font, shadow, line, x, y, |f, t, fx, fy| {
-            renderer.render_text_argb(f, t, fx, fy);
+            crate::ingame_menu::layout::render_text_screen_font(renderer, f, t, fx, fy);
         });
     };
 
@@ -1231,6 +1232,7 @@ pub(super) fn render_frame(
     // ── GPU phase: trajectory preview ──
     // Draws dots along projectile arcs every 7 world units.
     render_trajectory_preview(host, renderer);
+    render_item_effect_preview(host, renderer, hud_fonts);
 
     // ── GPU phase: Listen ability radar ping ──
     // Draws an expanding white circle at the PC's feet during the
@@ -1697,14 +1699,36 @@ pub(super) fn render_frame(
                         PortraitTarget::Pc(pc_id) => Some(pc_id),
                         _ => None,
                     };
-                    pc_id
+                    let action = pc_id
                         .and_then(|pc_id| engine.get_entity(pc_id))
                         .and_then(engine_element::Entity::pc_data)
                         .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
                         .and_then(|profile| profile.actions.get(btn as usize))
-                        .and_then(|action| crate::ui_panel::action_button_tooltip_mt_id(*action))
-                        .and_then(|mt_id| {
-                            menu_resources.map(|resources| resources.menu_text.get(mt_id))
+                        .copied();
+                    action
+                        .map(|action| {
+                            let mut text = crate::ui_panel::action_button_tooltip_mt_id(action)
+                                .and_then(|mt_id| {
+                                    menu_resources.map(|resources| resources.menu_text.get(mt_id))
+                                })
+                                .unwrap_or_default();
+                            if let Some((_key, extension)) =
+                                crate::ui_panel::item_action_tooltip_extension(
+                                    action,
+                                    engine.sim_config().item_gameplay,
+                                    host.gameplay_config
+                                        .item_previews
+                                        .effective_for_original_parity(
+                                            engine.original_rng_replay_cursor().is_some(),
+                                        ),
+                                )
+                            {
+                                if !text.is_empty() {
+                                    text.push_str(" — ");
+                                }
+                                text.push_str(extension);
+                            }
+                            text
                         })
                         .unwrap_or_default()
                 }
@@ -1802,7 +1826,7 @@ pub(super) fn render_frame(
         console_overlay.tick_animation();
     }
     if console_overlay.is_visible() {
-        let console_font = menu_resources.and_then(|r| r.label_font());
+        let console_font = menu_resources.and_then(|r| r.label_font_any());
         console_overlay.render(renderer, console_font);
     }
 

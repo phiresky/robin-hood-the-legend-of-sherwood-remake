@@ -227,6 +227,16 @@ pub struct CliArgs {
     #[arg(long, value_name = "ENDPOINT_ID")]
     pub connect: Option<String>,
 
+    /// Join from a canonical host-signed browser invitation.
+    #[arg(long, value_name = "RHMP2_TICKET")]
+    pub join: Option<String>,
+
+    /// Browser shell attestation that this durable local identity previously
+    /// redeemed the invitation. The host remains authoritative.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub browser_join_redeemed: bool,
+
     /// Internal matchmaking handoff: keep the simulation paused until this
     /// wall-clock timestamp so host and joiners begin together.
     #[arg(long, hide = true)]
@@ -236,6 +246,15 @@ pub struct CliArgs {
     /// for at the multiplayer ready barrier.
     #[arg(long, hide = true)]
     pub mp_expected_players: Option<u32>,
+
+    /// Internal multiplayer-menu handoff for the selected mission profile.
+    #[arg(long, hide = true)]
+    pub mp_mission_profile_id: Option<u32>,
+
+    /// Override the active profile's browser-invitation publication setting
+    /// for this hosted game. Omitted means use the saved preference.
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub mp_browser_join_links: Option<bool>,
 
     /// Nickname shown in the portrait "controlled by" overlay on
     /// peers.  Defaults to a host-name-derived fallback when omitted.
@@ -342,8 +361,12 @@ impl Default for CliArgs {
             wait_for_command: false,
             server: false,
             connect: None,
+            join: None,
+            browser_join_redeemed: false,
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
+            mp_mission_profile_id: None,
+            mp_browser_join_links: None,
             mp_nickname: String::new(),
             global_options: ApplicationContext::default(),
             pending_lua_mission: None,
@@ -357,6 +380,81 @@ impl Default for CliArgs {
         install_global_options(&mut args);
         args
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static PENDING_BROWSER_JOIN: std::cell::RefCell<Option<(String, bool)>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_pending_browser_join(code: String, redeemed: bool) -> Result<(), String> {
+    // Authenticate immediately, before the shell can use ticket-selected
+    // mission or relay fields. Time is rechecked when the run starts.
+    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(&code)?;
+    ticket.validate_use_at(
+        current_epoch_seconds(),
+        if redeemed {
+            crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
+        } else {
+            crate::multiplayer::join_ticket::InvitationUse::Initial
+        },
+    )?;
+    PENDING_BROWSER_JOIN.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if pending.is_some() {
+            return Err("browser multiplayer invitation was already installed".to_string());
+        }
+        *pending = Some((code, redeemed));
+        Ok(())
+    })
+}
+
+pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    if args.join.is_none() {
+        if let Some((code, redeemed)) =
+            PENDING_BROWSER_JOIN.with(|pending| pending.borrow_mut().take())
+        {
+            args.join = Some(code);
+            args.browser_join_redeemed = redeemed;
+        }
+    }
+    let Some(code) = args.join.as_deref() else {
+        return Ok(());
+    };
+    if args.server || args.connect.is_some() || args.mission.is_some() {
+        return Err("--join cannot be combined with --server, --connect, or --mission".to_string());
+    }
+    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)?;
+    ticket.validate_use_at(
+        current_epoch_seconds(),
+        if args.browser_join_redeemed {
+            crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
+        } else {
+            crate::multiplayer::join_ticket::InvitationUse::Initial
+        },
+    )?;
+    #[cfg(target_arch = "wasm32")]
+    let connect = code.to_string();
+    #[cfg(not(target_arch = "wasm32"))]
+    let connect = serde_json::to_string(&ticket.endpoint_addr()?)
+        .expect("validated iroh EndpointAddr serialization cannot fail");
+    args.connect = Some(connect);
+    args.mission = Some(ticket.payload().mission_id.clone());
+    args.proto = None;
+    args.mp_expected_players = Some(ticket.payload().expected_players);
+    args.mp_mission_profile_id = ticket.payload().mission_profile_id;
+    Ok(())
+}
+
+fn current_epoch_seconds() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn install_global_options(args: &mut CliArgs) {

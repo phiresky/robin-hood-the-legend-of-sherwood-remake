@@ -17,7 +17,7 @@ use robin_engine::sherwood_stat as engine_sherwood_stat;
 use std::collections::HashMap;
 
 use crate::main_entry::picture_to_surface;
-use crate::native_font::{self, Font, NativeFont};
+use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids;
@@ -109,6 +109,32 @@ pub const MT_MSG_REALLY_RETURN_TO_MAP: usize = 255;
 pub const MT_STR_DIFFICULTY_EASY: usize = 34;
 pub const MT_STR_DIFFICULTY_MEDIUM: usize = 35;
 pub const MT_STR_DIFFICULTY_HARD: usize = 36;
+// Rust-port strings live above the retail table's 343 entries. Keeping them
+// in the same lookup path gives the language-pack work one stable seam for
+// supplying translated replacements without changing difficulty UI code.
+pub const MT_PORT_BTN_DIFFICULTY: usize = 1000;
+pub const MT_PORT_STR_DIFFICULTY_LEGENDARY: usize = 1001;
+pub const MT_PORT_STR_DIFFICULTY_CUSTOM: usize = 1002;
+pub const MT_PORT_TTL_ADVANCED_DIFFICULTY: usize = 1003;
+pub const MT_PORT_STR_DIFFICULTY_HELP: usize = 1004;
+pub const MT_PORT_DIFF_LEGACY_SCRIPT: usize = 1010;
+pub const MT_PORT_DIFF_ENEMY_FIGHTING: usize = 1011;
+pub const MT_PORT_DIFF_ENEMY_SHOOTING: usize = 1012;
+pub const MT_PORT_DIFF_ENEMY_IQ: usize = 1013;
+pub const MT_PORT_DIFF_ENEMY_HEALTH: usize = 1014;
+pub const MT_PORT_DIFF_REACTION_TIME: usize = 1015;
+pub const MT_PORT_DIFF_BLIP_RANGE: usize = 1016;
+pub const MT_PORT_DIFF_CARNAGE: usize = 1017;
+pub const MT_PORT_DIFF_SMALL_CAPACITY: usize = 1018;
+pub const MT_PORT_DIFF_LARGE_CAPACITY: usize = 1019;
+pub const MT_PORT_DIFF_AUTO_HEAL: usize = 1020;
+pub const MT_PORT_DIFF_NET_PREVIEW: usize = 1021;
+pub const MT_PORT_DIFF_FRIENDLY_FIRE: usize = 1022;
+pub const MT_PORT_DIFF_SPECIAL_DELAY: usize = 1023;
+pub const MT_PORT_DIFF_PUNCH: usize = 1024;
+pub const MT_PORT_DIFF_GUARD_VIEW_DISTANCE: usize = 1025;
+pub const MT_PORT_DIFF_GUARD_VIEW_ANGLE: usize = 1026;
+pub const MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY: usize = 1027;
 pub const MT_STR_ANONYMOUS: usize = 62;
 pub const MT_STR_MONEY: usize = 63;
 pub const MT_STR_CARNAGE_FACTOR: usize = 65;
@@ -271,6 +297,26 @@ pub const MT_STR_AMULETS: usize = 245;
 pub const MT_STR_PLAYING_TIME: usize = 258;
 pub const MT_WORD_NOTHING: usize = 329;
 
+// Sherwood trading extension strings.  These ids intentionally sit outside
+// the legacy table and can be supplied by extended locale packs; the English
+// entries below remain the complete fallback.
+pub const MT_TTL_SHERWOOD_TRADING: usize = 1_010;
+pub const MT_STR_TRADING_HINT: usize = 1_011;
+pub const MT_BTN_SELL_ONE: usize = 1_012;
+pub const MT_BTN_SELL_FIVE: usize = 1_013;
+pub const MT_STR_TRADE_RANSOM: usize = 1_014;
+pub const MT_STR_TRADE_ROW: usize = 1_015;
+pub const MT_STR_TRADE_CONFIRM: usize = 1_016;
+pub const MT_STR_TRADE_WAITING: usize = 1_017;
+pub const MT_STR_TRADE_SOLD: usize = 1_018;
+pub const MT_STR_TRADE_REJECTED: usize = 1_019;
+pub const MT_STR_TRADE_DISABLED: usize = 1_020;
+pub const MT_STR_TRADE_REASON_HOST: usize = 1_021;
+pub const MT_STR_TRADE_REASON_LOCATION: usize = 1_022;
+pub const MT_STR_TRADE_REASON_ITEM: usize = 1_023;
+pub const MT_STR_TRADE_REASON_STOCK: usize = 1_024;
+pub const MT_STR_TRADE_REASON_OVERFLOW: usize = 1_025;
+
 // Per-button tooltip menu-text ids.
 pub const MT_INFOBULLE_BUTTON_PLAY_MISSION: usize = 323;
 pub const MT_INFOBULLE_BUTTON_FARMERS_TO_BLAZON: usize = 325;
@@ -419,6 +465,10 @@ impl MenuText {
         }
         self.fallbacks.get(&id).copied().unwrap_or("").to_string()
     }
+
+    pub fn is_loaded(&self) -> bool {
+        !self.strings.is_empty()
+    }
 }
 
 fn default_fallbacks() -> HashMap<usize, &'static str> {
@@ -504,6 +554,35 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m.insert(MT_STR_DIFFICULTY_EASY, "Easy");
     m.insert(MT_STR_DIFFICULTY_MEDIUM, "Medium");
     m.insert(MT_STR_DIFFICULTY_HARD, "Hard");
+    m.insert(MT_PORT_BTN_DIFFICULTY, "Difficulty");
+    m.insert(MT_PORT_STR_DIFFICULTY_LEGENDARY, "Legendary");
+    m.insert(MT_PORT_STR_DIFFICULTY_CUSTOM, "Custom");
+    m.insert(MT_PORT_TTL_ADVANCED_DIFFICULTY, "Advanced difficulty");
+    m.insert(
+        MT_PORT_STR_DIFFICULTY_HELP,
+        "Up/Down selects a rule. Left/Right changes it.",
+    );
+    m.insert(MT_PORT_DIFF_LEGACY_SCRIPT, "Script compatibility");
+    m.insert(MT_PORT_DIFF_ENEMY_FIGHTING, "Enemy fighting");
+    m.insert(MT_PORT_DIFF_ENEMY_SHOOTING, "Enemy shooting");
+    m.insert(MT_PORT_DIFF_ENEMY_IQ, "Enemy intelligence");
+    m.insert(MT_PORT_DIFF_ENEMY_HEALTH, "Enemy health");
+    m.insert(MT_PORT_DIFF_REACTION_TIME, "Reaction time");
+    m.insert(MT_PORT_DIFF_BLIP_RANGE, "Minimap detection range");
+    m.insert(MT_PORT_DIFF_CARNAGE, "Recruitment carnage");
+    m.insert(MT_PORT_DIFF_SMALL_CAPACITY, "Small item capacity");
+    m.insert(MT_PORT_DIFF_LARGE_CAPACITY, "Large item capacity");
+    m.insert(MT_PORT_DIFF_AUTO_HEAL, "Auto-heal interval");
+    m.insert(MT_PORT_DIFF_NET_PREVIEW, "Accurate net preview");
+    m.insert(MT_PORT_DIFF_FRIENDLY_FIRE, "Protect allies from arrows");
+    m.insert(MT_PORT_DIFF_SPECIAL_DELAY, "Special-strike delay");
+    m.insert(MT_PORT_DIFF_PUNCH, "Punch concussion");
+    m.insert(MT_PORT_DIFF_GUARD_VIEW_DISTANCE, "Guard view distance");
+    m.insert(MT_PORT_DIFF_GUARD_VIEW_ANGLE, "Guard view angle");
+    m.insert(
+        MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY,
+        "Guard noise sensitivity",
+    );
     // `MT_STR_MONEY` in the stock table is a format string
     // ("Money: £%i") — the profile-info widget plugs the ransom into it
     // via `printf`-style substitution.  Keep the `%i` placeholder so
@@ -571,6 +650,46 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
         "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
     );
     m.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
+    m.insert(
+        MT_STR_TRADING_HINT,
+        "Trading available: press T or use Sherwood trading in the pause menu.",
+    );
+    m.insert(MT_TTL_SHERWOOD_TRADING, "Sherwood trading");
+    m.insert(MT_BTN_SELL_ONE, "Sell 1");
+    m.insert(MT_BTN_SELL_FIVE, "Sell 5");
+    m.insert(MT_STR_TRADE_RANSOM, "Ransom: %d");
+    m.insert(MT_STR_TRADE_ROW, "%s — stock %u — £%u each");
+    m.insert(
+        MT_STR_TRADE_CONFIRM,
+        "Confirm: sell %u %s for £%u? Press the same Sell button again.",
+    );
+    m.insert(
+        MT_STR_TRADE_WAITING,
+        "Waiting for the host to confirm the sale…",
+    );
+    m.insert(
+        MT_STR_TRADE_SOLD,
+        "Sold %u %s for £%u. Remaining stock: %u.",
+    );
+    m.insert(MT_STR_TRADE_REJECTED, "Sale rejected: %s.");
+    m.insert(
+        MT_STR_TRADE_DISABLED,
+        "Trading is disabled in Gameplay settings.",
+    );
+    m.insert(MT_STR_TRADE_REASON_HOST, "only the host may trade");
+    m.insert(
+        MT_STR_TRADE_REASON_LOCATION,
+        "trading is only available in Sherwood",
+    );
+    m.insert(
+        MT_STR_TRADE_REASON_ITEM,
+        "that production sector is not a sellable item",
+    );
+    m.insert(MT_STR_TRADE_REASON_STOCK, "only %u items remain");
+    m.insert(
+        MT_STR_TRADE_REASON_OVERFLOW,
+        "the ransom total cannot hold the proceeds",
+    );
     m.insert(MT_STR_DB_S06, "You collected %u gold pieces.");
     m.insert(MT_STR_DB_S07, "%u of %u enemy soldiers still alive.");
     m.insert(MT_STR_DB_S08, "%u new gang members.");
@@ -745,19 +864,16 @@ pub struct MenuSurface {
 /// Cached menu fonts loaded via `manager.cfg`.
 #[derive(Default)]
 pub struct MenuFonts {
-    pub menu_button_enabled: Option<NativeFont>,
-    pub menu_button_disabled: Option<NativeFont>,
-    pub mission_title: Option<NativeFont>,
-    pub popup_scroll: Option<NativeFont>,
-    pub default: Option<NativeFont>,
-    pub edit_field: Option<NativeFont>,
-    pub menu_text: Option<NativeFont>,
-    pub debrief: Option<NativeFont>,
-    pub active_short_briefing: Option<NativeFont>,
-    pub inactive_short_briefing: Option<NativeFont>,
+    pub menu_button_enabled_any: Option<Font>,
+    pub menu_button_disabled_any: Option<Font>,
     pub mission_title_any: Option<Font>,
     pub popup_scroll_any: Option<Font>,
     pub default_any: Option<Font>,
+    pub edit_field_any: Option<Font>,
+    pub menu_text_any: Option<Font>,
+    pub debrief_any: Option<Font>,
+    pub active_short_briefing_any: Option<Font>,
+    pub inactive_short_briefing_any: Option<Font>,
     pub list_default: Option<Font>,
     pub list_focused: Option<Font>,
     pub list_selected: Option<Font>,
@@ -773,11 +889,12 @@ impl MenuFonts {
                 return Self::default();
             }
         };
-        // legacy implementation keeps menu fonts behind `SBFont`; cache the Rust `Font` enum
-        // for the same native/TrueType split. Native-only legacy accessors
-        // below still expose bitmap fonts to callers that have not moved to
-        // the polymorphic text helpers.
-        let load_any = |name: &str| match native_font::load_font_by_name(&config, name) {
+        // The original implementation kept menu fonts behind `SBFont`; cache
+        // the Rust `Font` enum so every caller preserves the same
+        // native/TrueType split without loading duplicate bitmap atlases.
+        let load_any = |name: &str| match native_font::load_font_by_name_for_active_locale(
+            &config, name,
+        ) {
             Ok(font) if font.is_renderable() => Some(font),
             Ok(native_font::Font::TrueType(tt)) => {
                 tracing::info!(
@@ -792,41 +909,21 @@ impl MenuFonts {
                 None
             }
         };
-        let load_native = |name: &str| {
-            let font = load_any(name)?;
-            match font {
-                Font::Native(native) => Some(native),
-                Font::TrueType(tt) => {
-                    tracing::info!(
-                        "Menu font '{name}' resolved to TrueType '{}'; native-only callers will use fallbacks",
-                        tt.truetype_name_str()
-                    );
-                    None
-                }
-            }
-        };
         Self {
-            menu_button_enabled: load_native("MenuButtonEnabled"),
-            menu_button_disabled: load_native("MenuButtonDisabled"),
-            mission_title: load_native("MissionTitle"),
-            popup_scroll: load_native("PopupScroll"),
-            default: load_native("Default"),
-            edit_field: load_native("EditField"),
-            menu_text: load_native("MenuText"),
-            debrief: load_native("Debrief"),
-            active_short_briefing: load_native("ActiveShortBriefing"),
-            inactive_short_briefing: load_native("InactiveShortBriefing"),
+            menu_button_enabled_any: load_any("MenuButtonEnabled"),
+            menu_button_disabled_any: load_any("MenuButtonDisabled"),
             mission_title_any: load_any("MissionTitle"),
             popup_scroll_any: load_any("PopupScroll"),
             default_any: load_any("Default"),
+            edit_field_any: load_any("EditField"),
+            menu_text_any: load_any("MenuText"),
+            debrief_any: load_any("Debrief"),
+            active_short_briefing_any: load_any("ActiveShortBriefing"),
+            inactive_short_briefing_any: load_any("InactiveShortBriefing"),
             list_default: load_any("ListDefault"),
             list_focused: load_any("ListFocused"),
             list_selected: load_any("ListSelected"),
-            list_fallback: match native_font::load_font_by_name(&config, "Default") {
-                Ok(font) if font.is_renderable() => Some(font),
-                Ok(_) => None,
-                Err(_) => None,
-            },
+            list_fallback: load_any("Default"),
         }
     }
 }
@@ -914,6 +1011,11 @@ pub struct IngameMenuResources {
 
     // ── Lazily loaded portraits (RHID_DLG_*) ───────────────────────
     portrait_cache: HashMap<i32, MenuSurface>,
+}
+
+pub(crate) struct PreparedMenuLocalization {
+    menu_text: MenuText,
+    fonts: MenuFonts,
 }
 
 impl IngameMenuResources {
@@ -1085,6 +1187,49 @@ impl IngameMenuResources {
         })
     }
 
+    /// Reload only locale-sensitive menu state. Sprite surfaces and portrait
+    /// textures are language-independent and stay owned by this cache, which
+    /// avoids leaking a second full DEFAULT.RES upload on every switch.
+    pub fn reload_localized(
+        &mut self,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    ) -> anyhow::Result<()> {
+        let prepared = Self::prepare_localized(shipping)?;
+        self.apply_localized(prepared);
+        Ok(())
+    }
+
+    pub(crate) fn prepare_localized(
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    ) -> anyhow::Result<PreparedMenuLocalization> {
+        let mut text_res = ResourceManager::new();
+        let mut attached = false;
+        match text_res.attach_or_from_shipping("Data/Text/Level.res", shipping) {
+            Ok(()) => attached = true,
+            Err(error) => tracing::debug!("Localized Level.res unavailable: {error:#}"),
+        }
+        match text_res.attach_or_from_shipping("Data/Interface/Start.sxt", shipping) {
+            Ok(()) => attached = true,
+            Err(error) => tracing::debug!("Localized Start.sxt unavailable: {error:#}"),
+        }
+        anyhow::ensure!(
+            attached,
+            "neither localized Level.res nor Start.sxt could be loaded"
+        );
+        let menu_text = MenuText::load(&mut text_res);
+        anyhow::ensure!(
+            menu_text.is_loaded(),
+            "localized resource files contain no recognized core menu table"
+        );
+        let fonts = MenuFonts::load();
+        Ok(PreparedMenuLocalization { menu_text, fonts })
+    }
+
+    pub(crate) fn apply_localized(&mut self, prepared: PreparedMenuLocalization) {
+        self.menu_text = prepared.menu_text;
+        self.fonts = prepared.fonts;
+    }
+
     pub fn button_dimensions(&self) -> (i32, i32) {
         (self.button_w.max(128), self.button_h.max(25))
     }
@@ -1216,23 +1361,17 @@ impl IngameMenuResources {
             .or_else(|| self.button_surface(state))
     }
 
-    fn first_native<'a>(
-        fonts: impl IntoIterator<Item = Option<&'a NativeFont>>,
-    ) -> Option<&'a NativeFont> {
-        fonts.into_iter().flatten().next()
-    }
-
-    pub fn menu_button_font(&self, enabled: bool) -> Option<&NativeFont> {
+    pub fn menu_button_font_any(&self, enabled: bool) -> Option<&Font> {
         if enabled {
-            Self::first_native([
-                self.fonts.menu_button_enabled.as_ref(),
-                self.fonts.menu_button_disabled.as_ref(),
-            ])
+            self.fonts
+                .menu_button_enabled_any
+                .as_ref()
+                .or(self.fonts.menu_button_disabled_any.as_ref())
         } else {
-            Self::first_native([
-                self.fonts.menu_button_disabled.as_ref(),
-                self.fonts.menu_button_enabled.as_ref(),
-            ])
+            self.fonts
+                .menu_button_disabled_any
+                .as_ref()
+                .or(self.fonts.menu_button_enabled_any.as_ref())
         }
     }
 
@@ -1244,14 +1383,6 @@ impl IngameMenuResources {
             .or(self.fonts.default_any.as_ref())
     }
 
-    pub fn title_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.mission_title.as_ref(),
-            self.fonts.popup_scroll.as_ref(),
-            self.fonts.menu_button_enabled.as_ref(),
-        ])
-    }
-
     pub fn popup_font_any(&self) -> Option<&Font> {
         self.fonts
             .popup_scroll_any
@@ -1259,85 +1390,71 @@ impl IngameMenuResources {
             .or(self.fonts.default_any.as_ref())
     }
 
-    /// Body font for generic modal dialogs (YesNo, mission state popup).
-    pub fn popup_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.popup_scroll.as_ref(),
-            self.fonts.default.as_ref(),
-            self.fonts.menu_button_enabled.as_ref(),
-        ])
+    pub fn debrief_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .debrief_any
+            .as_ref()
+            .or(self.fonts.popup_scroll_any.as_ref())
+            .or(self.fonts.default_any.as_ref())
     }
 
-    /// Debriefing body text font (falls back to popup scroll).
-    pub fn debrief_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.debrief.as_ref(),
-            self.fonts.popup_scroll.as_ref(),
-            self.fonts.default.as_ref(),
-        ])
+    pub fn label_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .default_any
+            .as_ref()
+            .or(self.fonts.popup_scroll_any.as_ref())
+    }
+
+    pub fn menu_text_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .menu_text_any
+            .as_ref()
+            .or(self.fonts.default_any.as_ref())
+            .or(self.fonts.popup_scroll_any.as_ref())
+    }
+
+    pub fn edit_field_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .edit_field_any
+            .as_ref()
+            .or(self.fonts.menu_button_enabled_any.as_ref())
+            .or(self.fonts.default_any.as_ref())
+    }
+
+    pub fn active_briefing_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .active_short_briefing_any
+            .as_ref()
+            .or(self.fonts.popup_scroll_any.as_ref())
+            .or(self.fonts.default_any.as_ref())
+    }
+
+    pub fn inactive_briefing_font_any(&self) -> Option<&Font> {
+        self.fonts
+            .inactive_short_briefing_any
+            .as_ref()
+            .or(self.fonts.popup_scroll_any.as_ref())
+            .or(self.fonts.default_any.as_ref())
     }
 
     /// Resolve a font by its `font.cfg` name (`"Debrief"`,
     /// `"PopupScroll"`, …).  Used when a popup-scroll caller passes an
     /// explicit font name.  Returns `None` for unknown names so the
     /// caller can fall back to the default popup font.
-    pub fn font_by_name(&self, name: &str) -> Option<&NativeFont> {
+    pub fn font_by_name_any(&self, name: &str) -> Option<&Font> {
         match name {
-            "MenuButtonEnabled" => self.fonts.menu_button_enabled.as_ref(),
-            "MenuButtonDisabled" => self.fonts.menu_button_disabled.as_ref(),
-            "MissionTitle" => self.fonts.mission_title.as_ref(),
-            "PopupScroll" => self.fonts.popup_scroll.as_ref(),
-            "Default" => self.fonts.default.as_ref(),
-            "EditField" => self.fonts.edit_field.as_ref(),
-            "MenuText" => self.fonts.menu_text.as_ref(),
-            "Debrief" => self.fonts.debrief.as_ref(),
-            "ActiveShortBriefing" => self.fonts.active_short_briefing.as_ref(),
-            "InactiveShortBriefing" => self.fonts.inactive_short_briefing.as_ref(),
+            "MenuButtonEnabled" => self.fonts.menu_button_enabled_any.as_ref(),
+            "MenuButtonDisabled" => self.fonts.menu_button_disabled_any.as_ref(),
+            "MissionTitle" => self.fonts.mission_title_any.as_ref(),
+            "PopupScroll" => self.fonts.popup_scroll_any.as_ref(),
+            "Default" => self.fonts.default_any.as_ref(),
+            "EditField" => self.fonts.edit_field_any.as_ref(),
+            "MenuText" => self.fonts.menu_text_any.as_ref(),
+            "Debrief" => self.fonts.debrief_any.as_ref(),
+            "ActiveShortBriefing" => self.fonts.active_short_briefing_any.as_ref(),
+            "InactiveShortBriefing" => self.fonts.inactive_short_briefing_any.as_ref(),
             _ => None,
         }
-    }
-
-    /// Regular label font (Options hub, labels on Graphics/Sounds).
-    pub fn label_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.default.as_ref(),
-            self.fonts.popup_scroll.as_ref(),
-        ])
-    }
-
-    /// Profile-info / sidebar text font (`MenuText` in `font.cfg`),
-    /// distinct from the "Default" font used elsewhere.
-    pub fn menu_text_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.menu_text.as_ref(),
-            self.fonts.default.as_ref(),
-            self.fonts.popup_scroll.as_ref(),
-        ])
-    }
-
-    /// Font used for large radio/toggle button labels.
-    pub fn edit_field_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.edit_field.as_ref(),
-            self.fonts.menu_button_enabled.as_ref(),
-            self.fonts.default.as_ref(),
-        ])
-    }
-
-    pub fn active_briefing_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.active_short_briefing.as_ref(),
-            self.fonts.popup_scroll.as_ref(),
-            self.fonts.default.as_ref(),
-        ])
-    }
-
-    pub fn inactive_briefing_font(&self) -> Option<&NativeFont> {
-        Self::first_native([
-            self.fonts.inactive_short_briefing.as_ref(),
-            self.fonts.active_short_briefing.as_ref(),
-            self.fonts.default.as_ref(),
-        ])
     }
 
     /// Pick the list-row font based on focus/selection state.
@@ -1365,10 +1482,10 @@ impl IngameMenuResources {
         .or(self.fonts.list_fallback.as_ref())
     }
 
-    /// 6-state list font lookup that preserves the `Font` enum so
-    /// callers can render via either the native bitmap or the TrueType
-    /// path. Same alternate-fallback logic as
-    /// [`Self::list_font_native_with_style`].
+    /// 6-state-compatible list font lookup that preserves the `Font` enum so
+    /// callers can render via either the native bitmap or TrueType path. The
+    /// current font table has no separate alternate rows, so `alternate`
+    /// intentionally shares the normal focus/selection fallback.
     pub fn list_font_with_style(
         &self,
         focused: bool,
@@ -1618,6 +1735,5 @@ mod tests {
             resources.title_font_any(),
             Some(Font::TrueType(_))
         ));
-        assert!(resources.title_font().is_none());
     }
 }

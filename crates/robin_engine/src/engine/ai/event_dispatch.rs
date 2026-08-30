@@ -1104,6 +1104,17 @@ impl EngineInner {
                 .enemy_ai()
                 .map(|enemy| enemy.base.blood_alcohol)
                 .unwrap_or(0);
+            let hostile_soldier = matches!(entity, Entity::Soldier(_))
+                && entity.camp().is_hostile_to(crate::element::Camp::Royalists);
+            let difficulty_rules = self.control.sim_config.difficulty.rules();
+            let (view_distance_percent, view_angle_percent) = if hostile_soldier {
+                (
+                    difficulty_rules.hostile_soldier_view_distance_percent,
+                    difficulty_rules.hostile_soldier_view_angle_percent,
+                )
+            } else {
+                (100, 100)
+            };
 
             ai_vision::RefreshViewContext {
                 body_direction: edata.direction(),
@@ -1114,6 +1125,8 @@ impl EngineInner {
                 is_dead: entity.is_dead(),
                 is_active_and_outside_building,
                 is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+                hostile_soldier_view_distance_percent: view_distance_percent,
+                hostile_soldier_view_angle_percent: view_angle_percent,
                 blood_alcohol,
                 own_position: pos,
                 follow_target_position,

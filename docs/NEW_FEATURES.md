@@ -50,6 +50,32 @@ A list of which additional features we have added, which ones we might still wan
   replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
   closed instead of being decoded as plausible achievement evidence.
 
+- **Rotating autosaves.** Single-player missions create interruption-safe
+  recovery points at mission boundaries, when the native window or browser page
+  is backgrounded, and every five minutes of active gameplay. One ordered
+  writer commits an immutable full save payload before publishing a separate
+  manifest, retains exactly the newest three generations, drains accepted work
+  during clean shutdown, and removes unpublished crash leftovers on recovery.
+  Browser records use the same portable JSON value model inside compressed,
+  SHA-256-checked storage envelopes; lifecycle events wake the game before
+  hidden-page timer throttling and urgent snapshots publish synchronously.
+  Autosaves appear only in Load lists and cannot be manually overwritten or
+  deleted. The independent Gameplay option is enabled by default. Multiplayer,
+  replay playback, and headless automation never autosave.
+
+- **Legendary and custom difficulty.** Player profiles may select the three
+  retail presets, a fixed Legendary preset, or a validated Custom ruleset.
+  The resolved integer/boolean rules are authoritative simulation state and
+  travel through profiles, saves, replay snapshots, and multiplayer welcome
+  messages. Legendary continues the retail combat/health/reaction/capacity
+  progression and additionally gives hostile soldiers 135% view distance,
+  125% view-cone width, and 150% noise sensitivity. Those perception rules
+  are independently editable in Custom; Easy, Medium, and Hard remain at
+  their original 100% perception. Original-RNG parity maps Legendary/Custom
+  back to their explicit retail compatibility preset, and V1 ranked boards
+  accept only immutable Easy/Medium/Hard identities. Story mode is
+  intentionally absent.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -79,6 +105,16 @@ A list of which additional features we have added, which ones we might still wan
   specialist inputs, authored speed, and the original game's explicit lack of
   raw-material consumption. Forecasting and campaign production call the same
   pure calculation, with boundary tests guarding truncation and saturation.
+
+- **Authoritative Sherwood item trading.** Hosts can sell any stored production
+  item for a fixed, documented ransom value through an independently toggleable
+  Sherwood panel. The built-in **T** action and the touch/mouse-accessible pause
+  menu row share one fail-closed modal request; both require Sherwood, the host
+  seat, and the enabled gameplay rule. Explicit **Sell 1** and **Sell 5**
+  actions require a second matching activation, then exact stock removal and
+  ransom mutation occur only in the deterministic command frame. Replays,
+  rollback, multiplayer, saves, and Original-parity policy carry or reject the
+  same typed command and configuration.
 
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
@@ -187,6 +223,23 @@ A list of which additional features we have added, which ones we might still wan
   asset root and validates every entry before UI startup. Browser builds
   explicitly preload only their build-reachable font/UI subset. See
   `assets/core-datadir/README.md`.
+
+- **Runtime language switching.** Main-menu Options discovers and validates
+  every installed retail locale and offers an application-global `Automatic`
+  or explicit language choice without restarting the game. Active-mission and
+  pause-menu Options deliberately do not expose the selector; the selected
+  language applies when the next session is built. Applying a language
+  atomically replaces loose-datadir or shipping-bundle lookup, rebuilds eager
+  menu presentation caches, and returns to Options. Text never silently falls
+  through to a different language; only missing recorded speech and
+  cinematics may use an installed English pack. Shipping datadir format v15
+  preserves complete per-locale overlays for native, Android, and browser
+  packages; older manifests fail loudly and must be regenerated. Generated
+  character names and persisted save labels remain frozen, multiplayer mission
+  text and playback are client-local, and logical speech timing comes from
+  either a stable canonical voice pack or the host's explicit base
+  `Data/Sounds` selection rather than the client's active presentation
+  language.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
@@ -387,7 +440,21 @@ A list of which additional features we have added, which ones we might still wan
   bootstrapped through the BitTorrent Mainline DHT, so games are discovered
   with no broker, master server, or configuration. The current design is
   predictive rollback netcode rather than strict "wait for every peer before
-  ticking" lockstep. Browser clients are pending iroh wasm support.
+  ticking" lockstep.
+
+- **Authenticated browser multiplayer**. A native host can publish a
+  30-minute, fragment-only `rhmp3` invitation for
+  `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
+  relay-over-WebSocket transport with the protocol-28 game wire,
+  prove a durable non-extractable identity through an isolated typed signer,
+  and reclaim only their parked seat generation. Demo and Full joins fail
+  before boot unless the ticket-selected engine artifact, exact native
+  Data/locale closure, and every browser package byte agree. Reconnect adopts
+  an authoritative replacement snapshot even when it predates the abandoned
+  prediction future, then clears future inputs/hashes/history. Only the host
+  records the canonical server-ordered replay. Relay observability is stated
+  in the invitation UI, and browser-link publication is a default-on persisted
+  privacy setting that can be disabled without affecting native iroh play.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its
@@ -482,13 +549,23 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Allow switching language in settings mid-game.
-- More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
-- Add autosave support.
-- trading: if you over produce an item, maybe you can sell it for money?
-- throw something skill that makes a noise somewhere else so guards run there
+- Item reliability rebalances are implemented as independent Gameplay
+  settings. Direct apples can interrupt active swordfights; wasps acquire
+  valid initial targets within 75 instead of 50 units; Will Scarlet's stone
+  can use the sibling throwable base range 300 instead of its shipped 200;
+  resistant VIPs/riders/Stuteley are skipped while a net catches other people
+  in its original strict 40-unit circle; and outdoor non-VIP soldiers with
+  authored beer value zero accept ale at minimum potency 20. Positive authored
+  beer, net terrain crumpling, ally capture, and purse behavior are unchanged.
+  Each rule defaults on independently; Original-parity sessions force them off.
+- Ground-targeted stone noise distractions are implemented. With the
+  independent gameplay toggle enabled, a real Stone projectile may target
+  valid ground and emits one deterministic 240-unit noise stimulus on its
+  terminal impact. Guards use the existing heard-noise search behavior. The
+  command, target layer, replay, rollback, multiplayer, and quick-action paths
+  remain authoritative; its additional impact cue is independently toggleable.
 - Cloaking (implemented, optional): selected heroes whose sprite profile has
   the shipped cape rows can put the cloak back on with a rebindable key. The
   reversed original transition leads to a dedicated stationary Cloaked state;

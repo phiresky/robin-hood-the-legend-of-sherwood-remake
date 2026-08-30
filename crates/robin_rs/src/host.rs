@@ -32,6 +32,10 @@ use crate::bg_cache::BackgroundDecal;
 use crate::draw_manager::DrawManager;
 use crate::key_config::KeyConfig;
 use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
+use crate::localization::{
+    LanguageChange, LanguagePack, LanguageSelection, LocalizationPreferences, LocalizationService,
+    PortTextKey,
+};
 use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
@@ -56,6 +60,7 @@ pub enum TacticalTargetMode {
 struct ApplicationServices {
     player_profiles: Mutex<PlayerProfileManager>,
     key_configs: Mutex<KeyConfigStore>,
+    localization: Mutex<LocalizationService>,
     shipping: Option<Arc<ShippingDatadir>>,
 }
 
@@ -105,19 +110,34 @@ impl ApplicationContext {
     pub fn complete(
         options: engine_api::GlobalOptions,
         player_profiles: PlayerProfileManager,
+        key_configs: KeyConfigStore,
+        shipping: Option<Arc<ShippingDatadir>>,
+    ) -> Result<Self, String> {
+        Self::complete_with_localization(
+            options,
+            player_profiles,
+            key_configs,
+            shipping,
+            LocalizationService::disabled(),
+        )
+    }
+
+    /// Complete a production application context with localization already
+    /// installed. Keeping this separate from [`Self::complete`] prevents unit
+    /// test contexts from mutating the process-wide resource search order.
+    pub fn complete_with_localization(
+        options: engine_api::GlobalOptions,
+        player_profiles: PlayerProfileManager,
         mut key_configs: KeyConfigStore,
         shipping: Option<Arc<ShippingDatadir>>,
+        localization: LocalizationService,
     ) -> Result<Self, String> {
         let active = player_profiles
             .get_active()
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
         let amount_of_speaking = active.sound_config.amount_of_speaking;
-        let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-        let enable_unbinding = active.gameplay_config.enable_unbinding;
-        let clean_hands_npc_kills_invalidate =
-            active.gameplay_config.clean_hands_npc_kills_invalidate;
-        let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+        let gameplay_config = active.gameplay_config;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -131,16 +151,21 @@ impl ApplicationContext {
 
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
-        sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
+        sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
             services: Some(Arc::new(ApplicationServices {
                 player_profiles: Mutex::new(player_profiles),
                 key_configs: Mutex::new(key_configs),
+                localization: Mutex::new(localization),
                 shipping,
             })),
         })
@@ -154,6 +179,9 @@ impl ApplicationContext {
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.item_gameplay = existing.item_gameplay;
+        sim_config.noise_distraction_feedback = existing.noise_distraction_feedback;
+        sim_config.sherwood_trading = existing.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -181,6 +209,85 @@ impl ApplicationContext {
         Ok(self.required_services()?.shipping.clone())
     }
 
+    pub fn localization_preferences(&self) -> Result<LocalizationPreferences, String> {
+        self.with_localization(|localization| localization.preferences().clone())
+    }
+
+    pub fn installed_languages(&self) -> Result<Vec<LanguagePack>, String> {
+        self.with_localization(|localization| localization.installed().to_vec())
+    }
+
+    pub fn active_locale(&self) -> Result<Option<String>, String> {
+        self.with_localization(|localization| localization.active_locale().map(str::to_owned))
+    }
+
+    pub fn localized_mission_name(&self, mission_id: u32, fallback: &str) -> String {
+        self.with_localization(|localization| {
+            localization
+                .active_locale()
+                .and_then(|locale| {
+                    localization
+                        .installed()
+                        .iter()
+                        .find(|pack| pack.locale == locale)
+                })
+                .and_then(|pack| pack.mission_names.get(&mission_id))
+                .cloned()
+                .unwrap_or_else(|| fallback.to_owned())
+        })
+        .unwrap_or_else(|error| panic!("mission title lost localization service: {error}"))
+    }
+
+    pub fn localization_generation(&self) -> Result<u64, String> {
+        self.with_localization(LocalizationService::generation)
+    }
+
+    pub fn language_selector_visible(&self) -> Result<bool, String> {
+        self.with_localization(LocalizationService::selector_visible)
+    }
+
+    pub fn canonical_speech_timing_locale(&self) -> Result<Option<String>, String> {
+        self.with_localization(|localization| {
+            localization
+                .canonical_speech_timing_locale()
+                .map(str::to_owned)
+        })
+    }
+
+    pub fn port_text(&self, key: PortTextKey) -> Result<&'static str, String> {
+        self.with_localization(|localization| {
+            crate::localization::port_text(localization.active_locale(), key)
+        })
+    }
+
+    pub fn set_language(&self, selection: LanguageSelection) -> Result<LanguageChange, String> {
+        let services = self.required_services()?;
+        let mut localization = services
+            .localization
+            .lock()
+            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        let change = localization
+            .set_selection(selection, services.shipping.as_deref())
+            .map_err(|error| error.to_string())?;
+        drop(localization);
+        if change.previous_locale != change.active_locale {
+            crate::process_asset_cache::invalidate_localized();
+        }
+        Ok(change)
+    }
+
+    fn with_localization<R>(
+        &self,
+        read: impl FnOnce(&LocalizationService) -> R,
+    ) -> Result<R, String> {
+        let localization = self
+            .required_services()?
+            .localization
+            .lock()
+            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        Ok(read(&localization))
+    }
+
     pub fn player_profiles_snapshot(&self) -> Result<PlayerProfileManager, String> {
         self.with_player_profiles(Clone::clone)
     }
@@ -206,15 +313,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (
-            result,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-        ) = {
+        let (result, difficulty, amount_of_speaking, gameplay_config) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -228,20 +327,10 @@ impl ApplicationContext {
                 result,
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
-                active.gameplay_config.fix_hard_reaction_times,
-                active.gameplay_config.enable_unbinding,
-                active.gameplay_config.clean_hands_npc_kills_invalidate,
-                active.gameplay_config.reusable_cloaks,
+                active.gameplay_config,
             )
         };
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(result)
     }
 
@@ -255,15 +344,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (
-            profile_id,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-        ) = {
+        let (profile_id, difficulty, amount_of_speaking, gameplay_config) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -310,11 +391,7 @@ impl ApplicationContext {
             let profile_id = active.id;
             let difficulty = active.difficulty;
             let amount_of_speaking = active.sound_config.amount_of_speaking;
-            let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-            let enable_unbinding = active.gameplay_config.enable_unbinding;
-            let clean_hands_npc_kills_invalidate =
-                active.gameplay_config.clean_hands_npc_kills_invalidate;
-            let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+            let gameplay_config = active.gameplay_config;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -338,25 +415,10 @@ impl ApplicationContext {
             }
             // TODO: Persist browser profiles and key configurations in
             // IndexedDB instead of keeping first-launch changes session-only.
-            (
-                profile_id,
-                difficulty,
-                amount_of_speaking,
-                fix_hard_reaction_times,
-                enable_unbinding,
-                clean_hands_npc_kills_invalidate,
-                reusable_cloaks,
-            )
+            (profile_id, difficulty, amount_of_speaking, gameplay_config)
         };
 
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(profile_id)
     }
 
@@ -432,17 +494,18 @@ impl ApplicationContext {
         &self,
         difficulty: robin_engine::player_profile::DifficultyLevel,
         amount_of_speaking: u16,
-        fix_hard_reaction_times: bool,
-        enable_unbinding: bool,
-        clean_hands_npc_kills_invalidate: bool,
-        reusable_cloaks: bool,
+        gameplay_config: robin_engine::gameplay_config::GameplayConfig,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
-        sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
+        sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -884,6 +947,8 @@ pub struct HostFrontend {
     /// (Easy-mode nets).  Read by the trajectory-preview renderer to
     /// swap the arc colour from cyan (default) to pink (crumpled).
     pub net_crumpled: bool,
+    /// Host-only explanation rendered at the current item target.
+    pub item_effect_preview: Option<ItemEffectPreview>,
     pub time_no_mouse_move: u32,
     pub mouse_map_prev: MapPoint,
     /// Rolling counter for the once-every-10-frames ground-mark drop
@@ -1010,12 +1075,22 @@ pub struct HostFrontend {
     pub background_decal_order: Vec<EntityId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemEffectPreview {
+    pub center: MapPoint,
+    pub radius: Option<u16>,
+    pub localization_key: &'static str,
+    pub fallback_text: &'static str,
+    pub blocked: bool,
+}
+
 #[derive(Default)]
 pub struct HostTransport {
     pub local_seat: engine_player_command::PlayerId,
     pub net: Option<crate::multiplayer::NetChannels>,
     pub mission_seed: Option<u64>,
     pub mission_sim_config: Option<engine_api::SimConfig>,
+    pub speech_timing_locale: Option<String>,
     pub mission_id: Option<String>,
     pub reconnecting: bool,
 }
@@ -1051,6 +1126,36 @@ pub enum HostSignal {
     MissionStatePopup,
     ResetInput,
     PromoteFpsCheat,
+    SherwoodTrading,
+}
+
+/// Live presentation facts required to admit a Sherwood trading-panel request.
+///
+/// These checks intentionally mirror the authoritative sale-command ordering:
+/// host ownership, feature rule, then mission location. The engine repeats the
+/// same checks when a sale reaches the deterministic command frame, so a stale
+/// or forged presentation request cannot mutate campaign state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SherwoodTradingAccess {
+    pub(crate) local_is_host: bool,
+    pub(crate) enabled: bool,
+    pub(crate) in_sherwood: bool,
+}
+
+impl SherwoodTradingAccess {
+    pub(crate) fn validate(self) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        use robin_engine::trading::TradeRejectReason;
+        if !self.local_is_host {
+            return Err(TradeRejectReason::HostOnly);
+        }
+        if !self.enabled {
+            return Err(TradeRejectReason::TradingDisabled);
+        }
+        if !self.in_sherwood {
+            return Err(TradeRejectReason::NotInSherwood);
+        }
+        Ok(())
+    }
 }
 
 /// Ordered, typed work emitted at the post-tick boundary. Variant-specific
@@ -1059,6 +1164,8 @@ pub enum HostSignal {
 pub struct HostEffectBatches {
     modals: Vec<HostModalRequest>,
     signals: Vec<HostSignal>,
+    trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+    next_trade_request_id: u64,
     pub background_blits: Vec<PendingBgBlit>,
 }
 
@@ -1101,6 +1208,28 @@ impl HostEffectBatches {
         };
         self.modals.remove(index);
         true
+    }
+
+    pub fn extend_trade_receipts(
+        &mut self,
+        receipts: impl IntoIterator<Item = robin_engine::trading::TradeReceipt>,
+    ) {
+        self.trade_receipts.extend(receipts);
+    }
+
+    pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
+        std::mem::take(&mut self.trade_receipts)
+    }
+
+    /// Allocate a process-session correlation id for one authoritative sale.
+    /// This counter deliberately survives panel close/reopen and effect-queue
+    /// clears so a delayed network receipt cannot alias a newer request.
+    pub(crate) fn allocate_trade_request_id(&mut self) -> u64 {
+        self.next_trade_request_id = self
+            .next_trade_request_id
+            .checked_add(1)
+            .expect("Sherwood trade request id exhausted");
+        self.next_trade_request_id
     }
 
     pub fn dialogue_count(&self) -> usize {
@@ -1151,6 +1280,31 @@ impl HostEffectBatches {
         }
     }
 
+    /// Queue a player-facing trading-panel request only after all live access
+    /// checks pass. This is the single producer used by keyboard and menu UI.
+    pub(crate) fn request_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        access.validate()?;
+        self.request_signal(HostSignal::SherwoodTrading);
+        Ok(())
+    }
+
+    /// Consume and revalidate a queued request immediately before modal
+    /// construction. A settings/location/seat transition between input and
+    /// presentation therefore fails closed, while an empty queue is ordinary.
+    pub(crate) fn take_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<bool, robin_engine::trading::TradeRejectReason> {
+        if !self.take_signal(HostSignal::SherwoodTrading) {
+            return Ok(false);
+        }
+        access.validate()?;
+        Ok(true)
+    }
+
     pub fn has_signal(&self, signal: HostSignal) -> bool {
         self.signals.contains(&signal)
     }
@@ -1166,6 +1320,7 @@ impl HostEffectBatches {
     pub fn clear(&mut self) {
         self.modals.clear();
         self.signals.clear();
+        self.trade_receipts.clear();
         self.background_blits.clear();
     }
 }
@@ -1552,6 +1707,14 @@ impl Host {
         if fx.pending_sherwood_report {
             self.effects.request_sherwood_report();
         }
+        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
+            self.effects.extend_trade_receipts(fx.trade_receipts);
+        } else if !fx.trade_receipts.is_empty() {
+            tracing::trace!(
+                count = fx.trade_receipts.len(),
+                "discarding host-only Sherwood trade receipts on a client"
+            );
+        }
         if fx.pending_show_console {
             self.effects.request_signal(HostSignal::ShowConsole);
         }
@@ -1915,6 +2078,75 @@ mod application_context_tests {
         assert!(effects.take_signal(HostSignal::ResetInput));
         assert!(!effects.take_signal(HostSignal::ResetInput));
         assert!(effects.take_signal(HostSignal::ShowConsole));
+    }
+
+    #[test]
+    fn trading_signal_requires_host_enabled_rule_and_sherwood() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let cases = [
+            (
+                SherwoodTradingAccess {
+                    local_is_host: false,
+                    ..allowed
+                },
+                TradeRejectReason::HostOnly,
+            ),
+            (
+                SherwoodTradingAccess {
+                    enabled: false,
+                    ..allowed
+                },
+                TradeRejectReason::TradingDisabled,
+            ),
+            (
+                SherwoodTradingAccess {
+                    in_sherwood: false,
+                    ..allowed
+                },
+                TradeRejectReason::NotInSherwood,
+            ),
+        ];
+
+        for (access, reason) in cases {
+            let mut effects = HostEffectBatches::default();
+            assert_eq!(effects.request_sherwood_trading(access), Err(reason));
+            assert!(!effects.has_signal(HostSignal::SherwoodTrading));
+        }
+
+        let mut effects = HostEffectBatches::default();
+        assert_eq!(effects.request_sherwood_trading(allowed), Ok(()));
+        assert!(effects.has_signal(HostSignal::SherwoodTrading));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(true));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(false));
+    }
+
+    #[test]
+    fn queued_trading_signal_is_revalidated_and_drained_before_modal_dispatch() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let mut effects = HostEffectBatches::default();
+        effects.request_sherwood_trading(allowed).unwrap();
+
+        let disabled = SherwoodTradingAccess {
+            enabled: false,
+            ..allowed
+        };
+        assert_eq!(
+            effects.take_sherwood_trading(disabled),
+            Err(TradeRejectReason::TradingDisabled)
+        );
+        assert!(!effects.has_signal(HostSignal::SherwoodTrading));
     }
 
     fn dictionary_frame_holder(shadow_color: u16) -> FrameHolder {

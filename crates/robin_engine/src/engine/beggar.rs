@@ -103,18 +103,11 @@ pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
     difficulty: crate::player_profile::DifficultyLevel,
 ) {
     use crate::element::{Camp, Detectable, DetectableType};
-    use crate::player_profile::difficulty_params;
-
     let eligible: Vec<_> = entities
         .soldiers()
         .filter_map(|(soldier_id, soldier)| {
             let ai = soldier.npc.ai_brain.enemy()?;
-            let iq = difficulty.modify_capacity(
-                ai.soldier_profile_iq,
-                difficulty_params::EASY_ENEMY_IQ,
-                difficulty_params::HARD_ENEMY_IQ,
-                100,
-            );
+            let iq = difficulty.rules().enemy_iq(ai.soldier_profile_iq, 100);
             (soldier.soldier.cached_camp.is_hostile_to(Camp::Royalists)
                 && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())

@@ -20,14 +20,17 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 use robin_engine::graphic_config::GraphicConfig;
+use robin_engine::multiplayer_config::MultiplayerConfig;
 use robin_engine::sound_config::SoundConfig;
 
 use super::gameplay::show_gameplay;
 use super::graphics::show_graphics;
+use super::language::show_language;
 use super::layout::{
     MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt,
+    render_text_virt_font,
 };
+use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
     IngameMenuResources, MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS,
     MT_STR_MEGA_BYTES, MT_STR_MEGA_HERZS, MT_STR_MEMORY, MT_STR_PROCESSOR, MT_TTL_OPTIONS,
@@ -45,17 +48,27 @@ pub struct OptionsOutcome {
     /// Callers must react by reloading the input translator's bindings
     /// and refreshing derived UI-shortcut state.
     pub key_config_changed: bool,
+    /// The locale lookup generation changed. Callers must discard every
+    /// eager localized presentation cache before drawing another menu frame.
+    pub language_changed: bool,
 }
 
 const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
 const BUTTON_GAMEPLAY: u32 = 3;
+#[cfg(not(target_arch = "wasm32"))]
+const BUTTON_MULTIPLAYER_PRIVACY: u32 = 4;
 /// Desktop only: re-select the game data folder (see
 /// [`crate::datadir_locator`]).
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-const BUTTON_GAME_DATA: u32 = 4;
-const BUTTON_BACK: u32 = 5;
+const BUTTON_GAME_DATA: u32 = 5;
+const BUTTON_BACK: u32 = 6;
+const BUTTON_LANGUAGE: u32 = 7;
+
+fn language_option_visible(allow_language_switching: bool, selector_visible: bool) -> bool {
+    allow_language_switching && selector_visible
+}
 
 /// Display the in-game options hub.
 ///
@@ -67,15 +80,19 @@ const BUTTON_BACK: u32 = 5;
 /// entry path).
 #[allow(clippy::too_many_arguments)]
 pub async fn show_options(
+    application_context: &crate::host::ApplicationContext,
+    allow_language_switching: bool,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     mut cursor: Option<ModalCursor<'_>>,
     graphic_config: &mut GraphicConfig,
     gameplay_config: &mut GameplayConfig,
+    multiplayer_config: &mut MultiplayerConfig,
     sound_config: &mut SoundConfig,
     key_config: &mut KeyConfig,
     custom_key_config: &mut KeyConfig,
+    sherwood_trading_editable: bool,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
@@ -105,6 +122,18 @@ pub async fn show_options(
             (BUTTON_SHORTCUTS, &shortcuts_label),
             (BUTTON_GAMEPLAY, "Gameplay"),
         ];
+        #[cfg(not(target_arch = "wasm32"))]
+        entries.push((BUTTON_MULTIPLAYER_PRIVACY, "Multiplayer / Privacy"));
+        let language_label = application_context
+            .port_text(crate::localization::PortTextKey::Language)
+            .unwrap_or_else(|error| panic!("Options lost localized text: {error}"));
+        let selector_visible = allow_language_switching
+            && application_context
+                .language_selector_visible()
+                .unwrap_or_else(|error| panic!("Options lost language preferences: {error}"));
+        if language_option_visible(allow_language_switching, selector_visible) {
+            entries.push((BUTTON_LANGUAGE, language_label));
+        }
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         entries.push((BUTTON_GAME_DATA, "Game Data Folder"));
         entries.push((BUTTON_BACK, &back_label));
@@ -252,9 +281,37 @@ pub async fn show_options(
                             resources,
                             cursor.as_mut().map(|c| c.reborrow()),
                             gameplay_config,
+                            sherwood_trading_editable,
                         )
                         .await;
                         outcome.changed |= changed;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    BUTTON_MULTIPLAYER_PRIVACY => {
+                        let changed = show_multiplayer_privacy(
+                            event_pump,
+                            renderer,
+                            resources,
+                            cursor.as_mut().map(|c| c.reborrow()),
+                            multiplayer_config,
+                        )
+                        .await;
+                        outcome.changed |= changed;
+                    }
+                    BUTTON_LANGUAGE => {
+                        if show_language(
+                            application_context,
+                            event_pump,
+                            renderer,
+                            resources,
+                            cursor.as_mut().map(|c| c.reborrow()),
+                        )
+                        .await
+                        {
+                            outcome.language_changed = true;
+                            outcome.changed = true;
+                            done = true;
+                        }
                     }
                     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                     BUTTON_GAME_DATA => {
@@ -277,13 +334,13 @@ pub async fn show_options(
                 draw_screen_background(renderer, &bg);
             }
 
-            if let Some(font) = resources.title_font() {
-                render_text_virt(renderer, font, transform, &title, 20, 20);
+            if let Some(font) = resources.title_font_any() {
+                render_text_virt_font(renderer, font, transform, &title, 20, 20);
             }
-            if let Some(font) = resources.label_font() {
+            if let Some(font) = resources.label_font_any() {
                 let mut y = 120;
                 for line in info.lines() {
-                    render_text_virt(renderer, font, transform, line, 40, y);
+                    render_text_virt_font(renderer, font, transform, line, 40, y);
                     y += font.height() as i32 + 4;
                 }
             }
@@ -298,12 +355,25 @@ pub async fn show_options(
             crate::window::sleep_ui_frame().await;
         }
 
-        if !re_display {
+        if outcome.language_changed || !re_display {
             break;
         }
     }
 
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_option_visible;
+
+    #[test]
+    fn language_option_respects_main_menu_only_scope() {
+        assert!(language_option_visible(true, true));
+        assert!(!language_option_visible(true, false));
+        assert!(!language_option_visible(false, true));
+        assert!(!language_option_visible(false, false));
+    }
 }
 
 /// Build the hardware description line shown on the options hub.

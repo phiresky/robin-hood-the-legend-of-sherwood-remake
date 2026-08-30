@@ -978,6 +978,24 @@ impl PortraitCache {
         self.localized_names = names;
     }
 
+    /// Refresh data-authored hero/VIP names without rewriting the generated
+    /// Merry Men names that are already part of campaign/replay identity.
+    pub fn reload_localized_names_preserving_generated(
+        &mut self,
+        names: [Option<String>; CharacterKind::COUNT],
+    ) {
+        for kind in CharacterKind::VARIANTS {
+            if matches!(
+                kind,
+                CharacterKind::MerryManA | CharacterKind::MerryManB | CharacterKind::MerryManC
+            ) && self.localized_names[kind.as_index()].is_some()
+            {
+                continue;
+            }
+            self.localized_names[kind.as_index()] = names[kind.as_index()].clone();
+        }
+    }
+
     //
     // Determinism: the resulting names are persisted to
     // `campaign.peasant_names` via `RegisterPeasantName`, which is
@@ -2816,6 +2834,124 @@ pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Op
     })
 }
 
+/// Optional post-port detail appended to the localized Original tooltip.
+/// The stable key is exposed with the English fallback so a future extension
+/// catalog can translate these strings independently of `MenuText` ids.
+pub fn item_action_tooltip_extension(
+    action: robin_engine::profiles::Action,
+    rules: robin_engine::gameplay_config::ItemGameplayConfig,
+    previews: robin_engine::gameplay_config::ItemPreviewConfig,
+) -> Option<(&'static str, &'static str)> {
+    use robin_engine::profiles::Action;
+    match action {
+        Action::Apple if previews.apple_effect => Some(if rules.apple_combat_interrupt {
+            (
+                "item_tooltip.apple.interrupt",
+                "60-frame daze; 1500-frame scent; interrupts active combat.",
+            )
+        } else {
+            (
+                "item_tooltip.apple.classic",
+                "60-frame daze; 1500-frame scent; fighting targets are immune.",
+            )
+        }),
+        Action::Stone if previews.stone_direct_effect || previews.stone_distraction_area => Some(
+            match (
+                previews.stone_direct_effect,
+                previews.stone_distraction_area,
+                rules.stone_ground_distraction,
+                rules.stone_longer_range,
+            ) {
+                (true, true, true, true) => (
+                    "item_tooltip.stone.direct_and_distraction",
+                    "Direct hit: 10 damage + strong concussion; long base range 300. Ground noise radius: 240.",
+                ),
+                (true, true, true, false) => (
+                    "item_tooltip.stone.direct_and_distraction_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200. Ground noise radius: 240.",
+                ),
+                (true, _, _, true) => (
+                    "item_tooltip.stone.direct",
+                    "Direct hit: 10 damage + strong concussion; long base range 300.",
+                ),
+                (true, _, _, false) => (
+                    "item_tooltip.stone.direct_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200.",
+                ),
+                (false, true, true, _) => (
+                    "item_tooltip.stone.distraction",
+                    "Ground noise attracts eligible hostiles within 240.",
+                ),
+                (false, true, false, _) => (
+                    "item_tooltip.stone.distraction_disabled",
+                    "Ground distraction is disabled in Gameplay settings.",
+                ),
+                (false, false, _, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Net if previews.net_capture_area || previews.net_crumple_prediction => Some(
+            match (
+                previews.net_capture_area,
+                previews.net_crumple_prediction,
+                rules.net_selective_immunity,
+            ) {
+                (true, true, true) => (
+                    "item_tooltip.net.capture_and_terrain_crumple",
+                    "Captures active people within 40, including allies; VIPs/riders/Net user are skipped; terrain can crumple it.",
+                ),
+                (true, true, false) => (
+                    "item_tooltip.net.capture_and_crumple",
+                    "Captures active people within 40, including allies; terrain or people can crumple it.",
+                ),
+                (true, false, true) => (
+                    "item_tooltip.net.selective_capture",
+                    "Captures active people within 40, including allies; VIPs, riders, and the Net user are skipped.",
+                ),
+                (true, false, false) => (
+                    "item_tooltip.net.capture",
+                    "Captures active people within 40, including allies.",
+                ),
+                (false, true, true) => (
+                    "item_tooltip.net.terrain_crumple",
+                    "Terrain can crumple the net; resistant people are skipped.",
+                ),
+                (false, true, false) => (
+                    "item_tooltip.net.crumple",
+                    "Terrain and some victim conditions can crumple the net.",
+                ),
+                (false, false, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Ale if previews.ale_effect => Some(if rules.ale_reliable_distraction {
+            (
+                "item_tooltip.ale.reliable",
+                "Zero-interest outdoor non-VIP soldiers also accept at potency 20; authored interest and drunk behavior stay unchanged.",
+            )
+        } else {
+            (
+                "item_tooltip.ale.classic",
+                "Visible outdoor enemies need authored beer interest; drunk enemies accept.",
+            )
+        }),
+        Action::Purse if previews.purse_effect => Some((
+            "item_tooltip.purse.effect",
+            "Scatters 5 coins worth £50; visible outdoor enemies need money interest.",
+        )),
+        Action::WaspNest if previews.wasp_area => Some(if rules.wasp_reliable_acquisition {
+            (
+                "item_tooltip.wasp.reliable",
+                "Acquires within 75 (225 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        } else {
+            (
+                "item_tooltip.wasp.classic",
+                "Acquires within 50 (150 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        }),
+        _ => None,
+    }
+}
+
 /// Hover-idle tracker for portrait action buttons. These compact controls
 /// need much quicker feedback than the large requirements-bar widgets.
 #[derive(Default, Clone)]
@@ -2917,13 +3053,12 @@ impl RequirementsTooltipTracker {
 /// fill — relies on the shadow font for contrast against the scene.
 ///
 /// `shadow` is the optional "Background" font; when `None`, the text is
-/// drawn without an explicit shadow (the NativeFont rasterizer still
-/// bakes a subtle halo into ARGB glyphs).  `cursor_size` is the current
-/// cursor sprite's on-screen size (width, height).
+/// drawn without an explicit shadow. `cursor_size` is the current cursor
+/// sprite's on-screen size (width, height).
 pub fn draw_screen_tooltip(
     renderer: &mut Renderer,
-    font: &crate::native_font::NativeFont,
-    shadow: Option<&crate::native_font::NativeFont>,
+    font: &crate::native_font::Font,
+    shadow: Option<&crate::native_font::Font>,
     text: &str,
     mouse_x: i32,
     mouse_y: i32,
@@ -2957,7 +3092,7 @@ pub fn draw_screen_tooltip(
         let box_x = mouse_x.max(0);
         let box_y = default_y.max(0);
         let box_w = (sw - box_x).max(1);
-        let wrap = layout::wrap_text(font, text, box_w, 3);
+        let wrap = layout::wrap_text_for_box_font(font, text, box_w, 3);
         // Clamp vertically if the wrapped box overflows the bottom.
         let total_h = (wrap.lines.len() as i32) * th;
         let y_top = if box_y + total_h > sh {
@@ -2968,9 +3103,9 @@ pub fn draw_screen_tooltip(
         for (i, line) in wrap.lines.iter().enumerate() {
             let ly = y_top + (i as i32) * th;
             if let Some(sh_font) = shadow {
-                renderer.render_text_argb(sh_font, line, box_x + 1, ly + 1);
+                layout::render_text_screen_font(renderer, sh_font, line, box_x + 1, ly + 1);
             }
-            renderer.render_text_argb(font, line, box_x, ly);
+            layout::render_text_screen_font(renderer, font, line, box_x, ly);
         }
         return;
     }
@@ -2994,9 +3129,9 @@ pub fn draw_screen_tooltip(
     }
 
     if let Some(sh_font) = shadow {
-        renderer.render_text_argb(sh_font, text, x + 1, y + 1);
+        layout::render_text_screen_font(renderer, sh_font, text, x + 1, y + 1);
     }
-    renderer.render_text_argb(font, text, x, y);
+    layout::render_text_screen_font(renderer, font, text, x, y);
 }
 
 // ─── PC info popup overlay ────────────────────────────────────────
@@ -3628,6 +3763,92 @@ mod tests {
         assert_eq!(tracker.ready_button(), Some((2, 1)));
         tracker.update(Some((2, 2)));
         assert_eq!(tracker.ready_button(), None);
+    }
+
+    #[test]
+    fn stone_preview_controls_direct_hit_and_noise_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let direct_only = ItemPreviewConfig {
+            stone_direct_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, direct_text) = item_action_tooltip_extension(
+            Action::Stone,
+            ItemGameplayConfig::default(),
+            direct_only,
+        )
+        .expect("direct stone explanation");
+        assert!(direct_text.contains("Direct hit"));
+        assert!(!direct_text.contains("noise"));
+
+        let noise_only = ItemPreviewConfig {
+            stone_distraction_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, noise_text) =
+            item_action_tooltip_extension(Action::Stone, ItemGameplayConfig::default(), noise_only)
+                .expect("stone noise explanation");
+        assert!(noise_text.contains("Ground noise"));
+        assert!(!noise_text.contains("Direct hit"));
+    }
+
+    #[test]
+    fn net_preview_controls_capture_area_and_crumple_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let capture_only = ItemPreviewConfig {
+            net_capture_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, capture_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), capture_only)
+                .expect("net capture explanation");
+        assert!(capture_text.contains("within 40"));
+        assert!(!capture_text.contains("crumple"));
+
+        let crumple_only = ItemPreviewConfig {
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, crumple_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), crumple_only)
+                .expect("net crumple explanation");
+        assert!(crumple_text.contains("crumple"));
+        assert!(!crumple_text.contains("within 40"));
+    }
+
+    #[test]
+    fn item_tooltips_explain_selective_net_and_reliable_ale_without_changing_previews() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let net_preview = ItemPreviewConfig {
+            net_capture_area: true,
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, net_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::default(), net_preview)
+                .expect("selective net explanation");
+        assert!(net_text.contains("skipped"));
+        assert!(net_text.contains("terrain can crumple"));
+        assert!(!net_text.contains("people can crumple"));
+
+        let ale_preview = ItemPreviewConfig {
+            ale_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, reliable_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::default(), ale_preview)
+                .expect("reliable ale explanation");
+        let (_, classic_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::classic(), ale_preview)
+                .expect("classic ale explanation");
+        assert!(reliable_text.contains("potency 20"));
+        assert!(classic_text.contains("authored beer interest"));
     }
 
     #[test]

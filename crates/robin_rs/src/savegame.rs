@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
 
 /// Metadata for a single save game slot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SaveGame {
     /// Display name shown in the UI (UTF-8).
     pub text: String,
@@ -73,6 +73,7 @@ pub enum SpecialSlot {
     ExQuickSave,
     Restart,
     Sherwood,
+    Autosave,
 }
 
 impl SpecialSlot {
@@ -84,9 +85,26 @@ impl SpecialSlot {
             "ExQuickSave" => Some(Self::ExQuickSave),
             "Restart" => Some(Self::Restart),
             "Sherwood" => Some(Self::Sherwood),
+            filename if is_generated_autosave_filename(filename) => Some(Self::Autosave),
             _ => None,
         }
     }
+}
+
+/// Autosave names are storage identifiers, not arbitrary player labels. Keep
+/// this recognizer strict so cleanup and manual-delete guards can never target
+/// a path outside the autosave namespace.
+pub(crate) fn is_generated_autosave_filename(filename: &str) -> bool {
+    let Some(rest) = filename.strip_prefix("Autosave_") else {
+        return false;
+    };
+    let Some((timestamp, sequence)) = rest.split_once('_') else {
+        return false;
+    };
+    !timestamp.is_empty()
+        && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+        && sequence.len() >= 4
+        && sequence.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 impl SaveGame {
@@ -111,7 +129,7 @@ impl SaveGame {
     }
 
     pub fn is_special(&self) -> bool {
-        self.special.is_some()
+        self.special.is_some() || self.is_autosave()
     }
 
     pub fn is_continue(&self) -> bool {
@@ -124,6 +142,11 @@ impl SaveGame {
 
     pub fn is_sherwood(&self) -> bool {
         self.special == Some(SpecialSlot::Sherwood)
+    }
+
+    pub fn is_autosave(&self) -> bool {
+        self.special == Some(SpecialSlot::Autosave)
+            || is_generated_autosave_filename(&self.filename)
     }
 }
 
@@ -152,13 +175,20 @@ impl SaveGameManager {
             .active_profile_save_directory()
             .unwrap_or_else(|error| panic!("save manager requires an active profile: {error}"));
         let dir_str = dir.to_string_lossy().into_owned();
-        match Self::load_index(&dir_str) {
+        let mut manager = match Self::load_index(&dir_str) {
             Ok(mgr) => mgr,
             Err(err) => {
                 tracing::info!("No save index at {dir_str} ({err}) - starting fresh");
                 Self::new(dir_str)
             }
+        };
+        if let Err(error) = crate::autosave::load_into_manager(&mut manager) {
+            tracing::error!(
+                "Autosave manifest for {} could not be loaded: {error:#}",
+                manager.save_directory
+            );
         }
+        manager
     }
 
     /// Find the slot for one of the well-known special filenames, or
@@ -432,6 +462,15 @@ impl SaveGameManager {
             .saves
             .get(index)
             .ok_or_else(|| anyhow::anyhow!("save slot index {index} is out of range"))?;
+        if slot.is_autosave() {
+            return crate::autosave::read_payload(&self.save_directory, &slot.filename)
+                .with_context(|| {
+                    format!(
+                        "failed to decode exact autosave slot {index} ({})",
+                        slot.filename
+                    )
+                });
+        }
         let path = self.save_path(index);
         GameSaveFile::read_from(&path).with_context(|| {
             format!(
@@ -531,6 +570,13 @@ impl SaveGameManager {
 
     pub fn remove(&mut self, index: usize) {
         if index < self.saves.len() {
+            if self.saves[index].is_autosave() {
+                tracing::warn!(
+                    filename = self.saves[index].filename,
+                    "refusing to delete an auto-managed autosave through the manual slot API"
+                );
+                return;
+            }
             self.remove_files(index);
             self.saves.remove(index);
         }
@@ -539,6 +585,13 @@ impl SaveGameManager {
     /// Remove by filename.
     pub fn remove_by_filename(&mut self, filename: &str) {
         if let Some(idx) = self.find_by_filename(filename) {
+            if self.saves[idx].is_autosave() {
+                tracing::warn!(
+                    filename,
+                    "refusing to delete an auto-managed autosave through the filename API"
+                );
+                return;
+            }
             self.remove_files(idx);
             self.saves.remove(idx);
         }
@@ -696,6 +749,19 @@ impl SaveGameManager {
 
     /// Load the thumbnail for a slot if one exists on disk.
     pub fn load_thumbnail(&self, index: usize) -> Option<Thumbnail> {
+        let slot = self.saves.get(index)?;
+        if slot.is_autosave() {
+            return match crate::autosave::read_thumbnail(&self.save_directory, &slot.filename) {
+                Ok(thumbnail) => thumbnail,
+                Err(error) => {
+                    tracing::warn!(
+                        filename = slot.filename,
+                        "failed to load autosave thumbnail: {error:#}"
+                    );
+                    None
+                }
+            };
+        }
         let path = self.thumb_path(index);
         if !path.exists() {
             return None;
@@ -726,7 +792,33 @@ impl SaveGameManager {
 
     /// Does the save file on disk for this slot exist?
     pub fn slot_file_exists(&self, index: usize) -> bool {
+        if let Some(slot) = self.saves.get(index)
+            && slot.is_autosave()
+        {
+            return match crate::autosave::payload_exists(&self.save_directory, &slot.filename) {
+                Ok(exists) => exists,
+                Err(error) => {
+                    tracing::error!(
+                        filename = slot.filename,
+                        "could not check autosave payload existence: {error:#}"
+                    );
+                    false
+                }
+            };
+        }
         self.save_path(index).exists()
+    }
+
+    /// Replace only auto-managed slots, preserving manual and Original
+    /// special slots that may have changed while the writer was active.
+    pub(crate) fn replace_autosaves(&mut self, autosaves: Vec<SaveGame>) {
+        assert!(
+            autosaves.iter().all(SaveGame::is_autosave),
+            "autosave replacement received a manual slot"
+        );
+        self.saves.retain(|save| !save.is_autosave());
+        self.saves.extend(autosaves);
+        self.sort_by_time();
     }
 
     /// Persist the save manager index itself (the list of saves).
@@ -736,7 +828,7 @@ impl SaveGameManager {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
         }
         let json = serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
-        std::fs::write(&path, json).map_err(|e| format!("write: {e}"))
+        save_file::atomic_write(&path, json.as_bytes()).map_err(|e| format!("write: {e:#}"))
     }
 
     /// Load the save manager index from disk.
@@ -804,6 +896,28 @@ mod tests {
         let save = SaveGame::new("Savegame_005".into(), "My Save".into(), 0);
         assert!(!save.is_special());
         assert_eq!(save.version, save_file::SAVE_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn autosave_storage_names_are_strict_and_path_safe() {
+        for valid in ["Autosave_1_0000", "Autosave_18446744073709551615_9999"] {
+            assert!(is_generated_autosave_filename(valid), "{valid}");
+            assert_eq!(
+                SpecialSlot::from_filename(valid),
+                Some(SpecialSlot::Autosave)
+            );
+        }
+        for invalid in [
+            "Autosave_1_999",
+            "Autosave_1_0000.json",
+            "Autosave_../0000",
+            "Autosave_1_../../Continue",
+            "Autosave_notes",
+            "autosave_1_0000",
+        ] {
+            assert!(!is_generated_autosave_filename(invalid), "{invalid}");
+            assert_eq!(SpecialSlot::from_filename(invalid), None, "{invalid}");
+        }
     }
 
     #[test]
@@ -1042,5 +1156,15 @@ mod tests {
         mgr.remove_by_filename("Continue");
         assert_eq!(mgr.count(), 1);
         assert_eq!(mgr.saves[0].filename, "Savegame_000");
+    }
+
+    #[test]
+    fn manual_remove_apis_refuse_autosaves() {
+        let mut mgr = SaveGameManager::new("/tmp/test_saves".into());
+        mgr.saves
+            .push(SaveGame::new("Autosave_1_0000".into(), "Mission".into(), 1));
+        mgr.remove(0);
+        mgr.remove_by_filename("Autosave_1_0000");
+        assert_eq!(mgr.count(), 1);
     }
 }

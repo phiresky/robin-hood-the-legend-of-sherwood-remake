@@ -2,9 +2,9 @@
 //!
 //! - [`EngineInner::apply_net_falling_effect`]: sweeps every active human
 //!   inside `SQUARE_RADIUS_NET_CAPTURE` of the net's landing point,
-//!   classifies them as VIP/Rider/Stuteley → "crumple" or normal →
-//!   "stick", and launches a `Command::ReceiveNet` damage element per
-//!   non-crumple victim.
+//!   classifies them as VIP/Rider/Stuteley → "crumple" (Classic) or
+//!   "skip" (selective immunity), and launches a `Command::ReceiveNet`
+//!   damage element per ordinary victim.
 //!
 //! - [`EngineInner::unapply_net_effect`]: per-victim, decrement the
 //!   stuck-under-nets counter, snap `StuckUnderNet` posture back to
@@ -169,8 +169,13 @@ impl EngineInner {
                     let vip = assets
                         .profile_manager
                         .get_soldier(s.soldier.soldier_profile_index)
-                        .map(|p| p.vip)
-                        .unwrap_or(false);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing soldier profile {:?} for {actor_id:?}",
+                                s.soldier.soldier_profile_index
+                            )
+                        })
+                        .vip;
                     (vip, s.soldier.rider, false, vip)
                 }
                 Entity::Civilian(c) => {
@@ -178,8 +183,14 @@ impl EngineInner {
                         .profile_manager
                         .civilians
                         .get(usize::from(c.civilian.civilian_profile_index))
-                        .map(|p| p.civilian_type == crate::profiles::CivilianType::Vip)
-                        .unwrap_or(false);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing civilian profile {} for {actor_id:?}",
+                                c.civilian.civilian_profile_index
+                            )
+                        })
+                        .civilian_type
+                        == crate::profiles::CivilianType::Vip;
                     (vip, false, false, false)
                 }
                 Entity::Pc(pc) => {
@@ -189,7 +200,13 @@ impl EngineInner {
                     let stuteley = assets
                         .profile_manager
                         .get_character(pc.pc.profile_index)
-                        .is_some_and(|cp| cp.has_action(crate::profiles::Action::Net));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing character profile {:?} for {actor_id:?}",
+                                pc.pc.profile_index
+                            )
+                        })
+                        .has_action(crate::profiles::Action::Net);
                     (false, false, stuteley, false)
                 }
                 _ => (false, false, false, false),
@@ -207,6 +224,12 @@ impl EngineInner {
                 }
                 if is_soldier_vip {
                     self.drain_ai_owner_work_for(sim, assets, actor_id);
+                }
+                if self.control.sim_config.item_gameplay.net_selective_immunity {
+                    // Rebalanced behavior: resistant actors remain immune but
+                    // cannot invalidate ordinary captures elsewhere in the
+                    // original strict 40-unit landing circle.
+                    continue;
                 }
                 if victims_snapshot.is_empty() {
                     should_crumple = true;
@@ -1525,6 +1548,95 @@ mod tests {
         );
         assert!(net.net.victims.is_empty(), "no victims when crumpled");
         assert_eq!(count_receive_net_for(&engine, rider_id), 0);
+    }
+
+    #[test]
+    fn selective_immunity_skips_all_resistant_types_and_captures_an_ally() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .net_selective_immunity = true;
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
+        let net_id = engine.add_entity(make_net(landing));
+        let rider_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z),
+            0,
+            true,
+        );
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 5.0, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+        let Entity::Soldier(victim) = engine
+            .get_entity_mut(victim_id)
+            .expect("test allied victim")
+        else {
+            unreachable!()
+        };
+        victim.soldier.cached_camp = crate::element::Camp::Royalists;
+        let vip_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 10.0, LAND_Y, LAND_Z),
+            1,
+            false,
+        );
+        let stuteley_id =
+            engine.add_entity(make_pc(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z), 1));
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            panic!("test net changed entity kind");
+        };
+        assert!(!net.net.crumpled);
+        assert_eq!(net.net.victims, vec![victim_id]);
+        assert_eq!(count_receive_net_for(&engine, rider_id), 0);
+        assert_eq!(count_receive_net_for(&engine, vip_id), 0);
+        assert_eq!(count_receive_net_for(&engine, stuteley_id), 0);
+        assert_eq!(count_receive_net_for(&engine, victim_id), 1);
+    }
+
+    #[test]
+    fn net_capture_circle_keeps_original_strict_radius_boundary() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .net_selective_immunity = true;
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
+        let net_id = engine.add_entity(make_net(landing));
+        let inside_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 39.999, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+        let boundary_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 40.0, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            panic!("test net changed entity kind");
+        };
+        assert_eq!(net.net.victims, vec![inside_id]);
+        assert_eq!(count_receive_net_for(&engine, boundary_id), 0);
     }
 
     #[test]

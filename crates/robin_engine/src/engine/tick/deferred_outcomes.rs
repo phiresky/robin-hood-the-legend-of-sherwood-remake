@@ -1343,7 +1343,14 @@ impl EngineInner {
                 );
                 continue;
             };
-            let beer = profile.beer;
+            let beer = crate::gameplay_config::effective_ale_potency(
+                profile.beer,
+                profile.vip,
+                self.control
+                    .sim_config
+                    .item_gameplay
+                    .ale_reliable_distraction,
+            );
             if beer == 0 {
                 continue;
             }
@@ -1544,7 +1551,7 @@ mod tests {
     use super::*;
     use crate::element::{
         ActorSoldier, ElementData, ElementKind, ElementNet, NetData, ObjectData, ObjectType,
-        Posture, ProjectileData,
+        Posture, ProjectileData, SoldierData,
     };
 
     fn test_soldier() -> Entity {
@@ -1583,6 +1590,57 @@ mod tests {
                 .money,
             125,
             "a stale deferred thief must not destroy the victim's money"
+        );
+    }
+
+    #[test]
+    fn reliable_zero_beer_completion_uses_minimum_potency_and_classic_uses_zero() {
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                beer: 0,
+                vip: false,
+                ..Default::default()
+            });
+        let mut engine = EngineInner::new();
+        let mut soldier = test_soldier();
+        let Entity::Soldier(actor) = &mut soldier else {
+            unreachable!()
+        };
+        actor.soldier = SoldierData {
+            soldier_profile_index: crate::profiles::SoldierProfileIdx(0),
+            ..Default::default()
+        };
+        actor.npc.ai.ai_brain =
+            crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(0)));
+        let soldier_id = engine.add_entity(soldier);
+
+        engine.drain_drink_done(&assets, vec![soldier_id]);
+        assert_eq!(
+            engine
+                .get_entity(soldier_id)
+                .and_then(Entity::npc_data)
+                .and_then(|npc| npc.ai_brain.base())
+                .expect("test soldier AI")
+                .blood_alcohol,
+            0
+        );
+
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .ale_reliable_distraction = true;
+        engine.drain_drink_done(&assets, vec![soldier_id]);
+        assert_eq!(
+            engine
+                .get_entity(soldier_id)
+                .and_then(Entity::npc_data)
+                .and_then(|npc| npc.ai_brain.base())
+                .expect("test soldier AI")
+                .blood_alcohol,
+            crate::gameplay_config::REBALANCED_ALE_MIN_POTENCY as u8
         );
     }
 

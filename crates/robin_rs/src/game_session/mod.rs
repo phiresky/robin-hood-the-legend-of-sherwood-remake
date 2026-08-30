@@ -136,6 +136,29 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::MissionLocation;
 
+/// Snapshot the three live gates shared by every player-facing route into the
+/// Sherwood trading panel. The authoritative command repeats these checks.
+fn sherwood_trading_access(
+    host: &Host,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+) -> crate::host::SherwoodTradingAccess {
+    crate::host::SherwoodTradingAccess {
+        local_is_host: host.transport.local_seat == engine_player_command::PlayerId::HOST,
+        enabled: engine.sim_config().sherwood_trading,
+        in_sherwood: engine.is_sherwood(profiles),
+    }
+}
+
+fn request_sherwood_trading_panel(
+    host: &mut Host,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+) -> Result<(), robin_engine::trading::TradeRejectReason> {
+    let access = sherwood_trading_access(host, engine, profiles);
+    host.effects.request_sherwood_trading(access)
+}
+
 pub(crate) fn prepare_replay_mission(
     profiles: &mut engine_profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
@@ -462,6 +485,9 @@ fn simulation_config_for_level_restart(
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
         checkpoint.enable_unbinding = outcome.enable_unbinding;
         checkpoint.reusable_cloaks = outcome.reusable_cloaks;
+        checkpoint.item_gameplay = outcome.item_gameplay;
+        checkpoint.noise_distraction_feedback = outcome.noise_distraction_feedback;
+        checkpoint.sherwood_trading = outcome.sherwood_trading;
     }
     checkpoint
 }
@@ -1203,6 +1229,14 @@ mod required_state_tests {
                         enabled: false,
                     }
                     .into(),
+                    robin_engine::player_command::PlayerCommand::SetItemGameplayConfig {
+                        config: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
+                    }
+                    .into(),
+                    robin_engine::player_command::PlayerCommand::SetNoiseDistractionFeedback {
+                        enabled: false,
+                    }
+                    .into(),
                 ])
                 .with_hourglass(false),
             )
@@ -1225,6 +1259,11 @@ mod required_state_tests {
 
         assert_eq!(restarted.amount_of_speaking, 9);
         assert!(!restarted.enable_unbinding);
+        assert_eq!(
+            restarted.item_gameplay,
+            robin_engine::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!restarted.noise_distraction_feedback);
         assert!(restarted.highlander2, "other construction config resets");
     }
 
@@ -1237,6 +1276,11 @@ mod required_state_tests {
 
         assert_eq!(restarted.amount_of_speaking, 9);
         assert!(!restarted.enable_unbinding);
+        assert_eq!(
+            restarted.item_gameplay,
+            robin_engine::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!restarted.noise_distraction_feedback);
         assert!(restarted.highlander2, "direct launch uses its checkpoint");
     }
 
@@ -1250,6 +1294,11 @@ mod required_state_tests {
         assert_eq!(restarted, checkpoint);
         assert_eq!(restarted.amount_of_speaking, 3);
         assert!(restarted.enable_unbinding);
+        assert_eq!(restarted.item_gameplay, checkpoint.item_gameplay);
+        assert_eq!(
+            restarted.noise_distraction_feedback,
+            checkpoint.noise_distraction_feedback
+        );
     }
 
     #[test]

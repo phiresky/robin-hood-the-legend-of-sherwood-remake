@@ -1,4 +1,20 @@
 import { appendLogLine } from './log.js';
+import {
+    authenticateBrowserJoinTicket,
+    captureAndScrubBrowserJoinCode,
+    validateBrowserJoinTicketUse,
+    type VerifiedBrowserJoinTicket,
+} from './join_ticket.js';
+import {
+    parseMultiplayerBuildManifest,
+    prepareMultiplayerContent,
+    type MultiplayerBuildManifest,
+    type PreparedMultiplayerContent,
+} from './multiplayer_content.js';
+import {
+    installBrowserMultiplayerIdentity,
+    wasInvitationRedeemed,
+} from './multiplayer_identity.js';
 import { applyReplayFromQuery, installShareButton, type RobinRpc } from './replay.js';
 import { installTimeline } from './timeline.js';
 
@@ -11,8 +27,13 @@ declare global {
 
 type BuildSelection = {
     readonly short: string;
-    readonly source: 'latest' | 'replay';
+    readonly source: 'latest' | 'replay' | 'multiplayer';
     readonly buildBase?: string;
+};
+
+type BrowserJoinContext = {
+    readonly ticket: VerifiedBrowserJoinTicket;
+    readonly redeemed: boolean;
 };
 
 // --- boot progress overlay -------------------------------------------------
@@ -110,7 +131,10 @@ type RobinWasmModule = {
         module_or_path?: string | URL | Request | Response | ArrayBuffer;
     }) => Promise<unknown>;
     readonly wasm_boot: (datadir: Uint8Array, dataBaseUrl: string) => void;
+    readonly wasm_multiplayer_compatibility?: () => unknown;
+    readonly wasm_set_multiplayer_join_ticket?: (code: string, redeemed: boolean) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
+    readonly wasm_preload_shipping_file?: (path: string, bytes: Uint8Array) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
 };
 
@@ -123,6 +147,10 @@ const DEFAULT_BINARIES_BASE = import.meta.env.DEV
     ? window.location.origin
     : 'https://phiresky.github.io/robin-hood-the-legend-of-sherwood-remake-binaries';
 const pageParams = new URLSearchParams(window.location.search);
+// Capture and erase the ticket before `main` can issue its first artifact or
+// content request. Fragment data never reaches the origin server; replacing
+// this history entry prevents later copy/paste and browser-history exposure.
+const capturedBrowserJoinCode = captureAndScrubBrowserJoinCode(new URL(window.location.href));
 const BINARIES_BASE =
     pageParams.get('binaries-base') ??
     pageParams.get('binaries_base') ??
@@ -288,7 +316,10 @@ function replayBuildHash(replay: string): string {
     throw new Error('replay= must be an rhrec compact replay or a git hash');
 }
 
-async function resolveBuild(): Promise<BuildSelection> {
+async function resolveBuild(ticket?: VerifiedBrowserJoinTicket): Promise<BuildSelection> {
+    if (ticket !== undefined) {
+        return { short: ticket.payload.engine_version.slice(0, 12), source: 'multiplayer' };
+    }
     const wasmBase = pageParams.get('wasm-base') ?? pageParams.get('wasm_base');
     if (wasmBase !== null && wasmBase.length > 0) {
         return {
@@ -312,11 +343,112 @@ async function resolveBuild(): Promise<BuildSelection> {
     return { short, source: 'latest' };
 }
 
+async function prepareBrowserJoin(code: string | undefined): Promise<BrowserJoinContext | undefined> {
+    if (code === undefined) return undefined;
+    const ticket = await authenticateBrowserJoinTicket(code);
+    const redeemed = await wasInvitationRedeemed(ticket.payload.session_id);
+    validateBrowserJoinTicketUse(ticket, Math.floor(Date.now() / 1000), redeemed);
+    // The non-extractable durable signer must exist before the wasm relay
+    // client can prove seat ownership. Storage/WebCrypto failure is fatal.
+    await installBrowserMultiplayerIdentity();
+    return { ticket, redeemed };
+}
+
+function assertMultiplayerWasmCompatibility(
+    wasm: RobinWasmModule,
+    ticket: VerifiedBrowserJoinTicket,
+): void {
+    if (wasm.wasm_multiplayer_compatibility === undefined) {
+        throw new Error('selected browser artifact does not export multiplayer compatibility data');
+    }
+    const raw = wasm.wasm_multiplayer_compatibility();
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('browser artifact returned malformed multiplayer compatibility data');
+    }
+    const object = raw as Record<string, unknown>;
+    const keys = Object.keys(object);
+    const expectedKeys = ['engineCommit', 'artifactShort', 'netProtocol', 'ticketSchema'];
+    if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
+        throw new Error('browser artifact returned non-canonical multiplayer compatibility data');
+    }
+    if (
+        object.engineCommit !== ticket.payload.engine_version
+        || object.artifactShort !== ticket.payload.engine_version.slice(0, 12)
+        || object.netProtocol !== ticket.payload.net_protocol
+        || object.ticketSchema !== ticket.payload.schema
+    ) {
+        throw new Error('loaded browser artifact does not exactly match the host-signed invitation');
+    }
+}
+
+async function requestFullContentFolder(): Promise<FileList> {
+    const gate = document.querySelector<HTMLElement>('#multiplayer-content-gate');
+    const input = document.querySelector<HTMLInputElement>('#multiplayer-content-files');
+    const choose = document.querySelector<HTMLButtonElement>('#multiplayer-content-choose');
+    const status = document.querySelector<HTMLElement>('#multiplayer-content-status');
+    if (gate === null || input === null || choose === null || status === null) {
+        throw new Error('Full multiplayer content picker is unavailable');
+    }
+    gate.hidden = false;
+    status.textContent = 'Choose the exact local Full web-content export. Nothing is uploaded.';
+    return await new Promise<FileList>((resolve) => {
+        const clicked = (): void => input.click();
+        const changed = (): void => {
+            const files = input.files;
+            if (files === null || files.length === 0) {
+                status.textContent = 'No folder selected. Choose the required Full content folder.';
+                return;
+            }
+            choose.removeEventListener('click', clicked);
+            input.removeEventListener('change', changed);
+            status.textContent = `Authenticating ${files.length} local files; nothing is uploaded…`;
+            resolve(files);
+        };
+        input.addEventListener('change', changed);
+        choose.addEventListener('click', clicked);
+        choose.focus();
+    });
+}
+
+function preloadLocalAssets(
+    wasm: RobinWasmModule,
+    assets: PreparedMultiplayerContent['assets'],
+): void {
+    if (assets.length === 0) return;
+    if (wasm.wasm_preload_asset === undefined) {
+        throw new Error('selected browser artifact cannot preload authenticated Full assets');
+    }
+    for (const asset of assets) wasm.wasm_preload_asset(asset.path, asset.bytes);
+}
+
+function preloadLocalShippingFiles(
+    wasm: RobinWasmModule,
+    files: PreparedMultiplayerContent['shippingFiles'],
+): void {
+    if (files.length === 0) return;
+    if (wasm.wasm_preload_shipping_file === undefined) {
+        throw new Error('selected browser artifact cannot preload authenticated Full mission data');
+    }
+    // wasm_boot installs the datadir synchronously and only then schedules
+    // the game future. Do not await/yield until every verified split file is
+    // in Rust's cache, so an accidental network fallback is impossible.
+    for (const file of files) wasm.wasm_preload_shipping_file(file.path, file.bytes);
+}
+
 async function main(): Promise<void> {
     bootProgress('engine-js', 'loading engine…', 0);
-    const build = await resolveBuild();
+    const browserJoin = await prepareBrowserJoin(capturedBrowserJoinCode);
+    const build = await resolveBuild(browserJoin?.ticket);
     const buildBase = build.buildBase ?? `${WASM_BUILDS_BASE}/${build.short}`;
     logOk(`[selected ${build.source} build ${build.short}]`);
+
+    let multiplayerBuild: MultiplayerBuildManifest | undefined;
+    if (browserJoin !== undefined) {
+        const rawManifest = await fetchJson(`${buildBase}/manifest.json`);
+        multiplayerBuild = parseMultiplayerBuildManifest(rawManifest, browserJoin.ticket);
+        logOk(`[authenticated browser invitation via ${browserJoin.ticket.payload.relay_url}]`);
+        logOk('[privacy: the selected relay can observe IP addresses, timing, and byte counts; game traffic is end-to-end encrypted]');
+    }
 
     // coi-serviceworker (index.html) turns this on after a one-time reload on
     // hosts without COOP/COEP headers. Rust checks the same flag and decides
@@ -330,31 +462,56 @@ async function main(): Promise<void> {
     logOk('[loading wasm module]');
     const wasm = await loadWasmModule(buildBase, build.short !== 'local', build.source === 'latest');
 
-    logOk('[wasm module ready, fetching datadir]');
+    let multiplayerContent: PreparedMultiplayerContent | undefined;
+    if (browserJoin !== undefined && multiplayerBuild !== undefined) {
+        assertMultiplayerWasmCompatibility(wasm, browserJoin.ticket);
+        if (wasm.wasm_set_multiplayer_join_ticket === undefined) {
+            throw new Error('selected browser artifact has no multiplayer ticket entry point');
+        }
+        wasm.wasm_set_multiplayer_join_ticket(browserJoin.ticket.code, browserJoin.redeemed);
+        multiplayerContent = await prepareMultiplayerContent(
+            browserJoin.ticket,
+            multiplayerBuild,
+            requestFullContentFolder,
+        );
+    }
 
-    const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
-    const resp = await fetchWithProgress(
-        dataUrl,
-        build.source === 'latest' ? 'no-cache' : 'force-cache',
-        'application/zstd',
-        (loaded, total) => {
-            bootProgress(
-                'gamedata',
-                'loading game data…',
-                total > 0 ? loaded / total : 0,
-                progressDetail(loaded, total),
-            );
-        },
-    );
-    const buf = await resp.arrayBuffer();
-    logOk(`[datadir fetched: ${buf.byteLength} bytes]`);
+    logOk('[wasm module ready, fetching datadir]');
+    let datadir: Uint8Array;
+    let dataBaseUrl: string;
+    if (multiplayerContent === undefined) {
+        const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
+        const resp = await fetchWithProgress(
+            dataUrl,
+            build.source === 'latest' ? 'no-cache' : 'force-cache',
+            'application/zstd',
+            (loaded, total) => {
+                bootProgress(
+                    'gamedata',
+                    'loading game data…',
+                    total > 0 ? loaded / total : 0,
+                    progressDetail(loaded, total),
+                );
+            },
+        );
+        datadir = new Uint8Array(await resp.arrayBuffer());
+        dataBaseUrl = dataUrl.slice(0, dataUrl.lastIndexOf('/'));
+    } else {
+        datadir = multiplayerContent.datadir;
+        dataBaseUrl = multiplayerContent.dataBaseUrl;
+        preloadLocalAssets(wasm, multiplayerContent.assets);
+    }
+    logOk(`[datadir ready: ${datadir.byteLength} bytes]`);
 
     await preloadAssets(wasm, buildBase, build.source === 'latest');
 
     const rpc = installRpcClient(wasm);
 
     bootProgress('boot', 'starting game…', 0.5);
-    wasm.wasm_boot(new Uint8Array(buf), dataUrl.slice(0, dataUrl.lastIndexOf('/')));
+    wasm.wasm_boot(datadir, dataBaseUrl);
+    if (multiplayerContent !== undefined) {
+        preloadLocalShippingFiles(wasm, multiplayerContent.shippingFiles);
+    }
     // winit attaches to the existing canvas during its next event-loop turn
     // and may restore the requested 1024x768 attributes. Re-apply the actual
     // CSS/device-pixel size after attachment without coupling Rust to the DOM.

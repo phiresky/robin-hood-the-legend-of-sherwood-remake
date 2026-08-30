@@ -114,6 +114,48 @@ fn replay_identity_digest<T: Serialize + ?Sized>(value: &T) -> Result<ReplaySave
     Ok(ReplaySaveIdentity(Sha256::digest(bytes).into()))
 }
 
+/// Atomically replace one persisted save/index file from a same-directory
+/// temporary file. Keeping the temporary beside the destination ensures the
+/// final rename cannot cross filesystem boundaries.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("atomic write target has no parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("creating atomic-write directory {}", parent.display()))?;
+    let autosave_write = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "autosaves.json" || name.starts_with("Autosave_"));
+    let prefix = if autosave_write {
+        ".robin-autosave-staging-"
+    } else {
+        ".robin-atomic-staging-"
+    };
+    let mut temporary = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempfile_in(parent)
+        .with_context(|| format!("creating temporary file beside {}", path.display()))?;
+    use std::io::Write;
+    temporary
+        .write_all(bytes)
+        .with_context(|| format!("writing temporary file for {}", path.display()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .with_context(|| format!("syncing temporary file for {}", path.display()))?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("atomically replacing {}", path.display()))?;
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| format!("syncing atomic-write directory {}", parent.display()))?;
+    Ok(())
+}
+
 // ─── Thumbnail ───────────────────────────────────────────────────────
 
 /// Default thumbnail dimensions.  Downsampled to a small fixed size to
@@ -195,23 +237,19 @@ impl Thumbnail {
 
     /// Write the thumbnail to `path` as a normal 8-bit RGB PNG file.
     pub fn write_to(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating thumbnail directory {}", parent.display()))?;
-        }
-
-        let file = fs::File::create(path)
-            .with_context(|| format!("creating thumbnail {}", path.display()))?;
-        let writer = std::io::BufWriter::new(file);
-        let mut encoder = png::Encoder::new(writer, self.width as u32, self.height as u32);
+        let mut encoded = Vec::new();
+        let mut encoder = png::Encoder::new(&mut encoded, self.width as u32, self.height as u32);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .with_context(|| format!("writing thumbnail PNG header {}", path.display()))?;
-        writer
-            .write_image_data(&self.rgb888_pixels())
-            .with_context(|| format!("writing thumbnail PNG data {}", path.display()))
+        {
+            let mut writer = encoder
+                .write_header()
+                .with_context(|| format!("writing thumbnail PNG header {}", path.display()))?;
+            writer
+                .write_image_data(&self.rgb888_pixels())
+                .with_context(|| format!("writing thumbnail PNG data {}", path.display()))?;
+        }
+        atomic_write(path, &encoded)
     }
 
     /// Read a thumbnail written by [`write_to`](Self::write_to).
@@ -466,7 +504,19 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-pub const SAVE_FORMAT_VERSION: u32 = 58;
+/// - **v58** (2026-08-30, achievements): records deterministic achievement
+///   tracker state and the NPC-on-NPC Clean Hands rule.
+/// - **v59** (2026-08-30, item rebalance): combines that state with expanded
+///   item rules, cached ale eligibility, and ground-stone command/projectiles.
+/// - **v60** (2026-08-30, authoritative Sherwood trading): combines those
+///   item-rebalance fields with the
+///   deterministic trading rule, exact sale commands, receipts, campaign
+///   ransom, and production-item inventory state.
+/// - **v61** (2026-08-30, resolved difficulty rules): combines the preceding
+///   feature state with Legendary or
+///   validated Custom difficulty, including independent hostile-soldier
+///   distance, cone-width, and hearing modifiers.
+pub const SAVE_FORMAT_VERSION: u32 = 61;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -632,12 +682,9 @@ impl GameSaveFile {
     /// Write the save file to disk as JSON.
     pub fn write_to(&self, path: &Path) -> Result<()> {
         self.header.validate()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating save directory {}", parent.display()))?;
-        }
         let json = serde_json::to_string_pretty(self).context("serializing save file")?;
-        fs::write(path, json).with_context(|| format!("writing save file {}", path.display()))
+        atomic_write(path, json.as_bytes())
+            .with_context(|| format!("writing save file {}", path.display()))
     }
 
     /// Read a save file from disk.
@@ -726,8 +773,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_achievement_tracker_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 58);
+    fn save_format_version_requires_items_trading_and_resolved_difficulty() {
+        assert_eq!(SAVE_FORMAT_VERSION, 61);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -971,13 +1018,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_previous_rust_campaign_schema_at_header() {
+    fn read_rejects_previous_rust_achievement_schema_at_header() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("previous_rust_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 56,
+                "version": 59,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -988,10 +1035,10 @@ mod tests {
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("previous Rust campaign schema must be rejected");
+            .expect("previous Rust achievement schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 56")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 59")
         );
     }
 

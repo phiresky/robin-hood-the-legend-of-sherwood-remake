@@ -1,4 +1,4 @@
-//! Build script: emit `ROBIN_GIT_HASH` for replay-format tagging.
+//! Build script: emit exact and short source identities.
 //!
 //! Shaders are now consumed directly as WGSL by wgpu at runtime — no
 //! offline compilation step needed.
@@ -27,7 +27,7 @@ fn emit_git_hash() {
             None => break None,
         }
     };
-    let hash = if let Some(git_meta) = git_meta {
+    let commit = if let Some(git_meta) = git_meta {
         let actual_git = if git_meta.is_file() {
             match std::fs::read_to_string(&git_meta) {
                 Ok(s) => s
@@ -79,7 +79,7 @@ fn emit_git_hash() {
             }
         }
         match std::process::Command::new("git")
-            .args(["rev-parse", "--short=12", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(&manifest_dir)
             .output()
         {
@@ -91,5 +91,7 @@ fn emit_git_hash() {
     } else {
         "unknown".to_string()
     };
-    println!("cargo:rustc-env=ROBIN_GIT_HASH={hash}");
+    let short = commit.get(..12).unwrap_or(commit.as_str());
+    println!("cargo:rustc-env=ROBIN_GIT_HASH={short}");
+    println!("cargo:rustc-env=ROBIN_GIT_COMMIT={commit}");
 }

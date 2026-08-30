@@ -32,6 +32,11 @@ pub const SB_FILE_READ: i32 = 0x01;
 pub struct SbFileSystem {
     assets: Arc<robin_util::asset_fs::AssetVfs>,
     alternate_paths: Mutex<Vec<String>>,
+    /// The selected locale root and its fallback root. Keeping the pair behind
+    /// one mutex makes a runtime language switch atomic: readers can observe
+    /// either the old pair or the new pair, never a selected locale from one
+    /// configuration and a fallback from another.
+    locale_paths: Mutex<(Option<String>, Option<String>)>,
     overlay_paths: Mutex<Vec<OverlayRoot>>,
     primary_path: Mutex<Option<PathBuf>>,
 }
@@ -41,6 +46,7 @@ impl SbFileSystem {
         Self {
             assets,
             alternate_paths: Mutex::new(Vec::new()),
+            locale_paths: Mutex::new((None, None)),
             overlay_paths: Mutex::new(Vec::new()),
             primary_path: Mutex::new(None),
         }
@@ -342,9 +348,11 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 
 /// Resolve a game-data path to an actual filesystem path.
 ///
-/// Tries the path directly (case-insensitive), then each registered alternate
-/// path.  Returns `None` if the file cannot be found anywhere.  Used by the
-/// video player to obtain a real path for ffmpeg to open.
+/// Searches directory overlays, the selected and fallback locale roots, the
+/// primary datadir, the direct path, and finally ordinary alternate paths.
+/// Every native-filesystem probe is case-insensitive. Returns `None` if the
+/// file cannot be found anywhere. Used by the video player to obtain a real
+/// path for ffmpeg to open.
 ///
 /// Zip overlays are *skipped* — they back the byte-buffer API only.
 /// Callers that need a real filesystem path (the video player) won't
@@ -368,15 +376,26 @@ impl SbFileSystem {
             }
         }
         let primary = self.primary_path.lock().unwrap().clone();
-        if let Some(primary) = &primary {
-            candidates.push(primary.join(&normalised));
-        }
-        candidates.push(PathBuf::from(&normalised));
-        for alt in self.alternate_paths.lock().unwrap().iter() {
-            if let Some(primary) = &primary {
-                candidates.push(primary.join(alt).join(&normalised));
+        for locale_root in self.locale_path_snapshot_for(&normalised) {
+            if !Path::new(&locale_root).is_absolute()
+                && let Some(primary) = &primary
+            {
+                candidates.push(primary.join(&locale_root).join(&normalised));
             }
-            candidates.push(Path::new(alt).join(&normalised));
+            candidates.push(Path::new(&locale_root).join(&normalised));
+        }
+        let strict_locale = self.locale_paths().0.is_some() && is_required_locale_path(&normalised);
+        if !strict_locale {
+            if let Some(primary) = &primary {
+                candidates.push(primary.join(&normalised));
+            }
+            candidates.push(PathBuf::from(&normalised));
+            for alt in self.alternate_paths.lock().unwrap().iter() {
+                if let Some(primary) = &primary {
+                    candidates.push(primary.join(alt).join(&normalised));
+                }
+                candidates.push(Path::new(alt).join(&normalised));
+            }
         }
         candidates
             .into_iter()
@@ -413,9 +432,31 @@ impl SbFileSystem {
         }
         drop(overlay_paths);
 
-        if let Some(primary) = self.primary_path.lock().unwrap().clone() {
+        let primary = self.primary_path.lock().unwrap().clone();
+        for locale_root in self.locale_path_snapshot_for(&normalised) {
+            if !Path::new(&locale_root).is_absolute()
+                && let Some(primary) = &primary
+            {
+                let full = primary.join(&locale_root).join(&normalised);
+                if let Some(resolved) = resolve_contained_file(primary, &full) {
+                    return Some(resolved);
+                }
+            }
+            let full = Path::new(&locale_root).join(&normalised);
+            if let Some(resolved) = resolve_case_insensitive(&full)
+                && resolved.is_file()
+            {
+                return Some(resolved);
+            }
+        }
+
+        if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+            return None;
+        }
+
+        if let Some(primary) = &primary {
             let full = primary.join(&normalised);
-            if let Some(resolved) = resolve_contained_file(&primary, &full) {
+            if let Some(resolved) = resolve_contained_file(primary, &full) {
                 return Some(resolved);
             }
         }
@@ -430,9 +471,9 @@ impl SbFileSystem {
         // Alternate paths
         let alt_paths = self.alternate_paths.lock().unwrap();
         for alt in alt_paths.iter() {
-            if let Some(primary) = self.primary_path.lock().unwrap().clone() {
+            if let Some(primary) = &primary {
                 let full = primary.join(alt).join(&normalised);
-                if let Some(resolved) = resolve_contained_file(&primary, &full) {
+                if let Some(resolved) = resolve_contained_file(primary, &full) {
                     return Some(resolved);
                 }
             }
@@ -564,7 +605,37 @@ impl SbFileSystem {
             }
         }
         drop(overlay_paths);
-        if let Some(primary) = self.primary_path.lock().unwrap().clone()
+
+        let primary = self.primary_path.lock().unwrap().clone();
+        for locale_root in self.locale_path_snapshot_for(&normalised) {
+            if !Path::new(&locale_root).is_absolute()
+                && let Some(primary) = &primary
+                && let Some(bytes) = try_read(
+                    self,
+                    &primary
+                        .join(&locale_root)
+                        .join(&normalised)
+                        .to_string_lossy(),
+                )?
+            {
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
+            }
+            if let Some(bytes) = try_read(
+                self,
+                &Path::new(&locale_root).join(&normalised).to_string_lossy(),
+            )? {
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
+            }
+        }
+
+        if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+            tracing::warn!(
+                "SbFile::open: required localized asset {normalised} is absent from the selected pack"
+            );
+            return Err(SBFILE_ERROR_FILE_NOT_FOUND);
+        }
+
+        if let Some(primary) = &primary
             && let Some(bytes) = try_read(self, &primary.join(&normalised).to_string_lossy())?
         {
             return Ok(SbFile::from_bytes(bytes, normalised.clone()));
@@ -574,7 +645,7 @@ impl SbFileSystem {
         }
         let alt_paths = self.alternate_paths.lock().unwrap();
         for alt in alt_paths.iter() {
-            if let Some(primary) = self.primary_path.lock().unwrap().clone()
+            if let Some(primary) = &primary
                 && let Some(bytes) =
                     try_read(self, &primary.join(alt).join(&normalised).to_string_lossy())?
             {
@@ -585,8 +656,9 @@ impl SbFileSystem {
             }
         }
         tracing::warn!(
-            "SbFile::open: {normalised} not found (tried direct + {} alternate paths)",
-            alt_paths.len()
+            "SbFile::open: {normalised} not found (tried {} locale + direct + {} alternate paths)",
+            self.locale_path_snapshot_for(&normalised).len(),
+            alt_paths.len(),
         );
         Err(SBFILE_ERROR_FILE_NOT_FOUND)
     }
@@ -805,6 +877,23 @@ impl SbFile {
         global_file_system().add_alternate_path(path)
     }
 
+    /// Atomically replace the selected locale root and fallback locale root.
+    ///
+    /// For presentation asset families, locale roots are searched after
+    /// overlays but before the primary/direct datadir and ordinary alternate
+    /// paths. Simulation inputs never consult this layer. A relative root is
+    /// resolved both beneath the primary datadir and relative to the process
+    /// working directory, matching the established alternate-path
+    /// conventions. Passing `None` disables that locale layer.
+    pub fn set_locale_paths(selected: Option<&str>, fallback: Option<&str>) -> i32 {
+        global_file_system().set_locale_paths(selected, fallback)
+    }
+
+    /// Return one coherent snapshot of the selected and fallback locale roots.
+    pub fn locale_paths() -> (Option<String>, Option<String>) {
+        global_file_system().locale_paths()
+    }
+
     pub fn add_overlay_path(path: &str) -> i32 {
         global_file_system().add_overlay_path(path)
     }
@@ -838,13 +927,20 @@ impl SbFile {
         global_file_system().overlay_paths()
     }
 
+    /// Whether an in-memory ZIP overlay is active. Callers that require a
+    /// filesystem-verifiable content closure must fail instead of silently
+    /// omitting these roots from [`Self::overlay_paths`].
+    pub fn has_zip_overlays() -> bool {
+        global_file_system().has_zip_overlays()
+    }
+
     pub fn set_primary_path(path: &str) -> i32 {
         global_file_system().set_primary_path(path)
     }
 
     /// Resolve a relative datadir *directory* to every existing native
-    /// directory across the search order (overlays, primary, direct,
-    /// then alternates such as the language folder), case-insensitively.
+    /// directory across the search order (overlays, selected locale, fallback
+    /// locale, primary, direct, then ordinary alternates), case-insensitively.
     ///
     /// Callers that stat many files under one datadir directory resolve
     /// the layering once with this instead of paying the full per-file
@@ -886,11 +982,32 @@ impl SbFileSystem {
             }
         }
 
-        if !requested.is_absolute()
-            && let Some(primary) = self.primary_path.lock().unwrap().clone()
-            && path_exists_contained(&primary, &primary.join(&normalised))?
-        {
-            return Ok(true);
+        let primary = self.primary_path.lock().unwrap().clone();
+        if !requested.is_absolute() {
+            for locale_root in self.locale_path_snapshot_for(&normalised) {
+                if !Path::new(&locale_root).is_absolute()
+                    && let Some(primary) = &primary
+                    && path_exists_contained(
+                        primary,
+                        &primary.join(&locale_root).join(&normalised),
+                    )?
+                {
+                    return Ok(true);
+                }
+                if resolve_case_insensitive(&Path::new(&locale_root).join(&normalised)).is_some() {
+                    return Ok(true);
+                }
+            }
+
+            if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+                return Ok(false);
+            }
+
+            if let Some(primary) = &primary
+                && path_exists_contained(primary, &primary.join(&normalised))?
+            {
+                return Ok(true);
+            }
         }
         match self.assets.try_exists(requested) {
             Ok(true) => return Ok(true),
@@ -907,8 +1024,8 @@ impl SbFileSystem {
         if !requested.is_absolute() {
             let alternate_paths = self.alternate_paths.lock().unwrap();
             for alternate in alternate_paths.iter() {
-                if let Some(primary) = self.primary_path.lock().unwrap().clone()
-                    && path_exists_contained(&primary, &primary.join(alternate).join(&normalised))?
+                if let Some(primary) = &primary
+                    && path_exists_contained(primary, &primary.join(alternate).join(&normalised))?
                 {
                     return Ok(true);
                 }
@@ -927,6 +1044,51 @@ impl SbFileSystem {
         }
         paths.push(path.to_string());
         SBFILE_NO_ERROR
+    }
+
+    /// Atomically replace both locale roots without disturbing generic
+    /// alternate paths. Invalid roots reject the entire update, leaving the
+    /// previous pair intact.
+    pub fn set_locale_paths(&self, selected: Option<&str>, fallback: Option<&str>) -> i32 {
+        let selected = match selected.map(normalise_locale_root).transpose() {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        let fallback = match fallback.map(normalise_locale_root).transpose() {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        *self.locale_paths.lock().unwrap() = (selected, fallback);
+        SBFILE_NO_ERROR
+    }
+
+    pub fn locale_paths(&self) -> (Option<String>, Option<String>) {
+        self.locale_paths.lock().unwrap().clone()
+    }
+
+    /// Snapshot the roots in lookup order, suppressing a duplicate fallback.
+    fn locale_path_snapshot_for(&self, path: &str) -> Vec<String> {
+        // A language pack is presentation data. Never allow an installed
+        // locale directory to replace levels, scripts, gameplay profiles, or
+        // any other simulation input merely because it contains a matching
+        // Data/ subtree.
+        if !is_locale_overlay_path(path) {
+            return Vec::new();
+        }
+        let (selected, fallback) = self.locale_paths();
+        let mut paths = Vec::with_capacity(2);
+        if let Some(selected) = selected {
+            paths.push(selected);
+        }
+        if let Some(fallback) = fallback
+            && is_optional_english_fallback_path(path)
+            && !paths
+                .iter()
+                .any(|selected| selected.eq_ignore_ascii_case(&fallback))
+        {
+            paths.push(fallback);
+        }
+        paths
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1006,6 +1168,14 @@ impl SbFileSystem {
             .collect()
     }
 
+    pub fn has_zip_overlays(&self) -> bool {
+        self.overlay_paths
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|overlay| matches!(overlay, OverlayRoot::Zip(_)))
+    }
+
     pub fn set_primary_path(&self, path: &str) -> i32 {
         #[cfg(not(target_arch = "wasm32"))]
         let path = match fs::canonicalize(path) {
@@ -1037,6 +1207,56 @@ impl SbFileSystem {
             SBFILE_ERROR_PATH_NOT_IN_SET
         }
     }
+}
+
+/// A missing translation is an invalid language pack, not a reason to create
+/// a mixed-language UI. Only recorded speech and cinematics are optional and
+/// may fall back to the installed English pack.
+fn is_optional_english_fallback_path(path: &str) -> bool {
+    let normalized = path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase();
+    normalized == "data/sounds/exclamations"
+        || normalized.starts_with("data/sounds/exclamations/")
+        || normalized == "data/cinematics"
+        || normalized.starts_with("data/cinematics/")
+}
+
+fn is_required_locale_path(path: &str) -> bool {
+    let normalized = path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase();
+    normalized == "data/text"
+        || normalized.starts_with("data/text/")
+        || normalized == "data/interface/start.sxt"
+}
+
+fn is_locale_overlay_path(path: &str) -> bool {
+    let normalized = path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase();
+    normalized == "data/text"
+        || normalized.starts_with("data/text/")
+        || normalized == "data/interface"
+        || normalized.starts_with("data/interface/")
+        || is_optional_english_fallback_path(&normalized)
+}
+
+fn normalise_locale_root(root: &str) -> Result<String, i32> {
+    let normalised = root.replace('\\', "/");
+    let normalised = normalised.trim_end_matches('/');
+    if normalised.is_empty()
+        || Path::new(normalised)
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        tracing::warn!("SbFileSystem::set_locale_paths: invalid locale root {root:?}");
+        return Err(SBFILE_ERROR_READ);
+    }
+    Ok(normalised.to_string())
 }
 
 /// Read `path` from an overlay root, returning the bytes if present.
@@ -1166,6 +1386,240 @@ mod tests {
         isolated.set_primary_path(primary.path().to_str().unwrap());
         assert_eq!(isolated.read_all("shared.dat").unwrap(), b"primary");
         assert!(isolated.overlay_paths().is_empty());
+    }
+
+    fn write_layer_file(root: &Path, relative: &str, contents: &[u8]) -> PathBuf {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn locale_lookup_precedence_is_shared_by_all_resolution_apis() {
+        let primary = tempfile::tempdir().unwrap();
+        let overlay = tempfile::tempdir().unwrap();
+        let relative = "Data/Sounds/Exclamations/locale-precedence.dat";
+
+        let overlay_file = write_layer_file(overlay.path(), relative, b"overlay");
+        let selected_file = write_layer_file(
+            &primary.path().join("selected-locale"),
+            relative,
+            b"selected",
+        );
+        let fallback_file = write_layer_file(
+            &primary.path().join("fallback-locale"),
+            relative,
+            b"fallback",
+        );
+        let primary_file = write_layer_file(primary.path(), relative, b"primary");
+        let alternate_file =
+            write_layer_file(&primary.path().join("ordinary"), relative, b"alternate");
+
+        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            file_system.set_primary_path(primary.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(file_system.add_alternate_path("ordinary"), SBFILE_NO_ERROR);
+        assert_eq!(
+            file_system.set_locale_paths(Some("selected-locale"), Some("fallback-locale")),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.add_overlay_path(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+
+        let assert_resolves_to = |expected: &[u8], expected_path: &Path| {
+            assert_eq!(
+                file_system
+                    .open(relative, SB_FILE_READ)
+                    .unwrap()
+                    .into_bytes(),
+                expected
+            );
+            assert_eq!(file_system.read_all(relative).unwrap(), expected);
+            assert!(file_system.try_exists(relative).unwrap());
+            assert_eq!(
+                file_system.resolve_data_path(relative).unwrap(),
+                fs::canonicalize(expected_path).unwrap()
+            );
+        };
+
+        assert_resolves_to(b"overlay", &overlay_file);
+        assert_eq!(
+            file_system.resolve_data_dir_layers("Data/Sounds/Exclamations"),
+            vec![
+                overlay.path().join("Data/Sounds/Exclamations"),
+                primary
+                    .path()
+                    .join("selected-locale/Data/Sounds/Exclamations"),
+                primary
+                    .path()
+                    .join("fallback-locale/Data/Sounds/Exclamations"),
+                primary.path().join("Data/Sounds/Exclamations"),
+                primary.path().join("ordinary/Data/Sounds/Exclamations"),
+            ]
+        );
+
+        assert_eq!(
+            file_system.remove_overlay(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_resolves_to(b"selected", &selected_file);
+        fs::remove_file(selected_file).unwrap();
+        assert_resolves_to(b"fallback", &fallback_file);
+        fs::remove_file(fallback_file).unwrap();
+        assert_resolves_to(b"primary", &primary_file);
+        fs::remove_file(primary_file).unwrap();
+        assert_resolves_to(b"alternate", &alternate_file);
+    }
+
+    #[test]
+    fn english_fallback_is_not_used_for_text() {
+        let primary = tempfile::tempdir().unwrap();
+        write_layer_file(
+            &primary.path().join("fallback-locale"),
+            "Data/Text/only-in-english.res",
+            b"english",
+        );
+
+        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            file_system.set_primary_path(primary.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.set_locale_paths(Some("selected-locale"), Some("fallback-locale")),
+            SBFILE_NO_ERROR
+        );
+        assert!(matches!(
+            file_system.open("Data/Text/only-in-english.res", SB_FILE_READ),
+            Err(SBFILE_ERROR_FILE_NOT_FOUND)
+        ));
+        assert!(file_system.resolve_data_dir_layers("Data/Text").is_empty());
+    }
+
+    #[test]
+    fn locale_roots_cannot_override_simulation_inputs() {
+        let primary = tempfile::tempdir().unwrap();
+        write_layer_file(
+            primary.path(),
+            "Data/Configuration/profile.cpf",
+            b"base-profile",
+        );
+        write_layer_file(
+            &primary.path().join("selected-locale"),
+            "Data/Configuration/profile.cpf",
+            b"localized-profile",
+        );
+
+        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            file_system.set_primary_path(primary.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.set_locale_paths(Some("selected-locale"), None),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system
+                .open("Data/Configuration/profile.cpf", SB_FILE_READ)
+                .unwrap()
+                .into_bytes(),
+            b"base-profile"
+        );
+    }
+
+    #[test]
+    fn locale_updates_are_atomic_normalised_and_reject_invalid_roots() {
+        let file_system = Arc::new(SbFileSystem::new(Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        assert_eq!(
+            file_system.set_locale_paths(Some("de-DE/"), Some("1033\\")),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.locale_paths(),
+            (Some("de-DE".to_string()), Some("1033".to_string()))
+        );
+
+        assert_eq!(
+            file_system.set_locale_paths(Some("fr-FR"), Some("../escape")),
+            SBFILE_ERROR_READ
+        );
+        assert_eq!(
+            file_system.locale_paths(),
+            (Some("de-DE".to_string()), Some("1033".to_string()))
+        );
+
+        let writer = Arc::clone(&file_system);
+        let update = std::thread::spawn(move || {
+            for _ in 0..2_000 {
+                assert_eq!(
+                    writer.set_locale_paths(Some("de-DE"), Some("en-US")),
+                    SBFILE_NO_ERROR
+                );
+                assert_eq!(
+                    writer.set_locale_paths(Some("fr-FR"), Some("en-GB")),
+                    SBFILE_NO_ERROR
+                );
+            }
+        });
+        for _ in 0..2_000 {
+            let pair = file_system.locale_paths();
+            assert!(matches!(
+                pair,
+                (Some(ref selected), Some(ref fallback))
+                    if (selected == "de-DE" && (fallback == "1033" || fallback == "en-US"))
+                        || (selected == "fr-FR" && fallback == "en-GB")
+            ));
+        }
+        update.join().unwrap();
+    }
+
+    #[test]
+    fn duplicate_fallback_is_only_searched_once() {
+        let root = tempfile::tempdir().unwrap();
+        let locale_dir = root.path().join("EN-us/Data/Text");
+        fs::create_dir_all(&locale_dir).unwrap();
+
+        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            file_system.set_primary_path(root.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.set_locale_paths(Some("EN-us"), Some("en-US")),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            file_system.resolve_data_dir_layers("Data/Text"),
+            vec![locale_dir]
+        );
+    }
+
+    #[test]
+    fn global_exists_uses_absolute_locale_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let unique_name = format!("locale-global-{}.dat", fastrand::u64(..));
+        let relative = format!("Data/Interface/{unique_name}");
+        write_layer_file(root.path(), &relative, b"locale");
+
+        assert_eq!(
+            SbFile::set_locale_paths(Some(root.path().to_str().unwrap()), None),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            SbFile::locale_paths(),
+            (Some(root.path().to_string_lossy().into_owned()), None)
+        );
+        assert!(SbFile::exists(&relative));
+        assert_eq!(SbFile::read_all(&relative).unwrap(), b"locale");
+        assert_eq!(SbFile::set_locale_paths(None, None), SBFILE_NO_ERROR);
     }
 
     #[test]

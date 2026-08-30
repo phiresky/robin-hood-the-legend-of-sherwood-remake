@@ -162,19 +162,7 @@ pub fn max_ammo_for_action(
 /// would rewrite non-tabulated bases (8 → 10 on Easy), so the literal
 /// `match` keeps modded / future capacities in step.
 fn apply_difficulty_scaling(base: u16, difficulty: DifficultyLevel) -> u16 {
-    match difficulty {
-        DifficultyLevel::Easy => match base {
-            6 => 8,
-            12 => 15,
-            other => other,
-        },
-        DifficultyLevel::Medium => base,
-        DifficultyLevel::Hard => match base {
-            6 => 4,
-            12 => 9,
-            other => other,
-        },
-    }
+    difficulty.rules().ammo_capacity(base)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -526,6 +514,12 @@ mod tests {
     fn difficulty_scaling_hard_decreases() {
         assert_eq!(apply_difficulty_scaling(6, DifficultyLevel::Hard), 4);
         assert_eq!(apply_difficulty_scaling(12, DifficultyLevel::Hard), 9);
+    }
+
+    #[test]
+    fn difficulty_scaling_legendary_uses_systematic_capacity_step() {
+        assert_eq!(apply_difficulty_scaling(6, DifficultyLevel::Legendary), 2);
+        assert_eq!(apply_difficulty_scaling(12, DifficultyLevel::Legendary), 6);
     }
 
     // ── Max ammo ──

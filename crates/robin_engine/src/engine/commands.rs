@@ -10,7 +10,7 @@ use super::{CameraDisplayState, EngineInner, LevelAssets};
 use super::{HostDisplayState, InputState};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
-use crate::player_command::{PlayerCommand, PlayerInput};
+use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use crate::profiles::Action;
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
@@ -120,7 +120,7 @@ fn recorded_interaction_quick_phase(command: Command) -> Option<QuickAction> {
 /// does use the selected layer; Net also authors literal zero before capture.
 fn recorded_ground_target_titbit_layer(command: Command, captured_layer: u16) -> u16 {
     match command {
-        Command::ThrowPurse | Command::ThrowNet => 0,
+        Command::ThrowPurse | Command::ThrowNet | Command::ThrowStone => 0,
         _ => captured_layer,
     }
 }
@@ -646,6 +646,7 @@ impl EngineInner {
                         Command::ThrowNet => crate::titbit::QuickAction::Net as u16,
                         Command::ThrowWaspNest => crate::titbit::QuickAction::Wasp as u16,
                         Command::ThrowPurse => crate::titbit::QuickAction::Purse as u16,
+                        Command::ThrowStone => crate::titbit::QuickAction::Stone as u16,
                         _ => panic!(
                             "recorded ground-target command {command:?} has no Original QA titbit"
                         ),
@@ -1266,6 +1267,19 @@ impl EngineInner {
             CampaignHarvestProductionSectorState => {
                 self.harvest_production_sector_state(assets);
             }
+            CampaignSellProductionItem {
+                request_id,
+                prod_type,
+                quantity,
+            } => {
+                self.sell_sherwood_production_item(
+                    assets,
+                    seat,
+                    *request_id,
+                    *prod_type,
+                    *quantity,
+                );
+            }
             CampaignConvertSelectedPeasantsToBlazons => {
                 self.convert_selected_peasants_to_blazons(sim, &assets.profile_manager);
             }
@@ -1457,6 +1471,59 @@ impl EngineInner {
             }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(*enabled);
+            }
+            SetItemGameplayConfig { config } => {
+                if self.control.rng.original_replay_cursor().is_some() {
+                    tracing::warn!("ignoring item-rebalance command during Original-parity replay");
+                    self.control.sim_config.item_gameplay =
+                        crate::gameplay_config::ItemGameplayConfig::classic();
+                } else {
+                    self.control.sim_config.item_gameplay = *config;
+                }
+                let reliable_ale = self
+                    .control
+                    .sim_config
+                    .item_gameplay
+                    .ale_reliable_distraction;
+                for (actor_id, entity) in self.world.entities.actors_mut() {
+                    // Ale completion resolves a SoldierProfile from SoldierData;
+                    // autonomous PC enemies must not gain the soldier-only
+                    // zero-beer eligibility without that completion contract.
+                    let reliable_for_actor = if !reliable_ale {
+                        false
+                    } else if let Entity::Soldier(soldier) = entity {
+                        !assets
+                            .profile_manager
+                            .get_soldier(soldier.soldier.soldier_profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "ale reliability requires missing soldier profile {:?} for {actor_id:?}",
+                                    soldier.soldier.soldier_profile_index,
+                                )
+                            })
+                            .vip
+                    } else {
+                        false
+                    };
+                    if let Some(enemy) = entity.enemy_ai_mut() {
+                        enemy.ale_reliable_distraction = reliable_for_actor;
+                    }
+                }
+            }
+            SetNoiseDistractionFeedback { enabled } => {
+                if self.control.rng.original_replay_cursor().is_some() {
+                    tracing::warn!("ignoring stone-feedback command during Original-parity replay");
+                    self.control.sim_config.noise_distraction_feedback = false;
+                } else {
+                    self.control.sim_config.noise_distraction_feedback = *enabled;
+                }
+            }
+            SetSherwoodTrading { enabled } => {
+                if seat == usize::from(PlayerId::HOST.0) {
+                    self.control.sim_config.sherwood_trading = *enabled;
+                } else {
+                    tracing::warn!(seat, "non-host Sherwood trading setting command rejected");
+                }
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -5974,6 +6041,113 @@ mod tests {
     use crate::sprite_script::{SpriteScript, UNMAPPED};
 
     #[test]
+    fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .extend([
+                crate::profiles::SoldierProfile::default(),
+                crate::profiles::SoldierProfile {
+                    vip: true,
+                    ..Default::default()
+                },
+            ]);
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            soldier: SoldierData::default(),
+        }));
+        let vip_soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                soldier_profile_index: crate::profiles::SoldierProfileIdx(1),
+                ..Default::default()
+            },
+        }));
+        let autonomous_pc_id = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                ai: Some(Box::new(crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::default(),
+                    )),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        }));
+
+        let mut rules = crate::gameplay_config::ItemGameplayConfig::classic();
+        rules.ale_reliable_distraction = true;
+        engine.apply_command(
+            &sim_context,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SetItemGameplayConfig { config: rules },
+        );
+
+        assert!(
+            engine
+                .get_entity(soldier_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test soldier enemy AI")
+                .ale_reliable_distraction
+        );
+        assert!(
+            !engine
+                .get_entity(vip_soldier_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test VIP soldier enemy AI")
+                .ale_reliable_distraction
+        );
+        assert!(
+            !engine
+                .get_entity(autonomous_pc_id)
+                .and_then(Entity::enemy_ai)
+                .expect("test autonomous PC enemy AI")
+                .ale_reliable_distraction
+        );
+    }
+
+    #[test]
     fn recorded_failed_group_move_does_not_emit_accept_bark() {
         let failed = EntityId::Pc(crate::entity_id::PcId(136));
         let succeeded = EntityId::Pc(crate::entity_id::PcId(137));
@@ -8841,6 +9015,14 @@ mod tests {
     #[test]
     fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
         let cases = [
+            (
+                Action::Stone,
+                Command::ThrowStone,
+                Field::NoiseDistractionTarget,
+                QuickAction::Stone,
+                9,
+                0,
+            ),
             (
                 Action::Purse,
                 Command::ThrowPurse,

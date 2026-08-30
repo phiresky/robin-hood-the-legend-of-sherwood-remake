@@ -1375,8 +1375,8 @@ pub struct NewPlayerScreen {
 /// Maximum player name length.
 pub const MAX_PLAYER_NAME_LENGTH: usize = 30;
 
-/// Number of difficulty levels.
-pub const DIFFICULTY_LEVEL_COUNT: u32 = 3;
+/// Number of selectable presets, including Legendary and Advanced/Custom.
+pub const DIFFICULTY_LEVEL_COUNT: u32 = 5;
 
 impl NewPlayerScreen {
     /// Create with default difficulty (Medium = index 1).

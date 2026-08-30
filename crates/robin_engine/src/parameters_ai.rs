@@ -169,6 +169,10 @@ pub const NOISE_VOLUME_PLING: i32 = 200;
 pub const NOISE_VOLUME_PFIIIT: i32 = 400;
 pub const NOISE_VOLUME_LOGS: i32 = 400;
 pub const NOISE_VOLUME_DRAWBRIDGE: i32 = 500;
+/// Audible radius of a deliberately ground-thrown stone. It is broad enough
+/// to pull guards off a nearby patrol without behaving like the map-wide
+/// drawbridge/thunder events.
+pub const NOISE_VOLUME_DISTRACTION: i32 = 250;
 
 pub const MIN_SUBJECTIVE_NOISE_VOLUME_TO_GO: i32 = 0;
 pub const CALL_VOLUME_ALERTING_CIVILIST: i32 = 650;

@@ -41,6 +41,8 @@ pub(super) struct LiveGameplayInput<'a> {
 fn toggle_pause_menu(context: &mut LiveGameplayContext<'_>, pause_closed: &mut bool) {
     let LiveGameplayContext {
         host,
+        manager,
+        assets,
         callbacks,
         presentation,
         resources,
@@ -57,14 +59,27 @@ fn toggle_pause_menu(context: &mut LiveGameplayContext<'_>, pause_closed: &mut b
     }
 
     callbacks.suspend_play_time();
+    let sherwood_trading_available = manager.engine.is_sherwood(&assets.profile_manager)
+        && host.transport.local_seat == engine_player_command::PlayerId::HOST
+        && sherwood_trading_access(host, &manager.engine, &assets.profile_manager)
+            .validate()
+            .is_ok();
     if let Some(menu_resources) = resources.menu.as_ref() {
-        ui.pause_menu = Some(PauseMenu::new(menu_resources, ui.restart_allowed));
+        ui.pause_menu = Some(PauseMenu::new_with_sherwood_trading(
+            menu_resources,
+            ui.restart_allowed,
+            sherwood_trading_available,
+        ));
     } else {
         let fallback =
             IngameMenuResources::new(&mut presentation.renderer, host.shipping.as_deref());
         let menu_resources =
             required_menu_resources(&fallback, "opening the pause menu after resource reload");
-        ui.pause_menu = Some(PauseMenu::new(menu_resources, ui.restart_allowed));
+        ui.pause_menu = Some(PauseMenu::new_with_sherwood_trading(
+            menu_resources,
+            ui.restart_allowed,
+            sherwood_trading_available,
+        ));
         resources.menu = fallback;
     }
     if ui.pause_menu.is_some() {
@@ -312,6 +327,13 @@ fn dispatch_gameplay_action(
                 );
             }
         }
+        GameAction::OpenSherwoodTrading => {
+            if let Err(reason) =
+                request_sherwood_trading_panel(host, &manager.engine, &assets.profile_manager)
+            {
+                tracing::debug!(?reason, "Sherwood trading shortcut rejected");
+            }
+        }
         GameAction::PrintScreen => {
             host.pending_print_screen =
                 Some(print_screen_request_from_modifiers(ctrl_held, shift_held));
@@ -389,9 +411,8 @@ pub(super) async fn drive_live_gameplay_input(
         context.callbacks,
         context.window,
         &mut context.presentation.renderer,
-        &mut context.resources.cursor,
         &mut context.presentation.sprites.cursor_renderer,
-        &context.resources.menu,
+        context.resources,
         &mut context.audio.backend,
         &context.audio.sample_loader,
         &mut context.input.threaded,

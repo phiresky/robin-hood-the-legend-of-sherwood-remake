@@ -76,10 +76,12 @@ pub enum GameKey {
     RequestInfo,
     Teleport,
     AiInfo,
+    /// Built-in Sherwood-only shortcut for the post-port trading panel.
+    SherwoodTrading,
 }
 
 impl GameKey {
-    pub const COUNT: usize = 38;
+    pub const COUNT: usize = 39;
 
     /// All variants in enum order.
     pub const ALL: [GameKey; Self::COUNT] = [
@@ -121,6 +123,7 @@ impl GameKey {
         Self::RequestInfo,
         Self::Teleport,
         Self::AiInfo,
+        Self::SherwoodTrading,
     ];
 
     /// The action name string used in [`KeyConfig`] bindings.
@@ -164,6 +167,7 @@ impl GameKey {
             Self::RequestInfo => "RequestInfo",
             Self::Teleport => "Teleport",
             Self::AiInfo => "AiInfo",
+            Self::SherwoodTrading => "SherwoodTrading",
         }
     }
 }
@@ -208,6 +212,8 @@ pub enum GameAction {
     DisplayConsole,
     DisplayInfo,
     DisplayAiInfo,
+    /// Ask the host presentation to open the Sherwood trading panel.
+    OpenSherwoodTrading,
     SwitchMaskedDisplay,
     PrintScreen,
 
@@ -391,6 +397,7 @@ impl InputTranslator {
         self.bindings[GameKey::DisplayConsole] = Some(Backquote);
         self.bindings[GameKey::PrintScreen] = Some(PrintScreen);
         self.bindings[GameKey::DisplayMenu] = Some(Escape);
+        self.bindings[GameKey::SherwoodTrading] = Some(KeyT);
 
         // Debug keys (only in non-shipping builds)
         self.bindings[GameKey::SlowMotion] = Some(Pause);
@@ -679,6 +686,14 @@ impl InputTranslator {
                 }
                 if key_released(keys, prev, self.key(GameKey::AiInfo)) {
                     actions.push(GameAction::DisplayAiInfo);
+                }
+                let trading_key = self.key(GameKey::SherwoodTrading);
+                if key_released(keys, prev, trading_key)
+                    && trading_key.is_some_and(|key| {
+                        self.translate_key(key) == Some(GameKey::SherwoodTrading)
+                    })
+                {
+                    actions.push(GameAction::OpenSherwoodTrading);
                 }
 
                 // Macro keys
@@ -1041,6 +1056,37 @@ mod tests {
         assert_eq!(t.get_binding(GameKey::ScrollUp), Some(KeyCode::ArrowUp));
         // Reserved bindings survive
         assert_eq!(t.get_binding(GameKey::DisplayMenu), Some(KeyCode::Escape));
+        assert_eq!(t.get_binding(GameKey::SherwoodTrading), Some(KeyCode::KeyT));
+    }
+
+    #[test]
+    fn built_in_t_shortcut_emits_typed_trading_action_on_release() {
+        let mut t = InputTranslator::new(1024.0, 768.0);
+
+        let pressed = keys_down(&[KeyCode::KeyT]);
+        assert!(
+            !t.translate_keyboard(&pressed, TranslationFlags::ALL)
+                .contains(&GameAction::OpenSherwoodTrading)
+        );
+
+        let released = keys_down(&[]);
+        assert!(
+            t.translate_keyboard(&released, TranslationFlags::ALL)
+                .contains(&GameAction::OpenSherwoodTrading)
+        );
+    }
+
+    #[test]
+    fn custom_binding_on_t_takes_precedence_over_trading_shortcut() {
+        let mut t = InputTranslator::new(1024.0, 768.0);
+        t.set_binding(GameKey::Action1, Some(KeyCode::KeyT));
+
+        let pressed = keys_down(&[KeyCode::KeyT]);
+        let _ = t.translate_keyboard(&pressed, TranslationFlags::ALL);
+        let actions = t.translate_keyboard(&keys_down(&[]), TranslationFlags::ALL);
+
+        assert!(actions.contains(&GameAction::SelectAction { index: 0 }));
+        assert!(!actions.contains(&GameAction::OpenSherwoodTrading));
     }
 
     #[test]

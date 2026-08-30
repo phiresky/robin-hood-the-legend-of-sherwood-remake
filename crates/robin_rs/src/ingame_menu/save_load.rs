@@ -25,7 +25,7 @@ use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::savegame::SaveGameManager;
+use crate::savegame::{SaveGame, SaveGameManager};
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
@@ -33,7 +33,7 @@ use jiff::{Timestamp, tz::TimeZone};
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_fallback_panel,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
@@ -233,7 +233,7 @@ pub async fn show_save_load(
             (mode, selected),
             (SaveLoadMode::Save, Some(_)) | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
         );
-        let delete_enabled = matches!(selected, Some(ListRow::Existing(_)));
+        let delete_enabled = selected_is_deletable(selected, save_manager, &visible);
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -535,6 +535,12 @@ pub async fn show_save_load(
                 ID_DELETE => {
                     if let Some(ListRow::Existing(v_idx)) = selected {
                         let slot = visible[v_idx];
+                        if save_manager.get(slot).is_some_and(SaveGame::is_autosave) {
+                            tracing::warn!(
+                                "manual save picker ignored a delete request for an autosave"
+                            );
+                            continue;
+                        }
                         let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
                         if show_yesno(
                             event_pump,
@@ -787,7 +793,7 @@ fn draw_input_field(
         draw_fallback_panel(renderer, transform, &INPUT_RECT);
     }
 
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
 
@@ -838,7 +844,7 @@ fn draw_input_field(
     } else {
         format!("{left_text}{right_text}")
     };
-    render_text_virt(
+    render_text_virt_font(
         renderer,
         font,
         transform,
@@ -974,11 +980,26 @@ fn row_label(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) ->
         ListRow::Existing(v_idx) => {
             let slot = visible[v_idx];
             match save_manager.get(slot) {
-                Some(s) => s.text.clone(),
+                Some(save) if save.is_autosave() => format!("Autosave - {}", save.text),
+                Some(save) => save.text.clone(),
                 None => format!("<invalid slot {slot}>"),
             }
         }
     }
+}
+
+fn selected_is_deletable(
+    selected: Option<ListRow>,
+    save_manager: &SaveGameManager,
+    visible: &[usize],
+) -> bool {
+    let Some(ListRow::Existing(visible_index)) = selected else {
+        return false;
+    };
+    visible
+        .get(visible_index)
+        .and_then(|&slot| save_manager.get(slot))
+        .is_some_and(|save| !save.is_autosave())
 }
 
 fn row_detail(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) -> String {
@@ -1175,7 +1196,7 @@ fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> 
                 .expect("index from 0..count() must resolve");
             match mode {
                 SaveLoadMode::Load => !save.is_continue() && !save.is_restart(),
-                SaveLoadMode::Save => save.special.is_none(),
+                SaveLoadMode::Save => !save.is_special(),
             }
         })
         .collect()
@@ -1184,6 +1205,29 @@ fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autosaves_are_loadable_but_not_overwritable_or_deletable() {
+        let mut manager = SaveGameManager::new("/tmp/test_saves".into());
+        manager.saves.push(SaveGame::new(
+            "Autosave_100_0000".into(),
+            "The Silver Arrow".into(),
+            7,
+        ));
+
+        let load_visible = collect_visible_slots(&manager, SaveLoadMode::Load);
+        assert_eq!(load_visible, vec![0]);
+        assert!(!selected_is_deletable(
+            Some(ListRow::Existing(0)),
+            &manager,
+            &load_visible,
+        ));
+        assert!(collect_visible_slots(&manager, SaveLoadMode::Save).is_empty());
+        assert_eq!(
+            row_label(ListRow::Existing(0), &manager, &load_visible),
+            "Autosave - The Silver Arrow"
+        );
+    }
 
     #[test]
     fn empty_new_save_name_gets_default_label() {

@@ -79,9 +79,9 @@ pub(crate) struct MultiplayerRollbackTelemetry {
 ///
 /// Also folds `AssignedLocalSeat` events (late seat-assignment
 /// races) into `host.transport.local_seat` and logs other diagnostic events.
-/// Native disconnects remain synchronized only while the transport's real
-/// reconnect loop is active. Browser disconnects arrive as `Fatal` because
-/// wasm has no reconnect implementation.
+/// Native and browser disconnects remain synchronized only while their real
+/// transport reconnect loops are active. Both abandon the old prediction
+/// future and wait for an authoritative replacement snapshot.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_net_inputs(
     host: &mut Host,
@@ -152,19 +152,23 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    tracing::warn!(
-                        "multiplayer: peer disconnected — transport will auto-reconnect; \
-                         simulation is held until an authoritative snapshot arrives"
-                    );
-                    host.transport.reconnecting = true;
-                    admission_events.push(MultiplayerAdmissionEvent::Disconnected);
-                }
-                #[cfg(target_arch = "wasm32")]
-                panic!(
-                    "fatal multiplayer session error: browser transport disconnected and automatic reconnect is unavailable"
+                tracing::warn!(
+                    "multiplayer: peer disconnected — transport will auto-reconnect; \
+                     simulation is held until an authoritative snapshot arrives"
                 );
+                host.transport.reconnecting = true;
+                admission_events.push(MultiplayerAdmissionEvent::Disconnected);
+                // Everything derived from the disconnected process's future
+                // is invalid. Events already drained from that generation
+                // occur before Disconnected and are removed here; events from
+                // the replacement stream arrive afterward.
+                late_inputs.clear();
+                pending_inputs.clear();
+                peer_hashes.clear();
+                recent_timeline_history.clear();
+                *rewind_buffer = RewindBuffer::new();
+                latest_host_clock_sample = None;
+                rewrote_sim_state = true;
             }
             NetEvent::Reconnected => {
                 tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
@@ -173,12 +177,14 @@ pub(crate) fn drain_net_inputs(
                 mission_id,
                 rng_seed,
                 sim_config,
+                speech_timing_locale,
             } => {
                 // Welcome is awaited before Engine construction; retain the
                 // event copy for diagnostics and reconnect validation.
                 if host.transport.mission_id.as_deref() != Some(mission_id.as_str())
                     || host.transport.mission_seed != Some(rng_seed)
                     || host.transport.mission_sim_config != Some(sim_config)
+                    || host.transport.speech_timing_locale != speech_timing_locale
                 {
                     panic!(
                         "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
@@ -186,6 +192,7 @@ pub(crate) fn drain_net_inputs(
                 }
                 host.transport.mission_seed = Some(rng_seed);
                 host.transport.mission_sim_config = Some(sim_config);
+                host.transport.speech_timing_locale = speech_timing_locale;
                 host.transport.mission_id = Some(mission_id);
             }
             NetEvent::Fatal(message) => panic!("fatal multiplayer session error: {message}"),
@@ -193,7 +200,8 @@ pub(crate) fn drain_net_inputs(
                 frame,
                 engine_bytes,
             } => {
-                if frame < effective_frame {
+                let replacing_prediction_future = host.transport.reconnecting;
+                if frame < effective_frame && !replacing_prediction_future {
                     tracing::debug!(
                         frame,
                         local_timeline_frame = effective_frame,
@@ -225,6 +233,14 @@ pub(crate) fn drain_net_inputs(
                                 if let Some(net) = host.transport.net.as_ref() {
                                     net.send_ready_to_sim(frame);
                                 }
+                                if replacing_prediction_future {
+                                    *rewind_buffer = RewindBuffer::new();
+                                    rewind_buffer.seed_initial_anchor(frame, &manager.engine);
+                                    pending_inputs.clear();
+                                    peer_hashes.clear();
+                                    recent_timeline_history.clear();
+                                    rewrote_sim_state = true;
+                                }
                             } else {
                                 match Engine::adopt_authoritative_snapshot(snapshot, assets) {
                                     Ok(adopted) => {
@@ -245,10 +261,16 @@ pub(crate) fn drain_net_inputs(
                                              local init diverged"
                                         );
                                         *rewind_buffer = RewindBuffer::new();
-                                        let adopted = TimelineFrame::from_wire(frame);
-                                        pending_inputs.retain(|&queued, _| queued >= adopted);
+                                        rewind_buffer.seed_initial_anchor(frame, &manager.engine);
+                                        if replacing_prediction_future {
+                                            pending_inputs.clear();
+                                            peer_hashes.clear();
+                                        } else {
+                                            let adopted = TimelineFrame::from_wire(frame);
+                                            pending_inputs.retain(|&queued, _| queued >= adopted);
+                                            peer_hashes.retain(|&f, _| f >= frame);
+                                        }
                                         recent_timeline_history.clear();
-                                        peer_hashes.retain(|&f, _| f >= frame);
                                         rewrote_sim_state = true;
                                         if let Some(net) = host.transport.net.as_ref() {
                                             net.send_ready_to_sim(frame);
@@ -290,10 +312,16 @@ pub(crate) fn drain_net_inputs(
                                 net.send_ready_to_sim(frame);
                             }
                             *rewind_buffer = RewindBuffer::new();
-                            let adopted = TimelineFrame::from_wire(frame);
-                            pending_inputs.retain(|&queued, _| queued >= adopted);
+                            rewind_buffer.seed_initial_anchor(frame, &manager.engine);
+                            if replacing_prediction_future {
+                                pending_inputs.clear();
+                                peer_hashes.clear();
+                            } else {
+                                let adopted = TimelineFrame::from_wire(frame);
+                                pending_inputs.retain(|&queued, _| queued >= adopted);
+                                peer_hashes.retain(|&f, _| f >= frame);
+                            }
                             recent_timeline_history.clear();
-                            peer_hashes.retain(|&f, _| f >= frame);
                             rewrote_sim_state = true;
                         }
                         Err(error) => panic!(
@@ -716,19 +744,81 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let publish_browser_links = resolve_browser_join_publication(args)?;
+            let speech_timing_locale = host
+                .application_context
+                .canonical_speech_timing_locale()
+                .map_err(|error| {
+                    format!("multiplayer: cannot select authoritative speech timing: {error}")
+                })?;
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
             match start_server(
                 nickname.clone(),
                 authoritative_mission_id.to_string(),
                 authoritative_rng_seed,
                 authoritative_sim_config,
+                speech_timing_locale.clone(),
                 in_tx,
                 out_rx,
                 frame_cursor,
                 snapshot_slot,
                 args.mp_expected_players.unwrap_or(1),
+                publish_browser_links,
             ) {
                 Ok(handle) => {
+                    if publish_browser_links {
+                        let content_edition = if crate::main_entry::detect_demo_mode_with_context(
+                            &args.global_options,
+                        )
+                        .is_some()
+                        {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Demo
+                        } else {
+                            crate::multiplayer::join_ticket::BrowserContentEdition::Full
+                        };
+                        let content_identity_sha256 =
+                            crate::multiplayer::content_identity::active_content_identity()
+                                .map_err(|error| {
+                                    format!(
+                                        "multiplayer: cannot publish an exact browser content invitation: {error}"
+                                    )
+                                })?;
+                        let ticket = handle
+                            .browser_join_ticket(
+                                content_edition,
+                                content_identity_sha256.clone(),
+                                args.mp_mission_profile_id,
+                                args.mp_expected_players.unwrap_or(1),
+                            )
+                            .map_err(|error| {
+                                format!("multiplayer: browser invitation unavailable: {error}")
+                            })?;
+                        let browser_base =
+                            std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
+                                crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
+                            });
+                        let share_url = ticket.share_url(&browser_base).map_err(|error| {
+                            format!("multiplayer: browser share URL unavailable: {error}")
+                        })?;
+                        tracing::info!(
+                            browser_join_code = %ticket.encode(),
+                            %share_url,
+                            relay = %ticket.payload().relay_url,
+                            ?content_edition,
+                            %content_identity_sha256,
+                            "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
+                        );
+                        host.pending_console_output.push(format!(
+                            "Browser join code (expires after 30 minutes if unused): {}",
+                            ticket.encode()
+                        ));
+                        host.pending_console_output
+                            .push(format!("Browser join link: {share_url}"));
+                        host.pending_console_output.push(format!(
+                            "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
+                            ticket.payload().relay_url
+                        ));
+                    }
                     tracing::info!(
                         endpoint_id = %handle.endpoint_id(),
                         nickname = %nickname,
@@ -741,6 +831,7 @@ pub(super) async fn setup_multiplayer_session(
                     host.transport.net = Some(channels);
                     host.transport.mission_seed = Some(authoritative_rng_seed);
                     host.transport.mission_sim_config = Some(authoritative_sim_config);
+                    host.transport.speech_timing_locale = speech_timing_locale;
                     host.transport.mission_id = Some(authoritative_mission_id.to_string());
                 }
                 Err(e) => {
@@ -758,14 +849,28 @@ pub(super) async fn setup_multiplayer_session(
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
                     while (handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none())
+                        || handle.mission_sim_config().is_none()
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none())
                         && web_time::Instant::now() < deadline
                     {
+                        if let Some(error) = handle.startup_error() {
+                            return Err(format!(
+                                "multiplayer: browser relay startup failed: {error}"
+                            ));
+                        }
                         crate::window::sleep_ms(10).await;
+                    }
+                    if let Some(error) = handle.startup_error() {
+                        return Err(format!(
+                            "multiplayer: browser relay startup failed: {error}"
+                        ));
                     }
                     if handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none()
                     {
                         return Err(
                             "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
@@ -776,16 +881,42 @@ pub(super) async fn setup_multiplayer_session(
                 let welcomed_mission = handle
                     .mission_id()
                     .expect("successful Welcome must include a mission id");
+                let assigned_seat = handle
+                    .assigned_seat()
+                    .expect("successful Welcome must assign a local seat");
+                host.transport.local_seat = assigned_seat;
                 if welcomed_mission != authoritative_mission_id {
                     return Err(format!(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
                     ));
+                }
+                #[cfg(target_arch = "wasm32")]
+                let speech_timing_locale = handle
+                    .speech_timing_authority()
+                    .expect("successful browser Welcome must publish speech timing authority");
+                #[cfg(not(target_arch = "wasm32"))]
+                let speech_timing_locale = handle.speech_timing_locale();
+                if let Some(authoritative_locale) = speech_timing_locale.as_deref() {
+                    let has_timing_pack = host
+                        .application_context
+                        .installed_languages()
+                        .map_err(|error| {
+                            format!("multiplayer: cannot inspect installed voice packs: {error}")
+                        })?
+                        .into_iter()
+                        .any(|pack| pack.locale == authoritative_locale && pack.has_voice);
+                    if !has_timing_pack {
+                        return Err(format!(
+                            "multiplayer: host requires voice pack `{authoritative_locale}` for deterministic speech timing, but that validated pack is not installed"
+                        ));
+                    }
                 }
                 host.transport.mission_id = Some(welcomed_mission.to_string());
                 if let Some(seed) = handle.mission_seed() {
                     host.transport.mission_seed = Some(seed);
                 }
                 host.transport.mission_sim_config = handle.mission_sim_config();
+                host.transport.speech_timing_locale = speech_timing_locale;
                 tracing::info!(
                     server = %addr,
                     nickname = %nickname,
@@ -828,12 +959,47 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
+fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
+    let saved = args
+        .global_options
+        .active_profile_snapshot()
+        .map(|profile| profile.multiplayer_config.publish_browser_join_links)
+        .map_err(|error| {
+            format!("multiplayer: cannot read browser publication preference: {error}")
+        })?;
+    Ok(resolve_publication_preference(
+        args.mp_browser_join_links,
+        saved,
+    ))
+}
+
+fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
+    cli_override.unwrap_or(saved)
+}
+
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
+    if args.server && args.connect.is_some() {
+        return Err("multiplayer host and client modes are mutually exclusive".to_string());
+    }
+    if let Some(expected) = args.mp_expected_players
+        && !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
+    {
+        return Err(format!(
+            "multiplayer expected player count must be between 1 and {}",
+            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+        ));
+    }
     let multiplayer = args.server || args.connect.is_some();
     let replay = args.replay.is_some() || args.replay_data.is_some();
     if multiplayer && replay {
         return Err(
             "multiplayer cannot be combined with replay playback; Welcome mission/seed/SimConfig must be the sole frame-0 authority"
+                .to_string(),
+        );
+    }
+    if args.connect.is_some() && args.record.is_some() {
+        return Err(
+            "multiplayer peers cannot choose a replay output; only the host records the canonical ordered session"
                 .to_string(),
         );
     }
@@ -843,8 +1009,8 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
 #[cfg(test)]
 mod tests {
     use super::{
-        MultiplayerAdmissionEvent, drain_net_inputs, rewind_from_recent_timeline_history,
-        validate_multiplayer_launch_args,
+        MultiplayerAdmissionEvent, TimelineFrame, drain_net_inputs, resolve_publication_preference,
+        rewind_from_recent_timeline_history, validate_multiplayer_launch_args,
     };
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
@@ -887,6 +1053,42 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
+
+        let peer_recording = crate::main_entry::CliArgs {
+            connect: Some("127.0.0.1:7878".to_string()),
+            record: Some("peer-is-not-canonical.rhrec.jsonl".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            validate_multiplayer_launch_args(&peer_recording)
+                .unwrap_err()
+                .contains("only the host records")
+        );
+    }
+
+    #[test]
+    fn browser_publication_cli_override_precedes_saved_preference() {
+        assert!(resolve_publication_preference(None, true));
+        assert!(!resolve_publication_preference(None, false));
+        assert!(resolve_publication_preference(Some(true), false));
+        assert!(!resolve_publication_preference(Some(false), true));
+    }
+
+    #[test]
+    fn multiplayer_launch_rejects_ambiguous_mode_and_player_count() {
+        let both = crate::main_entry::CliArgs {
+            server: true,
+            connect: Some("host".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&both).is_err());
+
+        let too_many = crate::main_entry::CliArgs {
+            server: true,
+            mp_expected_players: Some(5),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&too_many).is_err());
     }
 
     #[test]
@@ -939,6 +1141,81 @@ mod tests {
         assert!(matches!(
             outgoing.recv().expect("ReadyToSim after adoption"),
             NetOutbound::ReadyToSim { frame: 0 }
+        ));
+    }
+
+    #[test]
+    fn reconnect_accepts_older_snapshot_and_discards_prediction_future() {
+        let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
+        let mut snapshot = manager.engine.clone();
+        snapshot
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetAmountOfSpeaking { amount: 7 }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("snapshot mutation");
+        let snapshot_hash = robin_engine::replay::state_hash(&snapshot);
+
+        incoming
+            .send(NetEvent::Disconnected)
+            .expect("queue disconnect");
+        incoming
+            .send(NetEvent::Reconnected)
+            .expect("queue reconnect");
+        incoming
+            .send(NetEvent::InitialSnapshot {
+                frame: 3,
+                engine_bytes: snapshot.encode_native_snapshot(),
+            })
+            .expect("queue older replacement snapshot");
+
+        let mut rewind = RewindBuffer::new();
+        let mut hashes = std::collections::BTreeMap::from([(8, 123)]);
+        let mut pending = std::collections::BTreeMap::from([(
+            TimelineFrame::from_wire(9),
+            vec![PlayerCommand::CrouchDown.into()],
+        )]);
+        let mut recent = SnapshotHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        assert!(recent.checkpoint(8, &manager.engine));
+
+        let drain = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            8,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+            &mut recent,
+        );
+
+        assert_eq!(
+            drain.admission_events,
+            [
+                MultiplayerAdmissionEvent::Disconnected,
+                MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 3 },
+            ]
+        );
+        assert_eq!(drain.adopted_frame, Some(3));
+        assert!(drain.rewrote_sim_state);
+        assert!(!host.transport.reconnecting);
+        assert_eq!(
+            robin_engine::replay::state_hash(&manager.engine),
+            snapshot_hash
+        );
+        assert!(pending.is_empty());
+        assert!(hashes.is_empty());
+        assert!(recent.restore(8, RestorePolicy::Exact).is_err());
+        assert_eq!(rewind.oldest_reachable_frame(), Some(3));
+        assert!(matches!(
+            outgoing.recv().expect("ReadyToSim after replacement"),
+            NetOutbound::ReadyToSim { frame: 3 }
         ));
     }
 

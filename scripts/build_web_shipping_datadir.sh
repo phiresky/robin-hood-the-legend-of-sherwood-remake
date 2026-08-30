@@ -31,6 +31,7 @@ target/release/convert_datadir \
     --rle-sprite-format jxl-q80 \
     --audio-format opus \
     --zstd-window-log 30 \
+    --web-content-manifest \
     "$mode"
 
 manifest="$output_dir/Data/datadir.bin"
@@ -39,4 +40,10 @@ if [[ ! -s "$manifest" ]]; then
     exit 1
 fi
 
-echo "web shipping datadir ready: $manifest"
+content_manifest="$output_dir/Data/robinhood-web-content.json"
+if [[ ! -s "$content_manifest" ]]; then
+    echo "conversion did not produce $content_manifest" >&2
+    exit 1
+fi
+
+echo "web shipping datadir ready: $manifest ($content_manifest)"

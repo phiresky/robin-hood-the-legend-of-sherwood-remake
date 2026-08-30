@@ -8,8 +8,8 @@ use crate::renderer::Renderer;
 use robin_engine::short_briefings::ShortBriefings;
 
 use super::layout::{
-    MenuRect, MenuTransform, TextAlign, draw_background, measure_text_height_in_box,
-    render_text_in_box,
+    MenuRect, MenuTransform, TextAlign, draw_background, measure_text_height_in_box_font,
+    render_text_in_box_font,
 };
 use super::resources::IngameMenuResources;
 
@@ -24,10 +24,9 @@ const MARGIN: i32 = 15;
 /// its `done` flag, inserting a separator between primary and secondary
 /// sections when both are present.
 ///
-/// Briefing text is resolved from the level's short-briefing text-table
-/// id via the supplied lookup.  When the lookup returns `None`
-/// (no level resources loaded) the briefing id is shown as a placeholder
-/// so the layout stays visible in development builds.
+/// Briefing text is resolved from the level's short-briefing text-table id via
+/// the supplied lookup. Missing authored text is a required-content error;
+/// drawing a numeric placeholder would conceal an invalid language pack.
 pub fn draw_short_briefings(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
@@ -89,13 +88,13 @@ fn draw_section(
             Some(id) => id,
             None => continue,
         };
-        // Fixed placeholder when the string-table lookup fails.
-        let text = lookup(id).unwrap_or_else(|| "Invalid short briefing ID...".to_string());
+        let text = lookup(id)
+            .unwrap_or_else(|| panic!("required localized short briefing string {id} is missing"));
 
         let font = if done {
-            resources.inactive_briefing_font()
+            resources.inactive_briefing_font_any()
         } else {
-            resources.active_briefing_font()
+            resources.active_briefing_font_any()
         };
         let Some(font) = font else { continue };
 
@@ -125,9 +124,9 @@ fn draw_section(
         // through the same `wrap_text` call with the same
         // `max_lines = remaining_h / line_h`, so the advance can't
         // drift from the rasterised line count.
-        let needed_h =
-            measure_text_height_in_box(font, &text, text_w, remaining_h).max(font.height() as i32);
-        let _ = render_text_in_box(
+        let needed_h = measure_text_height_in_box_font(font, &text, text_w, remaining_h)
+            .max(font.height() as i32);
+        let _ = render_text_in_box_font(
             renderer,
             font,
             transform,

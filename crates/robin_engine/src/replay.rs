@@ -69,10 +69,15 @@ pub struct ReplayHeader {
 /// every admitted [`SimulationFrameInput`] and host control is explicit,
 /// serialized command chains are non-recursive, stored movement actions carry
 /// exact routes, and point-Seek state carries explicit route provenance.
-/// Version 17 requires the full-fidelity campaign history and practice-return
-/// snapshot. There is deliberately no Rust-schema compatibility adapter:
+/// Version 17 requires full-fidelity campaign history. Version 18 adds
+/// achievement tracker state, and version 19 combines that with expanded item
+/// rules, cached ale eligibility, and ground-stone state. Version 20 combines
+/// that state with authoritative Sherwood trading configuration, commands,
+/// and receipts. Version 21 carries resolved Legendary/Custom difficulty
+/// rules alongside both feature families. There is deliberately
+/// no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 18;
+pub const REPLAY_SCHEMA_VERSION: u32 = 21;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -778,8 +783,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_achievement_tracker_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 18);
+    fn replay_schema_version_identifies_items_trading_and_resolved_difficulty() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 21);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -879,7 +884,7 @@ mod tests {
 
     #[test]
     fn every_obsolete_rust_jsonl_schema_is_rejected() {
-        for version in [10, 12, 13, 14, 16] {
+        for version in [10, 12, 13, 14, 16, 17, 18] {
             let input = format!(
                 "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
             );
@@ -1137,6 +1142,10 @@ mod tests {
             PlayerCommand::SetAmountOfSpeaking { amount: 9 },
             PlayerCommand::SetUnbindingEnabled { enabled: false },
             PlayerCommand::SetReusableCloaks { enabled: false },
+            PlayerCommand::SetItemGameplayConfig {
+                config: crate::gameplay_config::ItemGameplayConfig::classic(),
+            },
+            PlayerCommand::SetNoiseDistractionFeedback { enabled: false },
         ];
         let mut recorder = ReplayRecorder::new(
             &path,
@@ -1162,6 +1171,11 @@ mod tests {
         assert_eq!(live.control.sim_config.amount_of_speaking, 9);
         assert!(!live.control.sim_config.enable_unbinding);
         assert!(!live.control.sim_config.reusable_cloaks);
+        assert_eq!(
+            live.control.sim_config.item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!live.control.sim_config.noise_distraction_feedback);
 
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
@@ -1183,6 +1197,11 @@ mod tests {
         assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
         assert!(!replayed.control.sim_config.enable_unbinding);
         assert!(!replayed.control.sim_config.reusable_cloaks);
+        assert_eq!(
+            replayed.control.sim_config.item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!replayed.control.sim_config.noise_distraction_feedback);
         assert_eq!(state_hash(&live), state_hash(&replayed));
         let _ = std::fs::remove_file(path);
     }

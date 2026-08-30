@@ -111,6 +111,31 @@
         }
         #boot-progress.bp-error .bp-label { color: #f77; }
         #boot-progress.bp-error .bp-fill { background: #a33; }
+        #multiplayer-content-gate {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: grid;
+            place-items: center;
+            background: rgb(0 0 0 / 82%);
+        }
+        #multiplayer-content-gate[hidden] { display: none; }
+        #multiplayer-content-panel {
+            width: min(560px, calc(100vw - 32px));
+            box-sizing: border-box;
+            border: 1px solid #6d5a2e;
+            background: #17140e;
+            padding: 20px;
+            line-height: 1.5;
+        }
+        #multiplayer-content-choose {
+            background: #493b20;
+            color: #fff2c9;
+            border: 1px solid #a8842f;
+            padding: 8px 14px;
+            font: inherit;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -127,6 +152,18 @@
         <div class="bp-bar"><div class="bp-fill" id="bp-fill"></div></div>
         <div class="bp-detail" id="bp-detail"></div>
     </div>
+    <section id="multiplayer-content-gate" hidden aria-labelledby="multiplayer-content-title">
+        <div id="multiplayer-content-panel">
+            <h1 id="multiplayer-content-title">Full game content required</h1>
+            <p>
+                This host is playing the Full edition. Choose the exact local web-content export
+                for this build. Files are authenticated in this browser and are never uploaded.
+            </p>
+            <p id="multiplayer-content-status"></p>
+            <button id="multiplayer-content-choose" type="button">Choose Full content folder</button>
+            <input id="multiplayer-content-files" type="file" webkitdirectory multiple hidden>
+        </div>
+    </section>
     <div id="replay-timeline"></div>
     <div id="toolbar">
         <button id="share-replay" type="button" title="Copy a shareable URL of the current replay">
