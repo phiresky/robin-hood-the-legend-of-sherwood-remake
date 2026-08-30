@@ -6116,19 +6116,13 @@ impl EngineInner {
                     // hearing test.  Preserve the location sector so noises
                     // on roofs and other raised projection areas originate at
                     // their actual elevation.
-                    let source = self.position_to_point_3d(
-                        assets,
-                        crate::position_interface::SectorHandle::new(sector),
-                        layer,
-                        x,
-                        y,
-                    );
+                    let source = self.position_to_point_3d(assets, Some(sector), layer, x, y);
                     tracing::debug!(
                         noise_type = ?noise_type,
                         x,
                         y,
                         layer,
-                        sector,
+                        sector = sector.get(),
                         elevation = source.z,
                         "dispatching scripted noise"
                     );
