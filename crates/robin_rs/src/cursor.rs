@@ -78,6 +78,11 @@ pub struct CursorRenderer {
 
     /// Whether the OS cursor has been hidden.
     os_cursor_hidden: bool,
+
+    /// Wall-clock sampling used by refresh-rate UI loops. Gameplay continues
+    /// to call `advance_animation` once per fixed simulation presentation.
+    ui_animation_sample: Option<web_time::Instant>,
+    ui_animation_accumulated_us: u64,
 }
 
 impl CursorRenderer {
@@ -92,6 +97,8 @@ impl CursorRenderer {
             frame_length: 1,
             frame_timer: 0,
             os_cursor_hidden: false,
+            ui_animation_sample: None,
+            ui_animation_accumulated_us: 0,
         }
     }
 
@@ -308,6 +315,31 @@ impl CursorRenderer {
                     break;
                 }
             }
+        }
+    }
+
+    /// Advance at the legacy ~60 Hz UI animation rate even when the menu is
+    /// being presented on a 90/120/144 Hz display.
+    pub fn advance_ui_animation(&mut self) {
+        const UI_ANIMATION_TICK_US: u64 = 16_000;
+        const MAX_CATCH_UP_TICKS: u64 = 4;
+
+        let now = web_time::Instant::now();
+        let Some(previous) = self.ui_animation_sample.replace(now) else {
+            self.advance_animation();
+            return;
+        };
+        self.ui_animation_accumulated_us = self
+            .ui_animation_accumulated_us
+            .saturating_add(now.duration_since(previous).as_micros() as u64);
+        let ticks =
+            (self.ui_animation_accumulated_us / UI_ANIMATION_TICK_US).min(MAX_CATCH_UP_TICKS);
+        // A suspended tab/window may resume with minutes of elapsed time.
+        // Advance a bounded amount once and discard the obsolete backlog
+        // instead of fast-forwarding the cursor for many subsequent frames.
+        self.ui_animation_accumulated_us %= UI_ANIMATION_TICK_US;
+        for _ in 0..ticks {
+            self.advance_animation();
         }
     }
 

@@ -394,6 +394,7 @@ impl MissionLoadingScreen {
         let renderer_config = MissionRendererConfig {
             scale_mode: profile.graphic_config.scale_mode,
             shader_preset: profile.graphic_config.shader_preset,
+            native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
         };
         let renderer = loading_pak.and_then(|path| {
             let datadir_kind = match detect_demo_mode_with_context(application_context)

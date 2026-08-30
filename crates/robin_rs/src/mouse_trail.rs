@@ -179,14 +179,16 @@ impl MouseTrailRenderer {
         Some(clamped - 1)
     }
 
-    /// Draw the polyline stored in `mouse_way` to the GPU render
-    /// target, and decay every sample's alpha by one tick.
+    /// Draw the polyline stored in `mouse_way` to the GPU render target.
+    /// Alpha advancement is a separate fixed-tick boundary so native-refresh
+    /// recompositions can draw the same state repeatedly without ageing it.
     ///
     /// Alternates between single-point draws (for adjacent samples)
-    /// and X/Y-dominant interpolation (for larger gaps), then updates
-    /// each sample's alpha with the per-frame decay formula.  The
-    /// caller should only invoke this while the player is dragging
-    /// during a swordfight (`IsDragging() && IsSelectedPCSwordfighting()`).
+    /// and X/Y-dominant interpolation (for larger gaps). The caller advances
+    /// each sample's alpha separately, once after the fixed-tick presentation
+    /// is complete, so display-refresh recompositions remain read-only. The
+    /// caller should only invoke this while the player is dragging during a
+    /// swordfight (`IsDragging() && IsSelectedPCSwordfighting()`).
     pub fn render(&self, mouse_way: &mut MouseWay, renderer: &mut Renderer) {
         let size = mouse_way.points.len();
         if size == 0 {
@@ -214,15 +216,20 @@ impl MouseTrailRenderer {
                 let next_alpha = mouse_way.alpha[i + 1];
                 self.draw_interpolated(point, alpha_level, next, next_alpha, renderer);
             }
+        }
+    }
 
-            // ── Alpha decay ──
-            let new_alpha = if alpha_level > 100.0 {
-                alpha_level - 1.0
+    /// Decay every trail sample exactly once after a complete fixed-tick
+    /// presentation, independent of the physical display refresh rate.
+    pub fn advance(&self, mouse_way: &mut MouseWay) {
+        for alpha_level in &mut mouse_way.alpha {
+            let new_alpha = if *alpha_level > 100.0 {
+                *alpha_level - 1.0
             } else {
-                let step = DISMISHING_SPEED / alpha_level.max(1.0);
-                (alpha_level - step).max(0.0)
+                let step = DISMISHING_SPEED / (*alpha_level).max(1.0);
+                (*alpha_level - step).max(0.0)
             };
-            mouse_way.alpha[i] = new_alpha;
+            *alpha_level = new_alpha;
         }
     }
 

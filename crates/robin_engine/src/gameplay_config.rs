@@ -42,6 +42,15 @@ pub struct GameplayConfig {
     /// it restores the original input behavior.
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
+
+    /// Enable world-camera pan, pinch zoom, and inertial motion for touch
+    /// input. Tap and drag emulation remains available when this is off.
+    #[serde(default = "default_touch_camera_gestures")]
+    pub touch_camera_gestures: bool,
+}
+
+const fn default_touch_camera_gestures() -> bool {
+    true
 }
 
 impl Default for GameplayConfig {
@@ -50,6 +59,7 @@ impl Default for GameplayConfig {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
             enable_unbinding: true,
+            touch_camera_gestures: true,
         }
     }
 }
@@ -69,6 +79,7 @@ mod tests {
         assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
+        assert!(config.touch_camera_gestures);
     }
 
     #[test]

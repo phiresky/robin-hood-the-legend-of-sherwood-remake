@@ -58,7 +58,9 @@ use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
 use frame_simulate::{FrameSimulationFlags, FrameSimulationOutcome, InteractiveFrameSimulation};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
-use interactive::{InteractiveFrontend, InteractiveMission, RenderViewState};
+use interactive::{
+    CameraPresentationPose, InteractiveFrontend, InteractiveMission, RenderViewState,
+};
 pub(crate) use modal_state::ModalContext;
 use modal_state::{
     ActiveModal, ActiveModalOutcome, drain_pending_console_display, drain_pending_debriefings,
@@ -75,7 +77,7 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
+    RenderCadence, capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
     drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
@@ -95,7 +97,7 @@ use runtime::{
 };
 use tick::{
     dismiss_pending_modals, drain_steps, modal_state_pending, post_render_engine_cleanup,
-    pre_render_engine_setup,
+    pre_render_engine_setup, sync_render_camera,
 };
 
 use crate::app_effect::{AppEffect, SoundMode};

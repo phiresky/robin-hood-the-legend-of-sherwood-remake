@@ -31,6 +31,7 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Touch Camera Gestures",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -193,7 +194,7 @@ pub async fn show_gameplay(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {
@@ -209,6 +210,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
+        3 => config.touch_camera_gestures = !config.touch_camera_gestures,
         _ => {}
     }
 }
@@ -218,6 +220,27 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
+        3 => config.touch_camera_gestures,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_option_toggle, is_option_selected};
+    use robin_engine::gameplay_config::GameplayConfig;
+
+    #[test]
+    fn touch_camera_gestures_toggle_independently() {
+        let mut config = GameplayConfig::default();
+        let original_tactical_control = config.control_tactical_units;
+        let original_unbinding = config.enable_unbinding;
+
+        apply_option_toggle(&mut config, 3);
+
+        assert!(!config.touch_camera_gestures);
+        assert_eq!(config.control_tactical_units, original_tactical_control);
+        assert_eq!(config.enable_unbinding, original_unbinding);
+        assert!(!is_option_selected(&config, 3));
     }
 }

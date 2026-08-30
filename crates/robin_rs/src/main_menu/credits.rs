@@ -78,6 +78,8 @@ pub(crate) async fn show_credits(
     // bottom of the screen, then increment by 1 per tick while the
     // guard below holds.
     let mut offset: i32 = -initial_screen_h;
+    let mut last_scroll_sample = web_time::Instant::now();
+    let mut scroll_accumulated_us = 0_u64;
 
     loop {
         let events = event_pump.poll_events();
@@ -198,12 +200,21 @@ pub(crate) async fn show_credits(
         // literal is preserved so other resolutions hit the same scroll
         // stop point.
         if offset + screen_h + ((768 - screen_h) / 2) < credit_height - 1 {
-            offset += 1;
+            let now = web_time::Instant::now();
+            scroll_accumulated_us = scroll_accumulated_us
+                .saturating_add(now.duration_since(last_scroll_sample).as_micros() as u64);
+            last_scroll_sample = now;
+            let pixels = (scroll_accumulated_us / 20_000).min(i32::MAX as u64) as i32;
+            scroll_accumulated_us %= 20_000;
+            offset = offset.saturating_add(pixels);
+        } else {
+            last_scroll_sample = web_time::Instant::now();
+            scroll_accumulated_us = 0;
         }
 
         renderer.flip();
-        // 20 ms per frame keeps the reel speed in parity with the
-        // original busy-wait.
-        crate::window::sleep_ms(20).await;
+        // Presentation follows the configured display cadence; scroll motion
+        // above remains at the original 50 pixels/second wall-clock rate.
+        crate::window::sleep_ui_frame().await;
     }
 }

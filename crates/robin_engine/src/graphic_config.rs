@@ -55,6 +55,12 @@ pub struct GraphicConfig {
     /// restores the original fixed 4:3 canvas and presentation letterboxing.
     #[serde(default = "default_adaptive_widescreen")]
     pub adaptive_widescreen: bool,
+
+    /// Present host-only camera/world interpolation between 25 Hz simulation
+    /// ticks at the display's vsync cadence. Turning this off restores legacy
+    /// one-present-per-tick behavior and the non-vsync swapchain mode.
+    #[serde(default = "default_native_refresh_presentation")]
+    pub native_refresh_presentation: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -179,6 +185,10 @@ fn default_adaptive_widescreen() -> bool {
     true
 }
 
+fn default_native_refresh_presentation() -> bool {
+    true
+}
+
 impl Default for GraphicConfig {
     fn default() -> Self {
         Self {
@@ -194,6 +204,7 @@ impl Default for GraphicConfig {
             shader_preset: default_shader_preset(),
             apply_fog_to_all_sprites: true,
             adaptive_widescreen: true,
+            native_refresh_presentation: true,
         }
     }
 }
@@ -284,6 +295,7 @@ mod tests {
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);
         assert!(cfg.adaptive_widescreen);
+        assert!(cfg.native_refresh_presentation);
     }
 
     #[test]
@@ -320,6 +332,7 @@ mod tests {
         assert!(restored.hardware_cursor);
         assert!(restored.apply_fog_to_all_sprites);
         assert!(restored.adaptive_widescreen);
+        assert!(restored.native_refresh_presentation);
     }
 
     #[test]
@@ -376,6 +389,18 @@ mod tests {
         let restored: GraphicConfig = serde_json::from_value(json).unwrap();
 
         assert!(restored.adaptive_widescreen);
+    }
+
+    #[test]
+    fn old_profiles_enable_native_refresh_presentation() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut()
+            .expect("graphics config serializes as an object")
+            .remove("native_refresh_presentation");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert!(restored.native_refresh_presentation);
     }
 
     #[test]
