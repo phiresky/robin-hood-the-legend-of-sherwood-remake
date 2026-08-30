@@ -43,7 +43,7 @@ pub struct SaveGame {
     /// Localized/static mission name at time of save, when profile data was available.
     #[serde(default)]
     pub mission_name: String,
-    /// Stable profile identity at save time. Missing only on legacy v55
+    /// Stable profile identity at save time. Missing only on pre-metadata v56
     /// entries created before save provenance was added.
     #[serde(default)]
     pub player_profile_id: Option<u32>,
