@@ -11,7 +11,6 @@ use crate::cursor::CursorRenderer;
 
 use crate::gfx_types::GameEvent;
 use crate::input::KeyboardState;
-use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::resource_widget_id::{
@@ -725,12 +724,12 @@ pub fn draw_widget_button(
     // `(btn_h - font_height) / 2` inside the button and use horizontal
     // centred alignment.  The text-cell top thus lands at
     // `sy + (h - font_height) / 2` with the glyph cell top at that y.
-    if sprite_drawn && let Some(font) = resources.menu_button_font(base.enabled) {
+    if sprite_drawn && let Some(font) = resources.menu_button_font_any(base.enabled) {
         let tw = font.text_width(&base.text);
         let th = font.height() as i32;
         let tx = sx + (w - tw) / 2;
         let ty = sy + (h - th) / 2;
-        super::layout::render_text_screen(renderer, font, &base.text, tx, ty);
+        super::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
     }
 }
 
@@ -837,12 +836,12 @@ pub fn draw_picture_surface_rect(
     );
 }
 
-/// Render all label widgets in a frame with a single native font.
+/// Render all label widgets in a frame with one native or TrueType font.
 pub fn draw_frame_labels(
     renderer: &mut Renderer,
     transform: MenuTransform,
     frame: &FrameWnd,
-    font: &NativeFont,
+    font: &crate::native_font::Font,
     align: super::layout::TextAlign,
 ) {
     for widget in frame.widgets() {
@@ -852,7 +851,7 @@ pub fn draw_frame_labels(
         let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
             continue;
         };
-        super::layout::render_text_in_box(
+        super::layout::render_text_in_box_font(
             renderer,
             font,
             transform,
@@ -961,10 +960,10 @@ pub fn draw_widget_radio(
         renderer.draw_rect_outline_screen(sx, sy, sx + w, sy + h, border);
     }
 
-    if let Some(font) = resources.menu_button_font(base.enabled) {
+    if let Some(font) = resources.menu_button_font_any(base.enabled) {
         let tx = sx + 4;
         let ty = sy + (h - font.height() as i32) / 2;
-        super::layout::render_text_screen(renderer, font, &base.text, tx, ty);
+        super::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
     }
 }
 

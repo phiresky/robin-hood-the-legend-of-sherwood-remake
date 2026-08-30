@@ -5,7 +5,7 @@ before the `mods/` overlays; overlays take precedence over the primary
 datadir).
 
 `core-overlay-manifest.json` is the canonical, strictly sorted inventory for
-packaged targets. It pins this overlay to shipping-datadir schema 14 and records
+packaged targets. It pins this overlay to shipping-datadir schema 15 and records
 the byte length and SHA-256 digest of every required file. Packaged desktop
 startup validates the manifest and exact physical `Data/` tree before mounting
 it. Android's Gradle build validates the same source directory, then Android

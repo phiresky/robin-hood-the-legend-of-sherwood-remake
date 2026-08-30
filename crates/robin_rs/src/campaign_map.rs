@@ -5,12 +5,13 @@
 
 use crate::campaign_progress::{CampaignProgressGraph, ExhibitGridNavigator, MissionProgressState};
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::host::ApplicationContext;
 use crate::ingame_menu::blazon_set;
 use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
 use crate::ingame_menu::resources::{IngameMenuResources, MenuSurface};
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::menu::{CampaignMapState, LOCATION_POSITIONS, mission_location_from_index};
-use crate::native_font::{self, NativeFont};
+use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
@@ -127,7 +128,7 @@ struct CampaignMapAssets {
     close: Option<MenuSurface>,
     tooltip_bg: Option<MenuSurface>,
     lifetime: [Option<MenuSurface>; 5],
-    font: Option<NativeFont>,
+    font: Option<Font>,
 }
 
 struct ShortMissionDescriptionWindow {
@@ -207,6 +208,7 @@ pub(crate) struct CampaignMapModalState {
 impl CampaignMapModalState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        application_context: &ApplicationContext,
         renderer: &mut Renderer,
         campaign: &Campaign,
         profiles: &engine_profiles::ProfileManager,
@@ -220,6 +222,7 @@ impl CampaignMapModalState {
         lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
     ) -> Self {
         let items = campaign_map_items(
+            application_context,
             campaign,
             profiles,
             Some(lifetime_history),
@@ -238,7 +241,10 @@ impl CampaignMapModalState {
 
         let assets = CampaignMapAssets::load(renderer, menu_resources);
         let frame = build_campaign_frame(&items, campaign_map, &assets);
-        let graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
+        let mut graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
+        for node in &mut graph.nodes {
+            node.name = application_context.localized_mission_name(node.mission_id, &node.name);
+        }
         if presentation != CampaignPresentationMode::ClassicMap && graph.nodes.is_empty() {
             tracing::warn!("Campaign history presentation has no non-Sherwood missions");
         }
@@ -679,14 +685,14 @@ fn render_campaign_progress(
                 13
             };
             let name: String = node.name.chars().take(max_chars).collect();
-            layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
+            layout::render_text_virt_font(renderer, font, transform, &name, x + 5, y + h - 17);
             if node.attempt_count != 0 {
                 let detail = if show_achievement_badges {
                     format!("{}x  {} badge", node.attempt_count, node.badge_count)
                 } else {
                     format!("{}x", node.attempt_count)
                 };
-                layout::render_text_virt(renderer, font, transform, &detail, x + 31, y + 5);
+                layout::render_text_virt_font(renderer, font, transform, &detail, x + 31, y + 5);
             }
         }
     }
@@ -709,8 +715,8 @@ fn render_campaign_progress(
             ),
             CampaignPresentationMode::ClassicMap => unreachable!(),
         };
-        layout::render_text_virt(renderer, font, transform, &title, 25, 22);
-        layout::render_text_virt(
+        layout::render_text_virt_font(renderer, font, transform, &title, 25, 22);
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -721,7 +727,7 @@ fn render_campaign_progress(
             25,
             43,
         );
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -761,11 +767,11 @@ fn render_campaign_progress(
         } else {
             "Locked: inspect only"
         };
-        layout::render_text_virt(renderer, font, transform, action, 25, 414);
+        layout::render_text_virt_font(renderer, font, transform, action, 25, 414);
         if show_achievement_badges {
             render_progress_achievement_badges(renderer, transform, node.badges, Some(font));
         }
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -774,7 +780,7 @@ fn render_campaign_progress(
             437,
         );
         if graph.cyclic_prerequisites {
-            layout::render_text_virt(
+            layout::render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -791,10 +797,10 @@ fn render_achievement_aggregation_summary(
     transform: MenuTransform,
     scope_label: &str,
     summary: robin_engine::achievement::AchievementAggregationSummary,
-    font: &NativeFont,
+    font: &Font,
     y: i32,
 ) {
-    layout::render_text_virt(renderer, font, transform, scope_label, 25, y);
+    layout::render_text_virt_font(renderer, font, transform, scope_label, 25, y);
     for (index, presentation) in
         crate::achievement_hud::achievement_aggregation_presentations(summary)
             .iter()
@@ -811,7 +817,7 @@ fn render_achievement_aggregation_summary(
             transform.origin_x + x,
             transform.origin_y + item_y + 1,
         );
-        layout::render_text_virt(
+        layout::render_text_virt_font(
             renderer,
             font,
             transform,
@@ -829,7 +835,7 @@ fn render_progress_achievement_badges(
     renderer: &mut Renderer,
     transform: MenuTransform,
     badges: robin_engine::achievement::AchievementSet,
-    font: Option<&NativeFont>,
+    font: Option<&Font>,
 ) {
     let Some(font) = font else {
         return;
@@ -847,7 +853,7 @@ fn render_progress_achievement_badges(
             transform.origin_x + x,
             transform.origin_y + y + 1,
         );
-        layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+        layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
     }
 }
 
@@ -903,6 +909,7 @@ fn draw_achievement_badge_icon(
 }
 
 fn campaign_map_items(
+    application_context: &ApplicationContext,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
@@ -921,7 +928,8 @@ fn campaign_map_items(
             let mission_idx = loc.mission_idx?;
             let mission = campaign.missions.get(mission_idx)?;
             let profile = mission.profile(profiles);
-            let name = profile.mission_name.clone();
+            let name =
+                application_context.localized_mission_name(profile.id, &profile.mission_name);
             let location = mission_location_from_index(loc_idx).unwrap_or(MissionLocation::Nowhere);
             if matches!(
                 location,
@@ -962,7 +970,7 @@ fn load_level_descriptors(
 ) -> Option<LevelDescriptors> {
     let filename = res_descr::red_filename(mission_id);
     shipping
-        .and_then(|dd| dd.red_files.get(&filename).cloned())
+        .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
         .or_else(|| {
             let path = format!("Data/Text/{filename}");
             res_descr::load(&path).ok()
@@ -1184,7 +1192,7 @@ fn render_campaign_map(
 
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
-        layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
+        layout::render_text_virt_font(renderer, font, transform, "Tab: History & Practice", 18, 12);
         if show_achievement_badges {
             render_achievement_aggregation_summary(
                 renderer,
@@ -1219,7 +1227,7 @@ fn render_tooltip(
     show_achievement_badges: bool,
 ) {
     let Some(font) = resources
-        .and_then(|r| r.fonts.popup_scroll.as_ref())
+        .and_then(IngameMenuResources::popup_font_any)
         .or(assets.font.as_ref())
     else {
         return;
@@ -1316,7 +1324,7 @@ fn render_tooltip(
                 transform.origin_x + x,
                 transform.origin_y + y + 1,
             );
-            layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+            layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
         }
     }
 }
@@ -1456,12 +1464,9 @@ fn campaign_surface_for_resource(
     }
 }
 
-fn load_campaign_font() -> Option<NativeFont> {
+fn load_campaign_font() -> Option<Font> {
     let config = native_font::load_font_config().ok()?;
-    match native_font::load_font_by_name(&config, "Default").ok()? {
-        native_font::Font::Native(font) => Some(font),
-        native_font::Font::TrueType(_) => None,
-    }
+    native_font::load_font_by_name_for_active_locale(&config, "Default").ok()
 }
 
 fn draw_marker(renderer: &mut Renderer, transform: MenuTransform, x: i32, y: i32, blinking: bool) {

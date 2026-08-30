@@ -11,7 +11,7 @@ use robin_engine::trading::{
 
 use super::layout::{
     MENU_W, MenuTransform, TextAlign, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_in_box, render_text_virt,
+    render_text_in_box_font, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_SELL_FIVE, MT_BTN_SELL_ONE, MT_STR_TRADE_CONFIRM,
@@ -440,9 +440,9 @@ impl TradingModalState {
         if let Some(background) = resources.menu_bg[0] {
             draw_screen_background(renderer, &background);
         }
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let title = resources.menu_text.get(MT_TTL_SHERWOOD_TRADING);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -451,12 +451,12 @@ impl TradingModalState {
                 24,
             );
         }
-        if let Some(font) = resources.label_font() {
+        if let Some(font) = resources.label_font_any() {
             let ransom = substitute(
                 &resources.menu_text.get(MT_STR_TRADE_RANSOM),
                 &[&self.ransom.to_string()],
             );
-            render_text_virt(renderer, font, transform, &ransom, ROW_X, 57);
+            render_text_virt_font(renderer, font, transform, &ransom, ROW_X, 57);
             for (index, row) in self.rows.iter().enumerate() {
                 let y = ROW_Y + index as i32 * ROW_H;
                 if index == self.selected {
@@ -479,10 +479,10 @@ impl TradingModalState {
                         &row.unit_price.to_string(),
                     ],
                 );
-                render_text_virt(renderer, font, transform, &line, ROW_X, y);
+                render_text_virt_font(renderer, font, transform, &line, ROW_X, y);
             }
             if !self.status.is_empty() {
-                let _ = render_text_in_box(
+                let _ = render_text_in_box_font(
                     renderer,
                     font,
                     transform,

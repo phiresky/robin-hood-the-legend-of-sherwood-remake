@@ -505,10 +505,9 @@ pub fn load_font_by_name(config: &HashMap<String, FontEntry>, name: &str) -> Res
 
     if let Some(filename) = entry.truetype.as_deref() {
         let rel = format!("{FONT_PATH}{filename}");
-        // `TrueTypeFont::load` uses `std::fs::read` directly, so the
-        // game-relative path has to be resolved through the SbFile
-        // datadir-search machinery (unlike `NativeFont::load`, which
-        // opens via `SbFile::open`).
+        // Resolve native files when available for efficient direct access;
+        // `TrueTypeFont::load` also accepts the game-relative VFS path used by
+        // browser and Android shipping bundles.
         let resolved =
             engine_sbfile::resolve_data_path(&rel).unwrap_or_else(|| PathBuf::from(&rel));
         let tt = TrueTypeFont::load(&resolved);
@@ -526,6 +525,39 @@ pub fn load_font_by_name(config: &HashMap<String, FontEntry>, name: &str) -> Res
     }
 
     Err(native_err.unwrap_or_else(|| anyhow::anyhow!("font '{}' has no loadable filename", name)))
+}
+
+/// Locale-aware counterpart to [`load_font_by_name`]. Scripts whose retail
+/// bitmap family cannot provide full glyph coverage prefer the authored `.tfn`
+/// face, then fall back to the normal native-first behavior when that face is
+/// absent or unusable.
+pub fn load_font_by_name_for_active_locale(
+    config: &HashMap<String, FontEntry>,
+    name: &str,
+) -> Result<Font> {
+    let Some(entry) = config.get(name) else {
+        bail!("font '{}' not in config", name);
+    };
+    if crate::localization::active_locale_prefers_truetype()
+        && let Some(filename) = entry.truetype.as_deref()
+    {
+        let rel = format!("{FONT_PATH}{filename}");
+        let resolved =
+            engine_sbfile::resolve_data_path(&rel).unwrap_or_else(|| PathBuf::from(&rel));
+        let tt = TrueTypeFont::load(&resolved);
+        if tt.is_valid() && tt.has_loaded_face() {
+            tracing::info!(
+                "Font '{name}' uses locale-preferred TrueType face '{}'",
+                tt.truetype_name_str()
+            );
+            return Ok(Font::TrueType(tt));
+        }
+        tracing::warn!(
+            "Font '{name}' locale-preferred TrueType '{}' is unavailable; falling back to native family",
+            resolved.display()
+        );
+    }
+    load_font_by_name(config, name)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────

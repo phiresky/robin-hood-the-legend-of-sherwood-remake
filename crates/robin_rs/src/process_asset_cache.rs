@@ -46,6 +46,14 @@ enum State {
 
 static STATE: Mutex<State> = Mutex::new(State::Idle);
 
+/// Invalidate parsed locale-sensitive sound tables. Sprite/FX rebuilding is
+/// currently coupled to the same process cache, so the next request rebuilds
+/// the complete immutable bundle. This is infrequent and occurs only while a
+/// menu has paused the mission.
+pub fn invalidate_localized() {
+    *STATE.lock().expect("process asset cache lock poisoned") = State::Idle;
+}
+
 /// Kick off the warm-up thread. No-op if already started or on wasm
 /// (no threads there; `get_or_build` falls back to a synchronous
 /// build, and shipping datadirs make that cheap anyway).
@@ -213,6 +221,90 @@ fn build_exclamations(
         return Vec::new();
     }
 
+    build_exclamations_from(
+        profiles,
+        shipping,
+        &mut excl_res,
+        |dat_filename| {
+            let path = format!("Data/Sounds/Exclamations/{dat_filename}");
+            SbFile::read_all(&path).map_err(|status| format!("{path}: SBFile error {status}"))
+        },
+        "active language",
+        shipping.is_some(),
+    )
+    .unwrap_or_else(|error| panic!("authoritative shipping exclamation data is invalid: {error}"))
+}
+
+/// Resolve the speech metadata for a specific installed language without
+/// changing the process-wide active locale. This supplies the canonical
+/// language-independent timing table used by multiplayer and replay.
+pub fn build_exclamations_for_language(
+    pack: &crate::localization::LanguagePack,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    profiles: &ProfileManager,
+) -> Result<Vec<Vec<(u32, Vec<String>)>>, String> {
+    let mut resources = if pack.data_root.is_empty() {
+        let shipping = shipping.ok_or_else(|| {
+            format!(
+                "shipping voice pack {} has no shipping datadir",
+                pack.locale
+            )
+        })?;
+        match shipping.locale_resource(&pack.locale, "Data/Sounds/Exclamations/actors.res") {
+            Ok(Some(resources)) => resources.clone(),
+            Ok(None) => return Err(format!("voice pack {} has no actors.res", pack.locale)),
+            Err(error) => {
+                return Err(format!(
+                    "voice pack {} actors.res lookup failed: {error:#}",
+                    pack.locale
+                ));
+            }
+        }
+    } else {
+        let mut resources = ResourceManager::new();
+        let path = format!("{}/Data/Sounds/Exclamations/actors.res", pack.data_root);
+        resources.attach_resource_file(&path).map_err(|error| {
+            format!(
+                "voice pack {} actors.res failed to load: {error:#}",
+                pack.locale
+            )
+        })?;
+        resources
+    };
+
+    let data_root = pack.data_root.clone();
+    let locale = pack.locale.clone();
+    build_exclamations_from(
+        profiles,
+        shipping,
+        &mut resources,
+        |dat_filename| {
+            if data_root.is_empty() {
+                let shipping = shipping.ok_or_else(|| "shipping datadir is absent".to_owned())?;
+                let path = format!("Data/Sounds/Exclamations/{dat_filename}");
+                shipping
+                    .locale_raw(&locale, &path)
+                    .map_err(|error| error.to_string())?
+                    .map(<[u8]>::to_vec)
+                    .ok_or_else(|| format!("{path}: missing from shipping locale {locale}"))
+            } else {
+                let path = format!("{data_root}/Data/Sounds/Exclamations/{dat_filename}");
+                SbFile::read_all(&path).map_err(|status| format!("{path}: SBFile error {status}"))
+            }
+        },
+        &format!("canonical locale {}", pack.locale),
+        true,
+    )
+}
+
+fn build_exclamations_from(
+    profiles: &ProfileManager,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    excl_res: &mut ResourceManager,
+    mut read_definition: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    source: &str,
+    strict: bool,
+) -> Result<Vec<Vec<(u32, Vec<String>)>>, String> {
     // Collect unique exclamation IDs from all profile types. The id's
     // non-zero LE bytes spell the actor file's name suffix.
     let mut files_needed = std::collections::BTreeMap::<u32, String>::new();
@@ -246,67 +338,63 @@ fn build_exclamations(
     let mut result = Vec::new();
     let mut total_exclamations = 0usize;
     for (&excl_id, dat_filename) in &files_needed {
-        let dat_path = format!("Data/Sounds/Exclamations/{dat_filename}");
-        let data = match SbFile::read_all(&dat_path) {
+        let data = match read_definition(dat_filename) {
             Ok(d) => d,
             Err(e) => {
-                if shipping.is_some() {
-                    panic!(
-                        "shipping mission selected exclamation profile {excl_id:#010x}, but {dat_path} is unavailable: {e}"
-                    );
+                if strict {
+                    return Err(format!(
+                        "failed to read {source} exclamation file '{dat_filename}': {e}"
+                    ));
                 }
-                tracing::warn!("Failed to read exclamation file '{dat_path}': error {e}");
+                tracing::warn!("Failed to read {source} exclamation file '{dat_filename}': {e}");
                 continue;
             }
         };
 
         let prefix_id = excl_id & 0xFFFF_0000;
-        let (table_id, exclamations) = match robin_engine::sound_cache::parse_exclamation_file(
-            &data, prefix_id,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                if shipping.is_some() {
-                    panic!(
-                        "shipping exclamation profile {excl_id:#010x} has invalid metadata in {dat_filename}: {e}"
-                    );
+        let (table_id, exclamations) =
+            match robin_engine::sound_cache::parse_exclamation_file(&data, prefix_id) {
+                Ok(r) => r,
+                Err(e) => {
+                    if strict {
+                        return Err(format!(
+                            "failed to parse {source} exclamation file '{dat_filename}': {e}"
+                        ));
+                    }
+                    tracing::warn!("Failed to parse exclamation file '{dat_filename}': {e}");
+                    continue;
                 }
-                tracing::warn!("Failed to parse exclamation file '{dat_filename}': {e}");
-                continue;
-            }
-        };
+            };
 
         // Resolve variant indices to WAV file paths via resource manager
-        let resolved: Vec<(u32, Vec<String>)> = exclamations
-            .into_iter()
-            .map(|(action_id, variant_indices)| {
-                let paths: Vec<String> = variant_indices
-                    .into_iter()
-                    .filter_map(|vi| match excl_res.get_sample(table_id as i32, vi as usize) {
-                        Ok(sample) => Some(sample.to_string()),
-                        Err(error) if shipping.is_some() => panic!(
-                            "shipping exclamation profile {excl_id:#010x} cannot resolve table {table_id} variant {vi}: {error}"
-                        ),
-                        Err(error) => {
-                            tracing::warn!(
-                                "Failed to resolve exclamation profile {excl_id:#010x}, table {table_id}, variant {vi}: {error}"
-                            );
-                            None
-                        }
-                    })
-                    .collect();
-                (action_id, paths)
-            })
-            .collect();
+        let mut resolved = Vec::with_capacity(exclamations.len());
+        for (action_id, variant_indices) in exclamations {
+            let mut paths = Vec::with_capacity(variant_indices.len());
+            for variant_index in variant_indices {
+                match excl_res.get_sample(table_id as i32, variant_index as usize) {
+                    Ok(path) => paths.push(path.to_string()),
+                    Err(error) if strict => {
+                        return Err(format!(
+                            "{source} actors.res cannot resolve table {table_id} variant {variant_index}: {error:#}"
+                        ));
+                    }
+                    Err(error) => tracing::warn!(
+                        "{source} actors.res cannot resolve table {table_id} variant {variant_index}: {error:#}"
+                    ),
+                }
+            }
+            resolved.push((action_id, paths));
+        }
 
         total_exclamations += resolved.len();
         result.push(resolved);
     }
 
     tracing::info!(
+        source,
         "Loaded exclamation cache: {} profiles, {} exclamations",
         files_needed.len(),
         total_exclamations,
     );
-    result
+    Ok(result)
 }

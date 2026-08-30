@@ -7,7 +7,7 @@
 
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::layout::{
-    MenuTransform, dim_screen, draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    MenuTransform, dim_screen, draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::resources::{
     IngameMenuResources, MT_BTN_BACK, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_GRAPHICS, MT_BTN_LOAD,
@@ -903,16 +903,16 @@ impl OptionsTaskState {
             OptionsPage::Shortcuts => resources.menu_text.get(MT_BTN_SHORTCUTS),
             OptionsPage::Gameplay => "Gameplay".to_string(),
         };
-        if let Some(font) = resources.title_font() {
-            render_text_virt(renderer, font, self.transform, &title, 20, 20);
+        if let Some(font) = resources.title_font_any() {
+            render_text_virt_font(renderer, font, self.transform, &title, 20, 20);
         }
-        if let Some(font) = resources.label_font() {
+        if let Some(font) = resources.label_font_any() {
             let help = match self.page {
                 OptionsPage::Hub => "Select a settings page.",
                 OptionsPage::Shortcuts => "Click a binding, then press a key. Mouse wheel scrolls.",
                 _ => "Click a value or use Left/Right. OK accepts; Cancel restores.",
             };
-            render_text_virt(renderer, font, self.transform, help, 24, 76);
+            render_text_virt_font(renderer, font, self.transform, help, 24, 76);
         }
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
         if let Some(cursor) = cursor {
@@ -1287,15 +1287,15 @@ impl SaveLoadTaskState {
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let title = if self.mode == SaveLoadMode::Save {
                 "Save Game"
             } else {
                 "Load Game"
             };
-            render_text_virt(renderer, font, self.transform, title, 30, 8);
+            render_text_virt_font(renderer, font, self.transform, title, 30, 8);
         }
-        if let Some(font) = resources.label_font() {
+        if let Some(font) = resources.label_font_any() {
             let total = self.visible.len() + usize::from(self.mode == SaveLoadMode::Save);
             for offset in 0..12 {
                 let row = self.scroll + offset;
@@ -1320,7 +1320,7 @@ impl SaveLoadTaskState {
                     )
                 };
                 let prefix = if selected { "> " } else { "  " };
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     self.transform,
@@ -1330,7 +1330,7 @@ impl SaveLoadTaskState {
                 );
             }
             if self.mode == SaveLoadMode::Save {
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     self.transform,

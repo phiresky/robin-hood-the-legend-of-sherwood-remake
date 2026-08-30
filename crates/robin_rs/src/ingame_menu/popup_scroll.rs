@@ -3,7 +3,7 @@
 //! A 496x463 parchment window with a text box at `(50,50)..(450,375)`,
 //! an optional right-side picture widget at `(446-w,50)..(446,50+h)`,
 //! and a single OK button (`RHID_OK`) at the bottom.  Pagination is
-//! handled by the shared `render_text_in_box_with_drop_cap` routine;
+//! handled by the shared `render_text_in_box_with_drop_cap_font` routine;
 //! it returns the tail of the string that didn't fit, and we loop
 //! until the whole body has been shown.
 //!
@@ -32,9 +32,8 @@ use crate::widget::{FrameWnd, WidgetPicture};
 use robin_engine::resource_ids;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TextFontTable, TextWidgetState, TooltipState,
-    dim_screen, draw_background, enter_modal_gpu_phase, render_text_in_box_with_drop_cap,
-    render_text_virt,
+    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
+    enter_modal_gpu_phase, render_text_in_box_with_drop_cap_font, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_OK, MenuSurface};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -462,42 +461,43 @@ impl PopupScrollModalState {
             );
         }
 
-        if let (Some(t), Some(font)) = (self.title.as_deref(), resources.title_font())
+        if let (Some(t), Some(font)) = (self.title.as_deref(), resources.title_font_any())
             && !t.is_empty()
         {
             let tw = font.text_width(t);
             let tx = self.virt_x + BODY_LEFT + (BODY_W - tw) / 2;
             let ty = self.virt_y + BODY_TOP + (TITLE_H - font.height() as i32) / 2;
-            render_text_virt(renderer, font, self.transform, t, tx, ty);
+            render_text_virt_font(renderer, font, self.transform, t, tx, ty);
         }
 
         let body_font = self
             .body_font_name
             .as_deref()
-            .and_then(|name| resources.font_by_name(name))
-            .or_else(|| resources.popup_font());
-        let fonts = TextFontTable::uniform(body_font);
-        self.text_remaining = render_text_in_box_with_drop_cap(
-            renderer,
-            &fonts,
-            TextWidgetState::Default,
-            self.transform,
-            &self.page_body,
-            self.virt_x + BODY_LEFT,
-            self.body_y,
-            BODY_W,
-            self.body_h,
-            self.drop_cap_w,
-            self.drop_cap_h,
-            self.align,
-        );
+            .and_then(|name| resources.font_by_name_any(name))
+            .or_else(|| resources.popup_font_any());
+        self.text_remaining = match body_font {
+            Some(font) => render_text_in_box_with_drop_cap_font(
+                renderer,
+                font,
+                self.transform,
+                &self.page_body,
+                self.virt_x + BODY_LEFT,
+                self.body_y,
+                BODY_W,
+                self.body_h,
+                self.drop_cap_w,
+                self.drop_cap_h,
+                self.align,
+            ),
+            None => self.page_body.clone(),
+        };
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             self.tooltip
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
         }

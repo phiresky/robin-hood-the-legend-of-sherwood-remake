@@ -1,9 +1,9 @@
 # Multiplayer architecture
 
-Updated 2026-08-19. Multiplayer uses a server-ordered input stream with a
+Updated 2026-08-30. Multiplayer uses a server-ordered input stream with a
 small scheduling delay, predictive simulation, rollback for late inputs,
 periodic state-hash verification, and authoritative snapshots for joins. The
-wire protocol is version 15; older protocol compatibility is unsupported.
+wire protocol is version 29; older protocol compatibility is unsupported.
 
 ## Seat model
 
@@ -69,7 +69,7 @@ world through that host viewport while HUD/input query the Engine selection for
 camera design: split-screen or replay-from-another-seat would need an explicit
 host viewport policy.
 
-## Protocol 15
+## Protocol 29
 
 Messages are bitcode-encoded binary frames, length-prefixed on a single
 bidirectional QUIC stream per peer. The handshake rejects a different
@@ -78,18 +78,28 @@ protocol version.
 | Direction | Message | Purpose |
 | --- | --- | --- |
 | client → server | `Hello { protocol_version, nickname }` | open or resume a session |
-| server → client | `Welcome { your_seat, mission_id, mission_seed, sim_config, host_nickname }` | authoritative mission construction and seat assignment |
+| server → client | `Welcome { your_seat, session_id, mission_id, mission_seed, sim_config, speech_timing_locale, host_nickname }` | authoritative session identity, mission construction, speech timing, and seat assignment |
 | client → server | `Input { origin_frame, command }` | propose a local command |
 | server → peers | `BroadcastInput { server_frame, origin_frame, target_frame, input }` | globally ordered, scheduled input |
 | server → peers | `StateHash { frame, hash, clock_frame, ms_until_next_frame }` | desync detection and pacing sample |
 | server → joining peer | `InitialSnapshot { frame, engine_bytes }` | authoritative mid-mission state |
 | client → server | `ReadyToSim { frame }` | peer loaded and adopted the snapshot |
 | server → peers | `BeginSim { frame, start_epoch_ms }` | release the start barrier |
-| either direction | `ModalDismiss { kind, result }` | synchronize a blocking modal outside the normal frame drain |
+| client → server | `ModalProposal { instance, kind, result, requested_frame }` | present a non-authoritative client request to the host |
+| server → clients | `ModalDecision { instance, kind, result, decision_frame }` | commit the host's sole authoritative result for one exact modal occurrence |
+| server → client | `ReconnectRequired { reason }` | discard the prediction future and perform a complete handshake/snapshot admission |
+| server → clients | `PrepareSnapshotTransition { id, payload }` | distribute exact host-authored save or campaign-exit bytes for validation and retention |
+| client → server | `SnapshotTransitionReady { id }` | acknowledge the exact prepared transition bytes |
+| server → clients | `CommitSnapshotTransition { id }` | release the transition only after every current peer is ready |
 
 `Welcome` is authoritative. A peer must not substitute a local mission, seed,
 or `SimConfig` after decode failure. The snapshot payload uses the current
 Engine schema and is rejected rather than migrated when incompatible.
+`speech_timing_locale: Some(locale)` likewise requires that exact validated
+voice pack on every peer. `None` is an explicit selection of the installation's
+base `Data/Sounds`, not a missing field or permission to auto-select a local
+presentation language. Browser connection state tracks "Welcome pending"
+separately from the received `None` value.
 
 ## Input scheduling and rollback
 
@@ -140,12 +150,22 @@ must not be repaired by silently adopting a new default Engine.
 - Browser clients are currently unsupported: the transport is iroh-only and
   iroh's wasm (relay-over-WebSocket) support has not been wired in yet.
 
-## Blocking modals
+## Modal authority and mission transitions
 
-Blocking dialogs stop the ordinary per-frame command drain, so their dismissal
-uses `ModalDismiss` rather than a scheduled `PlayerCommand`. The normal replay
-record still captures the dismissal at the mission-frame boundary. New modal
-types must define their network/replay ordering explicitly.
+Pause-side screens and scripted modals are frame-owned states: they poll and
+render once, then return to the mission driver so transport, HTTP, replay, and
+the multiplayer simulation continue. A client may propose a result for a
+session-bound modal instance, but only the host's `ModalDecision` closes it.
+The normal replay record captures that decision at the mission-frame boundary.
+
+Host-only save, load, restart, QuickLoad, and campaign-exit operations use an
+exact `Prepare`/`Ready`/`Commit` barrier. Clients first decode, validate, and
+retain the exact host bytes. The host commits only after every currently
+connected peer acknowledges the same session-bound transition id; reconnecting
+peers must acknowledge again. Participants then leave the old mission and
+perform a complete handshake/readiness admission for the replacement state.
+Local multiplayer saves remain explicitly diagnostic and are never accepted as
+authoritative load input.
 
 ## CLI
 

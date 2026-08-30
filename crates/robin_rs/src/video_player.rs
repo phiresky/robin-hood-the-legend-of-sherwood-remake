@@ -11,8 +11,8 @@
 //! The original game ships two cinematics:
 //! `Data/Cinematics/Intro.ogg` and `Data/Cinematics/Outro.ogg`.
 //!
-//! ESC, mouse-click, or window-close all skip playback. Missing files
-//! log a warning and return `Ok(())` (silent-skip).
+//! ESC, mouse-click, or window-close all skip playback. Missing configured
+//! cinematic content is returned as an explicit error to the calling menu.
 //!
 //! The whole module is gated on the `video` cargo feature. When the
 //! feature is off (e.g. `wasm32-unknown-emscripten` builds, which
@@ -99,11 +99,28 @@ pub async fn play_video(
         tracing::info!("sound disabled, skipping cinematic {path}");
         return Ok(());
     }
+    // ffmpeg requires a native pathname. Shipping browser/Android bundles
+    // expose cinematics as VFS bytes, so materialize those bytes for the
+    // decoder while retaining the temporary file for the whole playback.
+    let mut bundled_video = None;
     let resolved = match resolve_data_path(path) {
-        Some(p) => p,
+        Some(path) => path,
         None => {
-            tracing::warn!("Video file not found: {path}, skipping playback");
-            return Ok(());
+            use std::io::Write as _;
+
+            let bytes = robin_engine::sbfile::SbFile::read_all(path)
+                .map_err(|status| format!("Video file {path} is unavailable (SBFile {status})"))?;
+            let mut temporary = tempfile::Builder::new()
+                .prefix("robin-cinematic-")
+                .suffix(".ogg")
+                .tempfile()
+                .map_err(|error| format!("create temporary cinematic for {path}: {error}"))?;
+            temporary
+                .write_all(&bytes)
+                .map_err(|error| format!("write temporary cinematic for {path}: {error}"))?;
+            let resolved = temporary.path().to_owned();
+            bundled_video = Some(temporary);
+            resolved
         }
     };
     tracing::info!("Playing video: {}", resolved.display());
@@ -117,6 +134,9 @@ pub async fn play_video(
     // ── Open container ──────────────────────────────────────────────
     let mut ictx = ffmpeg_next::format::input(&resolved)
         .map_err(|e| format!("Failed to open {}: {e}", resolved.display()))?;
+    // Keep the bundle-backed temporary alive until every decoder/container
+    // handle has finished using its path.
+    let _bundled_video = bundled_video;
 
     // ── Video stream ────────────────────────────────────────────────
     let video_idx = ictx

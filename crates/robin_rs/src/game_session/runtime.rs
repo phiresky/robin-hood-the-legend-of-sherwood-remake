@@ -175,6 +175,7 @@ pub(super) struct MissionSimulationPhase<'a> {
 pub(super) struct MissionAudioPhase<'a> {
     pub(super) host: &'a mut Host,
     pub(super) manager: &'a mut EngineManager,
+    pub(super) assets: &'a Arc<LevelAssets>,
 }
 
 /// Borrow issued for render and presentation work.
@@ -277,6 +278,7 @@ impl MissionWorld {
         MissionAudioPhase {
             host: &mut self.host,
             manager: &mut self.manager,
+            assets: &self.assets,
         }
     }
 

@@ -2248,6 +2248,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
             sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
             *sherwood_flow = Some(SherwoodCampaignFlow::Map(
                 campaign_map::CampaignMapModalState::new(
+                    &host.application_context,
                     renderer,
                     campaign,
                     &assets.profile_manager,
@@ -2331,7 +2332,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(last_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path)
@@ -2416,7 +2417,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(mission_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path).ok()

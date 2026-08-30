@@ -34,7 +34,7 @@ fn shipping_loading_pak_pictures(
 ) -> Option<Vec<Picture>> {
     let dd = shipping?;
     let key = shipping_pak_key(pak_path);
-    let encoded = dd.pak_files.get(&key)?;
+    let encoded = dd.localized_pak(&key)?;
     let mut pictures = Vec::with_capacity(encoded.len());
     for (idx, pic) in encoded.iter().enumerate() {
         match pic.decode() {
@@ -607,13 +607,13 @@ impl LoadingScreenRenderer {
         state.initialize(width as u32, height as u32, max_level);
         state.set_height_field(height_field);
 
-        // Try to load the "Version" font for the overlay text. legacy implementation stores it
-        // behind `SBFont`, so keep either native bitmap or TrueType resolves
-        // and dispatch at render time.
+        // The legacy implementation stores loading fonts behind `SBFont`;
+        // keep either native bitmap or locale-selected TrueType resolves and
+        // dispatch at render time.
         let font_config = crate::native_font::load_font_config().ok();
         let load_font = |name: &str| -> Option<Font> {
             let cfg = font_config.as_ref()?;
-            match crate::native_font::load_font_by_name(cfg, name) {
+            match crate::native_font::load_font_by_name_for_active_locale(cfg, name) {
                 Ok(font) if font.is_renderable() => Some(font),
                 Ok(Font::TrueType(tt)) => {
                     tracing::info!(

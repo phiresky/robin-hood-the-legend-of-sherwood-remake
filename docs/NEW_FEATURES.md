@@ -237,6 +237,23 @@ A list of which additional features we have added, which ones we might still wan
   explicitly preload only their build-reachable font/UI subset. See
   `assets/core-datadir/README.md`.
 
+- **Runtime language switching.** Main-menu Options discovers and validates
+  every installed retail locale and offers an application-global `Automatic`
+  or explicit language choice without restarting the game. Active-mission and
+  pause-menu Options deliberately do not expose the selector; the selected
+  language applies when the next session is built. Applying a language
+  atomically replaces loose-datadir or shipping-bundle lookup, rebuilds eager
+  menu presentation caches, and returns to Options. Text never silently falls
+  through to a different language; only missing recorded speech and
+  cinematics may use an installed English pack. Shipping datadir format v15
+  preserves complete per-locale overlays for native, Android, and browser
+  packages; older manifests fail loudly and must be regenerated. Generated
+  character names and persisted save labels remain frozen, multiplayer mission
+  text and playback are client-local, and logical speech timing comes from
+  either a stable canonical voice pack or the host's explicit base
+  `Data/Sounds` selection rather than the client's active presentation
+  language.
+
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
   `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,
@@ -560,7 +577,6 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Allow switching language in settings mid-game.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - throw something skill that makes a noise somewhere else so guards run there
