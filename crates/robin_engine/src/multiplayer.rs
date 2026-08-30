@@ -1065,6 +1065,7 @@ mod tests {
         sim_config.difficulty = crate::player_profile::DifficultyLevel::custom(rules).unwrap();
         let msg = NetMsg::Welcome {
             your_seat: PlayerId(1),
+            session_id: MultiplayerSessionId([19; 16]),
             mission_id: "custom".to_owned(),
             mission_seed: 19,
             sim_config,
@@ -1091,6 +1092,7 @@ mod tests {
         sim_config.difficulty = crate::player_profile::DifficultyLevel::Custom(rules);
         let message = NetMsg::Welcome {
             your_seat: PlayerId(1),
+            session_id: MultiplayerSessionId([1; 16]),
             mission_id: "invalid".to_owned(),
             mission_seed: 1,
             sim_config,
