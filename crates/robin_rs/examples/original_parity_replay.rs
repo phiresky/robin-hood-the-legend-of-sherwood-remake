@@ -9152,6 +9152,70 @@ fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
     })
 }
 
+fn parity_float_is_positive_zero(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("bits"))
+        .and_then(serde_json::Value::as_u64)
+        == Some(0)
+}
+
+fn original_blocked_box_is_unset(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.len() != 2 {
+        return false;
+    }
+    ["min", "max"].into_iter().all(|corner| {
+        let Some(point) = object.get(corner).and_then(serde_json::Value::as_object) else {
+            return false;
+        };
+        point.len() == 2
+            && ["x", "y"]
+                .into_iter()
+                .all(|axis| point.get(axis).is_some_and(parity_float_is_positive_zero))
+    })
+}
+
+/// Translate Original-only wire representations into their Rust parity
+/// projection equivalents.
+///
+/// `RHOrder::mulNextID` starts at zero (`RHorder.cpp:13-21`), whereas Rust
+/// deliberately uses `NonZeroU32` order IDs. This is the same +1 translation
+/// used while adopting legacy saves, but runtime snapshots must retain their
+/// authoritative raw payload and apply it only while comparing.
+///
+/// Original's `SBGeoBoundingBox2D::Reset` clears only
+/// `mbBoxBoundsAreSet` (`sblibng/SBGeoBoundingBox2D.cpp:299-305`). The parity
+/// emitter omits that bit and therefore publishes a newly constructed unset
+/// blocked box as an all-positive-zero object. Rust represents the same unset
+/// state as `null`.
+fn canonicalize_original_runtime_representation(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                canonicalize_original_runtime_representation(value);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                if key == "last_processed_order_id"
+                    && let Some(original) = child.as_u64()
+                    && original < u64::from(u32::MAX)
+                {
+                    *child = serde_json::Value::from(original + 1);
+                } else if key == "blocked_box" && original_blocked_box_is_unset(child) {
+                    *child = serde_json::Value::Null;
+                } else {
+                    canonicalize_original_runtime_representation(child);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'static str {
     match kind {
         robin_engine::element::EntityIdKind::Pc => "pc",
@@ -9525,6 +9589,7 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
+            canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
             collect_json_subset_differences(
@@ -13111,6 +13176,75 @@ mod tests {
                 "current human snapshot accepted missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn runtime_snapshot_canonicalizes_original_zero_based_order_ids() {
+        let mut expected = serde_json::json!({
+            "sprite": {
+                "last_processed_order_id": 41,
+                "unrelated_id": 41
+            },
+            "nested": [{"last_processed_order_id": 0}],
+            "sentinel": {"last_processed_order_id": u32::MAX}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert_eq!(expected["sprite"]["last_processed_order_id"], 42);
+        assert_eq!(expected["sprite"]["unrelated_id"], 41);
+        assert_eq!(expected["nested"][0]["last_processed_order_id"], 1);
+        assert_eq!(expected["sentinel"]["last_processed_order_id"], u32::MAX);
+    }
+
+    #[test]
+    fn runtime_snapshot_canonicalizes_only_zero_original_blocked_boxes() {
+        let float = |bits| serde_json::json!({"bits": bits, "value": 0.0});
+        let zero_box = serde_json::json!({
+            "min": {"x": float(0), "y": float(0)},
+            "max": {"x": float(0), "y": float(0)}
+        });
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": zero_box},
+            "active_position": {"blocked_box": {
+                "min": {"x": float(0), "y": float(0)},
+                "max": {"x": float(0x3f80_0000), "y": float(0)}
+            }},
+            "unrelated_box": zero_box
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert!(expected["position"]["blocked_box"].is_null());
+        assert!(expected["active_position"]["blocked_box"].is_object());
+        assert!(expected["unrelated_box"].is_object());
+    }
+
+    #[test]
+    fn runtime_snapshot_compatibility_projection_matches_rust_representation() {
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": {
+                "min": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                },
+                "max": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                }
+            }},
+            "sprite": {"last_processed_order_id": 41}
+        });
+        let actual = serde_json::json!({
+            "position": {"blocked_box": null},
+            "sprite": {"last_processed_order_id": 42}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+        let mut differences = Vec::new();
+        collect_json_subset_differences("runtime", &expected, &actual, &mut differences);
+
+        assert!(differences.is_empty(), "{differences:#?}");
     }
 
     #[test]
