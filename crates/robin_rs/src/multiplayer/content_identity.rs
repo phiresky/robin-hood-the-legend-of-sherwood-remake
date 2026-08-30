@@ -335,6 +335,7 @@ fn verify_manifest_file(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_relative_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.starts_with('/')
