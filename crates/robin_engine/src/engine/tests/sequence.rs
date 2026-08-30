@@ -3422,9 +3422,17 @@ fn transition_resumed_pass_door_reach_event_obeys_real_action_followers() {
             .element_terminated(route_id, 0);
 
         let sim = crate::sim_rng::test_context();
-        let ((), stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
-            engine.dispatch_condolations_for_owner_boundary(&sim, owner, &assets);
-        });
+        let (((), reentrant_order), stimuli) =
+            crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+                crate::engine::soldier_helpers::capture_owner_boundary_reentrant_order(|| {
+                    engine.dispatch_condolations_for_owner_boundary(&sim, owner, &assets);
+                })
+            });
+        assert_eq!(
+            reentrant_order,
+            ["waypoint", "self_stimuli"],
+            "ReachPoint stays inside route-arrival Think: its script-side Halt must run before a recursively surfaced ReturnToDuty can launch the next Move"
+        );
         stimuli
             .into_iter()
             .filter(|(event_owner, stimulus)| {
