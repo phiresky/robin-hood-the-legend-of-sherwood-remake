@@ -25,9 +25,10 @@ use crate::ingame_menu::layout::{
 };
 use crate::ingame_menu::resources::{
     MT_BTN_LOAD, MT_BTN_OPTIONS, MT_BTN_QUIT_GAME, MT_BTN_SELECT_PLAYER, MT_BTN_SHOW_CREDITS,
-    MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_STR_CARNAGE_FACTOR,
-    MT_STR_DIFFICULTY_EASY, MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL,
-    MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY, MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE,
+    MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_PORT_STR_DIFFICULTY_CUSTOM,
+    MT_PORT_STR_DIFFICULTY_LEGENDARY, MT_STR_CARNAGE_FACTOR, MT_STR_DIFFICULTY_EASY,
+    MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY,
+    MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
@@ -895,6 +896,8 @@ fn difficulty_to_string(resources: &IngameMenuResources, level: DifficultyLevel)
         DifficultyLevel::Easy => MT_STR_DIFFICULTY_EASY,
         DifficultyLevel::Medium => MT_STR_DIFFICULTY_MEDIUM,
         DifficultyLevel::Hard => MT_STR_DIFFICULTY_HARD,
+        DifficultyLevel::Legendary => MT_PORT_STR_DIFFICULTY_LEGENDARY,
+        DifficultyLevel::Custom(_) => MT_PORT_STR_DIFFICULTY_CUSTOM,
     };
     resources.menu_text.get(id)
 }

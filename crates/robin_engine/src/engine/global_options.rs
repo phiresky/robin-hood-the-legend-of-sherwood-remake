@@ -68,6 +68,9 @@ pub struct SimConfig {
 
 impl SimConfig {
     pub fn from_options(options: &GlobalOptions, difficulty: DifficultyLevel) -> Self {
+        difficulty
+            .validate()
+            .expect("cannot construct simulation config with invalid difficulty rules");
         Self {
             difficulty,
             fix_hard_reaction_times: true,
@@ -84,6 +87,11 @@ impl SimConfig {
             synchronous_pathfinding: false,
             sherwood_trading: true,
         }
+    }
+
+    pub fn validate(self) -> Result<Self, crate::player_profile::InvalidDifficultyRules> {
+        self.difficulty.validate()?;
+        Ok(self)
     }
 }
 
