@@ -3573,6 +3573,9 @@ fn append_legacy_retained_terminal_success_repair(
 
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
     engine
+        .parity_replay_setup()
+        .refresh_sprite_dimension_cache(assets);
+    engine
         .advance_frame(
             assets,
             robin_engine::engine::SimulationFrameInput::no_hourglass().with_post_initialize(true),
@@ -8603,6 +8606,7 @@ fn initialize_headless_engine(
     .expect("initialize engine");
     robin_parity::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
+    assets.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)
 }
 
@@ -8728,6 +8732,11 @@ fn initialize_engine(
         &profiles,
         "Data/Sounds",
     );
+    // Original's CreateTargetSprite writes the active bank frame's native
+    // dimensions into the serialized RHSprite frontier. The parity engine is
+    // intentionally headless, so publish the immutable frame metadata used
+    // to project that post-render state without mutating the simulation.
+    assets.pixel_opacity = Some(host.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 

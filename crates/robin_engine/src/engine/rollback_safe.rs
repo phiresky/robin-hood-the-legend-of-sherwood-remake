@@ -4071,6 +4071,135 @@ impl Engine {
 }
 
 impl ParityReplaySetup<'_> {
+    /// Cross Original's post-RecordFrame presentation boundary.
+    ///
+    /// `RHSprite::CreateTargetSprite` overwrites the serialized width/height
+    /// cache with the current bank frame while refreshing visible entities.
+    /// Rust rendering is read-only, so the parity runner applies that legacy
+    /// side effect explicitly after comparing each recorded frame.
+    pub fn refresh_sprite_dimension_cache(&mut self, assets: &LevelAssets) {
+        let Some(frames) = assets.pixel_opacity.as_ref() else {
+            return;
+        };
+        let camera = &self.engine.inner.feedback.cutscene_camera;
+        let screen = EngineInner::director_camera_view_size();
+        let view = crate::sprite::BBox::from_coords(
+            camera.view_position.x,
+            camera.view_position.y,
+            camera.view_position.x + screen.x / camera.zoom_factor,
+            camera.view_position.y + (screen.y - super::PANNEL_HEIGHT) / camera.zoom_factor,
+        );
+        let updates = self
+            .engine
+            .inner
+            .world
+            .entities
+            .occupied()
+            .filter_map(|(id, entity)| {
+                let element = entity.element_data();
+                if !element.active || element.hidden_in_building {
+                    return None;
+                }
+                // RHElementScroll::Refresh only delegates to the ordinary object
+                // renderer in these two states. Invisible and taken scrolls keep
+                // their saved dimension cache even when their geometry intersects
+                // the camera view.
+                if matches!(entity, crate::element::Entity::Scroll(_))
+                    && !matches!(
+                        self.engine.inner.scroll_status(id),
+                        super::ScrollStatus::Visible | super::ScrollStatus::Opened
+                    )
+                {
+                    return None;
+                }
+                let sprite = entity.sprite();
+                let Some(row) = sprite
+                    .current_scripts_opt()
+                    .and_then(|scripts| scripts.get(usize::from(sprite.current_row)))
+                else {
+                    return None;
+                };
+                let Some(&bank_id) = row.frame_ids.get(usize::from(sprite.current_frame)) else {
+                    return None;
+                };
+                let Some((width, height)) = frames.sprite_dimensions(bank_id) else {
+                    return None;
+                };
+                // IsOnScreen asks FrameHolder for the current surface dimensions;
+                // the serialized cache is not consulted until CreateTargetSprite
+                // publishes those same dimensions. Using the stale cache here can
+                // incorrectly cull a frame sitting on the viewport boundary.
+                let sprite_position = entity.cxx_position_sprite();
+                let offset = sprite.current_offset();
+                let sprite_box = crate::sprite::BBox::from_coords(
+                    sprite_position.x + offset.x,
+                    sprite_position.y + offset.y,
+                    sprite_position.x + offset.x + f32::from(width),
+                    sprite_position.y + offset.y + f32::from(height),
+                );
+                if !sprite_box.is_intersecting(&view) {
+                    return None;
+                }
+
+                // CreateTargetSprite resets mbMasked before applying the current
+                // grid mask list. Keep this serialized presentation cache in step
+                // with the same mask query used by the renderer.
+                let kind = entity.kind();
+                let masked = if kind.has_valid_box_for_masking() {
+                    let world_box = crate::coordinates::MapBBox::from_coords(
+                        sprite_box.min.x,
+                        sprite_box.min.y,
+                        sprite_box.max.x,
+                        sprite_box.max.y,
+                    );
+                    let is_flying_human = element.posture == crate::element::Posture::Flying;
+                    if is_flying_human || kind.is_projectile() {
+                        !self
+                            .engine
+                            .inner
+                            .fast_grid()
+                            .get_masks_applied_to_projectile(
+                                self.engine.inner.fast_grid().level.special_layer,
+                                &world_box,
+                                element.position(),
+                                is_flying_human,
+                                self.engine.inner.sight_obstacles(assets),
+                            )
+                            .is_empty()
+                    } else {
+                        !self
+                            .engine
+                            .inner
+                            .fast_grid()
+                            .get_masks_applied_to_character(
+                                element.layer(),
+                                &world_box,
+                                element.position_map(),
+                            )
+                            .is_empty()
+                    }
+                } else {
+                    false
+                };
+                Some((id, width, height, masked))
+            })
+            .collect::<Vec<_>>();
+
+        for (id, width, height, masked) in updates {
+            let sprite = self
+                .engine
+                .inner
+                .world
+                .entities
+                .get_mut(id)
+                .expect("presentation refresh entity disappeared");
+            let sprite = sprite.sprite_mut();
+            sprite.current_width = width;
+            sprite.current_height = height;
+            sprite.masked = masked;
+        }
+    }
+
     /// Advance a frame whose commands were independently recorded by the
     /// Original parity tracer.
     ///
@@ -5363,6 +5492,77 @@ mod tests {
             parity_position_sprite(&state),
             (2791.0_f32.to_bits(), 171.0_f32.to_bits())
         );
+    }
+
+    #[test]
+    fn parity_runtime_refreshes_bank_dimensions_only_after_recorded_boundary() {
+        struct Frames;
+        impl crate::engine::PixelOpacityLookup for Frames {
+            fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+                (bank_id == 73).then_some((48, 19))
+            }
+
+            fn is_pixel_opaque(
+                &self,
+                _bank_id: u32,
+                _x: u16,
+                _y: u16,
+                _blue_pixels_are_in: bool,
+            ) -> bool {
+                false
+            }
+        }
+
+        let mut inner = EngineInner::new();
+        let mut sprite = crate::sprite::Sprite {
+            current_width: 44,
+            current_height: 20,
+            current_row: 0,
+            current_frame: 1,
+            masked: true,
+            ..Default::default()
+        };
+        // The stale 44-pixel cache ends before the viewport, while the
+        // current 48-pixel bank surface intersects it. Original IsOnScreen
+        // uses the latter before CreateTargetSprite publishes the cache.
+        sprite
+            .position_iface
+            .set_map_position(crate::coordinates::MapPoint::new(-47.0, 0.0));
+        sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![72, 73],
+            offsets: vec![
+                crate::coordinates::SpriteFrameOffset::ZERO,
+                crate::coordinates::SpriteFrameOffset::ZERO,
+            ],
+            ..Default::default()
+        }]);
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: true,
+                sprite,
+                ..Default::default()
+            },
+            fx: Default::default(),
+        }));
+        let assets = LevelAssets {
+            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            ..LevelAssets::new()
+        };
+
+        let mut engine = Engine { inner };
+        let before_refresh = engine.parity_entity_runtime_state(id, &assets);
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets);
+        let after_refresh = engine.parity_entity_runtime_state(id, &assets);
+
+        assert_eq!(before_refresh["sprite"]["width"], 44);
+        assert_eq!(before_refresh["sprite"]["height"], 20);
+        assert_eq!(before_refresh["sprite"]["masked"], true);
+        assert_eq!(after_refresh["sprite"]["width"], 48);
+        assert_eq!(after_refresh["sprite"]["height"], 19);
+        assert_eq!(after_refresh["sprite"]["masked"], false);
     }
 
     #[test]
