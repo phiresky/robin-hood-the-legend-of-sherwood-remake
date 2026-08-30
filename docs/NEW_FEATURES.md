@@ -136,6 +136,19 @@ A list of which additional features we have added, which ones we might still wan
   back to their explicit retail compatibility preset, and V1 ranked boards
   accept only immutable Easy/Medium/Hard identities. Story mode is
   intentionally absent.
+  - TODO: what can we do to make legendary harder without being boring? 
+    - just increasing health is boring
+    - increase vision distance or vision cone angle
+    - increase hearing sensitivity (or PC make more noise)
+    - decrease unconcious time
+    - longer distance for archers / crossbowmen (NPCs) and opposite (PCs) - although making items less useful is boring as well
+    - smarter enemy AI - e.g. archers should try to avoid and escape hand to hand combat more - normally once you have an archer in normal combat you've basically won instantly. what else?
+    - MORE enemies (can we programmatically just increase NPCs in missions?, just add more randomly somehow)
+      - make patrols larger (commander + 4 soldiers -> 6 soldiers)
+      - add more enemies in same spread (e.g. 5 archers on one walkable surface (wall) -> 7 archers spread out on same surface?)
+      - needs tweaking / candidate review
+    - no saving / permadeath / no clovers for reviving (?)
+    - enemies look around more
 
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
