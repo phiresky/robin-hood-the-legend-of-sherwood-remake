@@ -45,7 +45,7 @@ the same directional allocation limits as native before decoding a body.
   on by default and can be overridden per host launch. Disabling it leaves
   native iroh play available without requiring relay readiness.
 - A canonical `rhmp3` invitation is signed by the host endpoint key, valid for
-  first redemption for exactly 30 minutes, and binds protocol 33, the full
+  first redemption for exactly 30 minutes, and binds protocol 34, the full
   engine commit, mission/session, expected seats, one disclosed canonical
   HTTPS relay, Demo/Full edition, and the native host's exact content-closure
   SHA-256. The URL stores the public ticket in its fragment; the stable shell

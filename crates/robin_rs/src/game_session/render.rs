@@ -1369,6 +1369,8 @@ pub(super) fn render_frame(
     // is composited sharply after scaling/presentation effects.
     renderer.begin_ui_layer();
 
+    crate::combat_gesture_overlay::render(host, engine, renderer, hud_fonts);
+
     // ── GPU phase: UI panel, minimap ──
     let panel_mouse = threaded_input.position();
     crate::ui_panel::draw_panel(

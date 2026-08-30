@@ -36,7 +36,7 @@ use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::player_command::{GestureQuality, PlayerCommand};
 use robin_engine::profiles::Action;
 use robin_engine::sector::SectorNumber;
 #[cfg(feature = "client")]
@@ -1659,6 +1659,8 @@ impl TraceCommand {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
                 command: command_from_stable_name(&original_command_name),
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek,
                 seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },

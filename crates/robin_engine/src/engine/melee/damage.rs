@@ -308,6 +308,34 @@ impl EngineInner {
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
+        self.queue_scaled_sword_damage(
+            _sim,
+            _assets,
+            victim_id,
+            attacker_id,
+            sword_strike,
+            attacker_profile_idx,
+            crate::player_command::GestureQuality::PERFECT,
+        );
+    }
+
+    /// Queue sword damage with the deterministic multiplier already resolved
+    /// by the input command and retained on the active strike element.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn queue_scaled_sword_damage(
+        &mut self,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+        sword_strike: SwordStrike,
+        attacker_profile_idx: u32,
+        gesture_quality: crate::player_command::GestureQuality,
+    ) {
+        assert!(
+            gesture_quality.is_strike_quality(),
+            "invalid gesture quality reached sword damage queue"
+        );
         // Dead and unconscious victims are *not* filtered out here: the
         // sweep launchers hand every in-sector victim to the sequence
         // manager, and a dead / unconscious human still admits
@@ -334,6 +362,7 @@ impl EngineInner {
             sword_strike,
             attacker_profile_idx,
         );
+        elem.gesture_quality = gesture_quality;
         self.trace_reactive_sword_topology("before_damage_registration", victim_id, None);
         // Resolve the value normally determined by Instruct, but bypass the
         // engine's ordinary owned-element launcher because that path performs
@@ -390,6 +419,21 @@ impl EngineInner {
                 return;
             }
         };
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "sword damage element {:?}/{} vanished before application",
+                    damage_element.0, damage_element.1
+                )
+            })
+            .gesture_quality;
+        assert!(
+            gesture_quality.is_strike_quality(),
+            "invalid gesture quality reached sword damage application"
+        );
         if let Some(attacker_id) = attacker_id {
             let attacker = self.expect_entity(attacker_id, "sword-damage diplomacy attacker");
             let victim = self.expect_entity(victim_id, "sword-damage diplomacy victim");
@@ -534,6 +578,7 @@ impl EngineInner {
             attacker_profile: &attacker_profile,
             strike,
             attacker: &attacker_ctx,
+            gesture_quality,
             concussion_ctx: &ctx,
             max_life_points: victim_max_hp,
         };
