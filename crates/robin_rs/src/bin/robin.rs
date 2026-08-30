@@ -317,6 +317,20 @@ async fn wasm_main(
     #[cfg(feature = "wasm-threads")]
     wasm_init_thread_pool().await;
     let args = robin_rs::main_entry::parse_cli();
+    #[cfg(feature = "audio")]
+    if args.global_options.sound_enabled {
+        wasm_bindgen_futures::spawn_local(async {
+            if let Err(error) = robin_rs::audio_backend::preload_boot_catalog().await {
+                // Warmup runs alongside engine startup, so it never leaves the
+                // JS boot overlay waiting on an unreported blocking stage.
+                // First playback joins the same content-keyed load.
+                tracing::warn!(
+                    error,
+                    "browser boot/menu audio warmup failed; lazy playback will retry"
+                );
+            }
+        });
+    }
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
     tracing::info!("Rust initialization complete.");

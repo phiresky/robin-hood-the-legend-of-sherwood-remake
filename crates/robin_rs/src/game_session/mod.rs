@@ -1048,6 +1048,7 @@ where
         campaign,
         profiles,
         has_decoded_saved_world,
+        args.global_options.sound_enabled,
         progress,
     )
     .await
