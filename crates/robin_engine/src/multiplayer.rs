@@ -932,7 +932,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_all_version_29_authority_rules() {
+    fn protocol_version_includes_all_version_30_authority_rules() {
         // Version 30 combines authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
         // rebalanced item rules, deterministic achievements, authoritative
