@@ -273,7 +273,7 @@ pub fn wasm_multiplayer_compatibility() -> Result<wasm_bindgen::JsValue, wasm_bi
     Compatibility {
         engine_commit: robin_rs::replay_format::ENGINE_SOURCE_COMMIT,
         artifact_short: robin_rs::replay_format::ENGINE_VERSION_HASH,
-        net_protocol: robin_rs::multiplayer::NET_PROTOCOL_VERSION,
+        net_protocol: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
         ticket_schema: robin_rs::multiplayer::join_ticket::JOIN_TICKET_SCHEMA,
     }
     .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
