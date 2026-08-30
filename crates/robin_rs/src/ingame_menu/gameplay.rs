@@ -34,10 +34,12 @@ pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
 pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
 pub(crate) const TIMED_MISSIONS_OPTION_INDEX: usize = 34;
 pub(crate) const DYNAMIC_AMBIENCE_OPTION_INDEX: usize = 35;
-pub(crate) const MORE_COMBAT_GESTURES_OPTION_INDEX: usize = 36;
-pub(crate) const GESTURE_QUALITY_DAMAGE_OPTION_INDEX: usize = 37;
-pub(crate) const COMBAT_GESTURE_GUIDE_OPTION_INDEX: usize = 38;
-pub(crate) const COMBAT_GESTURE_COACH_OPTION_INDEX: usize = 39;
+pub(crate) const DIPLOMACY_OPTION_INDEX: usize = 36;
+pub(crate) const NPC_FACTION_WARS_OPTION_INDEX: usize = 37;
+pub(crate) const MORE_COMBAT_GESTURES_OPTION_INDEX: usize = 38;
+pub(crate) const GESTURE_QUALITY_DAMAGE_OPTION_INDEX: usize = 39;
+pub(crate) const COMBAT_GESTURE_GUIDE_OPTION_INDEX: usize = 40;
+pub(crate) const COMBAT_GESTURE_COACH_OPTION_INDEX: usize = 41;
 
 /// Toggle rows shown on the screen, in display order.
 pub(crate) const OPTION_LABELS: &[&str] = &[
@@ -77,6 +79,8 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Detailed Save Metadata",
     "Authored Mission Timers",
     "Dynamic Ambience Gameplay",
+    "Mission Diplomacy",
+    "NPC Faction Wars",
     "More Combat Gestures",
     "Gesture Quality Damage",
     "Show Combat Gesture Guide",
@@ -120,6 +124,8 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show mission and player provenance, relative age, and expanded save details.",
     "Enforce time limits authored by Rust JSON missions.",
     "Advance authored day, night, and fog gameplay schedules.",
+    "Enable mission-authored and runtime faction relationships.",
+    "Allow hostile non-player factions to perceive and fight one another.",
     "Recognize nine additional sword gestures as composite two-strike techniques.",
     "Scale sword damage to the recognized gesture's deterministic quality tier.",
     "Show reference paths for the additional combat gestures while swordfighting.",
@@ -519,6 +525,8 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         DYNAMIC_AMBIENCE_OPTION_INDEX => {
             config.enable_dynamic_ambience = !config.enable_dynamic_ambience
         }
+        DIPLOMACY_OPTION_INDEX => config.diplomacy = !config.diplomacy,
+        NPC_FACTION_WARS_OPTION_INDEX => config.npc_faction_wars = !config.npc_faction_wars,
         MORE_COMBAT_GESTURES_OPTION_INDEX => {
             config.more_combat_gestures = !config.more_combat_gestures
         }
@@ -576,6 +584,8 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
         TIMED_MISSIONS_OPTION_INDEX => config.enable_timed_missions,
         DYNAMIC_AMBIENCE_OPTION_INDEX => config.enable_dynamic_ambience,
+        DIPLOMACY_OPTION_INDEX => config.diplomacy,
+        NPC_FACTION_WARS_OPTION_INDEX => config.npc_faction_wars,
         MORE_COMBAT_GESTURES_OPTION_INDEX => config.more_combat_gestures,
         GESTURE_QUALITY_DAMAGE_OPTION_INDEX => config.gesture_quality_damage,
         COMBAT_GESTURE_GUIDE_OPTION_INDEX => config.show_combat_gesture_guide,
@@ -594,7 +604,7 @@ mod tests {
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
-        assert_eq!(standalone_visible_option_range(3), 36..40);
+        assert_eq!(standalone_visible_option_range(3), 36..42);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -643,6 +653,8 @@ mod tests {
                 "Detailed Save Metadata",
                 "Authored Mission Timers",
                 "Dynamic Ambience Gameplay",
+                "Mission Diplomacy",
+                "NPC Faction Wars",
                 "More Combat Gestures",
                 "Gesture Quality Damage",
                 "Show Combat Gesture Guide",
@@ -670,6 +682,8 @@ mod tests {
         ));
         assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
         assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
+        assert!(is_option_selected(&config, DIPLOMACY_OPTION_INDEX));
+        assert!(is_option_selected(&config, NPC_FACTION_WARS_OPTION_INDEX));
         assert!(is_option_selected(
             &config,
             MORE_COMBAT_GESTURES_OPTION_INDEX
@@ -789,6 +803,8 @@ mod tests {
             config.noise_distraction_feedback,
             before.noise_distraction_feedback
         );
+        assert_eq!(config.diplomacy, before.diplomacy);
+        assert_eq!(config.npc_faction_wars, before.npc_faction_wars);
     }
 
     #[test]

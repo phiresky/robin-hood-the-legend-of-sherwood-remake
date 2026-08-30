@@ -861,8 +861,12 @@ impl EngineInner {
                 .entities
                 .get(victim_id)
                 .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
-            let should_enter =
-                should_enter_swordfight_after_strike(attacker, victim, &assets.profile_manager);
+            let should_enter = should_enter_swordfight_after_strike(
+                attacker,
+                victim,
+                &assets.profile_manager,
+                &self.mission_domain.diplomacy,
+            );
             if should_enter {
                 self.queue_enter_swordfight_after_strike(victim_id, actor_id);
             }
@@ -1925,9 +1929,12 @@ impl EngineInner {
                     self.get_entity(active.attacker_id),
                     self.get_entity(victim_id),
                 ) {
-                    (Some(a), Some(v)) => {
-                        should_enter_swordfight_after_strike(a, v, &assets.profile_manager)
-                    }
+                    (Some(a), Some(v)) => should_enter_swordfight_after_strike(
+                        a,
+                        v,
+                        &assets.profile_manager,
+                        &self.mission_domain.diplomacy,
+                    ),
                     _ => false,
                 };
                 if should_enter {
@@ -3013,6 +3020,7 @@ impl EngineInner {
                 }),
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = ai.soldier_profile_rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
@@ -3229,6 +3237,7 @@ impl EngineInner {
                 attacker_direction: attack.attacker_direction,
                 attacker_elevation: attack.attacker_elevation,
                 attacker_camp: attack.attacker_camp,
+                diplomacy: &self.mission_domain.diplomacy,
                 is_swordfighting: attack.is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: attacker_sprite_frames,

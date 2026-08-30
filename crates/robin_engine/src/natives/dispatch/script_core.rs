@@ -51,6 +51,51 @@ impl NativeContext<'_, '_> {
                 }
             }
 
+            // --- Rust diplomacy extensions ---
+            GetActorAllegiance => {
+                let actor = stack.pop_i32();
+                let Some(entity) = self.get_entity(actor) else {
+                    tracing::warn!("GetActorAllegiance: actor {actor} does not exist");
+                    return -1;
+                };
+                entity
+                    .camp()
+                    .allegiance_id()
+                    .map(i32::from)
+                    .unwrap_or_else(|| {
+                        panic!("GetActorAllegiance actor {actor} has invalid Camp::Error")
+                    })
+            }
+            GetDiplomacyRelationship => {
+                let second = stack.pop_i32();
+                let first = stack.pop_i32();
+                let (first, second) = validate_diplomacy_ids(first, second)
+                    .unwrap_or_else(|error| panic!("GetDiplomacyRelationship: {error}"));
+                self.diplomacy
+                    .as_ref()
+                    .expect("GetDiplomacyRelationship requires mission diplomacy")
+                    .relationship_ids(first, second)
+                    .script_value()
+            }
+            SetDiplomacyRelationship => {
+                let relationship = stack.pop_i32();
+                let second = stack.pop_i32();
+                let first = stack.pop_i32();
+                let (first, second) = validate_diplomacy_ids(first, second)
+                    .unwrap_or_else(|error| panic!("SetDiplomacyRelationship: {error}"));
+                let relationship = crate::diplomacy::Relationship::from_script_value(relationship)
+                    .unwrap_or_else(|error| panic!("SetDiplomacyRelationship: {error}"));
+                let diplomacy = self
+                    .diplomacy
+                    .as_mut()
+                    .expect("SetDiplomacyRelationship requires mission diplomacy");
+                diplomacy
+                    .set_relationship_ids(first, second, relationship)
+                    .unwrap_or_else(|error| panic!("SetDiplomacyRelationship: {error}"));
+                crate::diplomacy::reconcile_entities(&mut self.entities, diplomacy);
+                0
+            }
+
             // --- sequence manager ---
             Start => {
                 // If a recording is already active, warn and
@@ -745,4 +790,12 @@ impl NativeContext<'_, '_> {
             _ => self.dispatch_sequences(native, stack),
         }
     }
+}
+
+fn validate_diplomacy_ids(first: i32, second: i32) -> Result<(u16, u16), String> {
+    let first = u16::try_from(first)
+        .map_err(|_| format!("first allegiance {first} is outside 0..=65535"))?;
+    let second = u16::try_from(second)
+        .map_err(|_| format!("second allegiance {second} is outside 0..=65535"))?;
+    Ok((first, second))
 }

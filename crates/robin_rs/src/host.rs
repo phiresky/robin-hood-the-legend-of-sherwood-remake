@@ -89,6 +89,7 @@ struct HostContextSnapshot {
     control_tactical_units: bool,
     touch_camera_gestures: bool,
     native_refresh_presentation: bool,
+    diplomacy_visuals: bool,
     gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
@@ -162,6 +163,8 @@ impl ApplicationContext {
         sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         sim_config.enable_timed_missions = gameplay_config.enable_timed_missions;
         sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
+        sim_config.diplomacy = gameplay_config.diplomacy;
+        sim_config.npc_faction_wars = gameplay_config.npc_faction_wars;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -187,6 +190,8 @@ impl ApplicationContext {
         sim_config.sherwood_trading = existing.sherwood_trading;
         sim_config.enable_timed_missions = existing.enable_timed_missions;
         sim_config.enable_dynamic_ambience = existing.enable_dynamic_ambience;
+        sim_config.diplomacy = existing.diplomacy;
+        sim_config.npc_faction_wars = existing.npc_faction_wars;
         *self
             .sim_config
             .lock()
@@ -485,6 +490,7 @@ impl ApplicationContext {
             control_tactical_units: active_profile.gameplay_config.control_tactical_units,
             touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
             native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
+            diplomacy_visuals: active_profile.graphic_config.diplomacy_visuals,
             gameplay_config: active_profile.gameplay_config,
         })
     }
@@ -513,6 +519,8 @@ impl ApplicationContext {
         sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         sim_config.enable_timed_missions = gameplay_config.enable_timed_missions;
         sim_config.enable_dynamic_ambience = gameplay_config.enable_dynamic_ambience;
+        sim_config.diplomacy = gameplay_config.diplomacy;
+        sim_config.npc_faction_wars = gameplay_config.npc_faction_wars;
         *self
             .sim_config
             .lock()
@@ -881,6 +889,9 @@ pub struct HostFrontend {
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
+
+    /// Active profile's local relationship colour/legend preference.
+    pub diplomacy_visuals: bool,
 
     /// Host-local presentation settings copied from the active profile.
     /// Deterministic settings are separately mirrored into `SimConfig`.
@@ -1470,6 +1481,7 @@ impl Host {
                 control_tactical_units: snapshot.control_tactical_units,
                 touch_camera_gestures: snapshot.touch_camera_gestures,
                 native_refresh_presentation: snapshot.native_refresh_presentation,
+                diplomacy_visuals: snapshot.diplomacy_visuals,
                 gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },

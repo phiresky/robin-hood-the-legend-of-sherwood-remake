@@ -1995,6 +1995,10 @@ pub struct LoadedMission {
 pub struct LoadedLevel {
     pub proto: LoadedProtoLevel,
     pub mission: LoadedMission,
+    /// Rust-port diplomacy authoring. Legacy binary levels leave this unset
+    /// and retain the original different-camp-is-hostile behavior.
+    #[serde(default)]
+    pub diplomacy: Option<crate::diplomacy::DiplomacyDefinition>,
 }
 
 /// Datadir-relative path of the hackable JSON level descriptor for a mission.
@@ -2040,6 +2044,9 @@ pub struct HackableLevelDescriptor {
     /// Ordered ambience changes measured in active gameplay seconds.
     #[serde(default)]
     pub ambience_schedule: Vec<AmbienceScheduleCue>,
+    /// Optional symmetric relationship matrix and player coalition.
+    #[serde(default)]
+    pub diplomacy: Option<crate::diplomacy::DiplomacyDefinition>,
 }
 
 /// Author-facing timed-mission rules for hackable JSON levels.
@@ -2285,6 +2292,7 @@ impl LoadedLevel {
         }
 
         let mut level = Self::empty_for_test();
+        level.diplomacy = descriptor.diplomacy.clone();
         level.mission.reserve_null_ai_handle = true;
         level.proto.grid_chunk_order = vec![ProtoGridChunk::Sight, ProtoGridChunk::Motion];
         let motion_obstacles = descriptor
@@ -2550,6 +2558,7 @@ impl LoadedLevel {
                 timed_mission: None,
                 ambience_schedule: Vec::new(),
             },
+            diplomacy: None,
         }
     }
 }
@@ -2608,7 +2617,11 @@ pub fn load_level(
     let mission = load_mission(&mut mission_reader, format, is_beggar)?;
     progress(1.0);
 
-    Ok(LoadedLevel { proto, mission })
+    Ok(LoadedLevel {
+        proto,
+        mission,
+        diplomacy: None,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5034,6 +5047,12 @@ mod tests {
                 "map_filename": "Arena",
                 "spawn": [50, 50],
                 "spawn_player": false,
+                "diplomacy": {
+                    "player_coalition": [0, 7],
+                    "relationships": [
+                        {"first": 2, "second": 9, "relationship": "neutral"}
+                    ]
+                },
                 "walkable_polygon": [[0, 0], [100, 0], [100, 100]],
                 "soldiers": [
                     {"position": [20, 20], "profile": 0, "allegiance": 2, "command_interface": "tactical_orders", "mission_role": "tactical_ally", "combat_stance": "defensive"},
@@ -5070,6 +5089,13 @@ mod tests {
         assert_eq!(
             level.mission.pcs_to_rescue[0].combat_stance,
             CombatStance::Aggressive
+        );
+        let diplomacy = level.diplomacy.expect("authored diplomacy");
+        assert_eq!(diplomacy.player_coalition, vec![0, 7]);
+        assert_eq!(diplomacy.relationships.len(), 1);
+        assert_eq!(
+            diplomacy.relationships[0].relationship,
+            crate::diplomacy::Relationship::Neutral
         );
         assert_eq!(
             level.mission.pcs_to_rescue[0].ai_profile.as_deref(),

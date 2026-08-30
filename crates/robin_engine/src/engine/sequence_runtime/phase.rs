@@ -1916,9 +1916,10 @@ impl EngineInner {
                                     self.apply_scripted_virtual_kill(sim, assets, owner, killer);
                                     if self.get_entity(owner).is_some_and(|victim| {
                                         victim.is_soldier()
-                                            && victim
-                                                .camp()
-                                                .is_hostile_to(crate::element::Camp::Royalists)
+                                            && self.camps_are_hostile(
+                                                victim.camp(),
+                                                crate::element::Camp::Royalists,
+                                            )
                                     }) {
                                         const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
                                         self.add_campaign_value(

@@ -7464,6 +7464,7 @@ fn entering_beggar_registers_only_intelligent_lacklandist_seekers() {
 
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,
     );
@@ -7471,6 +7472,7 @@ fn entering_beggar_registers_only_intelligent_lacklandist_seekers() {
     // must not append the same beggar twice.
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,
     );

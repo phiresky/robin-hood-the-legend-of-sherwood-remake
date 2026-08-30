@@ -192,6 +192,16 @@ fn target_interaction_assert_source_sector(
 }
 
 impl EngineInner {
+    /// Rebuild every relationship-derived cache after a runtime diplomacy
+    /// edit. No stale opponent/detectable may survive a peace treaty, and a
+    /// newly hostile faction must become perceivable without reloading.
+    fn reconcile_diplomacy_runtime(&mut self) {
+        crate::diplomacy::reconcile_entities(
+            &mut self.world.entities,
+            &self.mission_domain.diplomacy,
+        );
+    }
+
     /// Apply one authoritative command batch with an explicit interpretation
     /// of adjacent selection messages.
     pub(crate) fn apply_frame_commands_with_mode(
@@ -1610,6 +1620,27 @@ impl EngineInner {
                 } else {
                     tracing::warn!(seat, "non-host Sherwood trading setting command rejected");
                 }
+            }
+            SetDiplomacyEnabled { enabled } => {
+                self.control.sim_config.diplomacy = *enabled;
+                self.mission_domain.diplomacy.set_enabled(*enabled);
+                self.reconcile_diplomacy_runtime();
+            }
+            SetNpcFactionWars { enabled } => {
+                self.control.sim_config.npc_faction_wars = *enabled;
+                self.mission_domain.diplomacy.set_npc_faction_wars(*enabled);
+                self.reconcile_diplomacy_runtime();
+            }
+            SetDiplomacyRelationship {
+                first,
+                second,
+                relationship,
+            } => {
+                self.mission_domain
+                    .diplomacy
+                    .set_relationship_ids(*first, *second, *relationship)
+                    .unwrap_or_else(|error| panic!("invalid diplomacy command: {error}"));
+                self.reconcile_diplomacy_runtime();
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -4617,7 +4648,7 @@ impl EngineInner {
             let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
             let (is_hostile, scroll_attached) = match target {
                 Entity::Soldier(s) => (
-                    s.camp().is_hostile_to(selector_camp),
+                    self.camps_are_hostile(s.camp(), selector_camp),
                     s.npc.attached_scroll.is_some(),
                 ),
                 _ => (false, false),
@@ -5989,7 +6020,7 @@ fn determine_use_command(
             .get_entity(pc_id)
             .unwrap_or_else(|| panic!("selected PC {pc_id:?} disappeared during WakeUp dispatch"))
             .camp();
-        if entity.is_human() && entity.camp() == selector_camp {
+        if entity.is_human() && engine.camps_are_allied(entity.camp(), selector_camp) {
             return Some(Command::WakeUp);
         }
     }

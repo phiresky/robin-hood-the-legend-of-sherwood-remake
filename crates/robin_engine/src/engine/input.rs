@@ -822,8 +822,8 @@ impl EngineInner {
                 .camp(),
             None => Camp::Royalists,
         };
-        let same_camp_as_selector = camp == interaction_camp;
-        let hostile_to_selector = camp.is_hostile_to(interaction_camp);
+        let same_camp_as_selector = self.camps_are_allied(camp, interaction_camp);
+        let hostile_to_selector = self.camps_are_hostile(camp, interaction_camp);
         let posture = entity.element_data().posture;
         let is_tied = posture == Posture::Tied;
         let is_vip = self.is_entity_vip(assets, entity);
@@ -1486,7 +1486,8 @@ impl EngineInner {
         if unconscious
             && self.selected_pc_has_contextual_action(assets, selected_pc_id, PA::Resuscitate)
         {
-            let same_camp = entity.is_human() && entity.camp() == interaction_camp;
+            let same_camp =
+                entity.is_human() && self.camps_are_allied(entity.camp(), interaction_camp);
             if same_camp {
                 return RHMOUSE_WAKE_UP;
             }

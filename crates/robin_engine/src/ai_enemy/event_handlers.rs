@@ -1786,16 +1786,18 @@ impl EnemyAi {
                     // into a runtime rejection, or BeginSwordFight can
                     // attach opponents while this AI stays in its old
                     // state.
-                    let target_is_friend = ctx
+                    let target_relationship = ctx
                         .entity_view(enemy)
-                        .map(|v| v.camp == ctx.camp)
-                        .unwrap_or(false);
-                    if target_is_friend {
+                        .map(|v| ctx.entity_views.diplomacy.relationship(ctx.camp, v.camp))
+                        .unwrap_or(crate::diplomacy::Relationship::Neutral);
+                    if target_relationship != crate::diplomacy::Relationship::Hostile {
                         tracing::warn!(
                             me = self.base.me,
                             enemy = enemy.get(),
-                            "EVENT_ENTER_SWORDFIGHT target is friendly; matching reference release behavior and entering anyway"
+                            ?target_relationship,
+                            "rejecting EVENT_ENTER_SWORDFIGHT against a non-hostile target"
                         );
+                        return false;
                     }
                     let allowed_to_attack = self.is_allowed_to_attack(enemy.get(), ctx, tick);
                     if !allowed_to_attack {
@@ -1914,8 +1916,8 @@ impl EnemyAi {
                                 self.base.me
                             )
                         });
-                        let attacker_is_friend = attacker_view.camp == ctx.camp;
-                        if !attacker_is_friend {
+                        let attacker_is_hostile = ctx.is_hostile_with(attacker_view.camp);
+                        if attacker_is_hostile {
                             let already_opponent = self
                                 .find_fighter(self.base.me, tick)
                                 .unwrap_or_else(|| {
@@ -2158,7 +2160,7 @@ impl EnemyAi {
         // already-tied / already-guarded targets and archers on
         // unreachable wall-tops.
         let enemy_view = ctx.entity_view(enemy);
-        if ctx.camp == crate::element::Camp::Royalists
+        if ctx.is_player_aligned()
             && let Some(v) = enemy_view
             && (v.is_unconscious || v.posture == crate::element::Posture::Tied || v.is_carried)
         {
@@ -2170,7 +2172,7 @@ impl EnemyAi {
         {
             return;
         }
-        if ctx.camp == crate::element::Camp::Royalists
+        if ctx.is_player_aligned()
             && let Some(v) = enemy_view
             && v.elevation > ctx.elevation + 100.0
             && v.is_soldier()

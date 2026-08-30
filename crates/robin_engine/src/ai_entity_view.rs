@@ -445,6 +445,9 @@ pub type AiEntityViewMap = HashMap<u32, AiEntityView>;
 pub struct AiEntityViews {
     pub entities: AiEntityViewMap,
     pub building_authorizations: HashMap<crate::sector::SectorNumber, bool>,
+    /// Relationship data captured at the same deterministic boundary as the
+    /// entity views.
+    pub diplomacy: crate::diplomacy::DiplomacyState,
 }
 
 impl std::ops::Deref for AiEntityViews {
@@ -481,6 +484,7 @@ pub fn shared_entity_views(entities: AiEntityViewMap) -> SharedAiEntityViews {
     Arc::new(AiEntityViews {
         entities,
         building_authorizations: HashMap::new(),
+        diplomacy: Default::default(),
     })
 }
 

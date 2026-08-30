@@ -304,6 +304,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .unwrap_or(50);
@@ -316,6 +317,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
@@ -1343,6 +1345,7 @@ impl EngineInner {
             attacker_direction: direction,
             attacker_elevation: elevation,
             attacker_camp,
+            diplomacy: &self.mission_domain.diplomacy,
             is_swordfighting,
             opponent_time_limit,
             strike_startup_frames: attacker_sprite_frames,
@@ -1504,6 +1507,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
@@ -1554,6 +1558,7 @@ impl EngineInner {
                     opp,
                     &assets.profile_manager,
                     sim.config().difficulty,
+                    &self.mission_domain.diplomacy,
                 );
                 opponents_ability = opponents_ability.saturating_add(fa);
             } else {
@@ -1680,6 +1685,7 @@ impl EngineInner {
                     victim,
                     &assets.profile_manager,
                     sim.config().difficulty,
+                    &self.mission_domain.diplomacy,
                 );
                 let is_swordfighting = victim
                     .human_data()
@@ -2070,6 +2076,7 @@ impl EngineInner {
                 attacker_direction: pc_direction,
                 attacker_elevation: pc_elevation,
                 attacker_camp: pc_camp,
+                diplomacy: &self.mission_domain.diplomacy,
                 is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: pc_sprite_frames,
@@ -2321,6 +2328,7 @@ impl EngineInner {
                 victim_entity,
                 &assets.profile_manager,
                 sim.config().difficulty,
+                &self.mission_domain.diplomacy,
             );
             let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
@@ -2502,6 +2510,7 @@ impl EngineInner {
             attacker_direction: victim_direction,
             attacker_elevation: victim_elevation,
             attacker_camp: victim_camp,
+            diplomacy: &self.mission_domain.diplomacy,
             // A victim caught by a circle strike while not duelling has an
             // empty opponent list; the proposal bails out for it.
             is_swordfighting: principal_opponent.is_some(),
@@ -3033,7 +3042,7 @@ impl EngineInner {
                     let Some(entity @ Entity::Soldier(s)) = self.world.entities.get(id) else {
                         return false;
                     };
-                    if s.soldier.cached_camp != camp {
+                    if !self.camps_are_allied(s.soldier.cached_camp, camp) {
                         return false;
                     }
                     // AI state Attacking
@@ -3048,6 +3057,7 @@ impl EngineInner {
                         entity,
                         &assets.profile_manager,
                         self.control.sim_config.difficulty,
+                        &self.mission_domain.diplomacy,
                     );
                     if friend_ability < MIN_CAPACITY_LEARNING_BY_LOOKING {
                         return false;
@@ -3076,6 +3086,7 @@ impl EngineInner {
                     e,
                     &assets.profile_manager,
                     self.control.sim_config.difficulty,
+                    &self.mission_domain.diplomacy,
                 )
             })
             .unwrap_or(0);
@@ -3158,6 +3169,7 @@ mod tests {
             attacker_direction: 0,
             attacker_elevation: 0.0,
             attacker_camp: Camp::Royalists,
+            diplomacy: &crate::diplomacy::DiplomacyState::default(),
             is_swordfighting: true,
             opponent_time_limit: Some(deadline),
             strike_startup_frames: Some([10; crate::weapons::NUM_NORMAL_SWORD_STRIKES]),
@@ -3222,6 +3234,7 @@ mod tests {
                 attacker_direction: 0,
                 attacker_elevation: 0.0,
                 attacker_camp: Camp::Royalists,
+                diplomacy: &crate::diplomacy::DiplomacyState::default(),
                 is_swordfighting: true,
                 opponent_time_limit: Some(deadline),
                 strike_startup_frames: Some([10; crate::weapons::NUM_NORMAL_SWORD_STRIKES]),
@@ -3305,6 +3318,7 @@ mod tests {
                 attacker_direction: 0,
                 attacker_elevation: 0.0,
                 attacker_camp: Camp::Royalists,
+                diplomacy: &crate::diplomacy::DiplomacyState::default(),
                 is_swordfighting: true,
                 opponent_time_limit: Some(deadline),
                 strike_startup_frames: Some([7, 12, 25, 7, 7, 8, 8, 8, 8]),

@@ -287,6 +287,23 @@ impl EngineInner {
                 // EngineInner returns the request; host dispatches the actual load.
                 ConsoleResponse::LoadCampaignRequested(std::path::PathBuf::from(filename))
             }
+            SetDiplomacy {
+                first,
+                second,
+                relationship,
+            } => {
+                self.mission_domain
+                    .diplomacy
+                    .set_relationship_ids(*first, *second, *relationship)
+                    .unwrap_or_else(|error| panic!("invalid DIPLOMACY command: {error}"));
+                crate::diplomacy::reconcile_entities(
+                    &mut self.world.entities,
+                    &self.mission_domain.diplomacy,
+                );
+                ConsoleResponse::Ok(format!(
+                    "Diplomacy {first}<->{second} set to {relationship:?}."
+                ))
+            }
 
             // ── Blip / stealth cheats ────────────────────────────
             Ubiquity => {

@@ -802,12 +802,16 @@ impl EngineInner {
         let is_soldier_vip =
             matches!(entity, Entity::Soldier(_)) && self.is_entity_vip(assets, entity);
 
-        let camp =
-            if entity.is_human() && entity.camp().is_hostile_to(crate::element::Camp::Royalists) {
-                MmCamp::Lacklandists
-            } else {
-                MmCamp::Other
-            };
+        let camp = match self.relationship_to_player(entity.camp()) {
+            crate::diplomacy::Relationship::Hostile => MmCamp::Hostile,
+            crate::diplomacy::Relationship::Neutral => MmCamp::Neutral,
+            crate::diplomacy::Relationship::Allied => MmCamp::Allied,
+        };
+        let legacy_camp = if entity.camp() == crate::element::Camp::Royalists {
+            MmCamp::Allied
+        } else {
+            MmCamp::Hostile
+        };
 
         Some(ElementDotInfo {
             custom_dot: CustomDot::from_u16(elem.custom_minimap_dot),
@@ -826,6 +830,7 @@ impl EngineInner {
             is_unconscious: entity.human_data().is_some_and(|h| h.unconscious),
             posture_lying: elem.posture == Posture::Lying,
             camp,
+            legacy_camp,
         })
     }
 

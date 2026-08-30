@@ -850,6 +850,7 @@ impl InteractiveFrameSimulation {
                         host.gameplay_config = result.gameplay_config;
                         host.native_refresh_presentation =
                             result.graphic_config.native_refresh_presentation;
+                        host.diplomacy_visuals = result.graphic_config.diplomacy_visuals;
                         window.set_native_refresh_presentation(
                             result.graphic_config.native_refresh_presentation,
                         );
@@ -998,6 +999,32 @@ impl InteractiveFrameSimulation {
                                 assets.as_ref(),
                                 &PlayerCommand::SetDynamicAmbienceEnabled {
                                     enabled: result.gameplay_config.enable_dynamic_ambience,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.diplomacy
+                            != result.original_gameplay_config.diplomacy
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetDiplomacyEnabled {
+                                    enabled: result.gameplay_config.diplomacy,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.npc_faction_wars
+                            != result.original_gameplay_config.npc_faction_wars
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetNpcFactionWars {
+                                    enabled: result.gameplay_config.npc_faction_wars,
                                 },
                             );
                         }

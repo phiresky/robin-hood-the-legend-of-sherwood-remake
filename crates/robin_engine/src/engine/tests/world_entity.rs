@@ -4565,6 +4565,7 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
 
     let candidates = crate::engine::ai::build_friend_swap_candidates(
         &engine.world.entities,
+        &engine.mission_domain.diplomacy,
         &engine.script_domains.interactables.doors,
         &engine.orders.sequence_manager,
         owner,
@@ -4655,6 +4656,7 @@ fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
 
     let candidates = crate::engine::ai::build_friend_swap_candidates(
         &engine.world.entities,
+        &engine.mission_domain.diplomacy,
         &[],
         &engine.orders.sequence_manager,
         owner,

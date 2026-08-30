@@ -13,7 +13,7 @@ const DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v3\0');
 
 test('uses the current Rust join-ticket and network schemas', () => {
     assert.equal(browserJoinTicketConstants.schema, 3);
-    assert.equal(browserJoinTicketConstants.netProtocolVersion, 32);
+    assert.equal(browserJoinTicketConstants.netProtocolVersion, 33);
 });
 
 function base64Url(bytes: Uint8Array): string {

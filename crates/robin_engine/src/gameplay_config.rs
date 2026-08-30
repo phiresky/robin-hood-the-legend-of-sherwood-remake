@@ -353,6 +353,14 @@ pub struct GameplayConfig {
     /// Show the recognized template and quality briefly after a stroke.
     #[serde(default)]
     pub combat_gesture_coach: bool,
+    /// Enable authored and runtime diplomacy overrides. When disabled, every
+    /// distinct valid allegiance is hostile, preserving legacy behavior.
+    #[serde(default)]
+    pub diplomacy: bool,
+    /// Let hostile NPC soldiers perceive and fight one another. Turning this
+    /// off leaves conflicts involving a player active.
+    #[serde(default = "enabled_by_default")]
+    pub npc_faction_wars: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -394,6 +402,8 @@ impl Default for GameplayConfig {
             gesture_quality_damage: true,
             show_combat_gesture_guide: false,
             combat_gesture_coach: false,
+            diplomacy: true,
+            npc_faction_wars: true,
         }
     }
 }
@@ -433,6 +443,8 @@ impl GameplayConfig {
             gesture_quality_damage: false,
             show_combat_gesture_guide: false,
             combat_gesture_coach: false,
+            diplomacy: false,
+            npc_faction_wars: true,
         }
     }
 }
@@ -477,6 +489,8 @@ mod tests {
         assert!(!config.gesture_quality_damage);
         assert!(!config.show_combat_gesture_guide);
         assert!(!config.combat_gesture_coach);
+        assert!(!config.diplomacy);
+        assert!(config.npc_faction_wars);
     }
 
     #[test]

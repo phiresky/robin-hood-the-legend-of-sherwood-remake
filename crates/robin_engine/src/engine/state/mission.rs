@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    achievement::MissionAchievementState, campaign::Campaign, element::EntityId,
-    engine::MissionState, mission_stat::MissionStat, short_briefings::ShortBriefings,
+    achievement::MissionAchievementState, campaign::Campaign, diplomacy::DiplomacyState,
+    element::EntityId, engine::MissionState, mission_stat::MissionStat,
+    short_briefings::ShortBriefings,
 };
 
 /// Deterministic mission outcome, campaign, objective, and debriefing state.
@@ -27,6 +28,7 @@ pub(crate) struct MissionDomain {
     /// integrated with the other feature branches.
     pub(crate) achievements: MissionAchievementState,
     pub(crate) dead_pc: Option<EntityId>,
+    pub(crate) diplomacy: DiplomacyState,
     pub(crate) campaign: Campaign,
 }
 
@@ -39,6 +41,7 @@ impl MissionDomain {
             mission_stat: MissionStat::default(),
             achievements: MissionAchievementState::from_mission_start(),
             dead_pc: None,
+            diplomacy: DiplomacyState::default(),
             campaign,
         }
     }

@@ -2043,7 +2043,7 @@ fn determine_use_command(
             .get_entity(pc_id)
             .unwrap_or_else(|| panic!("selected PC {pc_id:?} disappeared during WakeUp dispatch"))
             .camp();
-        if entity.is_human() && entity.camp() == selector_camp {
+        if entity.is_human() && engine.camps_are_allied(entity.camp(), selector_camp) {
             return Some(Command::WakeUp);
         }
     }
