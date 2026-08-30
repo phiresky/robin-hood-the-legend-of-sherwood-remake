@@ -408,7 +408,11 @@ A list of which additional features we have added, which ones we might still wan
   - `POST /step-forward`, `POST /step-back`, `POST /go-to-frame` — external
     frame stepping and replay scrubbing.
   - `GET /get-replay`, `POST /load-replay` — in-memory replay export/import
-    for native and wasm drivers.
+    for native and wasm drivers. Recording uses a mission-generation-scoped,
+    64 MiB segmented spool that publishes only complete flush boundaries and
+    fails closed on overflow or durable-writer errors. Export has explicit
+    single-flight backpressure and always produces the one canonical compact
+    bitcode replay; no alternate JSONL export or ranked format is exposed.
   - Threading: a dedicated listener thread funnels requests through a
     shared queue; the game-session frame loop drains it once per tick
     after `run_engine_tick`, so HTTP-driven side effects land on the
