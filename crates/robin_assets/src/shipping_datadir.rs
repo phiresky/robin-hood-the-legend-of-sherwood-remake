@@ -1556,12 +1556,6 @@ impl ShippingDatadir {
         })
     }
 
-    /// Iterate every catalog key (normalized logical Opus path). Used by the
-    /// browser's background audio prefetch to enumerate what exists.
-    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
-        self.audio_assets.keys().map(String::as_str)
-    }
-
     /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
     /// required actor voices, music, ambience): the prefetch-first set.
     pub fn active_audio_keys(&self) -> Vec<String> {

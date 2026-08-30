@@ -196,10 +196,12 @@ fn maybe_start_catalog_prefetch() {
     for key in &mission_first {
         push_key(key, &mut ordered, &mut seen);
     }
-    let catalog_keys: Vec<String> = dd.audio_catalog_keys().map(str::to_owned).collect();
-    for key in &catalog_keys {
-        push_key(key, &mut ordered, &mut seen);
-    }
+    // Deliberately scoped to the ACTIVE mission. Warming the whole catalog
+    // pulls every other mission's dialogue bundle (13 of them, 300-450 KB
+    // each) plus every actor voice bank for characters that never appear —
+    // megabytes of audio the player will not hear this mission. Anything
+    // outside this set still loads lazily at first playback, exactly as it
+    // did before the prefetch existed.
     drop(push_key);
     if ordered.is_empty() {
         return;
@@ -285,6 +287,12 @@ pub async fn preload_boot(_path: &str, _bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn clear_mission() -> Result<(), String> {
+    // Re-arm the prefetch so the NEXT mission warms its own audio. The
+    // downloaded bundle bytes stay cached (content-addressed and shared
+    // across missions), so re-arming costs nothing for anything already
+    // fetched.
+    PREFETCH_STARTED.with(|started| started.set(false));
+    PREFETCH_QUEUE.with(|queue| queue.borrow_mut().clear());
     with_audio(|audio| {
         audio.generation = audio.generation.wrapping_add(1);
         audio.buffers.clear();
