@@ -10,6 +10,14 @@ use robin_assets::shipping_datadir as assets_shipping_datadir;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    // Decode public compact replay bytes before initializing any game/service
+    // state. The parent process applies OS memory/CPU/file limits and a wall
+    // timeout to this hidden one-shot worker.
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new("--internal-replay-admission-worker"))
+    {
+        std::process::exit(robin_rs::replay_format::run_native_admission_worker());
+    }
     // The GUI subsystem detaches us from any console; re-attach to the
     // parent's so stdout/stderr reach the terminal when launched from one.
     #[cfg(windows)]
@@ -324,6 +332,15 @@ pub fn wasm_preload_shipping_file(
         compressed_bytes,
     )
     .map_err(|error| wasm_bindgen::JsValue::from_str(&format!("preload shipping file: {error:#}")))
+}
+
+/// Record the exact digest accepted by `validate_compact_replay` in the
+/// isolated worker. This main-instance call only performs envelope preflight.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_mark_compact_replay_validated(compact: &str) -> Result<(), wasm_bindgen::JsValue> {
+    robin_rs::replay_format::mark_browser_worker_validated(compact)
+        .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
 }
 
 /// Worker-pool bring-up for `wasm-threads` builds. Requires cross-origin

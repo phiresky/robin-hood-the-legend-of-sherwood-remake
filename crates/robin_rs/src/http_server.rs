@@ -579,14 +579,24 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
                     #[serde(default)]
                     paused: bool,
                 }
-                match read_json::<LoadReplayBody>(&mut req) {
-                    Ok(b) => relay(
-                        &queue,
-                        HttpPayload::LoadReplay {
-                            data: b.data,
-                            paused: b.paused,
-                        },
-                    ),
+                match read_replay_json::<LoadReplayBody>(&mut req) {
+                    Ok(b) => match crate::replay_format::preflight_compact_transport(
+                        &b.data,
+                        &crate::replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS,
+                    ) {
+                        Ok(_) => relay(
+                            &queue,
+                            HttpPayload::LoadReplay {
+                                data: b.data,
+                                paused: b.paused,
+                            },
+                        ),
+                        Err(error) => (
+                            400,
+                            serde_json::json!({"error": format!("invalid compact replay: {error}")})
+                                .into(),
+                        ),
+                    },
                     Err(e) => (400, serde_json::json!({"error": e}).into()),
                 }
             }
@@ -675,6 +685,63 @@ fn read_json<T: serde::de::DeserializeOwned>(req: &mut tiny_http::Request) -> Re
     std::io::Read::read_to_string(req.as_reader(), &mut body)
         .map_err(|e| format!("body read: {e}"))?;
     serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))
+}
+
+/// Bounded transport reader for the only HTTP replay-admission route.
+///
+/// This cap is applied before UTF-8/JSON/String allocation. Generic RPC bodies
+/// are small trusted automation messages; `/load-replay` can carry a 16 MiB
+/// artifact and therefore has its own hostile-input acquisition path.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_replay_json<T: serde::de::DeserializeOwned>(
+    req: &mut tiny_http::Request,
+) -> Result<T, String> {
+    use std::io::Read as _;
+
+    const JSON_OVERHEAD_BYTES: usize = 1024;
+    let limit = crate::replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS
+        .max_input_bytes
+        .checked_add(JSON_OVERHEAD_BYTES)
+        .expect("replay JSON transport limit fits usize");
+
+    let header = |name: &'static str| {
+        req.headers()
+            .iter()
+            .find(|header| header.field.equiv(name))
+            .map(|header| header.value.as_str())
+    };
+    if header("Transfer-Encoding").is_some() {
+        return Err("load-replay does not accept Transfer-Encoding".into());
+    }
+    if header("Content-Encoding").is_some() {
+        return Err("load-replay does not accept Content-Encoding".into());
+    }
+    let content_type = header("Content-Type")
+        .ok_or_else(|| "load-replay requires Content-Type: application/json".to_string())?;
+    let media_type = content_type.split(';').next().unwrap_or_default().trim();
+    if !media_type.eq_ignore_ascii_case("application/json") {
+        return Err("load-replay requires Content-Type: application/json".into());
+    }
+    let declared = req
+        .body_length()
+        .ok_or_else(|| "load-replay requires a bounded Content-Length".to_string())?;
+    if declared > limit {
+        return Err(format!(
+            "load-replay JSON body observed {declared} bytes, limit is {limit}"
+        ));
+    }
+
+    let mut body = Vec::with_capacity(declared.min(limit));
+    std::io::Read::take(req.as_reader(), (limit + 1) as u64)
+        .read_to_end(&mut body)
+        .map_err(|error| format!("body read: {error}"))?;
+    if body.len() > limit {
+        return Err(format!(
+            "load-replay JSON body observed at least {} bytes, limit is {limit}",
+            body.len()
+        ));
+    }
+    serde_json::from_slice(&body).map_err(|error| format!("bad json: {error}"))
 }
 
 /// Send a payload to the game loop and wait for the reply.  Caps the
@@ -804,31 +871,15 @@ pub fn drain_pre_engine() {
     }
 }
 
-/// Parse a replay payload and stash it in the pending slot. Browser builds
-/// accept only compact `rhrec-…` payloads; native developer tooling also
-/// accepts the legacy JSONL stream.
+/// Parse a production replay payload and stash it in the pending slot. Both
+/// browser and native RPC accept exactly the canonical compact envelope.
 fn decode_load_replay(data: &str, paused: bool) -> Reply {
-    let trimmed = data.trim_start();
-    let replay = if trimmed.starts_with(crate::replay_format::COMPACT_PREFIX) {
-        let (hash, replay) = crate::replay_format::decode_compact(trimmed)
-            .map_err(|e| format!("decode compact replay: {e}"))?;
-        if hash != crate::replay_format::ENGINE_VERSION_HASH {
-            return Err(format!(
-                "replay engine hash `{hash}` does not match this build `{}`",
-                crate::replay_format::ENGINE_VERSION_HASH,
-            ));
-        }
-        replay
-    } else {
-        #[cfg(target_arch = "wasm32")]
-        return Err("browser replay RPC accepts only compact `rhrec-…` data".into());
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            engine_replay::ReplayData::from_reader(std::io::Cursor::new(trimmed.as_bytes()))
-                .map_err(|e| format!("parse replay: {e}"))?
-        }
-    };
+    // Compact admission is byte-canonical: whitespace is not discarded.
+    // Local JSONL tooling likewise emits its header at byte zero.
+    let trimmed = data;
+    let replay = crate::replay_format::decode_compact_for_public_playback(trimmed)
+        .map(|(_, replay)| replay)
+        .map_err(|e| format!("decode compact replay: {e}"))?;
     let frame_count = replay.frame_count();
     let seed = replay.header.rng_seed;
     set_pending_replay(PendingReplay {

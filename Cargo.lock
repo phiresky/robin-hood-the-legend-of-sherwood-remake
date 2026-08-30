@@ -5488,6 +5488,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_replay_admission_wasm"
+version = "0.0.0"
+dependencies = [
+ "robin_replay_format",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "robin_replay_format"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "robin_engine",
+ "serde",
+ "thiserror 2.0.20",
+ "zstd",
+]
+
+[[package]]
 name = "robin_rs"
 version = "0.1.0"
 dependencies = [
@@ -5538,6 +5558,7 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
+ "robin_replay_format",
  "robin_util",
  "semver",
  "serde",

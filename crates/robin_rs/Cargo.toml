@@ -15,6 +15,7 @@ crate-type = ["rlib"]
 [dependencies]
 robin_engine.workspace = true
 robin_assets.workspace = true
+robin_replay_format.workspace = true
 robin_util.workspace = true
 tempfile.workspace = true
 ab_glyph = "0.2"
