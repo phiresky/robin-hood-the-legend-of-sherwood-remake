@@ -2043,7 +2043,15 @@ pub struct HackableLevelDescriptor {
 }
 
 /// Author-facing timed-mission rules for hackable JSON levels.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 pub struct TimedMissionDefinition {
     /// Whole active-play seconds before an ordinary mission loss.
@@ -2062,7 +2070,15 @@ fn default_timed_warning_seconds() -> u32 {
 }
 
 /// One author-facing runtime ambience cue.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AmbienceScheduleCue {
     /// Active-play seconds from mission start.

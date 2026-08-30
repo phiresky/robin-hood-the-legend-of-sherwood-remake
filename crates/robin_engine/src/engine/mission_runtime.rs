@@ -456,7 +456,7 @@ mod tests {
             &LevelAssets::default(),
             &mut super::super::DevState::default(),
         );
-        assert_eq!(effects.code, super::super::GameCode::LevelFailed);
+        assert_eq!(effects.code, crate::game_operation::GameCode::LevelFailed);
         assert!(engine.mission_domain.state.quit_lost);
     }
 }

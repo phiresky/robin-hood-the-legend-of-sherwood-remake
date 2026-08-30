@@ -1695,8 +1695,7 @@ pub(super) async fn handle_pause_menu_events(
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
-                        if gameplay_config.enable_timed_missions
-                            != simulation_enable_timed_missions
+                        if gameplay_config.enable_timed_missions != simulation_enable_timed_missions
                         {
                             let cmd = PlayerCommand::SetTimedMissionsEnabled {
                                 enabled: gameplay_config.enable_timed_missions,
