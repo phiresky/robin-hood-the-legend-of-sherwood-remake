@@ -2036,6 +2036,7 @@ impl EngineInner {
                 .filter_map(|detectable| detectable.element)
                 .collect();
             let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
+                assets,
                 world,
                 positions_before_movement.map(|positions| (npc_id, positions)),
                 Some(&enemy_target_ids),
@@ -4097,6 +4098,7 @@ impl EngineInner {
     /// this view only supplies target fields without aliasing the observer.
     fn tick_enemy_ai_build_live_enemy_optical_targets(
         &self,
+        assets: &LevelAssets,
         world: &AiWorldView,
         owner_boundary: Option<(
             EntityId,
@@ -4117,11 +4119,41 @@ impl EngineInner {
                     let snapshot = world
                         .pcs
                         .iter()
-                        .find(|snapshot| snapshot.id == entity_id)
+                        .find(|snapshot| snapshot.id == entity_id);
+                    if snapshot.is_none() && !dead {
+                        panic!(
+                            "living PC {} is absent from the owner-relative Enemy optical snapshot",
+                            entity_id.index()
+                        );
+                    }
+                    // A replaced PC corpse remains a serialized entity and
+                    // may still be held by an NPC's Enemy detectable list,
+                    // but Original removes it from marrayActorsPC. It must
+                    // survive long enough for CleanUpDetectables(Enemy) to
+                    // observe `IsDead()` and erase the stale pointer. Read
+                    // the exact profile values for the transient target
+                    // record rather than requiring an active-roster snapshot.
+                    let (detection_speed_in_forest, detection_speed_in_city) = snapshot
+                        .map(|snapshot| {
+                            (
+                                snapshot.detection_speed_in_forest,
+                                snapshot.detection_speed_in_city,
+                            )
+                        })
                         .unwrap_or_else(|| {
-                            panic!(
-                                "PC {} is absent from the owner-relative Enemy optical snapshot",
-                                entity_id.index()
+                            let character = assets
+                                .profile_manager
+                                .get_character(pc.pc.profile_index)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "dead off-roster PC {} requires missing character profile {}",
+                                        entity_id.index(),
+                                        u32::from(pc.pc.profile_index)
+                                    )
+                                });
+                            (
+                                character.detection_speed_in_forest,
+                                character.detection_speed_in_city,
                             )
                         });
                     let posture = pc.element.posture;
@@ -4172,8 +4204,8 @@ impl EngineInner {
                         dead,
                         hollow_man: pc.human.hollow_man,
                         guarded: pc.pc.guard.is_some(),
-                        detection_speed_in_forest: snapshot.detection_speed_in_forest,
-                        detection_speed_in_city: snapshot.detection_speed_in_city,
+                        detection_speed_in_forest,
+                        detection_speed_in_city,
                         order_type,
                         blipped: pc.element.blipped,
                         camp: pc.pc.cached_camp,
@@ -4251,6 +4283,7 @@ impl EngineInner {
             self.tick_enemy_ai_build_world_view(assets, Some((owner, positions_before_movement)));
         let optical = self
             .tick_enemy_ai_build_live_enemy_optical_targets(
+                assets,
                 &world,
                 Some((owner, positions_before_movement)),
                 None,

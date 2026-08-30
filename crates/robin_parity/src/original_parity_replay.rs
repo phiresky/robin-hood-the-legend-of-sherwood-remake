@@ -77,6 +77,14 @@ impl From<TraceDirectorCompletion> for robin_engine::engine::DirectorCompletion 
     }
 }
 
+/// JSON trace header and the embedded header layout of
+/// [`BinaryTraceHeaderV68`].
+///
+/// ON-DISK FORMAT INVARIANT: changing any field, field order, or field type
+/// changes bitcode's native trace layout. Such a change must bump
+/// `TRACE_NATIVE_VERSION`, freeze the old layout in a version-named struct,
+/// and add an explicit decoder branch for it. Never silently edit this type
+/// while retaining native trace version 68.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceHeader {
@@ -106,6 +114,85 @@ struct TraceHeader {
     initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
+}
+
+/// Header layout written by native trace version 67. Changing
+/// `initial_npc_transients` from `Vec<_>` to `Option<Vec<_>>` changes
+/// bitcode's struct layout and therefore requires native trace version 68.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceHeaderV67 {
+    record_type: String,
+    mission: String,
+    proto_level: String,
+    rng_seed: u64,
+    schema: u32,
+    session_index: u32,
+    start_state: TraceStartState,
+    initial_frame: u64,
+    simulation_hz: u32,
+    synchronous_pathfinding: bool,
+    rng_stream: String,
+    visibility_queries: String,
+    random_input_seed: Option<u32>,
+    sim_config: TraceSimConfig,
+    campaign: TraceCampaign,
+    motion_grid: TraceMotionGrid,
+    initial_npc_transients: Vec<TraceInitialNpcTransient>,
+    initial_save: Option<TraceInitialSave>,
+}
+
+impl From<TraceHeaderV67> for TraceHeader {
+    fn from(header: TraceHeaderV67) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            // V67 could not distinguish an omitted JSON field from a present
+            // empty array. Its replay semantics treated both as legacy state.
+            initial_npc_transients: (!header.initial_npc_transients.is_empty())
+                .then_some(header.initial_npc_transients),
+            initial_save: header.initial_save,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<TraceHeader> for TraceHeaderV67 {
+    fn from(header: TraceHeader) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            initial_npc_transients: header.initial_npc_transients.unwrap_or_default(),
+            initial_save: header.initial_save,
+        }
+    }
 }
 
 #[derive(
@@ -1878,6 +1965,11 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
+/// Element layout embedded in version-68 native frame records.
+///
+/// ON-DISK FORMAT INVARIANT: do not change fields, their order, or their
+/// types without bumping `TRACE_NATIVE_VERSION` and freezing this layout in a
+/// version-named compatibility type, as done by [`TraceElementV67`].
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceElement {
     entity_id: TraceEntityId,
@@ -1925,6 +2017,86 @@ struct TraceElement {
     /// for "not recorded" and is excluded from logical comparison.
     #[serde(default = "missing_legacy_trace_json_value")]
     runtime: TraceJsonValue,
+}
+
+/// Element snapshot layout embedded in native trace version 67. Keep this
+/// frozen: even a field-order-only edit changes bitcode's on-disk shape.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceElementV67 {
+    entity_id: TraceEntityId,
+    creation_order: u32,
+    class_id: u16,
+    kind: TraceEntityKind,
+    active: bool,
+    blipped: bool,
+    unreachable: bool,
+    surface_id: u32,
+    posture: u32,
+    position_map: TracePoint,
+    old_position_map: TracePoint,
+    position_goal_map: TracePoint,
+    elevation: TraceFloat,
+    old_elevation: TraceFloat,
+    increment_map: TracePoint,
+    increment_map_valid: bool,
+    movement_map: TracePoint,
+    layer: u16,
+    layer_goal: u16,
+    sector: u16,
+    direction: i16,
+    direction_goal: i16,
+    moving: bool,
+    moving_map: bool,
+    sprite_row: u16,
+    sprite_frame: u16,
+    sprite_frame_count: u16,
+    actor: Option<TraceActor>,
+    human: Option<TraceHuman>,
+    pc: Option<TraceElementPc>,
+    ai: Option<TraceAi>,
+    detection: Option<TraceDetection>,
+    runtime: TraceJsonValue,
+}
+
+impl TraceElementV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> TraceElement {
+        TraceElement {
+            entity_id: self.entity_id,
+            creation_order: self.creation_order,
+            class_id: self.class_id,
+            kind: self.kind,
+            active: self.active,
+            blipped: self.blipped,
+            unreachable: self.unreachable,
+            surface_id: self.surface_id,
+            posture: self.posture,
+            position_map: self.position_map,
+            old_position_map: self.old_position_map,
+            position_goal_map: self.position_goal_map,
+            elevation: self.elevation,
+            old_elevation: self.old_elevation,
+            increment_map: self.increment_map,
+            increment_map_valid: increment_map_valid_was_recorded
+                .then_some(self.increment_map_valid),
+            movement_map: self.movement_map,
+            layer: self.layer,
+            layer_goal: self.layer_goal,
+            sector: self.sector,
+            direction: self.direction,
+            direction_goal: self.direction_goal,
+            moving: self.moving,
+            moving_map: self.moving_map,
+            sprite_row: self.sprite_row,
+            sprite_frame: self.sprite_frame,
+            sprite_frame_count: self.sprite_frame_count,
+            actor: self.actor,
+            human: self.human,
+            pc: self.pc,
+            ai: self.ai,
+            detection: self.detection,
+            runtime: self.runtime,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
@@ -3111,6 +3283,10 @@ struct TraceSequenceLifecycleEvent {
     accepted: Option<bool>,
 }
 
+/// Frame layout embedded in version-68 native records.
+///
+/// ON-DISK FORMAT INVARIANT: any bitcode-shape change requires a native
+/// version bump plus a frozen compatibility decoder for this layout.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
@@ -3148,6 +3324,71 @@ struct TraceFrame {
     movement_steps: Vec<TraceMovementStep>,
     #[serde(default)]
     flight_steps: Vec<TraceFlightStep>,
+}
+
+/// Frame layout embedded in native trace version 67. Its element type retains
+/// the original plain-`bool` `increment_map_valid` field.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceFrameV67 {
+    record_type: String,
+    frame_before: u64,
+    frame_after: u64,
+    game_code: i32,
+    simulation_body_ran: bool,
+    commands: Vec<TraceCommand>,
+    director_completions: Vec<TraceDirectorCompletion>,
+    selected_pcs: Vec<TraceEntityId>,
+    elements: Vec<TraceElementV67>,
+    visibility_queries: Vec<TraceVisibilityQuery>,
+    rng_draws: TraceRngBatch,
+    motion_line_changes: Vec<TraceMotionLineChange>,
+    path_events: Vec<TracePathEvent>,
+    route_construction_events: Vec<TraceRouteConstructionEvent>,
+    popup_events: Vec<TracePopupEvent>,
+    ai_forecast_events: Vec<TraceAiForecastEvent>,
+    alert_formation_events: Vec<TraceAlertFormationEvent>,
+    goto_authorization_events: Vec<TraceGoToAuthorizationEvent>,
+    strike_proposal_events: Vec<TraceStrikeProposalEvent>,
+    sequence_lifecycle_events: Vec<TraceSequenceLifecycleEvent>,
+    target_lifecycle_events: Vec<TraceTargetLifecycleEvent>,
+    resolved_exclamations: Vec<TraceResolvedExclamation>,
+    movement_steps: Vec<TraceMovementStep>,
+    flight_steps: Vec<TraceFlightStep>,
+}
+
+impl TraceFrameV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> TraceFrame {
+        TraceFrame {
+            record_type: self.record_type,
+            frame_before: self.frame_before,
+            frame_after: self.frame_after,
+            game_code: self.game_code,
+            simulation_body_ran: self.simulation_body_ran,
+            commands: self.commands,
+            director_completions: self.director_completions,
+            selected_pcs: self.selected_pcs,
+            elements: self
+                .elements
+                .into_iter()
+                .map(|element| element.into_current(increment_map_valid_was_recorded))
+                .collect(),
+            visibility_queries: self.visibility_queries,
+            rng_draws: self.rng_draws,
+            motion_line_changes: self.motion_line_changes,
+            path_events: self.path_events,
+            route_construction_events: self.route_construction_events,
+            popup_events: self.popup_events,
+            ai_forecast_events: self.ai_forecast_events,
+            alert_formation_events: self.alert_formation_events,
+            goto_authorization_events: self.goto_authorization_events,
+            strike_proposal_events: self.strike_proposal_events,
+            sequence_lifecycle_events: self.sequence_lifecycle_events,
+            target_lifecycle_events: self.target_lifecycle_events,
+            resolved_exclamations: self.resolved_exclamations,
+            movement_steps: self.movement_steps,
+            flight_steps: self.flight_steps,
+        }
+    }
 }
 
 /// Recursive JSON tree used for high-volume trace snapshots.
@@ -3432,7 +3673,8 @@ fn validate_trace_frame(frame: &TraceFrame) {
     validate_sequence_diagnostic_order(frame);
 }
 
-const TRACE_NATIVE_VERSION: u32 = 67;
+const TRACE_NATIVE_VERSION: u32 = 68;
+const TRACE_NATIVE_LEGACY_VERSION: u32 = 67;
 /// The native parity trace is the authoritative artifact once its JSONL
 /// source has been converted (and possibly deleted), so its name carries no
 /// version: compatibility is enforced through the versioned header/footer,
@@ -3466,19 +3708,58 @@ const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
 /// this storage-only change remains compatible within the current native version.
 const TRACE_NATIVE_BLOCK_RECORDS: usize = 1000;
 /// Bound the zstd history retained by every replay process. Cross-frame
-/// repetition is already captured inside the 1,000-frame bitcode blocks; a
-/// whole-trace 512 MiB-2 GiB window only traded resident memory for a small
-/// artifact-size win and prevented one replay lane per CPU core.
-const TRACE_NATIVE_WINDOW_LOG: u32 = 25;
+/// repetition is already captured inside the 1,000-frame bitcode blocks, while
+/// 512 MiB of cross-block history favors archival density without returning to
+/// the potentially multi-gigabyte windows of whole-trace compression.
+const TRACE_NATIVE_WINDOW_LOG: u32 = 29;
 
+/// Native trace header layout for version 68. Do not change its bitcode shape
+/// without bumping `TRACE_NATIVE_VERSION` and retaining this type as the v68
+/// compatibility decoder.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
-struct BinaryTraceHeader {
+struct BinaryTraceHeaderV68 {
     version: u32,
     source_fingerprint: String,
     trace: TraceHeader,
     rng_prefix: TraceRngPrefix,
 }
 
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct BinaryTraceHeaderV67 {
+    version: u32,
+    source_fingerprint: String,
+    trace: TraceHeaderV67,
+    rng_prefix: TraceRngPrefix,
+}
+
+impl From<BinaryTraceHeaderV67> for BinaryTraceHeaderV68 {
+    fn from(header: BinaryTraceHeaderV67) -> Self {
+        Self {
+            version: header.version,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<BinaryTraceHeaderV68> for BinaryTraceHeaderV67 {
+    fn from(header: BinaryTraceHeaderV68) -> Self {
+        Self {
+            version: TRACE_NATIVE_LEGACY_VERSION,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
+/// Native record layout for version 68.
+///
+/// ON-DISK FORMAT INVARIANT: this enum and every transitively encoded child
+/// type are immutable for version 68. Shape changes require a version bump and
+/// an explicit legacy decoder such as [`BinaryTraceRecordV67`].
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 enum BinaryTraceRecord {
     Frame(TraceFrame),
@@ -3489,12 +3770,46 @@ enum BinaryTraceRecord {
     },
 }
 
+/// Record layout written by native trace version 67. Do not modify this type
+/// or any of its versioned children.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+enum BinaryTraceRecordV67 {
+    Frame(TraceFrameV67),
+    End {
+        rng_suffix: Option<TraceRngBatch>,
+        final_frame: Option<u64>,
+        frame_count: Option<u64>,
+    },
+}
+
+impl BinaryTraceRecordV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> BinaryTraceRecord {
+        match self {
+            Self::Frame(frame) => {
+                BinaryTraceRecord::Frame(frame.into_current(increment_map_valid_was_recorded))
+            }
+            Self::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            } => BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            },
+        }
+    }
+}
+
 struct BinaryTraceReader {
     path: PathBuf,
     reader: Box<dyn Read>,
     footer: BinaryTraceFooter,
     /// Records of the current block not yet handed out by [`Self::read_record`].
     pending: VecDeque<BinaryTraceRecord>,
+    /// V67 used an empty header transient vector to identify recorder builds
+    /// where `increment_map_valid` was absent and defaulted to false.
+    v67_increment_map_valid_was_recorded: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6310,10 +6625,8 @@ fn spawn_roundtrip_audit_workers<'scope, 'env>(
     sender
 }
 
-/// Panic unless the native trace at `native_path` carries the current format
-/// version in both its fixed footer and its decoded header. Used when there
-/// is no JSONL source to regenerate from, so the only correct responses to a
-/// mismatch are migration or restoring the recording — never regeneration.
+/// Validate a standalone native trace, including the legacy version whose
+/// JSONL source may intentionally have been deleted.
 fn validate_standalone_native_trace(native_path: &Path) {
     let footer = read_binary_trace_footer(native_path).unwrap_or_else(|error| {
         panic!(
@@ -6322,9 +6635,16 @@ fn validate_standalone_native_trace(native_path: &Path) {
         )
     });
     let header = read_binary_trace_header(native_path);
-    assert!(
-        footer.version == TRACE_NATIVE_VERSION && header.version == TRACE_NATIVE_VERSION,
-        "native parity trace {} is version {} (footer {}) but this runner expects          {TRACE_NATIVE_VERSION}; its JSONL source is gone, so it must be migrated          with a runner that still reads its version",
+    validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+        panic!(
+            "native parity trace {} has an unsupported fixed footer: {error}",
+            native_path.display()
+        )
+    });
+    assert_eq!(
+        footer.version,
+        header.version,
+        "native parity trace {} has header version {} but footer version {}",
         native_path.display(),
         header.version,
         footer.version,
@@ -6530,7 +6850,7 @@ fn verify_converted_native_trace(
         .expect("read recording RNG prefix during native readback");
     let source_prefix: TraceRngPrefix = serde_json::from_str(&source_prefix_line)
         .expect("reparse recording RNG prefix during native readback");
-    let expected_header = BinaryTraceHeader {
+    let expected_header = BinaryTraceHeaderV68 {
         version: TRACE_NATIVE_VERSION,
         source_fingerprint: source_fingerprint.clone(),
         trace: source_trace,
@@ -7498,7 +7818,10 @@ fn digest_and_validate_native_trace(path: &Path) -> (u64, sha2::digest::Output<S
     validate_binary_trace_footer(&reader.footer)
         .unwrap_or_else(|error| panic!("reblocked native trace footer is invalid: {error}"));
     let header = reader.read_header();
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
+    assert_eq!(
+        header.version, reader.footer.version,
+        "native parity trace header/footer versions differ"
+    );
     let mut digest = Sha256::new();
     update_native_semantic_digest(&mut digest, &header);
     let mut timeline = TraceTimeline::new(header.trace.initial_frame);
@@ -7627,7 +7950,7 @@ fn ensure_native_binary_trace_locked(
         "invalid RNG prefix record type"
     );
     rng_prefix.draws.validate();
-    let header = BinaryTraceHeader {
+    let header = BinaryTraceHeaderV68 {
         version: TRACE_NATIVE_VERSION,
         source_fingerprint: fingerprint,
         trace,
@@ -7808,31 +8131,39 @@ impl BinaryTraceReader {
             reader: Box::new(decoder),
             footer,
             pending: VecDeque::new(),
+            v67_increment_map_valid_was_recorded: false,
         }
     }
 
-    fn read_header(&mut self) -> BinaryTraceHeader {
-        read_binary_record(&mut self.reader, "native parity trace header").unwrap_or_else(|error| {
-            panic!(
-                "read native parity trace header {}: {error}",
-                self.path.display()
-            )
-        })
+    fn read_header(&mut self) -> BinaryTraceHeaderV68 {
+        let header = read_binary_trace_header_record(&mut self.reader, self.footer.version)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "read native parity trace header {}: {error}",
+                    self.path.display()
+                )
+            });
+        self.v67_increment_map_valid_was_recorded = self.footer.version
+            == TRACE_NATIVE_LEGACY_VERSION
+            && header.trace.initial_npc_transients.is_some();
+        header
     }
 
     fn read_record(&mut self) -> BinaryTraceRecord {
         if let Some(record) = self.pending.pop_front() {
             return record;
         }
-        let block: Vec<BinaryTraceRecord> =
-            read_binary_record(&mut self.reader, "native parity trace block").unwrap_or_else(
-                |error| {
-                    panic!(
-                        "read native parity trace block {}: {error}",
-                        self.path.display()
-                    )
-                },
-            );
+        let block = read_binary_trace_block_record(
+            &mut self.reader,
+            self.footer.version,
+            self.v67_increment_map_valid_was_recorded,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "read native parity trace block {}: {error}",
+                self.path.display()
+            )
+        });
         self.pending.extend(block);
         self.pending.pop_front().unwrap_or_else(|| {
             panic!(
@@ -7914,22 +8245,26 @@ fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
 }
 
 fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
-    if footer.version != TRACE_NATIVE_VERSION {
+    if !matches!(
+        footer.version,
+        TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
+    ) {
         return Err(format!(
-            "footer version {} does not match runner version {TRACE_NATIVE_VERSION}",
+            "footer version {} is unsupported; this runner supports versions {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}",
             footer.version
         ));
     }
     Ok(())
 }
 
-fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeader, String> {
+fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeaderV68, String> {
+    let footer = read_binary_trace_footer(path)?;
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut decoder = zstd::stream::read::Decoder::new(file).map_err(|error| error.to_string())?;
     decoder
         .window_log_max(TRACE_ZSTD_WINDOW_LOG_MAX)
         .map_err(|error| error.to_string())?;
-    read_binary_record(&mut decoder, "native parity trace header")
+    read_binary_trace_header_record(&mut decoder, footer.version)
 }
 
 /// A compression window large enough for short encoded streams and otherwise
@@ -8009,7 +8344,7 @@ fn configure_cache_compression<W: Write>(
         .unwrap_or_else(|error| panic!("configure cache compression window: {error}"));
 }
 
-fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeader {
+fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeaderV68 {
     try_read_binary_trace_header(path).unwrap_or_else(|error| {
         panic!(
             "read native parity trace header {} after conversion: {error}",
@@ -8033,10 +8368,16 @@ fn write_binary_record<T: bitcode::Encode + ?Sized>(
         .unwrap_or_else(|error| panic!("write {label}: {error}"));
 }
 
+#[cfg(test)]
 fn read_binary_record<T: bitcode::DecodeOwned>(
     reader: &mut dyn Read,
     label: &str,
 ) -> Result<T, String> {
+    let encoded = read_binary_record_payload(reader, label)?;
+    bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
+}
+
+fn read_binary_record_payload(reader: &mut dyn Read, label: &str) -> Result<Vec<u8>, String> {
     const MAX_RECORD_BYTES: u64 = 1024 * 1024 * 1024;
     let mut length_bytes = [0_u8; 8];
     reader
@@ -8054,7 +8395,49 @@ fn read_binary_record<T: bitcode::DecodeOwned>(
     reader
         .read_exact(&mut encoded)
         .map_err(|error| format!("read {label} payload: {error}"))?;
-    bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
+    Ok(encoded)
+}
+
+fn read_binary_trace_header_record(
+    reader: &mut dyn Read,
+    version: u32,
+) -> Result<BinaryTraceHeaderV68, String> {
+    let label = "native parity trace header";
+    let encoded = read_binary_record_payload(reader, label)?;
+    match version {
+        TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<BinaryTraceHeaderV67>(&encoded)
+            .map(Into::into)
+            .map_err(|error| format!("decode version-67 {label}: {error}")),
+        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
+            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
+        _ => Err(format!(
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+        )),
+    }
+}
+
+fn read_binary_trace_block_record(
+    reader: &mut dyn Read,
+    version: u32,
+    v67_increment_map_valid_was_recorded: bool,
+) -> Result<Vec<BinaryTraceRecord>, String> {
+    let label = "native parity trace block";
+    let encoded = read_binary_record_payload(reader, label)?;
+    match version {
+        TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV67>>(&encoded)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(|record| record.into_current(v67_increment_map_valid_was_recorded))
+                    .collect()
+            })
+            .map_err(|error| format!("decode version-67 {label}: {error}")),
+        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
+            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
+        _ => Err(format!(
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+        )),
+    }
 }
 
 /// Storage experiment for the canonical trace layout: re-encode the cached
@@ -10198,14 +10581,17 @@ fn compare_frame(
             id,
             "layer",
             expected.layer,
-            element.layer(),
+            element
+                .optional_layer()
+                .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         compare(
             &mut differences,
             id,
             "layer_goal",
             expected.layer_goal,
-            pi.layer_goal().get(),
+            pi.optional_layer_goal()
+                .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         if !mapped_building_sector {
             compare(
@@ -11376,8 +11762,8 @@ mod tests {
         )
     }
 
-    fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeader {
-        BinaryTraceHeader {
+    fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeaderV68 {
+        BinaryTraceHeaderV68 {
             version: TRACE_NATIVE_VERSION,
             source_fingerprint: source_fingerprint.to_owned(),
             trace: TraceHeader {
@@ -11520,12 +11906,30 @@ mod tests {
     }
 
     #[test]
+    fn version_67_header_uses_legacy_vec_layout() {
+        let legacy: BinaryTraceHeaderV67 = minimal_test_native_header("legacy-v67").into();
+        let mut encoded_record = Vec::new();
+        write_binary_record(&mut encoded_record, &legacy, "test version-67 header");
+
+        let decoded = read_binary_trace_header_record(
+            &mut std::io::Cursor::new(encoded_record),
+            TRACE_NATIVE_LEGACY_VERSION,
+        )
+        .expect("decode version-67 header through its original bitcode layout");
+
+        assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
+        assert_eq!(decoded.source_fingerprint, "legacy-v67");
+        assert!(decoded.trace.initial_npc_transients.is_none());
+    }
+
+    #[test]
     fn native_level_nineteen_policy_round_trips_records_and_footer() {
-        assert_eq!(TRACE_NATIVE_VERSION, 67);
+        assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
+        assert_eq!(TRACE_NATIVE_VERSION, 68);
         assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
         assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
         assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 1000);
-        assert_eq!(TRACE_NATIVE_WINDOW_LOG, 25);
+        assert_eq!(TRACE_NATIVE_WINDOW_LOG, 29);
 
         let footer = BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
