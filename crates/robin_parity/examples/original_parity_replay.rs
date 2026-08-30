@@ -3536,7 +3536,8 @@ fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u64 {
 
 #[allow(clippy::too_many_arguments)]
 fn append_legacy_retained_terminal_success_repair(
-    commands: &mut Vec<PlayerCommand>,
+    commands_before_hourglass: &mut Vec<PlayerCommand>,
+    commands_after_hourglass: &mut Vec<PlayerCommand>,
     difficulty: robin_engine::player_profile::DifficultyLevel,
     campaign_run_id: u64,
     schema: u32,
@@ -3558,16 +3559,20 @@ fn append_legacy_retained_terminal_success_repair(
         return false;
     }
 
-    // Original MSG_QUIT_MISSION performs campaign/stat updates first and only
-    // then arms mbQuitWon for the retained Hourglass boundary.
+    // The omitted Original MSG_QUIT_MISSION both applies campaign/stat updates
+    // and arms mbQuitWon before the retained Hourglass boundary. Rust keeps
+    // terminal campaign updates in a post-hourglass command so achievement
+    // evidence is finalized only after that final engine boundary, matching the
+    // live Rust session transaction. Both phases still complete before parity
+    // compares the Original terminal snapshot.
     *already_applied = true;
-    commands.push(PlayerCommand::ApplyQuitMissionUpdates {
+    commands_before_hourglass.push(PlayerCommand::QuitMissionRequested);
+    commands_after_hourglass.push(PlayerCommand::ApplyQuitMissionUpdates {
         exit_code: GameCode::LevelSucceeded,
         difficulty,
         completed_at_unix_seconds: None,
         campaign_run_nonce: Some(campaign_run_id),
     });
-    commands.push(PlayerCommand::QuitMissionRequested);
     true
 }
 
@@ -4618,18 +4623,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        append_legacy_retained_terminal_success_repair(
-            &mut commands_before_hourglass_resolved,
-            header.sim_config.difficulty.into(),
-            campaign_run_id,
-            header.schema,
-            frame.frame_before,
-            frame.frame_after,
-            frame.simulation_body_ran,
-            frame.game_code,
-            &mut legacy_terminal_success_repair_applied,
-        );
-        let commands_after_hourglass = commands_after_hourglass
+        let mut commands_after_hourglass = commands_after_hourglass
             .into_iter()
             .filter_map(|command| {
                 let drop_ale_resolution = resolve_current_drop_ale(
@@ -4661,6 +4655,18 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 )
             })
             .collect::<Vec<_>>();
+        append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass_resolved,
+            &mut commands_after_hourglass,
+            header.sim_config.difficulty.into(),
+            campaign_run_id,
+            header.schema,
+            frame.frame_before,
+            frame.frame_after,
+            frame.simulation_body_ran,
+            frame.game_code,
+            &mut legacy_terminal_success_repair_applied,
+        );
         let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
             Some(preview) => preview,
             None => &mut engine,
@@ -11858,11 +11864,13 @@ mod tests {
 
     #[test]
     fn retained_terminal_success_repair_is_emitted_exactly_once() {
-        let mut commands = Vec::new();
+        let mut commands_before_hourglass = Vec::new();
+        let mut commands_after_hourglass = Vec::new();
         let mut applied = false;
         let campaign_run_id = 0x1234_5678_9abc_def0;
         assert!(append_legacy_retained_terminal_success_repair(
-            &mut commands,
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
             robin_engine::player_profile::DifficultyLevel::Medium,
             campaign_run_id,
             TRACE_SCHEMA_VERSION,
@@ -11873,7 +11881,8 @@ mod tests {
             &mut applied,
         ));
         assert!(!append_legacy_retained_terminal_success_repair(
-            &mut commands,
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
             robin_engine::player_profile::DifficultyLevel::Medium,
             campaign_run_id,
             TRACE_SCHEMA_VERSION,
@@ -11883,16 +11892,20 @@ mod tests {
             GameCode::LevelSucceeded as i32,
             &mut applied,
         ));
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands_before_hourglass.len(), 1);
+        assert_eq!(commands_after_hourglass.len(), 1);
         assert!(matches!(
-            commands[0],
+            commands_before_hourglass[0],
+            PlayerCommand::QuitMissionRequested
+        ));
+        assert!(matches!(
+            commands_after_hourglass[0],
             PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: GameCode::LevelSucceeded,
                 campaign_run_nonce: Some(actual),
                 ..
             } if actual == campaign_run_id
         ));
-        assert!(matches!(commands[1], PlayerCommand::QuitMissionRequested));
     }
 
     #[test]
