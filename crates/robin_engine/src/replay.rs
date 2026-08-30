@@ -1136,6 +1136,7 @@ mod tests {
         let commands = vec![
             PlayerCommand::SetAmountOfSpeaking { amount: 9 },
             PlayerCommand::SetUnbindingEnabled { enabled: false },
+            PlayerCommand::SetReusableCloaks { enabled: false },
         ];
         let mut recorder = ReplayRecorder::new(
             &path,
@@ -1160,6 +1161,7 @@ mod tests {
         live.apply_local_commands(&mut live_display, &mut live_input, &assets, &commands);
         assert_eq!(live.control.sim_config.amount_of_speaking, 9);
         assert!(!live.control.sim_config.enable_unbinding);
+        assert!(!live.control.sim_config.reusable_cloaks);
 
         let data = ReplayData::from_file(&path).unwrap();
         let replay_commands = ReplayPlayer::new(data)
@@ -1180,6 +1182,7 @@ mod tests {
 
         assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
         assert!(!replayed.control.sim_config.enable_unbinding);
+        assert!(!replayed.control.sim_config.reusable_cloaks);
         assert_eq!(state_hash(&live), state_hash(&replayed));
         let _ = std::fs::remove_file(path);
     }

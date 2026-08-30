@@ -115,6 +115,7 @@ impl ApplicationContext {
         let enable_unbinding = active.gameplay_config.enable_unbinding;
         let clean_hands_npc_kills_invalidate =
             active.gameplay_config.clean_hands_npc_kills_invalidate;
+        let reusable_cloaks = active.gameplay_config.reusable_cloaks;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -131,6 +132,7 @@ impl ApplicationContext {
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = reusable_cloaks;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -149,6 +151,7 @@ impl ApplicationContext {
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = existing.reusable_cloaks;
         *self
             .sim_config
             .lock()
@@ -208,6 +211,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
+            reusable_cloaks,
         ) = {
             let mut profiles = self
                 .required_services()?
@@ -225,6 +229,7 @@ impl ApplicationContext {
                 active.gameplay_config.fix_hard_reaction_times,
                 active.gameplay_config.enable_unbinding,
                 active.gameplay_config.clean_hands_npc_kills_invalidate,
+                active.gameplay_config.reusable_cloaks,
             )
         };
         self.refresh_profile_derived_state(
@@ -233,6 +238,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
+            reusable_cloaks,
         )?;
         Ok(result)
     }
@@ -254,6 +260,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
+            reusable_cloaks,
         ) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
@@ -305,6 +312,7 @@ impl ApplicationContext {
             let enable_unbinding = active.gameplay_config.enable_unbinding;
             let clean_hands_npc_kills_invalidate =
                 active.gameplay_config.clean_hands_npc_kills_invalidate;
+            let reusable_cloaks = active.gameplay_config.reusable_cloaks;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -335,6 +343,7 @@ impl ApplicationContext {
                 fix_hard_reaction_times,
                 enable_unbinding,
                 clean_hands_npc_kills_invalidate,
+                reusable_cloaks,
             )
         };
 
@@ -344,6 +353,7 @@ impl ApplicationContext {
             fix_hard_reaction_times,
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
+            reusable_cloaks,
         )?;
         Ok(profile_id)
     }
@@ -423,12 +433,14 @@ impl ApplicationContext {
         fix_hard_reaction_times: bool,
         enable_unbinding: bool,
         clean_hands_npc_kills_invalidate: bool,
+        reusable_cloaks: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = reusable_cloaks;
         *self
             .sim_config
             .lock()
@@ -1681,9 +1693,11 @@ mod application_context_tests {
                     height: 1,
                     dictionary_index: 0,
                     packed_data: std::sync::Arc::new(vec![0]),
+                    raster: None,
                 },
             )],
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         });
 
         let mut holder = FrameHolder::new();

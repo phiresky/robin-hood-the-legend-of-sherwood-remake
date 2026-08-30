@@ -989,7 +989,6 @@ pub(super) fn render_frame(
     // noisy.  All fields are `&'a mut T` / `&'a T`, so this is a
     // reborrow, not a move.
     let renderer = &mut *ctx.renderer;
-    renderer.set_shader_frame_count(Some(engine.frame_counter() as usize));
     let cursor_renderer = &mut *ctx.cursor_renderer;
     let selection_mark_renderer = &mut *ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
@@ -1283,6 +1282,11 @@ pub(super) fn render_frame(
     // Allied patrol routes share this foreground, floating-chain layer.
     render_selected_allied_patrol_routes(host, engine, assets, local_seat, renderer);
     crate::ui_panel::render_macro_dotted_chains(host, engine, renderer);
+
+    // The items above are mission-space feedback and belong to the effected
+    // gameplay image. Everything after this boundary is screen-space UI and
+    // is composited sharply after scaling/presentation effects.
+    renderer.begin_ui_layer();
 
     // ── GPU phase: UI panel, minimap ──
     let panel_mouse = threaded_input.position();

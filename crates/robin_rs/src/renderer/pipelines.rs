@@ -1,6 +1,8 @@
 //! Render pipelines and the lazy upscale-pipeline cache.
 
-use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::graphic_config::{
+    GraphicConfig, TextureEffect, TextureEffectParameters, TextureScaleMode, UpscaleParameters,
+};
 
 use crate::gpu_upscale::GpuUpscale;
 use crate::window::GpuContext;
@@ -11,6 +13,9 @@ use crate::gfx_types::BlendMode;
 pub(super) struct PipelineStore {
     pub(super) scale_mode: TextureScaleMode,
     pub(super) shader_preset: String,
+    pub(super) texture_effect: TextureEffect,
+    pub(super) upscale_parameters: UpscaleParameters,
+    pub(super) texture_effect_parameters: TextureEffectParameters,
     pub(super) gpu_upscale: GpuUpscale,
     pub(super) pipelines: [wgpu::RenderPipeline; 4],
     pub(super) masked_pipelines: [wgpu::RenderPipeline; 4],
@@ -118,6 +123,9 @@ impl PipelineStore {
         Self {
             scale_mode,
             shader_preset: String::new(),
+            texture_effect: TextureEffect::None,
+            upscale_parameters: UpscaleParameters::default(),
+            texture_effect_parameters: TextureEffectParameters::default(),
             gpu_upscale: GpuUpscale::new(gpu.clone(), gpu.surface_format),
             pipelines,
             masked_pipelines,
@@ -141,6 +149,21 @@ impl PipelineStore {
 
     pub(super) fn set_shader_preset(&mut self, preset: impl Into<String>) {
         self.shader_preset = preset.into();
+    }
+
+    pub(super) fn apply_upscale_config(&mut self, config: &GraphicConfig) {
+        self.scale_mode = config.scale_mode;
+        self.shader_preset = config.shader_preset.clone();
+        self.texture_effect = config.texture_effect;
+        self.upscale_parameters = config.upscale_parameters;
+        self.texture_effect_parameters = config.texture_effect_parameters;
+    }
+
+    pub(super) fn validate_retroarch_preset(
+        &mut self,
+        preset: &str,
+    ) -> Result<(), crate::gpu_upscale::UpscaleError> {
+        self.gpu_upscale.validate_retroarch_preset(preset)
     }
 }
 

@@ -17,6 +17,7 @@ mod animation;
 pub(crate) mod anti_collision;
 mod beggar;
 mod camera;
+mod cloak;
 mod combat;
 mod commands;
 mod console_dispatch;

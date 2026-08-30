@@ -193,7 +193,7 @@ pub(crate) async fn show_main_menu(
         logical_height as u16,
         initial_profile.graphic_config.scale_mode,
     );
-    renderer.set_shader_preset(initial_profile.graphic_config.shader_preset);
+    renderer.apply_upscale_config(&initial_profile.graphic_config);
 
     // Shared menu resources (buttons, fonts, menu text table) — reused
     // by every sub-menu launched from here.
@@ -287,6 +287,7 @@ pub(crate) async fn show_main_menu(
     // user cancels the dialog) so the prompt never repeats.
     if let Some(bg) = bg {
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
@@ -457,6 +458,7 @@ pub(crate) async fn show_main_menu(
         // GPU queue; no menu frame mutates a retained software surface.
 
         renderer.begin_gpu_frame_clear();
+        renderer.begin_ui_only_frame();
 
         if let Some(bg) = bg {
             let bg_x = transform.origin_x + (MENU_W - bg.width) / 2;
@@ -658,8 +660,7 @@ async fn dispatch_click(
                 });
             event_pump.set_logical_resolution_policy(&profile.graphic_config);
             renderer.sync_window_size(event_pump);
-            renderer.set_scale_mode(profile.graphic_config.scale_mode);
-            renderer.set_shader_preset(profile.graphic_config.shader_preset);
+            renderer.apply_upscale_config(&profile.graphic_config);
             None
         }
         ClickAction::Options => {

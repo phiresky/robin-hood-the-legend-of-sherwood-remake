@@ -1,8 +1,14 @@
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+
 plugins {
     id "com.android.application"
 }
 
 def repoRoot = layout.projectDirectory.dir("../..")
+def coreOverlayDir = repoRoot.dir("assets/core-datadir")
+def coreOverlayManifest = coreOverlayDir.file("core-overlay-manifest.json")
+def shippingDatadirSource = repoRoot.file("crates/robin_assets/src/shipping_datadir.rs")
 def ndkHome = providers.environmentVariable("ANDROID_NDK_HOME")
     .orElse("/home/phire/tmp/android-sdk/ndk/29.0.14206865")
 def ndkBin = ndkHome.map { "${it}/toolchains/llvm/prebuilt/linux-x86_64/bin" }
@@ -30,7 +36,10 @@ android {
     sourceSets {
         main {
             manifest.srcFile "../AndroidManifest.xml"
-            assets.srcDirs = ["../assets"]
+            // `../assets` is operator-supplied generated demo content and is
+            // intentionally absent from the repository. The engine-owned core
+            // overlay is a separate, retail-content-free APK asset root.
+            assets.srcDirs = ["../assets", coreOverlayDir.asFile]
             jniLibs.srcDirs = [syncedJniLibs]
         }
     }
@@ -38,6 +47,80 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+        }
+    }
+}
+
+tasks.register("validateCoreOverlay") {
+    group = "verification"
+    description = "Validate the exact engine core-overlay inventory packaged in the APK"
+    inputs.file(coreOverlayManifest)
+    inputs.dir(coreOverlayDir.dir("Data"))
+    inputs.file(shippingDatadirSource)
+
+    doLast {
+        def packagedRoots = android.sourceSets.main.assets.srcDirs.collect { it.canonicalFile }
+        if (!packagedRoots.contains(coreOverlayDir.asFile.canonicalFile)) {
+            throw new GradleException("core overlay is validated but not registered as an Android asset root")
+        }
+
+        def manifestFile = coreOverlayManifest.asFile
+        if (!manifestFile.isFile()) {
+            throw new GradleException("required core overlay manifest is missing: ${manifestFile}")
+        }
+        def manifest = new JsonSlurper().parse(manifestFile)
+        if (manifest.schema != 1) {
+            throw new GradleException("unsupported core overlay manifest schema ${manifest.schema}; expected 1")
+        }
+
+        def versionMatch = shippingDatadirSource.asFile.text =~
+            /pub const SHIPPING_DATADIR_VERSION: u32 = (\d+);/
+        if (!versionMatch.find()) {
+            throw new GradleException("could not read SHIPPING_DATADIR_VERSION from ${shippingDatadirSource.asFile}")
+        }
+        def shippingVersion = versionMatch.group(1) as Integer
+        if (manifest.shippingDatadirSchema != shippingVersion) {
+            throw new GradleException(
+                "core overlay targets shipping datadir schema ${manifest.shippingDatadirSchema}; runtime expects ${shippingVersion}"
+            )
+        }
+        if (!(manifest.files instanceof List) || manifest.files.isEmpty()) {
+            throw new GradleException("core overlay manifest must contain a non-empty files array")
+        }
+
+        def declared = manifest.files.collect { entry -> entry.path as String }
+        if (declared != declared.toSorted() || declared.toSet().size() != declared.size()) {
+            throw new GradleException("core overlay manifest paths must be unique and strictly sorted")
+        }
+        def actual = []
+        coreOverlayDir.dir("Data").asFile.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+            actual.add(coreOverlayDir.asFile.toPath().relativize(file.toPath()).toString().replace('\\', '/'))
+        }
+        actual.sort()
+        if (declared != actual) {
+            throw new GradleException("core overlay manifest inventory differs from assets/core-datadir/Data")
+        }
+
+        manifest.files.each { entry ->
+            def relative = entry.path as String
+            if (!relative.startsWith("Data/") || relative.contains("..") || relative.startsWith("/")) {
+                throw new GradleException("invalid core overlay asset path: ${relative}")
+            }
+            def asset = coreOverlayDir.file(relative).asFile
+            if (!asset.isFile()) {
+                throw new GradleException("required core overlay asset is missing: ${asset}")
+            }
+            if (asset.length() != (entry.size as Long)) {
+                throw new GradleException(
+                    "core overlay asset ${relative} has ${asset.length()} bytes; manifest requires ${entry.size}"
+                )
+            }
+            def digest = MessageDigest.getInstance("SHA-256").digest(asset.bytes).encodeHex().toString()
+            if (digest != entry.sha256) {
+                throw new GradleException(
+                    "core overlay asset ${relative} failed SHA-256 validation: expected ${entry.sha256}, got ${digest}"
+                )
+            }
         }
     }
 }
@@ -73,5 +156,6 @@ tasks.register("syncRustJniLibs", Copy) {
 }
 
 tasks.named("preBuild") {
+    dependsOn tasks.named("validateCoreOverlay")
     dependsOn tasks.named("syncRustJniLibs")
 }

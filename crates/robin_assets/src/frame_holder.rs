@@ -93,12 +93,87 @@ pub struct PackedSprite {
     /// storage, when the data is bank-backed rather than owned.
     #[serde(skip)]
     pub bank_span: Option<BankSpan>,
+    /// Shared late-streaming grid cell for a shipping VQ sprite whose blob
+    /// decode was deferred past mission activation (browser builds). Filled
+    /// in place by the background decode driver via
+    /// [`crate::late_sprites::publish_chunk`]; every `FrameHolder` clone and
+    /// the published pixel-opacity generation share the same cell, so the
+    /// pixels appear without republishing. `None` for everything else.
+    #[serde(skip)]
+    pub late_grid: Option<crate::late_sprites::LateGridCell>,
     /// Original runtime-loaded RGBA pixels, when this sprite came from a PNG
     /// overlay instead of the legacy bank.
     #[serde(skip)]
     pub rgba_data: Option<Vec<u8>>,
+    /// Already-decoded RGB565 canvas for this sprite, when the web
+    /// shipping format delivered it as a lossy JXL atlas region instead of
+    /// packed RLE words. Takes priority over `packed_data` / `bank_span`
+    /// in every RLE consumer below. See [`SpriteRaster`].
+    #[serde(skip)]
+    pub raster: Option<SpriteRaster>,
     /// Index into the dictionary table, or [`UNMAPPED_DICT`] for RLE sprites.
     pub dictionary_index: u16,
+}
+
+/// One sprite's window into an already-decoded RGB565 atlas.
+///
+/// Web shipping can deliver the RLE patch/ambient bucket as lossy JXL
+/// atlases (`--rle-sprite-format jxl-q70`, schema v14). Those decode once
+/// at mission install into a shared canvas per atlas; each sprite then
+/// references its sub-rect rather than owning a copy. The canvas holds
+/// exactly what an RLE decompression produces — `TRANSPARENT_COLOR_16` in
+/// transparent pixels, raw [`SHADOW_KEY`] markers in shadow pixels — so
+/// the consumers below stay a strided copy plus the same per-pixel
+/// substitution they always did, and the ambience-dependent shadow color
+/// is still applied downstream, per draw, exactly as for a native sprite.
+///
+/// Repacking these back into RLE runs would be pure busywork: nothing
+/// draws from runs — every consumer decompresses to this raster anyway.
+#[derive(Debug, Clone)]
+pub struct SpriteRaster {
+    /// Shared decoded atlas, `stride` pixels per row.
+    pub atlas: Arc<Vec<u16>>,
+    /// Atlas width in pixels.
+    pub stride: u32,
+    /// Top-left pixel of this sprite's region inside the atlas.
+    pub x: u16,
+    pub y: u16,
+}
+
+impl SpriteRaster {
+    /// One row of this sprite's region. `None` when the window does not
+    /// fit the atlas (a corrupt payload, never a normal state).
+    pub fn row(&self, y: usize, width: usize) -> Option<&[u16]> {
+        let start = (self.y as usize + y) * self.stride as usize + self.x as usize;
+        self.atlas.get(start..start + width)
+    }
+
+    pub fn pixel(&self, x: usize, y: usize) -> Option<u16> {
+        let index = (self.y as usize + y) * self.stride as usize + self.x as usize + x;
+        self.atlas.get(index).copied()
+    }
+}
+
+/// Blit one sprite raster into `dst`, mapping every pixel through `map`.
+/// The three RLE decompressors below differ only in that mapping, so the
+/// raster path reproduces each of them exactly.
+fn blit_raster(
+    raster: &SpriteRaster,
+    dst: &mut [u16],
+    pitch_words: usize,
+    width: usize,
+    height: usize,
+    map: impl Fn(u16) -> u16,
+) {
+    for y in 0..height {
+        let row = raster
+            .row(y, width)
+            .expect("sprite raster window fits its atlas");
+        let out = &mut dst[y * pitch_words..y * pitch_words + width];
+        for (dst_px, &src_px) in out.iter_mut().zip(row) {
+            *dst_px = map(src_px);
+        }
+    }
 }
 
 /// Portable payload for a sprite compiled from a runtime PNG overlay.
@@ -209,7 +284,9 @@ impl Default for PackedSprite {
             packed_size: 0,
             packed_data: None,
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
+            raster: None,
             dictionary_index: UNMAPPED_DICT,
         }
     }
@@ -568,6 +645,16 @@ impl FrameHolder {
         &self.dictionaries
     }
 
+    /// The dictionary set one [`SpriteVariant`] renders from. Empty for
+    /// Night/Fog until the matching `generate_*_dictionaries` has run.
+    pub fn variant_dictionaries(&self, variant: SpriteVariant) -> &[FrameDictionary] {
+        match variant {
+            SpriteVariant::Day => &self.dictionaries,
+            SpriteVariant::Night => &self.dictionaries_night,
+            SpriteVariant::Fog => &self.dictionaries_fog,
+        }
+    }
+
     pub fn num_sprites(&self) -> usize {
         self.sprites.len()
     }
@@ -587,16 +674,32 @@ impl FrameHolder {
         self.sprite_packed_slice(sprite_index as usize)
     }
 
-    /// Resolve a sprite's packed words: owned data first, then its span
-    /// into the shared bank storage.
+    /// Resolve a sprite's packed words: owned data first, then a filled
+    /// late-streaming cell, then its span into the shared bank storage.
     fn sprite_packed_slice(&self, sprite_index: usize) -> Option<&[u16]> {
         let sprite = self.sprites.get(sprite_index)?;
         if let Some(owned) = sprite.packed_data.as_deref() {
             return Some(owned);
         }
+        if let Some(cell) = sprite.late_grid.as_ref() {
+            // Lock-free read of the shared cell; the background driver
+            // fills it at most once. Empty means "not streamed yet".
+            return cell.get().map(|grid| grid.as_slice());
+        }
         let span = sprite.bank_span?;
         let words = self.bank.as_ref()?.words();
         words.get(span.offset_words as usize..(span.offset_words + span.len_words) as usize)
+    }
+
+    /// True while a shipping VQ sprite's grid is still streaming in the
+    /// background (browser installs activate before every chunk decodes).
+    /// Draw paths must skip — and, crucially, not cache — such a sprite;
+    /// it becomes ready in place a frame or two later.
+    pub fn sprite_pixels_pending(&self, sprite_index: u32) -> bool {
+        self.sprites
+            .get(sprite_index as usize)
+            .and_then(|sprite| sprite.late_grid.as_ref())
+            .is_some_and(|cell| cell.get().is_none())
     }
 
     /// Count `sprite_index` as touched in the shared usage statistics.
@@ -702,7 +805,9 @@ impl FrameHolder {
             packed_size: (sprite.packed_data.len() * 2) as u32,
             packed_data: Some(Arc::new(sprite.packed_data)),
             bank_span: None,
+            late_grid: None,
             rgba_data: sprite.rgba_data,
+            raster: None,
             dictionary_index: UNMAPPED_DICT,
         });
         index
@@ -838,6 +943,7 @@ impl FrameHolder {
         self.sprites.clear();
         self.sprites
             .resize(bank.sprite_count as usize, PackedSprite::default());
+        let mut late_rows = 0usize;
         for (index, sprite) in &bank.sprites {
             let Some(slot) = self.sprites.get_mut(*index as usize) else {
                 // Shipping conversion validates this too, but fail loudly if
@@ -847,15 +953,46 @@ impl FrameHolder {
                     bank.sprite_count
                 );
             };
+            // A dictionary-coded sprite with an empty grid that should have
+            // tiles is a VQ chunk whose decode was deferred past mission
+            // activation (browser streaming installs). Wire it to the shared
+            // late-grid cell the background driver fills; until then the
+            // sprite draws as nothing and hit-tests as transparent. A
+            // zero-area VQ sprite's empty grid is already complete.
+            let expected_grid = (sprite.width as usize / 4) * sprite.height as usize;
+            let (packed_data, late_grid) = if sprite.dictionary_index != UNMAPPED_DICT
+                && sprite.packed_data.is_empty()
+                && expected_grid > 0
+            {
+                late_rows += 1;
+                (None, Some(crate::late_sprites::cell(*index)))
+            } else {
+                (Some(Arc::clone(&sprite.packed_data)), None)
+            };
             *slot = PackedSprite {
                 width: sprite.width,
                 height: sprite.height,
-                packed_size: (sprite.packed_data.len() * 2) as u32,
-                packed_data: Some(Arc::clone(&sprite.packed_data)),
+                // Web-lossy sprites carry no packed words; their resident
+                // cost is the shared atlas the raster windows into. A
+                // deferred VQ sprite reports the grid it will occupy once
+                // the background driver fills its late cell.
+                packed_size: match sprite.raster.as_ref() {
+                    Some(_) => 2 * sprite.width as u32 * sprite.height as u32,
+                    None => (expected_grid.max(sprite.packed_data.len()) * 2) as u32,
+                },
+                packed_data,
                 bank_span: None,
+                late_grid,
                 rgba_data: None,
+                raster: sprite.raster.clone(),
                 dictionary_index: sprite.dictionary_index,
             };
+        }
+        if late_rows > 0 {
+            tracing::info!(
+                late_rows,
+                "sprite bank loaded with rows awaiting background streaming"
+            );
         }
         self.reset_usage_tracker();
     }
@@ -995,7 +1132,9 @@ impl FrameHolder {
                 packed_size: idx.size,
                 packed_data: None,
                 bank_span,
+                late_grid: None,
                 rgba_data: None,
+                raster: None,
                 dictionary_index: dict_index,
             });
         }
@@ -1011,6 +1150,39 @@ impl FrameHolder {
             .initialize_sprite_bank(data_dir)
             .context("initializing sprite bank")?;
         Ok(holder)
+    }
+
+    /// Safe degrade for a draw that hit a still-streaming sprite: paint the
+    /// frame's rectangle transparent (so stale destination contents cannot
+    /// leak) and count the skip. Never fabricates pixels — the sprite simply
+    /// does not appear until its grid lands a frame or two later.
+    fn skip_pending_frame(
+        &self,
+        dst: &mut [u16],
+        pitch_words: usize,
+        sprite_index: u32,
+        bit_depth: u16,
+    ) {
+        let sprite = &self.sprites[sprite_index as usize];
+        let transparent = if bit_depth == 16 {
+            TRANSPARENT_COLOR_16
+        } else {
+            TRANSPARENT_COLOR_15
+        };
+        let width = sprite.width as usize;
+        for row in dst
+            .chunks_mut(pitch_words.max(1))
+            .take(sprite.height as usize)
+        {
+            let cols = row.len().min(width);
+            row[..cols].fill(transparent);
+        }
+        let skips = crate::late_sprites::note_skipped_draw();
+        tracing::debug!(
+            sprite_index,
+            skips,
+            "skipped draw: sprite pixels still streaming"
+        );
     }
 
     // -- Decompression (high-level) --
@@ -1040,24 +1212,48 @@ impl FrameHolder {
         let idx = sprite_index as usize;
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
+        // A VQ sprite whose decode was deferred past mission activation has
+        // no pixels yet: draw nothing rather than panicking. Raster-backed
+        // (web-lossy) sprites ship their pixels inside the atlas and are
+        // never pending, so they skip the check and take the raster branch
+        // below; the packed branches look their words up themselves.
+        if sprite.raster.is_none() && self.sprite_pixels_pending(sprite_index) {
+            self.skip_pending_frame(dst, pitch_words, sprite_index, bit_depth);
+            return;
+        }
         let width = sprite.width as usize;
         let height = sprite.height as usize;
         let dict_idx = sprite.dictionary_index;
 
         if dict_idx == UNMAPPED_DICT {
-            // RLE sprite: bake the ambient shadow colour in as we decompress.
-            decompress_rle_arno_law(
-                packed,
-                dst,
-                pitch_words,
-                width,
-                height,
-                TRANSPARENT_COLOR_16,
-                shadow_color,
-            );
+            // RLE sprite: bake the ambient shadow colour in as we
+            // decompress. Web-lossy sprites are already a raster, so the
+            // same substitution runs over a strided copy instead.
+            if let Some(raster) = sprite.raster.as_ref() {
+                blit_raster(raster, dst, pitch_words, width, height, |color| {
+                    match color {
+                        SHADOW_KEY => shadow_color,
+                        TRANSPARENT_COLOR_16 => TRANSPARENT_COLOR_16,
+                        // Same disambiguation the packed path applies to a
+                        // literal that collides with the ambient shadow.
+                        _ if color == shadow_color => color + 1,
+                        _ => color,
+                    }
+                });
+            } else {
+                let packed = self
+                    .sprite_packed_slice(idx)
+                    .expect("sprite data not loaded");
+                decompress_rle_arno_law(
+                    packed,
+                    dst,
+                    pitch_words,
+                    width,
+                    height,
+                    TRANSPARENT_COLOR_16,
+                    shadow_color,
+                );
+            }
 
             // Apply variant effects on the decompressed pixels.
             // Process width*height contiguous pixels from the viewport start.
@@ -1088,121 +1284,15 @@ impl FrameHolder {
             }
         } else {
             // Vector-quantized sprite — select variant dictionary
+            let packed = self
+                .sprite_packed_slice(idx)
+                .expect("sprite data not loaded");
             let dict = match variant {
                 SpriteVariant::Day => &self.dictionaries[dict_idx as usize],
                 SpriteVariant::Night => &self.dictionaries_night[dict_idx as usize],
                 SpriteVariant::Fog => &self.dictionaries_fog[dict_idx as usize],
             };
             decompress_vector(packed, dst, pitch_words, width, height, dict);
-        }
-    }
-
-    /// Decompress a sprite, replacing shadow pixels with zero.
-    ///
-    /// Only supported for RLE sprites; vector-quantized sprites are a
-    /// deliberate no-op.
-    pub fn uncompress_frame_wipe_shadow(
-        &self,
-        dst: &mut [u16],
-        pitch_words: usize,
-        sprite_index: u32,
-        bit_depth: u16,
-    ) {
-        let idx = sprite_index as usize;
-        self.record_usage(idx);
-        let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
-        let width = sprite.width as usize;
-        let height = sprite.height as usize;
-        let dict_idx = sprite.dictionary_index;
-
-        if dict_idx == UNMAPPED_DICT {
-            let transparent = if bit_depth == 16 {
-                TRANSPARENT_COLOR_16
-            } else {
-                TRANSPARENT_COLOR_15
-            };
-            decompress_rle_wipe_shadow(
-                packed,
-                dst,
-                pitch_words,
-                width,
-                height,
-                transparent,
-                SHADOW_KEY,
-            );
-        }
-        // Vector-quantized: intentional no-op.
-    }
-
-    /// Decompress a sprite, replacing non-shadow/non-transparent pixels with a color.
-    ///
-    /// Only supported for RLE sprites; panics on vector-quantized.
-    #[allow(clippy::too_many_arguments)]
-    pub fn uncompress_frame_into_shadow(
-        &self,
-        dst: &mut [u16],
-        pitch_words: usize,
-        sprite_index: u32,
-        variant: SpriteVariant,
-        shadow_color: u16,
-        replacement_color: u16,
-        bit_depth: u16,
-    ) {
-        let idx = sprite_index as usize;
-        self.record_usage(idx);
-        let sprite = &self.sprites[idx];
-        let packed = self
-            .sprite_packed_slice(idx)
-            .expect("sprite data not loaded");
-        let width = sprite.width as usize;
-        let height = sprite.height as usize;
-        let dict_idx = sprite.dictionary_index;
-
-        assert!(
-            dict_idx == UNMAPPED_DICT,
-            "uncompress_frame_into_shadow not supported for vector-quantized sprites"
-        );
-
-        let transparent = if bit_depth == 16 {
-            TRANSPARENT_COLOR_16
-        } else {
-            TRANSPARENT_COLOR_15
-        };
-
-        decompress_rle_into_shadow(
-            packed,
-            dst,
-            pitch_words,
-            width,
-            height,
-            transparent,
-            shadow_color,
-            replacement_color,
-        );
-
-        // Apply variant effects on the decompressed pixels
-        let pixel_count = width * height;
-        match variant {
-            SpriteVariant::Day => {}
-            SpriteVariant::Night => {
-                apply_fog_effect_viewport(
-                    &mut dst[..pixel_count],
-                    NIGHT_INTENSITY,
-                    NIGHT_FOG_COLOR_16,
-                    shadow_color,
-                );
-            }
-            SpriteVariant::Fog => {
-                apply_fog_effect_viewport(
-                    &mut dst[..pixel_count],
-                    FOG_INTENSITY,
-                    FOG_COLOR,
-                    shadow_color,
-                );
-            }
         }
     }
 
@@ -1230,21 +1320,29 @@ impl FrameHolder {
         }
         self.record_usage(idx);
         let sprite = &self.sprites[idx];
-        let Some(packed) = self.sprite_packed_slice(idx) else {
-            return false;
-        };
-
         let width = sprite.width as usize;
         let height = sprite.height as usize;
         if x as usize >= width || y as usize >= height {
             return false;
         }
 
-        let pixel = if sprite.dictionary_index == UNMAPPED_DICT {
-            rle_pixel_at(packed, x as usize, y as usize)
+        // Web-lossy RLE sprites answer from their decoded raster: a direct
+        // index instead of walking scanlines to reach one pixel.
+        let pixel = if let Some(raster) = sprite.raster.as_ref() {
+            let Some(pixel) = raster.pixel(x as usize, y as usize) else {
+                return false;
+            };
+            pixel
         } else {
-            let dict = &self.dictionaries[sprite.dictionary_index as usize];
-            dict_pixel_at(packed, width, x as usize, y as usize, dict)
+            let Some(packed) = self.sprite_packed_slice(idx) else {
+                return false;
+            };
+            if sprite.dictionary_index == UNMAPPED_DICT {
+                rle_pixel_at(packed, x as usize, y as usize)
+            } else {
+                let dict = &self.dictionaries[sprite.dictionary_index as usize];
+                dict_pixel_at(packed, width, x as usize, y as usize, dict)
+            }
         };
 
         if pixel == TRANSPARENT_COLOR_16 {
@@ -1339,115 +1437,6 @@ pub fn decompress_rle_arno_law(
                     color = shadow_color;
                 }
                 dst[dst_pos] = color;
-                dst_pos += 1;
-            }
-            let remaining = (width as u16).saturating_sub(end);
-            for _ in 0..remaining {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        } else {
-            for _ in 0..width {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        }
-
-        dst_pos += pitch_words - width;
-    }
-}
-
-/// Decompress RLE, wiping shadow pixels to zero (for shadow extraction).
-pub fn decompress_rle_wipe_shadow(
-    src: &[u16],
-    dst: &mut [u16],
-    pitch_words: usize,
-    width: usize,
-    height: usize,
-    transparent_color: u16,
-    shadow_color: u16,
-) {
-    let mut src_pos = 0;
-    let mut dst_pos = 0;
-
-    for _y in 0..height {
-        let first = src[src_pos];
-        src_pos += 1;
-        let size = src[src_pos];
-        src_pos += 1;
-
-        if first != 0xFFFF && first > 0 {
-            for _ in 0..first {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        }
-
-        if size != 0xFFFF {
-            let end = size + 1;
-            let run = end - first;
-            for _ in 0..run {
-                let color = src[src_pos];
-                src_pos += 1;
-                dst[dst_pos] = if color == shadow_color { 0 } else { color };
-                dst_pos += 1;
-            }
-            let remaining = (width as u16).saturating_sub(end);
-            for _ in 0..remaining {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        } else {
-            for _ in 0..width {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        }
-
-        dst_pos += pitch_words - width;
-    }
-}
-
-/// Decompress RLE, replacing non-shadow/non-transparent pixels with a
-/// replacement color (for "into the shadow" rendering).
-#[allow(clippy::too_many_arguments)]
-pub fn decompress_rle_into_shadow(
-    src: &[u16],
-    dst: &mut [u16],
-    pitch_words: usize,
-    width: usize,
-    height: usize,
-    transparent_color: u16,
-    shadow_color: u16,
-    replacement_color: u16,
-) {
-    let mut src_pos = 0;
-    let mut dst_pos = 0;
-
-    for _y in 0..height {
-        let first = src[src_pos];
-        src_pos += 1;
-        let size = src[src_pos];
-        src_pos += 1;
-
-        if first != 0xFFFF && first > 0 {
-            for _ in 0..first {
-                dst[dst_pos] = transparent_color;
-                dst_pos += 1;
-            }
-        }
-
-        if size != 0xFFFF {
-            let end = size + 1;
-            let run = end - first;
-            for _ in 0..run {
-                let color = src[src_pos];
-                src_pos += 1;
-                dst[dst_pos] = if color == shadow_color || color == transparent_color {
-                    color
-                } else {
-                    replacement_color
-                };
                 dst_pos += 1;
             }
             let remaining = (width as u16).saturating_sub(end);
@@ -2190,7 +2179,9 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
+            raster: None,
             dictionary_index: UNMAPPED_DICT,
         });
 
@@ -2221,7 +2212,9 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
+            raster: None,
             dictionary_index: UNMAPPED_DICT,
         });
 
@@ -2255,7 +2248,9 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
+            raster: None,
             dictionary_index: 0,
         });
 
@@ -2282,7 +2277,9 @@ mod tests {
             packed_size: (packed.len() * 2) as u32,
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
+            late_grid: None,
             rgba_data: None,
+            raster: None,
             dictionary_index: UNMAPPED_DICT,
         });
 
@@ -2292,72 +2289,5 @@ mod tests {
         // Night effect should darken the red pixel
         assert_ne!(dst[0], 0xF800);
         assert_ne!(dst[0], TRANSPARENT_COLOR_16);
-    }
-
-    #[test]
-    fn test_uncompress_frame_wipe_shadow() {
-        let mut fh = FrameHolder::new();
-
-        let packed = vec![
-            0u16, 1, SHADOW_KEY, 0x1234, // row 0: shadow + normal pixel
-        ];
-        fh.sprites.push(PackedSprite {
-            width: 2,
-            height: 1,
-            packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(Arc::new(packed)),
-            bank_span: None,
-            rgba_data: None,
-            dictionary_index: UNMAPPED_DICT,
-        });
-
-        let mut dst = vec![0xFFFFu16; 2];
-        fh.uncompress_frame_wipe_shadow(&mut dst, 2, 0, 16);
-
-        // Shadow pixel wiped to 0
-        assert_eq!(dst[0], 0);
-        // Normal pixel preserved
-        assert_eq!(dst[1], 0x1234);
-    }
-
-    #[test]
-    fn test_uncompress_frame_into_shadow() {
-        let mut fh = FrameHolder::new();
-
-        let shadow_color = 0x0040u16;
-        let packed = vec![
-            0u16,
-            2,
-            shadow_color,
-            TRANSPARENT_COLOR_16,
-            0x1234, // 3 pixels
-        ];
-        fh.sprites.push(PackedSprite {
-            width: 3,
-            height: 1,
-            packed_size: (packed.len() * 2) as u32,
-            packed_data: Some(Arc::new(packed)),
-            bank_span: None,
-            rgba_data: None,
-            dictionary_index: UNMAPPED_DICT,
-        });
-
-        let replacement = 0x0800u16;
-        let mut dst = vec![0u16; 3];
-        fh.uncompress_frame_into_shadow(
-            &mut dst,
-            3,
-            0,
-            SpriteVariant::Day,
-            shadow_color,
-            replacement,
-            16,
-        );
-
-        // Shadow and transparent pixels kept as-is
-        assert_eq!(dst[0], shadow_color);
-        assert_eq!(dst[1], TRANSPARENT_COLOR_16);
-        // Other pixels replaced
-        assert_eq!(dst[2], replacement);
     }
 }

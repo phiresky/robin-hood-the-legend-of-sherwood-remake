@@ -319,6 +319,19 @@ impl Engine {
         HostConsoleDispatch { engine: self }
     }
 
+    /// Snapshot item stock and worker allocation from the live Sherwood map.
+    ///
+    /// This is presentation-only and does not mutate authoritative campaign
+    /// state. It intentionally uses the same capture routine as the mission
+    /// exit command so a production report opened after moving a worker is
+    /// never based on the previous visit's allocation.
+    pub fn live_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
+        self.inner.live_production_sectors(profiles)
+    }
+
     fn has_pending_recorded_drop_ale_route(
         &self,
         actor: EntityId,
@@ -2848,10 +2861,16 @@ impl Engine {
     pub fn new_preserving_campaign(
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
+        let original_parity = args.original_rng_replay.is_some();
+        let sim_config = if original_parity {
+            super::cloak::preserve_original_cloak_behavior(args.sim_config)
+        } else {
+            args.sim_config
+        };
         let mut inner = EngineInner::new_with_campaign(args.campaign);
-        inner.control.sim_config = args.sim_config;
+        inner.control.sim_config = sim_config;
         inner.control.mission_start_rng_seed = args.rng_seed;
-        inner.control.mission_start_sim_config = args.sim_config;
+        inner.control.mission_start_sim_config = sim_config;
         // Seed the PRNG and apply engine-global cheat flags FIRST,
         // before any setup that might draw from the RNG or branch on
         // the cheat flag.  See `EngineArgs::rng_seed` /
@@ -2860,7 +2879,7 @@ impl Engine {
         if let Some(draws) = args.original_rng_replay {
             inner.control.rng = SimulationRng::with_original_replay(draws);
         }
-        inner.set_golden_eye_mode(args.sim_config.golden_eye);
+        inner.set_golden_eye_mode(sim_config.golden_eye);
         if let Some(gm) = args.ground_mark_sprite {
             inner.set_ground_mark_sprite_data(
                 gm.half_w,

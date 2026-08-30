@@ -31,6 +31,8 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Sherwood Production Forecast",
+    "Reusable Cloaks",
     "Campaign Presentation",
     "NPC Kills Break Clean Hands",
     "Detailed Sword/Bow XP",
@@ -68,14 +70,17 @@ pub async fn show_gameplay(
 
     // ── Option toggle buttons stacked from (30,100) ───────────────
     let (field_w, field_h) = resources.input_field_dimensions();
+    let rows_per_column = OPTION_LABELS.len().div_ceil(2);
     let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
         .iter()
         .enumerate()
         .map(|(i, label)| super::layout::MenuButton {
             label: label.to_string(),
             enabled: true,
-            x: if i < 7 { 30 } else { 320 },
-            y: 100 + i32::try_from(i % 7).expect("gameplay option row fits i32") * (field_h + 2),
+            x: if i < rows_per_column { 30 } else { 320 },
+            y: 100
+                + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
+                    * (field_h + 2),
             w: field_w,
             h: field_h,
         })
@@ -228,19 +233,21 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
-        3 => config.campaign_presentation = config.campaign_presentation.next(),
-        4 => config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate,
-        5 => config.show_detailed_xp = !config.show_detailed_xp,
-        6 => config.show_speedrun_tracker = !config.show_speedrun_tracker,
-        7 => config.show_clean_hands_tracker = !config.show_clean_hands_tracker,
-        8 => config.show_ghost_tracker = !config.show_ghost_tracker,
-        9 => config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker,
-        10 => {
+        3 => config.show_production_forecast = !config.show_production_forecast,
+        4 => config.reusable_cloaks = !config.reusable_cloaks,
+        5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp = !config.show_detailed_xp,
+        8 => config.show_speedrun_tracker = !config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker = !config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker = !config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker,
+        12 => {
             config.show_all_enemies_one_building_tracker =
                 !config.show_all_enemies_one_building_tracker
         }
-        11 => config.show_achievement_badges = !config.show_achievement_badges,
-        12 => config.show_achievement_debrief = !config.show_achievement_debrief,
+        13 => config.show_achievement_badges = !config.show_achievement_badges,
+        14 => config.show_achievement_debrief = !config.show_achievement_debrief,
         _ => {}
     }
 }
@@ -250,19 +257,81 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
-        3 => {
+        3 => config.show_production_forecast,
+        4 => config.reusable_cloaks,
+        5 => {
             config.campaign_presentation
                 != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
         }
-        4 => config.clean_hands_npc_kills_invalidate,
-        5 => config.show_detailed_xp,
-        6 => config.show_speedrun_tracker,
-        7 => config.show_clean_hands_tracker,
-        8 => config.show_ghost_tracker,
-        9 => config.show_pile_o_bones_tracker,
-        10 => config.show_all_enemies_one_building_tracker,
-        11 => config.show_achievement_badges,
-        12 => config.show_achievement_debrief,
+        6 => config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp,
+        8 => config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker,
+        12 => config.show_all_enemies_one_building_tracker,
+        13 => config.show_achievement_badges,
+        14 => config.show_achievement_debrief,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gameplay_rows_preserve_independent_setting_mappings() {
+        assert_eq!(
+            OPTION_LABELS,
+            [
+                "Fix Hard Reaction Times",
+                "Control Tactical Units",
+                "Allow Untying NPCs",
+                "Sherwood Production Forecast",
+                "Reusable Cloaks",
+                "Campaign Presentation",
+                "NPC Kills Break Clean Hands",
+                "Detailed Sword/Bow XP",
+                "Speedrun Clock",
+                "Clean Hands Tracker",
+                "Ghost Tracker",
+                "Pile-o-Bones Tracker",
+                "All Enemies Stashed Tracker",
+                "Campaign Achievement Badges",
+                "Achievement Debrief Details",
+            ]
+        );
+
+        let mut config = GameplayConfig::default();
+        assert!(!is_option_selected(&config, 1));
+        assert!(is_option_selected(&config, 2));
+        assert!(is_option_selected(&config, 3));
+        assert!(is_option_selected(&config, 4));
+        assert!(is_option_selected(&config, 5));
+
+        apply_option_toggle(&mut config, 1);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 3);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 4);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 5);
+        assert_eq!(
+            config.campaign_presentation,
+            robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
+        );
     }
 }

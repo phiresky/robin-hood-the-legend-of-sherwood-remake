@@ -331,7 +331,7 @@ impl EngineInner {
                     // Entity position with a per-posture Z offset:
                     // Spy → +74, Tree → +35.
                     let z_add = match elem.posture {
-                        Posture::Spy => 74.0,
+                        Posture::Spy | Posture::Cloaked => 74.0,
                         Posture::Tree => 35.0,
                         _ => 35.0,
                     };
@@ -764,7 +764,7 @@ impl EngineInner {
             // initializes).
             let is_hidden = matches!(
                 pc.element.posture,
-                Posture::Spy | Posture::Tree | Posture::AnonymousArcher
+                Posture::Spy | Posture::Cloaked | Posture::Tree | Posture::AnonymousArcher
             );
             let profile = assets
                 .profile_manager

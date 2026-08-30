@@ -86,6 +86,20 @@ pub struct GameplayConfig {
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
 
+    /// Include the live item-production forecast in the Sherwood report.
+    /// This is presentation-only and may be disabled independently from the
+    /// underlying production simulation.
+    #[serde(default = "default_show_production_forecast")]
+    pub show_production_forecast: bool,
+
+    /// Allow PCs to put their shipped cape disguise back on.
+    ///
+    /// Missing means an existing/migrated profile and deliberately preserves
+    /// Original behavior (one-way cape removal only). Fresh profiles use the
+    /// `Default` value below and opt into the extension.
+    #[serde(default)]
+    pub reusable_cloaks: bool,
+
     /// Campaign-selection presentation. This affects visuals only; complete
     /// attempt details and completed-mission practice remain available in all
     /// modes.
@@ -123,12 +137,18 @@ pub struct GameplayConfig {
     pub show_achievement_debrief: bool,
 }
 
+const fn default_show_production_forecast() -> bool {
+    true
+}
+
 impl Default for GameplayConfig {
     fn default() -> Self {
         Self {
             fix_hard_reaction_times: true,
             control_tactical_units: false,
             enable_unbinding: true,
+            show_production_forecast: default_show_production_forecast(),
+            reusable_cloaks: true,
             campaign_presentation: CampaignPresentationMode::ProgressTree,
             clean_hands_npc_kills_invalidate: false,
             show_detailed_xp: false,
@@ -150,6 +170,7 @@ mod tests {
     #[test]
     fn hard_reaction_time_fix_is_the_default() {
         assert!(GameplayConfig::default().fix_hard_reaction_times);
+        assert!(GameplayConfig::default().show_production_forecast);
     }
 
     #[test]
@@ -162,6 +183,8 @@ mod tests {
         assert!(!config.show_detailed_xp);
         assert!(!config.show_achievement_badges);
         assert!(!config.show_achievement_debrief);
+        assert!(config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
         assert_eq!(
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree
@@ -180,5 +203,22 @@ mod tests {
         let config: GameplayConfig = serde_json::from_str(r#"{"control_allied_soldiers":true}"#)
             .expect("legacy gameplay config");
         assert!(config.control_tactical_units);
+    }
+
+    #[test]
+    fn production_forecast_toggle_round_trips_with_profile_config() {
+        let config = GameplayConfig {
+            show_production_forecast: false,
+            ..GameplayConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.show_production_forecast);
+    }
+
+    #[test]
+    fn fresh_profiles_enable_reusable_cloaks() {
+        assert!(GameplayConfig::default().reusable_cloaks);
     }
 }
