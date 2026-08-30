@@ -26,6 +26,7 @@ const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
+const AUTOSAVE_OPTION_INDEX: usize = 17;
 
 /// Toggle rows shown on the screen, in display order.
 const OPTION_LABELS: &[&str] = &[
@@ -46,6 +47,7 @@ const OPTION_LABELS: &[&str] = &[
     "Achievement Debrief Details",
     "Touch Camera Gestures",
     "Sherwood Item Trading",
+    "Rotating Autosaves",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -258,6 +260,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
         15 => config.touch_camera_gestures = !config.touch_camera_gestures,
         SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading = !config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled = !config.autosave_enabled,
         _ => {}
     }
 }
@@ -284,6 +287,7 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         14 => config.show_achievement_debrief,
         15 => config.touch_camera_gestures,
         SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled,
         _ => false,
     }
 }
@@ -314,6 +318,7 @@ mod tests {
                 "Achievement Debrief Details",
                 "Touch Camera Gestures",
                 "Sherwood Item Trading",
+                "Rotating Autosaves",
             ]
         );
 
@@ -388,5 +393,28 @@ mod tests {
 
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
+    }
+
+    #[test]
+    fn autosave_has_an_independent_gameplay_toggle() {
+        let mut config = GameplayConfig::default();
+        let before = config;
+        assert_eq!(OPTION_LABELS[AUTOSAVE_OPTION_INDEX], "Rotating Autosaves");
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        apply_option_toggle(&mut config, AUTOSAVE_OPTION_INDEX);
+        assert!(!is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert_eq!(
+            config.fix_hard_reaction_times,
+            before.fix_hard_reaction_times
+        );
+        assert_eq!(config.control_tactical_units, before.control_tactical_units);
+        assert_eq!(config.enable_unbinding, before.enable_unbinding);
+        assert_eq!(
+            config.show_production_forecast,
+            before.show_production_forecast
+        );
+        assert_eq!(config.reusable_cloaks, before.reusable_cloaks);
+        assert_eq!(config.campaign_presentation, before.campaign_presentation);
+        assert_eq!(config.touch_camera_gestures, before.touch_camera_gestures);
     }
 }
