@@ -384,12 +384,21 @@ impl WorldState {
                     return Err(format!("{name} references missing or non-PC entity {id}"));
                 }
             }
-            if ids.len() != entity_pc_count {
+            if name == "pc_ids" && ids.len() != entity_pc_count {
                 return Err(format!(
                     "{name} contains {} entries but entity storage contains {entity_pc_count} PCs",
                     ids.len(),
                 ));
             }
+        }
+        if let Some(id) = self
+            .original_pc_registry_ids
+            .iter()
+            .find(|id| !self.pc_ids.contains(id))
+        {
+            return Err(format!(
+                "original_pc_registry_ids contains {id}, which is absent from pc_ids"
+            ));
         }
         Ok(())
     }
@@ -514,8 +523,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "original_pc_registry_ids contains 0 entries")]
-    fn missing_original_pc_registry_entry_fails_loudly() {
+    fn retired_pc_may_be_absent_from_original_registry() {
         let mut world = WorldState::new();
         let id = EntityId::Pc(crate::entity_id::PcId(0));
         world

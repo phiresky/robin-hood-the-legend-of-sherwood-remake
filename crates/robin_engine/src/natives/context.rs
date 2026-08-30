@@ -15,6 +15,7 @@ use crate::element::EntityId;
 pub struct NativeSessionCapabilities<'a> {
     simulation: &'a crate::sim_rng::SimulationContext,
     entities: RefCell<&'a mut crate::entities::Entities>,
+    pc_registry: Option<&'a [EntityId]>,
     ai_global: RefCell<&'a mut crate::ai::AiGlobalState>,
     fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
     campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
@@ -42,6 +43,7 @@ impl<'a> NativeSessionCapabilities<'a> {
         Self {
             simulation,
             entities: RefCell::new(entities),
+            pc_registry: None,
             ai_global: RefCell::new(ai_global),
             fast_grid: RefCell::new(fast_grid),
             campaign: None,
@@ -58,6 +60,14 @@ impl<'a> NativeSessionCapabilities<'a> {
             weather: None,
             frame_counter: None,
         }
+    }
+
+    /// Attach Original's live `RHEngine::marrayActorsPC` view. This is
+    /// distinct from entity storage: a replaced PC corpse remains an entity
+    /// after it is retired from party-oriented script queries.
+    pub fn with_pc_registry(mut self, pc_registry: &'a [EntityId]) -> Self {
+        self.pc_registry = Some(pc_registry);
+        self
     }
 
     pub fn with_queries(
@@ -145,6 +155,10 @@ impl<'a> NativeSessionCapabilities<'a> {
 
     fn entities(&self) -> RefMut<'_, crate::entities::Entities> {
         RefMut::map(self.entities.borrow_mut(), |entities| &mut **entities)
+    }
+
+    fn pc_registry_option(&self) -> Option<&'a [EntityId]> {
+        self.pc_registry
     }
 
     fn ai_global(&self) -> RefMut<'_, crate::ai::AiGlobalState> {
@@ -337,6 +351,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) simulation: &'ctx crate::sim_rng::SimulationContext,
     pub(crate) script_effects: &'ctx mut ScriptEffects,
     pub(crate) entities: RefMut<'ctx, crate::entities::Entities>,
+    pub(crate) pc_registry: Option<&'owners [EntityId]>,
     pub(crate) ai_global: RefMut<'ctx, crate::ai::AiGlobalState>,
     pub(crate) fast_grid: RefMut<'ctx, crate::fast_find_grid::FastFindGrid>,
     pub(crate) script_state: &'ctx mut ScriptState,
@@ -396,6 +411,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             simulation: capabilities.simulation_context(),
             script_effects,
             entities: capabilities.entities(),
+            pc_registry: capabilities.pc_registry_option(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,
@@ -431,6 +447,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             simulation: capabilities.simulation_context(),
             script_effects,
             entities: capabilities.entities(),
+            pc_registry: capabilities.pc_registry_option(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,
@@ -467,6 +484,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             simulation: capabilities.simulation_context(),
             script_effects,
             entities: capabilities.entities(),
+            pc_registry: capabilities.pc_registry_option(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,

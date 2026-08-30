@@ -138,6 +138,14 @@ pub fn snapshot_all(
             continue;
         }
         let elem = entity.element_data();
+        // Original's disturbing-element loop tests IsActive() before it
+        // reads GetLayer(), GetSector(), or any repulsive geometry. Loaded
+        // replaced-PC corpses can be inactive and retain the serialized
+        // no-layer sentinel, so do not eagerly inspect state the original
+        // short-circuit never reaches.
+        if !elem.active {
+            continue;
+        }
         let is_actor = entity.is_actor();
         let actor = entity.actor_data();
         // RHsprite::PerformMotion copies pOrderCurrent->pAntagonist into
@@ -1156,6 +1164,27 @@ mod tests {
         let obstacle_repulsive = repulsive_line_from_grid(&obstacle);
         assert_eq!(obstacle_repulsive.normal, MapVec::new(0.0, -1.0));
         assert!(!obstacle_repulsive.is_area);
+    }
+
+    #[test]
+    fn snapshot_all_skips_inactive_no_layer_actor_before_layer_access() {
+        use crate::element::{ActorData, ActorPc, ElementData, HumanData, PcData};
+        use crate::entity_id::PcId;
+
+        let entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                active: false,
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        let entities = Entities::from_legacy_slots(vec![Some(entity)]);
+
+        let snapshots = snapshot_all(&entities, &ProfileManager::new());
+        assert!(snapshots[PcId(0)].is_none());
     }
 
     fn snapshot_mover_and_corpse(

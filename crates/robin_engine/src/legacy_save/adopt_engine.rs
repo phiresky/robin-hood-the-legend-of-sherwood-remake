@@ -306,6 +306,7 @@ impl LegacyKnownAdoptionPlan {
         self.sequences.apply(engine);
         self.actor_ownership.apply(engine);
         self.pc_human.apply(engine);
+        retire_loaded_replaced_pcs(engine);
         let trajectory = self.hiking_tail.apply_engine(engine);
         self.tail_runtime.apply(engine);
         self.vm_arena.apply(engine);
@@ -321,6 +322,39 @@ impl LegacyKnownAdoptionPlan {
             trajectory,
             post_load,
         }
+    }
+}
+
+/// Original reconstructs `marrayActorsPC` while loading every PC element,
+/// including corpses which had already received a reinforcement. Rebuild the
+/// nonserialized live roster invariant while leaving those corpses in entity
+/// storage and in the portrait-order list.
+fn retire_loaded_replaced_pcs(engine: &mut EngineInner) {
+    let registry = engine.world.original_pc_registry_ids.clone();
+    let retired = registry
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let Some(crate::element::Entity::Pc(pc)) = engine.world.entities.get(id) else {
+                panic!("Original PC registry contains missing or non-PC entity {id}");
+            };
+            pc.pc.life_points <= 0
+                && pc.pc.interface_hidden
+                && pc.pc.time_till_reinforcement == 0xFFFF_FFFF
+                && registry.iter().copied().any(|other_id| {
+                    other_id != id
+                        && matches!(
+                            engine.world.entities.get(other_id),
+                            Some(crate::element::Entity::Pc(other))
+                                if other.pc.life_points > 0
+                                    && other.pc.profile_index == pc.pc.profile_index
+                        )
+                })
+        })
+        .collect::<Vec<_>>();
+
+    for id in retired {
+        engine.retire_replaced_pc(id);
     }
 }
 
@@ -629,12 +663,55 @@ fn stage<T, E: std::fmt::Display>(
 
 #[cfg(test)]
 mod tests {
-    use super::advance_reused_beam_pc_creation_counter;
+    use super::{advance_reused_beam_pc_creation_counter, retire_loaded_replaced_pcs};
+    use crate::{
+        element::{ActorPc, ElementData, ElementKind, Entity, PcData},
+        engine::EngineInner,
+        profiles::CharacterProfileIdx,
+    };
 
     #[test]
     fn reused_beam_pcs_still_consume_original_load_construction_orders() {
         assert_eq!(advance_reused_beam_pc_creation_counter(158, 1), Ok(159));
         assert_eq!(advance_reused_beam_pc_creation_counter(200, 3), Ok(203));
         assert!(advance_reused_beam_pc_creation_counter(u32::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn loaded_replaced_corpse_leaves_live_pc_registry_but_remains_an_entity() {
+        fn pc(life_points: i16, hidden: bool, reinforcement_time: u32) -> Entity {
+            Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: PcData {
+                    life_points,
+                    interface_hidden: hidden,
+                    time_till_reinforcement: reinforcement_time,
+                    profile_index: CharacterProfileIdx(7),
+                    ..Default::default()
+                },
+            })
+        }
+
+        let mut engine = EngineInner::new();
+        let corpse = engine.add_entity(pc(0, true, 0xFFFF_FFFF));
+        let replacement = engine.add_entity(pc(100, false, 0xFFFF_FFFF));
+        let awaiting_replacement = engine.add_entity(pc(0, true, 12));
+
+        retire_loaded_replaced_pcs(&mut engine);
+
+        assert_eq!(
+            engine.world.original_pc_registry_ids,
+            vec![replacement, awaiting_replacement]
+        );
+        assert_eq!(
+            engine.world.pc_ids,
+            vec![corpse, replacement, awaiting_replacement]
+        );
+        assert!(matches!(engine.get_entity(corpse), Some(Entity::Pc(_))));
     }
 }
