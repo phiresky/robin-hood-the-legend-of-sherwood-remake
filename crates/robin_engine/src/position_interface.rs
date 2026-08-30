@@ -1091,6 +1091,21 @@ impl PositionInterface {
         }
     }
 
+    /// Mirror Original's inline `RHPositionInterface::SetPosture`.
+    ///
+    /// The Rust entity keeps a gameplay-facing posture beside the embedded
+    /// position interface, but the latter is still serialized and observed by
+    /// the parity contract.  Runtime posture transitions therefore have to
+    /// advance both copies in the same call, just as Original updates
+    /// `mpostureOld`, `mposture`, the emergency-lying latch, and the translated
+    /// move box atomically.
+    pub(crate) fn set_posture(&mut self, posture: crate::element::Posture) {
+        self.saved_old_posture = self.saved_posture;
+        self.saved_posture = posture;
+        self.use_emergency_lying_box = false;
+        self.move_box_map = self.get_move_box_offset(self.position_map);
+    }
+
     // ====================================================================
     // Increment computed state
     // ====================================================================
@@ -2544,6 +2559,35 @@ mod tests {
         let box_map = pi.get_move_box_map();
         assert!((box_map.x_min() - 100.0).abs() < 1e-4);
         assert!((box_map.y_min() - 200.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn set_posture_advances_serialized_postures_and_refreshes_move_box() {
+        use crate::element::Posture;
+
+        let mut pi = PositionInterface::new();
+        pi.set_move_box(MoveBox::from_corners(
+            MapVec::new(-6.0, -4.0),
+            MapVec::new(6.0, 4.0),
+        ));
+        pi.set_map_position(MapPoint::new(100.0, 200.0));
+        let mut state = pi.v48_serialized_state();
+        state.posture = Posture::LeaningOut;
+        state.old_posture = Posture::LeaningOut;
+        state.use_emergency_lying_box = true;
+        state.move_box_map = MapBBox::new();
+        pi.restore_v48_serialized_state(state);
+
+        pi.set_posture(Posture::Upright);
+
+        let state = pi.v48_serialized_state();
+        assert_eq!(state.posture, Posture::Upright);
+        assert_eq!(state.old_posture, Posture::LeaningOut);
+        assert!(!state.use_emergency_lying_box);
+        assert_eq!(state.move_box_map.x_min(), 94.0);
+        assert_eq!(state.move_box_map.y_min(), 196.0);
+        assert_eq!(state.move_box_map.x_max(), 106.0);
+        assert_eq!(state.move_box_map.y_max(), 204.0);
     }
 
     #[test]

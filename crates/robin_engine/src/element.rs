@@ -369,6 +369,7 @@ impl ElementData {
     pub fn set_posture(&mut self, p: Posture) {
         if self.posture.allows_transition_to(p) {
             self.posture = p;
+            self.sprite.position_iface.set_posture(p);
         }
     }
 
@@ -6272,11 +6273,19 @@ mod tests {
 
     #[test]
     fn entity_set_posture_updates_authoritative_posture() {
+        let mut element = ElementData {
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        let mut saved_position = element.sprite.position_iface.v48_serialized_state();
+        saved_position.posture = Posture::Upright;
+        saved_position.old_posture = Posture::Upright;
+        element
+            .sprite
+            .position_iface
+            .restore_v48_serialized_state(saved_position);
         let mut entity = Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                posture: Posture::Upright,
-                ..Default::default()
-            },
+            element,
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
@@ -6287,12 +6296,20 @@ mod tests {
 
         assert_eq!(entity.element_data().posture, Posture::Crouched);
         assert_eq!(entity.posture(), Posture::Crouched);
+        let position = entity.position_iface().v48_serialized_state();
+        assert_eq!(position.posture, Posture::Crouched);
+        assert_eq!(position.old_posture, Posture::Upright);
 
         entity.set_posture(Posture::Dead);
         entity.set_posture(Posture::Upright);
 
         assert_eq!(entity.element_data().posture, Posture::Dead);
         assert_eq!(entity.posture(), Posture::Dead);
+        assert_eq!(
+            entity.position_iface().v48_serialized_state().posture,
+            Posture::Dead,
+            "a rejected corpse transition must not advance position posture"
+        );
     }
 
     #[test]
