@@ -19,7 +19,7 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
     MENU_W, MenuTransform, TextAlign, VAlign, align_bottom_right, dim_screen,
-    enter_modal_gpu_phase, render_text_in_box_aligned, render_text_virt,
+    enter_modal_gpu_phase, render_text_in_box_aligned_font, render_text_virt_font,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods_dir};
@@ -298,21 +298,21 @@ pub(crate) async fn show_custom_missions(
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
         cursor.draw(renderer, transform, &input_state);
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
 fn draw_title(renderer: &mut Renderer, resources: &IngameMenuResources, transform: MenuTransform) {
     let Some(font) = resources
-        .edit_field_font()
-        .or_else(|| resources.menu_text_font())
+        .edit_field_font_any()
+        .or_else(|| resources.menu_text_font_any())
     else {
         return;
     };
     let title = "Custom Missions";
     let tw = font.text_width(title);
     let x = (MENU_W - tw) / 2;
-    render_text_virt(renderer, font, transform, title, x, TITLE_Y);
+    render_text_virt_font(renderer, font, transform, title, x, TITLE_Y);
 }
 
 fn draw_list(
@@ -363,7 +363,7 @@ fn draw_list(
         // Use the same body font as the main menu's left-side profile
         // info block ("Difficulty level: Hard" etc.) — clean serif on
         // dark backdrop, consistent with the rest of the menu.
-        let Some(font) = resources.menu_text_font() else {
+        let Some(font) = resources.menu_text_font_any() else {
             continue;
         };
         let tag = if e.requires_spellforge { "[SF] " } else { "" };
@@ -387,15 +387,11 @@ fn draw_list(
         // text colour is the same for selected/unselected, matching the
         // main menu profile info block.
         let _ = is_selected;
-        render_text_virt(renderer, font, transform, &label, LIST_X + 10, row_y);
+        render_text_virt_font(renderer, font, transform, &label, LIST_X + 10, row_y);
     }
 }
 
-fn truncate_to_pixel_width(
-    font: &crate::native_font::NativeFont,
-    text: &str,
-    max_w: i32,
-) -> String {
+fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
     if max_w <= 0 {
         return String::new();
     }
@@ -435,7 +431,7 @@ fn draw_detail_pane(
 
     // Same body font as the rows + the main menu's profile info block,
     // so the detail pane visually matches the rest of the menu.
-    let Some(font) = resources.menu_text_font() else {
+    let Some(font) = resources.menu_text_font_any() else {
         return;
     };
 
@@ -464,7 +460,7 @@ fn draw_detail_pane(
     }
 
     for line in lines {
-        let _ = render_text_in_box_aligned(
+        let _ = render_text_in_box_aligned_font(
             renderer,
             font,
             transform,
@@ -488,7 +484,7 @@ fn draw_detail_pane(
         // overflow rather than letting it escape the pane.
         let remaining_h = (DETAIL_Y + DETAIL_H) - y - 4;
         if remaining_h > line_h {
-            let _ = render_text_in_box_aligned(
+            let _ = render_text_in_box_aligned_font(
                 renderer,
                 font,
                 transform,

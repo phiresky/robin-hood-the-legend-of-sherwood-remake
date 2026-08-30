@@ -10,6 +10,13 @@
 use crate::gfx_types::BlendMode;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16, rgb565_to_rgb8};
 use robin_assets::frame_holder::SHADOW_KEY;
+
+/// Mouse-cursor draw flags from the `CUR ` resource (`SBUIMouse.h`). The
+/// original switches on `flags & SBUIMOUSE_DRAW`: `NORMAL` is a plain
+/// source-transparent blit, `SHADOWED` keys the shadow colour out and
+/// alpha-blends it (`SBThreadedInput.cpp`).
+const SBUIMOUSE_SHADOWED: u16 = 2;
+const SBUIMOUSE_DRAW: u16 = 0xF;
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::{ResourceId, ResourceManager};
 use robin_engine::sprite::BBox;
@@ -78,6 +85,11 @@ pub struct CursorRenderer {
 
     /// Whether the OS cursor has been hidden.
     os_cursor_hidden: bool,
+
+    /// Wall-clock sampling used by refresh-rate UI loops. Gameplay continues
+    /// to call `advance_animation` once per fixed simulation presentation.
+    ui_animation_sample: Option<web_time::Instant>,
+    ui_animation_accumulated_us: u64,
 }
 
 impl CursorRenderer {
@@ -92,6 +104,8 @@ impl CursorRenderer {
             frame_length: 1,
             frame_timer: 0,
             os_cursor_hidden: false,
+            ui_animation_sample: None,
+            ui_animation_accumulated_us: 0,
         }
     }
 
@@ -189,7 +203,9 @@ impl CursorRenderer {
             }
         }
 
-        if let Some(frame) = upload_pixels_to_gpu_frame(w, h, &pixels, renderer) {
+        // The built-in fallback arrow is drawn from plain colours; it has no
+        // shadow key.
+        if let Some(frame) = upload_pixels_to_gpu_frame(w, h, &pixels, false, renderer) {
             self.frames.push(frame);
         }
     }
@@ -207,8 +223,12 @@ impl CursorRenderer {
         renderer: &mut Renderer,
     ) -> bool {
         // Get cursor metadata
-        let (hotspot, frame_length) = match resource_manager.get_mouse_entry(cursor_id) {
-            Ok(entry) => (entry.hotspot, entry.frame_length),
+        let (hotspot, frame_length, shadowed) = match resource_manager.get_mouse_entry(cursor_id) {
+            Ok(entry) => (
+                entry.hotspot,
+                entry.frame_length,
+                entry.flags & SBUIMOUSE_DRAW == SBUIMOUSE_SHADOWED,
+            ),
             Err(e) => {
                 tracing::warn!("Failed to load cursor {cursor_id}: {e}");
                 return false;
@@ -244,7 +264,7 @@ impl CursorRenderer {
                     continue;
                 }
             };
-            let Some(frame) = upload_picture_to_gpu_frame(pic, renderer) else {
+            let Some(frame) = upload_picture_to_gpu_frame(pic, shadowed, renderer) else {
                 tracing::warn!("Cursor {cursor_id} frame {idx} upload failed");
                 self.frames.push(CursorFrame::invalid());
                 continue;
@@ -308,6 +328,31 @@ impl CursorRenderer {
                     break;
                 }
             }
+        }
+    }
+
+    /// Advance at the legacy ~60 Hz UI animation rate even when the menu is
+    /// being presented on a 90/120/144 Hz display.
+    pub fn advance_ui_animation(&mut self) {
+        const UI_ANIMATION_TICK_US: u64 = 16_000;
+        const MAX_CATCH_UP_TICKS: u64 = 4;
+
+        let now = web_time::Instant::now();
+        let Some(previous) = self.ui_animation_sample.replace(now) else {
+            self.advance_animation();
+            return;
+        };
+        self.ui_animation_accumulated_us = self
+            .ui_animation_accumulated_us
+            .saturating_add(now.duration_since(previous).as_micros() as u64);
+        let ticks =
+            (self.ui_animation_accumulated_us / UI_ANIMATION_TICK_US).min(MAX_CATCH_UP_TICKS);
+        // A suspended tab/window may resume with minutes of elapsed time.
+        // Advance a bounded amount once and discard the obsolete backlog
+        // instead of fast-forwarding the cursor for many subsequent frames.
+        self.ui_animation_accumulated_us %= UI_ANIMATION_TICK_US;
+        for _ in 0..ticks {
+            self.advance_animation();
         }
     }
 
@@ -382,7 +427,11 @@ impl CursorRenderer {
 
 /// Upload a `Picture` to persistent GPU images and return
 /// the resulting [`CursorFrame`]. Returns `None` if the upload failed.
-fn upload_picture_to_gpu_frame(pic: &Picture, renderer: &mut Renderer) -> Option<CursorFrame> {
+fn upload_picture_to_gpu_frame(
+    pic: &Picture,
+    shadowed: bool,
+    renderer: &mut Renderer,
+) -> Option<CursorFrame> {
     let w = pic.width;
     let h = pic.height;
     let pixel_u16: Vec<u16> = pic
@@ -392,13 +441,14 @@ fn upload_picture_to_gpu_frame(pic: &Picture, renderer: &mut Renderer) -> Option
         .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
-    upload_pixels_to_gpu_frame(w, h, &pixel_u16, renderer)
+    upload_pixels_to_gpu_frame(w, h, &pixel_u16, shadowed, renderer)
 }
 
 fn upload_pixels_to_gpu_frame(
     w: u16,
     h: u16,
     pixels: &[u16],
+    shadowed: bool,
     renderer: &mut Renderer,
 ) -> Option<CursorFrame> {
     if pixels.len() != w as usize * h as usize {
@@ -412,7 +462,11 @@ fn upload_pixels_to_gpu_frame(
         if px == TRANSPARENT_COLOR_KEY_16 {
             color_rgba.extend_from_slice(&[0, 0, 0, 0]);
             shadow_rgba.extend_from_slice(&[0, 0, 0, 0]);
-        } else if px == SHADOW_KEY {
+        } else if shadowed && px == SHADOW_KEY {
+            // Only a SBUIMOUSE_SHADOWED cursor keys its shadow colour out.
+            // A NORMAL cursor is a plain source-transparent blit in the
+            // original (SBThreadedInput.cpp switches on the resource's mouse
+            // flags), so the same value there is just a blue pixel to draw.
             color_rgba.extend_from_slice(&[0, 0, 0, 0]);
             shadow_rgba.extend_from_slice(&[0, 0, 0, 255]);
             has_shadow = true;

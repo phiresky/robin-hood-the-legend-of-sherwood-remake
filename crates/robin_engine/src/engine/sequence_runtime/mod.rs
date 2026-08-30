@@ -2120,14 +2120,36 @@ impl DirectAbilityCommandContext<'_> {
                 self.finish_begin(result, seq_id, elem_idx)
             }
             Command::ThrowApple | Command::ThrowStone => {
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
-                };
                 if !ammo_available {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
+                if command == Command::ThrowStone
+                    && let Some(target) = self
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|element| {
+                            read_sequence_map_point_property(
+                                element,
+                                crate::sequence::Field::NoiseDistractionTarget,
+                            )
+                        })
+                {
+                    let result = abilities::begin_throw_stone_at_ground(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    );
+                    return self.finish_begin(result, seq_id, elem_idx);
+                }
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                };
                 let result = match command {
                     Command::ThrowApple => abilities::begin_throw_apple(
                         self.entities,

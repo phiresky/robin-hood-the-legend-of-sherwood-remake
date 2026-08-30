@@ -218,7 +218,7 @@ impl BlazonTooltipTracker {
     pub fn draw(
         &self,
         renderer: &mut Renderer,
-        font: &crate::native_font::NativeFont,
+        font: &crate::native_font::Font,
         transform: MenuTransform,
         resources: &IngameMenuResources,
         mouse_virt_x: i32,

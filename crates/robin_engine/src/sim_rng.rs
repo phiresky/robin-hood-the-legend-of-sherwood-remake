@@ -66,6 +66,9 @@ impl SimulationContext {
 
     #[allow(clippy::disallowed_methods)]
     pub fn with_seed_and_config(seed: u64, config: crate::engine::SimConfig) -> Self {
+        config
+            .validate()
+            .expect("cannot create simulation context with invalid difficulty rules");
         Self {
             rng: Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))),
             original_replay: None,

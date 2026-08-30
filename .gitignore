@@ -62,6 +62,7 @@
 
 # Local API credentials
 /concept-maps/.env
+/.env
 
 __pycache__/
 

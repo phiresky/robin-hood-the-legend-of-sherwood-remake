@@ -31,10 +31,12 @@ pub mod debriefing;
 pub mod dialogue;
 pub mod gameplay;
 pub mod graphics;
+pub mod language;
 pub mod layout;
 pub mod mission_description;
 pub mod mission_state;
 pub mod modal_net;
+pub mod multiplayer_privacy;
 pub mod options;
 pub mod pause;
 pub mod popup_scroll;
@@ -42,6 +44,7 @@ pub mod resources;
 pub mod save_load;
 pub mod shortcuts;
 pub mod sounds;
+pub mod trading;
 pub mod widget_bridge;
 pub mod yesno;
 
@@ -54,12 +57,13 @@ pub use dialogue::{
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use mission_state::{MissionStatePopupState, show_mission_state_popup};
 pub use modal_net::ModalNet;
-pub use options::show_options;
+pub use options::{OptionsOutcome, show_options};
 pub use pause::{PauseMenu, PauseMenuOutcome};
 pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
 pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
+pub use trading::{TradingModalState, TradingOutcome};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
 
 use robin_engine::game_operation::GameCode;

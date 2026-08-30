@@ -3206,6 +3206,10 @@ pub struct ProjectileData {
     pub shooter: Option<EntityId>,
     pub frame_count: u16,
     pub flying: bool,
+    /// One-shot latch for a ground-targeted stone. The first terminal impact
+    /// broadcasts [`crate::ai::NoiseType::Distraction`] and clears this bit.
+    #[serde(default)]
+    pub noise_distraction: bool,
     /// Original's water/hole landing latch (`mbDive`).
     #[serde(default)]
     pub dive: bool,
@@ -3303,6 +3307,7 @@ impl Default for ProjectileData {
             shooter: None,
             frame_count: 0,
             flying: false,
+            noise_distraction: false,
             dive: false,
             magic_bullet: false,
             disappear: false,

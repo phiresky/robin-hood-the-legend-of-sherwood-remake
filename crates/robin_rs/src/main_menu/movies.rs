@@ -14,7 +14,7 @@ use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, align_bottom_right, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt,
+    render_text_virt_font,
 };
 use crate::ingame_menu::resources::{MT_BTN_BACK, MT_BTN_SHOW_MOVIES};
 use crate::ingame_menu::widget_bridge::{self, ModalInputState};
@@ -190,10 +190,10 @@ pub(crate) async fn show_movies(
 
         // Title — centre the string horizontally inside the 0..500 column,
         // matching the original layout's title label box.
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&title);
             let x = (500 - tw) / 2;
-            render_text_virt(renderer, font, transform, &title, x, 20);
+            render_text_virt_font(renderer, font, transform, &title, x, 20);
         }
 
         for widget in frame.widgets() {
@@ -203,7 +203,7 @@ pub(crate) async fn show_movies(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

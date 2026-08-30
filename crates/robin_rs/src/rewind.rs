@@ -115,6 +115,14 @@ impl RewindBuffer {
         self.history.begin_frame(frame, engine);
     }
 
+    /// Anchor a freshly reset rollback journal at a whole-state adoption
+    /// boundary. Authoritative reconnect snapshots can land between the
+    /// sparse tier's ordinary 25-frame checkpoints.
+    pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.history.seed_initial_anchor(frame, engine);
+        self.session = None;
+    }
+
     /// Finalize the frame: commit the pending snapshot (if any), push
     /// the frame's commands onto the log, and prune the snapshot ring
     /// to exponential spacing.
@@ -264,6 +272,25 @@ impl Default for RewindBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adopted_snapshot_seeds_an_off_cadence_timeline_anchor() {
+        use robin_engine::campaign::Campaign;
+
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let frame = SNAPSHOT_INTERVAL + 7;
+        let mut buffer = RewindBuffer::new();
+
+        buffer.seed_initial_anchor(frame, &engine);
+        buffer.begin_frame(frame, &engine, &assets);
+        buffer.end_frame(Vec::new());
+
+        assert!(buffer.frame_for(frame).is_some());
+        assert_eq!(buffer.oldest_cmd_frame(), frame);
+        assert_eq!(buffer.oldest_reachable_frame(), Some(frame));
+    }
 
     #[test]
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {

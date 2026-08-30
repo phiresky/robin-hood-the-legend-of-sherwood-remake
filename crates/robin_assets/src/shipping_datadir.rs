@@ -70,6 +70,12 @@ pub struct ShippingDatadir {
     /// that are neither authored by the destination mission nor implied by its
     /// current party, so save launches must not silently omit their masters.
     pub saved_world_rhs_files: Vec<String>,
+    /// Language packs keyed by canonical BCP-47 locale (`"en-US"`,
+    /// `"de-DE"`, ...). Windows' invariant LCID 2047 is represented as
+    /// `"und"`; its legacy `"2047"` and `"neutral"` names remain accepted
+    /// aliases but are not promoted to a made-up language identity.
+    #[serde(default)]
+    pub locales: BTreeMap<String, ShippingLocale>,
     /// Runtime-only source directory containing `datadir.bin` and its payloads.
     #[serde(skip)]
     #[bitcode(skip)]
@@ -87,6 +93,12 @@ pub struct ShippingDatadir {
     #[serde(skip)]
     #[bitcode(skip)]
     loaded_missions: RwLock<BTreeMap<String, Arc<ShippingMission>>>,
+    /// Host-authenticated compressed split payloads staged by the browser
+    /// before mission selection. Values remain shared so decoding does not
+    /// copy a potentially large package file merely to cross the async seam.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    preloaded_files: RwLock<BTreeMap<String, Arc<Vec<u8>>>>,
     #[serde(skip)]
     #[bitcode(skip)]
     active_mission: RwLock<Option<String>>,
@@ -94,6 +106,18 @@ pub struct ShippingDatadir {
     #[serde(skip)]
     #[bitcode(skip)]
     active_exclamation_ids: RwLock<BTreeSet<u32>>,
+    /// Runtime-only canonical locale selected for parsed-resource lookups.
+    /// The corresponding raw overlay lives in `AssetVfs`' replaceable locale
+    /// slot; both are changed by `set_active_locale*`.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    active_locale: RwLock<Option<String>>,
+    /// Runtime-only, lazily shared copies of locale raw-file bundles. Locale
+    /// switching can mount these on native, browser, and Android VFSes without
+    /// re-cloning every byte on each switch.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    locale_bundle_cache: RwLock<BTreeMap<String, Arc<robin_util::asset_fs::Bundle>>>,
 }
 
 impl Default for ShippingDatadir {
@@ -116,12 +140,16 @@ impl Default for ShippingDatadir {
             character_exclamation_ids: BTreeMap::new(),
             mission_exclamation_ids: BTreeMap::new(),
             saved_world_rhs_files: Vec::new(),
+            locales: BTreeMap::new(),
             source_dir: None,
             remote_base_url: None,
             boot_raw_bundle: OnceLock::new(),
             loaded_missions: RwLock::new(BTreeMap::new()),
+            preloaded_files: RwLock::new(BTreeMap::new()),
             active_mission: RwLock::new(None),
             active_exclamation_ids: RwLock::new(BTreeSet::new()),
+            active_locale: RwLock::new(None),
+            locale_bundle_cache: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -154,6 +182,113 @@ pub struct RemoteAudioAsset {
     pub duration_ms: u32,
     /// Slice start within the bundle at `url` (see [`ShippingAudioAsset`]).
     pub bundle_offset: Option<u32>,
+}
+
+/// A complete language overlay embedded in a shipping datadir.
+///
+/// Parsed resource maps avoid reparsing hot UI/mission text during a switch;
+/// `raw` contains the same locale's VFS-visible files, including speech and
+/// cinematics. Keeping the raw overlay in the platform-neutral manifest makes
+/// the representation identical for native, browser, and Android builds.
+#[derive(Default, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ShippingLocale {
+    /// Original Windows locale directory name when the pack came from a
+    /// legacy datadir (for example `"1031"`).
+    pub source_lcid: Option<String>,
+    /// Discovery aliases retained from the input. These are metadata only;
+    /// the containing `ShippingDatadir::locales` key is authoritative.
+    pub aliases: BTreeSet<String>,
+    pub profiles: Option<ProfileManager>,
+    pub res_files: BTreeMap<String, ResourceManager>,
+    pub pak_files: BTreeMap<String, Vec<EncodedPicture>>,
+    pub red_files: BTreeMap<String, LevelDescriptors>,
+    /// VFS bundle keys relative to `Data/`, normalized to lowercase `/` paths.
+    pub raw: BTreeMap<String, Vec<u8>>,
+}
+
+/// Map a legacy Windows LCID to its canonical shipping locale key.
+pub fn locale_id_from_lcid(lcid: &str) -> Option<&'static str> {
+    Some(match lcid {
+        "1028" => "zh-TW",
+        "1029" => "cs-CZ",
+        "1031" => "de-DE",
+        "1033" => "en-US",
+        "1036" => "fr-FR",
+        "1040" => "it-IT",
+        "1041" => "ja-JP",
+        "1042" => "ko-KR",
+        "1045" => "pl-PL",
+        "1046" => "pt-BR",
+        "1049" => "ru-RU",
+        "1054" => "th-TH",
+        "2047" => "und",
+        "2052" => "zh-CN",
+        "2070" => "pt-PT",
+        "3082" => "es-ES",
+        _ => return None,
+    })
+}
+
+/// Canonicalize a shipping locale lookup. Numeric LCIDs and `neutral` are
+/// accepted so old launch/config values can discover the new canonical keys.
+pub fn canonical_locale_id(locale: &str) -> Result<String> {
+    let locale = locale.trim();
+    if locale.is_empty() {
+        return Err(anyhow!("locale id must not be empty"));
+    }
+    if let Some(mapped) = locale_id_from_lcid(locale) {
+        return Ok(mapped.to_owned());
+    }
+    if locale.eq_ignore_ascii_case("neutral") {
+        return Ok("und".to_owned());
+    }
+
+    let normalized = locale.replace('_', "-");
+    let parts: Vec<&str> = normalized.split('-').collect();
+    if parts.is_empty()
+        || parts[0].len() < 2
+        || parts[0].len() > 8
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || part.len() > 8 || !part.is_ascii())
+        || !parts[0].bytes().all(|byte| byte.is_ascii_alphabetic())
+        || parts[1..]
+            .iter()
+            .any(|part| !part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    {
+        return Err(anyhow!("invalid BCP-47 locale id '{locale}'"));
+    }
+
+    let mut canonical = Vec::with_capacity(parts.len());
+    canonical.push(parts[0].to_ascii_lowercase());
+    for part in &parts[1..] {
+        let value = if part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            let mut chars = part.chars();
+            let first = chars
+                .next()
+                .expect("four-character script subtag is non-empty")
+                .to_ascii_uppercase();
+            format!("{first}{}", chars.as_str().to_ascii_lowercase())
+        } else if (part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_alphabetic()))
+            || (part.len() == 3 && part.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            part.to_ascii_uppercase()
+        } else {
+            part.to_ascii_lowercase()
+        };
+        canonical.push(value);
+    }
+    Ok(canonical.join("-"))
+}
+
+/// Normalize a path used as a parsed-resource or raw-bundle key.
+pub fn canonical_shipping_asset_key(path: &str) -> String {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    normalized
+        .strip_prefix("data/")
+        .unwrap_or(&normalized)
+        .trim_start_matches('/')
+        .to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -1218,6 +1353,217 @@ impl RleJxlDecodeScheduler {
 // ---------------------------------------------------------------------------
 
 impl ShippingDatadir {
+    /// Iterate installed language packs in stable canonical-locale order.
+    pub fn available_locales(&self) -> impl Iterator<Item = (&str, &ShippingLocale)> {
+        self.locales
+            .iter()
+            .map(|(locale, assets)| (locale.as_str(), assets))
+    }
+
+    /// Resolve a canonical locale, Windows LCID, or retained alias to a pack.
+    /// Invalid identifiers are errors; absent packs return `Ok(None)`.
+    pub fn locale(&self, locale: &str) -> Result<Option<&ShippingLocale>> {
+        if let Some((_, assets)) = self.locales.iter().find(|(_, assets)| {
+            assets
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(locale.trim()))
+        }) {
+            return Ok(Some(assets));
+        }
+        let canonical = canonical_locale_id(locale)?;
+        Ok(self.locales.get(&canonical))
+    }
+
+    /// Whether this manifest predates explicit locale metadata. Its top-level
+    /// resources remain usable, but their language identity is unknowable and
+    /// must not be advertised as a specific installed locale.
+    pub fn is_legacy_single_locale(&self) -> bool {
+        self.locales.is_empty()
+    }
+
+    pub fn locale_resource(&self, locale: &str, path: &str) -> Result<Option<&ResourceManager>> {
+        let key = canonical_shipping_asset_key(path);
+        Ok(self
+            .locale(locale)?
+            .and_then(|assets| assets.res_files.get(&key)))
+    }
+
+    pub fn locale_pak(&self, locale: &str, path: &str) -> Result<Option<&[EncodedPicture]>> {
+        let key = canonical_shipping_asset_key(path);
+        Ok(self
+            .locale(locale)?
+            .and_then(|assets| assets.pak_files.get(&key))
+            .map(Vec::as_slice))
+    }
+
+    pub fn locale_level_descriptors(
+        &self,
+        locale: &str,
+        path: &str,
+    ) -> Result<Option<&LevelDescriptors>> {
+        let key = canonical_shipping_asset_key(path);
+        let filename = key.rsplit('/').next().unwrap_or(&key);
+        Ok(self
+            .locale(locale)?
+            .and_then(|assets| assets.red_files.get(filename)))
+    }
+
+    pub fn locale_raw(&self, locale: &str, path: &str) -> Result<Option<&[u8]>> {
+        let key = canonical_shipping_asset_key(path);
+        Ok(self
+            .locale(locale)?
+            .and_then(|assets| assets.raw.get(&key))
+            .map(Vec::as_slice))
+    }
+
+    /// Return a shareable VFS overlay for a locale. The first call clones the
+    /// serialized raw map into an `Arc`; subsequent calls share that allocation.
+    pub fn locale_bundle(&self, locale: &str) -> Result<Option<Arc<robin_util::asset_fs::Bundle>>> {
+        let canonical = if let Some((canonical, _)) = self.locales.iter().find(|(_, assets)| {
+            assets
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(locale.trim()))
+        }) {
+            canonical.clone()
+        } else {
+            canonical_locale_id(locale)?
+        };
+        let Some(assets) = self.locales.get(&canonical) else {
+            return Ok(None);
+        };
+        if let Some(cached) = self
+            .locale_bundle_cache
+            .read()
+            .expect("shipping locale bundle cache lock poisoned")
+            .get(&canonical)
+            .cloned()
+        {
+            return Ok(Some(cached));
+        }
+
+        // A locale is a complete text/UI overlay. English is only a fallback
+        // for the two explicitly optional presentation families; allowing it
+        // to fill arbitrary missing files would create a partly translated UI
+        // and conceal an incomplete pack.
+        let mut raw = self
+            .locales
+            .get("en-US")
+            .filter(|_| canonical != "en-US")
+            .map(|english| {
+                english
+                    .raw
+                    .iter()
+                    .filter(|(key, _)| is_optional_english_fallback_key(key))
+                    .map(|(key, bytes)| (key.clone(), bytes.clone().into()))
+                    .collect::<robin_util::asset_fs::Bundle>()
+            })
+            .unwrap_or_default();
+        raw.extend(
+            assets
+                .raw
+                .iter()
+                .map(|(key, bytes)| (key.clone(), bytes.clone().into())),
+        );
+        let bundle = Arc::new(raw);
+        let bundle = self
+            .locale_bundle_cache
+            .write()
+            .expect("shipping locale bundle cache lock poisoned")
+            .entry(canonical)
+            .or_insert_with(|| bundle.clone())
+            .clone();
+        Ok(Some(bundle))
+    }
+
+    /// Atomically select the parsed and raw resources used by runtime
+    /// language-aware loaders. `None` clears the locale overlay for legacy
+    /// single-language manifests.
+    pub fn set_active_locale(&self, locale: Option<&str>) -> Result<()> {
+        let (canonical, bundle) = match locale {
+            Some(locale) => {
+                let canonical = canonical_locale_id(locale)?;
+                if !self.locales.contains_key(&canonical) {
+                    return Err(anyhow!("shipping locale {canonical} is not installed"));
+                }
+                let bundle = self
+                    .locale_bundle(&canonical)?
+                    .ok_or_else(|| anyhow!("shipping locale {canonical} has no raw bundle"))?;
+                (Some(canonical), Some(bundle))
+            }
+            None => (None, None),
+        };
+
+        robin_util::asset_fs::install_locale_bundle(bundle)
+            .context("install shipping locale bundle")?;
+        *self
+            .active_locale
+            .write()
+            .expect("shipping active locale lock poisoned") = canonical;
+        Ok(())
+    }
+
+    pub fn active_locale_name(&self) -> Option<String> {
+        self.active_locale
+            .read()
+            .expect("shipping active locale lock poisoned")
+            .clone()
+    }
+
+    pub fn active_resource(&self, path: &str) -> Option<&ResourceManager> {
+        if !is_locale_overlay_key(path) {
+            return None;
+        }
+        let locale = self.active_locale_name()?;
+        self.locale_resource(&locale, path).ok().flatten()
+    }
+
+    pub fn active_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
+        let locale = self.active_locale_name()?;
+        self.locale_pak(&locale, path).ok().flatten()
+    }
+
+    pub fn localized_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
+        if self.active_locale_name().is_some() {
+            // PAKs under locale roots commonly bake translated titles into
+            // their pixels. A v5 manifest must not substitute the top-level
+            // compatibility pack when the selected locale omitted one.
+            self.active_pak(path)
+        } else {
+            let key = canonical_shipping_asset_key(path);
+            self.pak_files.get(&key).map(Vec::as_slice)
+        }
+    }
+
+    pub fn active_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
+        let locale = self.active_locale_name()?;
+        self.locale_level_descriptors(&locale, path).ok().flatten()
+    }
+
+    /// Resolve a descriptor in the selected locale. Compatibility manifests
+    /// without locale metadata continue to use their top-level descriptor map;
+    /// a v5 pack never silently substitutes a different language.
+    pub fn localized_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
+        if self.active_locale_name().is_some() {
+            self.active_level_descriptors(path)
+        } else {
+            let key = canonical_shipping_asset_key(path);
+            let filename = key.rsplit('/').next().unwrap_or(&key);
+            self.red_files.get(filename)
+        }
+    }
+
+    /// Localized profile metadata for presentation lookups such as mission
+    /// titles. Engine construction must use the language-independent top-level
+    /// `profiles` index so a client locale cannot alter simulation data.
+    pub fn active_profiles(&self) -> Option<&ProfileManager> {
+        let locale = self.active_locale_name()?;
+        self.locales
+            .get(&locale)
+            .and_then(|assets| assets.profiles.as_ref())
+    }
+
     /// Parse a shipping datadir blob: zstd decompress + native bitcode decode.
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let compressed =
@@ -1294,6 +1640,26 @@ impl ShippingDatadir {
             .read()
             .expect("shipping mission lock poisoned")
             .contains_key(mission)
+    }
+
+    pub fn cache_preloaded_file(&self, file: String, bytes: Vec<u8>) -> Result<()> {
+        let replaced = self
+            .preloaded_files
+            .write()
+            .expect("shipping preloaded-file lock poisoned")
+            .insert(file.clone(), Arc::new(bytes));
+        if replaced.is_some() {
+            return Err(anyhow!("shipping file {file:?} was already preloaded"));
+        }
+        Ok(())
+    }
+
+    pub fn preloaded_file(&self, file: &str) -> Option<Arc<Vec<u8>>> {
+        self.preloaded_files
+            .read()
+            .expect("shipping preloaded-file lock poisoned")
+            .get(file)
+            .cloned()
     }
 
     pub fn install_mission(&self, mission: &str, mut payload: ShippingMission) -> Result<()> {
@@ -1556,14 +1922,19 @@ impl ShippingDatadir {
         })
     }
 
-    /// Iterate every catalog key (normalized logical Opus path). Used by the
-    /// browser's background audio prefetch to enumerate what exists.
-    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
-        self.audio_assets.keys().map(String::as_str)
+    /// Catalog keys required before any mission is selected (menu effects
+    /// and menu music). Browser startup decodes this deliberately small set;
+    /// it must not infer boot membership by scanning the whole catalog.
+    pub fn boot_audio_keys(&self) -> Vec<String> {
+        self.audio_durations_ms
+            .keys()
+            .filter(|key| self.audio_assets.contains_key(*key))
+            .cloned()
+            .collect()
     }
 
     /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
-    /// required actor voices, music, ambience): the prefetch-first set.
+    /// required actor voices, music, ambience): the exact mission warmup set.
     pub fn active_audio_keys(&self) -> Vec<String> {
         let Some(mission) = self.active_mission_name() else {
             return Vec::new();
@@ -1595,6 +1966,35 @@ impl ShippingDatadir {
                 .map(|bytes| bytes.as_ref())
         })
     }
+}
+
+/// English substitution is deliberately limited to optional recorded media.
+/// All matching uses canonical shipping keys (relative to `Data/`).
+pub fn is_optional_english_fallback_key(path: &str) -> bool {
+    let key = canonical_shipping_asset_key(path);
+    key == "sounds/exclamations"
+        || key.starts_with("sounds/exclamations/")
+        || key == "cinematics"
+        || key.starts_with("cinematics/")
+}
+
+/// Text resources are required to come from the selected locale. They never
+/// fall through to the compatibility/default maps of a shipping manifest.
+pub fn is_required_locale_key(path: &str) -> bool {
+    let key = canonical_shipping_asset_key(path);
+    key == "text" || key.starts_with("text/") || key == "interface/start.sxt"
+}
+
+/// Locale selection is presentation-only. Even if a converted locale source
+/// contains a complete Data tree, it must never replace simulation inputs such
+/// as levels, scripts, or gameplay profile data.
+pub fn is_locale_overlay_key(path: &str) -> bool {
+    let key = canonical_shipping_asset_key(path);
+    key == "text"
+        || key.starts_with("text/")
+        || key == "interface"
+        || key.starts_with("interface/")
+        || is_optional_english_fallback_key(&key)
 }
 
 impl ShippingMission {
@@ -1783,9 +2183,13 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // the default keeps exact RLE words and native shipping stays
 // byte-preserving). The mission chunk layout changed, so both magics
 // advance.
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA14";
+//
+// Datadir v15 adds `ShippingDatadir::locales`, carrying explicit,
+// canonicalized multi-locale payloads. Mission payloads remain at v8 because
+// locale data is confined to the boot datadir manifest.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA15";
 const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN08";
-pub const SHIPPING_DATADIR_VERSION: u32 = 14;
+pub const SHIPPING_DATADIR_VERSION: u32 = 15;
 pub const SHIPPING_MISSION_VERSION: u32 = 8;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
@@ -2044,9 +2448,15 @@ mod tests {
             .mission_exclamation_ids
             .insert("MissionOne".into(), vec![0x534F_4C44]);
         datadir.saved_world_rhs_files = vec!["rhs/saved-objects.rhmission.zst".into()];
+        let mut german = ShippingLocale {
+            source_lcid: Some("1031".into()),
+            ..ShippingLocale::default()
+        };
+        german.raw.insert("text/level.res".into(), vec![7, 8, 9]);
+        datadir.locales.insert("de-DE".into(), german);
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA14");
+        assert_eq!(&encoded[..8], b"RHDDNA15");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -2088,10 +2498,93 @@ mod tests {
             decoded.saved_world_rhs_files,
             ["rhs/saved-objects.rhmission.zst"]
         );
+        assert_eq!(
+            decoded.locale_raw("1031", "Text/Level.res").unwrap(),
+            Some([7, 8, 9].as_slice())
+        );
+
+        let mut previous_schema = encoded.clone();
+        previous_schema[..8].copy_from_slice(b"RHDDNA13");
+        let error = decode_native(&previous_schema).unwrap_err();
+        assert!(error.to_string().contains("regenerate datadir.bin"));
 
         let legacy_unversioned = bitcode::encode(&datadir);
         let error = decode_native(&legacy_unversioned).unwrap_err();
         assert!(error.to_string().contains("regenerate datadir.bin"));
+    }
+
+    #[test]
+    fn canonical_locale_ids_accept_legacy_aliases_without_inventing_identity() {
+        assert_eq!(canonical_locale_id("1031").unwrap(), "de-DE");
+        assert_eq!(canonical_locale_id("DE_de").unwrap(), "de-DE");
+        assert_eq!(canonical_locale_id("zh-hant-tw").unwrap(), "zh-Hant-TW");
+        assert_eq!(canonical_locale_id("2047").unwrap(), "und");
+        assert_eq!(canonical_locale_id("neutral").unwrap(), "und");
+        assert!(canonical_locale_id("../de-DE").is_err());
+    }
+
+    #[test]
+    fn locale_lookup_and_bundle_use_canonical_keys() {
+        let mut locale = ShippingLocale {
+            source_lcid: Some("1031".into()),
+            ..ShippingLocale::default()
+        };
+        locale.aliases.insert("1031".into());
+        locale.raw.insert("text/dialogue.wav".into(), vec![4, 2]);
+        let mut datadir = ShippingDatadir::default();
+        datadir.locales.insert("de-DE".into(), locale);
+
+        assert_eq!(
+            datadir
+                .locale_raw("1031", "Data\\Text\\Dialogue.wav")
+                .unwrap(),
+            Some([4, 2].as_slice())
+        );
+        assert!(datadir.locale("fr-FR").unwrap().is_none());
+        let first = datadir.locale_bundle("de_de").unwrap().unwrap();
+        let second = datadir.locale_bundle("1031").unwrap().unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            first.get("text/dialogue.wav").map(|bytes| bytes.as_ref()),
+            Some([4, 2].as_slice())
+        );
+    }
+
+    #[test]
+    fn locale_bundle_only_uses_english_for_optional_recorded_media() {
+        let mut english = ShippingLocale::default();
+        english.raw.insert("text/level.res".into(), vec![1]);
+        english.raw.insert("interface/start.sxt".into(), vec![2]);
+        english
+            .raw
+            .insert("sounds/exclamations/robin.wav".into(), vec![3]);
+        english.raw.insert("cinematics/intro.ogg".into(), vec![4]);
+
+        let mut german = ShippingLocale::default();
+        german.raw.insert("text/level.res".into(), vec![5]);
+
+        let mut datadir = ShippingDatadir::default();
+        datadir.locales.insert("en-US".into(), english);
+        datadir.locales.insert("de-DE".into(), german);
+
+        let bundle = datadir.locale_bundle("de-DE").unwrap().unwrap();
+        assert_eq!(
+            bundle.get("text/level.res").map(|bytes| bytes.as_ref()),
+            Some([5].as_slice())
+        );
+        assert!(!bundle.contains_key("interface/start.sxt"));
+        assert_eq!(
+            bundle
+                .get("sounds/exclamations/robin.wav")
+                .map(|bytes| bytes.as_ref()),
+            Some([3].as_slice())
+        );
+        assert_eq!(
+            bundle
+                .get("cinematics/intro.ogg")
+                .map(|bytes| bytes.as_ref()),
+            Some([4].as_slice())
+        );
     }
 
     #[test]
@@ -2561,6 +3054,48 @@ mod tests {
         assert_eq!(
             datadir.active_audio_metadata(Path::new("Data/Sounds/Arrow.wav")),
             Some((321, 654))
+        );
+    }
+
+    #[test]
+    fn audio_warmup_membership_is_exact_for_boot_and_active_mission() {
+        let mut datadir = ShippingDatadir::default();
+        for key in [
+            "sounds/menu/click.opus",
+            "sounds/exclamations/robin/alert.opus",
+            "sounds/not-mounted.opus",
+        ] {
+            datadir.audio_assets.insert(
+                key.into(),
+                ShippingAudioAsset {
+                    file: format!("audio/assets/{key}"),
+                    encoded_size: 10,
+                    duration_ms: 100,
+                    bundle_offset: None,
+                },
+            );
+        }
+        datadir
+            .audio_durations_ms
+            .insert("sounds/menu/click.opus".into(), 100);
+        let mut mission = ShippingMission::default();
+        mission
+            .audio_durations_ms
+            .insert("sounds/exclamations/robin/alert.opus".into(), 100);
+        datadir
+            .loaded_missions
+            .write()
+            .unwrap()
+            .insert("MissionA".into(), Arc::new(mission));
+        *datadir.active_mission.write().unwrap() = Some("MissionA".into());
+
+        assert_eq!(
+            datadir.boot_audio_keys(),
+            vec!["sounds/menu/click.opus".to_owned()]
+        );
+        assert_eq!(
+            datadir.active_audio_keys(),
+            vec!["sounds/exclamations/robin/alert.opus".to_owned()]
         );
     }
 

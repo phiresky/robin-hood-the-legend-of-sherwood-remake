@@ -27,7 +27,7 @@ use robin_engine::resource_ids;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_aligned,
+    enter_modal_gpu_phase, render_text_in_box_aligned_font,
 };
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
@@ -267,13 +267,9 @@ pub async fn show_buy_blazons(
         // Message text — centred horizontally inside the 300x75 box.
         // Use the "Debrief" font, falling back through the popup font
         // chain when it's missing.
-        let font = resources
-            .fonts
-            .debrief
-            .as_ref()
-            .or_else(|| resources.popup_font());
+        let font = resources.debrief_font_any();
         if let Some(font) = font {
-            let _ = render_text_in_box_aligned(
+            let _ = render_text_in_box_aligned_font(
                 renderer,
                 font,
                 transform,
@@ -310,7 +306,7 @@ pub async fn show_buy_blazons(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if screen.purchased {

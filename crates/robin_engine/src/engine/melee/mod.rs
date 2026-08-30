@@ -540,12 +540,8 @@ fn compute_special_strike_preparation_time(
     difficulty: crate::player_profile::DifficultyLevel,
     fighting_ability: u16,
 ) -> u32 {
-    use crate::player_profile::DifficultyLevel;
-    match difficulty {
-        DifficultyLevel::Easy => 13u32.saturating_sub(fighting_ability as u32 / 10),
-        DifficultyLevel::Medium => 10u32.saturating_sub(fighting_ability as u32 / 10),
-        DifficultyLevel::Hard => 0,
-    }
+    u32::from(difficulty.rules().special_strike_base_frames)
+        .saturating_sub(fighting_ability as u32 / 10)
 }
 
 // ─── Hero expression IDs ────────────────────────────────────────────
@@ -938,6 +934,10 @@ impl EngineInner {
         entity_id: EntityId,
         killer: Option<EntityId>,
     ) {
+        // Script/native life-point setters reach this virtual Kill boundary
+        // without allocating a Damage element. Preserve their exact optional
+        // killer instead of inferring responsibility from aggregate totals.
+        self.record_achievement_npc_death(entity_id, killer);
         let (is_pc, is_ai_owner, allied_soldier, killer_is_pc) = {
             let entity = self
                 .get_entity(entity_id)
@@ -1286,12 +1286,7 @@ fn fighting_ability_from_profile(
                 .cached_camp
                 .is_hostile_to(crate::element::Camp::Royalists)
             {
-                difficulty.modify_capacity(
-                    base,
-                    crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
-                    crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
-                    100,
-                )
+                difficulty.rules().enemy_fighting(base, 100)
             } else {
                 base
             }

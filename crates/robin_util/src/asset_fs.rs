@@ -96,6 +96,13 @@ enum Mount {
 /// prevents a symlink inside a mount from escaping it.
 #[derive(Debug, Default)]
 pub struct AssetVfs {
+    /// A replaceable, highest-priority language overlay. Unlike ordinary
+    /// mounts this slot is swapped atomically, so files missing from a newly
+    /// selected pack can never leak through from a previously selected pack.
+    locale_bundle: RwLock<Option<Arc<Bundle>>>,
+    /// The replaceable mission payload. Keeping this separate from the locale
+    /// overlay lets either change without retaining assets from the previous
+    /// mission or language.
     /// Engine-owned overlays searched before mission and shipping content.
     ///
     /// This is distinct from `mounts`: the core datadir must override a
@@ -146,6 +153,18 @@ impl AssetVfs {
             .write()
             .expect("asset VFS mounts poisoned")
             .insert(0, Mount::Memory(bundle));
+        Ok(())
+    }
+
+    /// Atomically replace the current language overlay.
+    pub fn set_locale_bundle(&self, bundle: Option<Arc<Bundle>>) -> Result<(), AssetError> {
+        if let Some(bundle) = &bundle {
+            validate_bundle(bundle)?;
+        }
+        *self
+            .locale_bundle
+            .write()
+            .expect("asset VFS locale bundle poisoned") = bundle;
         Ok(())
     }
 
@@ -207,6 +226,21 @@ impl AssetVfs {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        let locale = self
+            .locale_bundle
+            .read()
+            .expect("asset VFS locale bundle poisoned");
+        if let Some(locale) = locale.as_ref()
+            && is_locale_overlay_key(&key)
+        {
+            if let Some(bytes) = locale.get(&key) {
+                return Ok(bytes.clone());
+            }
+            if is_required_locale_key(&key) {
+                return Err(AssetError::NotFound(requested.display().to_string()));
+            }
+        }
+        drop(locale);
         let overlays = self
             .overlay_bundles
             .read()
@@ -277,6 +311,21 @@ impl AssetVfs {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
+        let locale = self
+            .locale_bundle
+            .read()
+            .expect("asset VFS locale bundle poisoned");
+        if let Some(locale) = locale.as_ref()
+            && is_locale_overlay_key(&key)
+        {
+            if locale.contains_key(&key) {
+                return Ok(true);
+            }
+            if is_required_locale_key(&key) {
+                return Ok(false);
+            }
+        }
+        drop(locale);
         if self
             .overlay_bundles
             .read()
@@ -436,6 +485,26 @@ pub fn global() -> &'static Arc<AssetVfs> {
 /// Install the shipping bundle at the highest regular-mount priority.
 pub fn install_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
     global().mount_bundle_first(bundle)
+}
+
+/// Replace the process runtime's current language overlay.
+pub fn install_locale_bundle(bundle: Option<Arc<Bundle>>) -> Result<(), AssetError> {
+    global().set_locale_bundle(bundle)
+}
+
+fn is_required_locale_key(key: &str) -> bool {
+    key == "text" || key.starts_with("text/") || key.eq_ignore_ascii_case("interface/start.sxt")
+}
+
+fn is_locale_overlay_key(key: &str) -> bool {
+    key == "text"
+        || key.starts_with("text/")
+        || key == "interface"
+        || key.starts_with("interface/")
+        || key == "sounds/exclamations"
+        || key.starts_with("sounds/exclamations/")
+        || key == "cinematics"
+        || key.starts_with("cinematics/")
 }
 
 /// Install an engine-owned overlay ahead of mission and shipping assets.
@@ -655,6 +724,63 @@ mod tests {
                 .try_exists("Data/Interface/UI/panel.png")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn locale_bundle_replacement_does_not_leak_the_previous_language() {
+        let vfs = AssetVfs::new();
+        vfs.mount_bundle(bundle(&[
+            ("interface/shared.dat", b"base"),
+            ("interface/old-only.dat", b"base-old"),
+        ]))
+        .unwrap();
+        vfs.set_locale_bundle(Some(bundle(&[
+            ("interface/shared.dat", b"german"),
+            ("interface/old-only.dat", b"german-only"),
+        ])))
+        .unwrap();
+        assert_eq!(
+            vfs.read("Data/Interface/old-only.dat").unwrap(),
+            b"german-only"
+        );
+
+        vfs.set_locale_bundle(Some(bundle(&[("interface/shared.dat", b"french")])))
+            .unwrap();
+        assert_eq!(vfs.read("Data/Interface/shared.dat").unwrap(), b"french");
+        assert_eq!(
+            vfs.read("Data/Interface/old-only.dat").unwrap(),
+            b"base-old"
+        );
+
+        vfs.set_locale_bundle(None).unwrap();
+        assert_eq!(vfs.read("Data/Interface/shared.dat").unwrap(), b"base");
+    }
+
+    #[test]
+    fn required_locale_text_never_falls_through_to_base_mounts() {
+        let vfs = AssetVfs::new();
+        vfs.mount_bundle(bundle(&[("text/level.res", b"base")]))
+            .unwrap();
+        vfs.set_locale_bundle(Some(bundle(&[("text/other.res", b"selected")])))
+            .unwrap();
+
+        assert!(matches!(
+            vfs.read("Data/Text/Level.res"),
+            Err(AssetError::NotFound(_))
+        ));
+        assert!(!vfs.try_exists("Data/Text/Level.res").unwrap());
+        assert_eq!(vfs.read("Data/Text/Other.res").unwrap(), b"selected");
+    }
+
+    #[test]
+    fn locale_bundle_cannot_override_simulation_inputs() {
+        let vfs = AssetVfs::new();
+        vfs.mount_bundle(bundle(&[("configuration/profile.cpf", b"base")]))
+            .unwrap();
+        vfs.set_locale_bundle(Some(bundle(&[("configuration/profile.cpf", b"localized")])))
+            .unwrap();
+
+        assert_eq!(vfs.read("Data/Configuration/profile.cpf").unwrap(), b"base");
     }
 
     #[test]

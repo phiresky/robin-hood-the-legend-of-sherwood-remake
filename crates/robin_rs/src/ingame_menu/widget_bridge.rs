@@ -11,7 +11,6 @@ use crate::cursor::CursorRenderer;
 
 use crate::gfx_types::GameEvent;
 use crate::input::KeyboardState;
-use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::resource_widget_id::{
@@ -442,20 +441,33 @@ impl ModalInputState {
                 self.virt_x = vx as f32;
                 self.virt_y = vy as f32;
                 if *btn == 1 {
+                    let matched_down = self.buttons.contains(MouseButtons::LEFT_DOWN);
                     self.buttons.remove(MouseButtons::LEFT_DOWN);
-                    self.buttons |= MouseButtons::LEFT_CLICK;
-                    if self.pending_double_click_left {
-                        self.buttons |= MouseButtons::LEFT_DOUBLE_CLICK;
-                        self.pending_double_click_left = false;
+                    if matched_down {
+                        self.buttons |= MouseButtons::LEFT_CLICK;
+                        if self.pending_double_click_left {
+                            self.buttons |= MouseButtons::LEFT_DOUBLE_CLICK;
+                        }
                     }
+                    self.pending_double_click_left = false;
                 } else if *btn == 3 {
+                    let matched_down = self.buttons.contains(MouseButtons::RIGHT_DOWN);
                     self.buttons.remove(MouseButtons::RIGHT_DOWN);
-                    self.buttons |= MouseButtons::RIGHT_CLICK;
-                    if self.pending_double_click_right {
-                        self.buttons |= MouseButtons::RIGHT_DOUBLE_CLICK;
-                        self.pending_double_click_right = false;
+                    if matched_down {
+                        self.buttons |= MouseButtons::RIGHT_CLICK;
+                        if self.pending_double_click_right {
+                            self.buttons |= MouseButtons::RIGHT_DOUBLE_CLICK;
+                        }
                     }
+                    self.pending_double_click_right = false;
                 }
+            }
+            GameEvent::PointerCancel => {
+                self.buttons.remove(MouseButtons::LEFT_DOWN);
+                self.buttons.remove(MouseButtons::LEFT_CLICK);
+                self.buttons.remove(MouseButtons::LEFT_DOUBLE_CLICK);
+                self.pending_double_click_left = false;
+                self.capture.clear();
             }
             GameEvent::TextInput { text } => {
                 self.text_input.push_str(text);
@@ -712,12 +724,12 @@ pub fn draw_widget_button(
     // `(btn_h - font_height) / 2` inside the button and use horizontal
     // centred alignment.  The text-cell top thus lands at
     // `sy + (h - font_height) / 2` with the glyph cell top at that y.
-    if sprite_drawn && let Some(font) = resources.menu_button_font(base.enabled) {
+    if sprite_drawn && let Some(font) = resources.menu_button_font_any(base.enabled) {
         let tw = font.text_width(&base.text);
         let th = font.height() as i32;
         let tx = sx + (w - tw) / 2;
         let ty = sy + (h - th) / 2;
-        super::layout::render_text_screen(renderer, font, &base.text, tx, ty);
+        super::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
     }
 }
 
@@ -824,12 +836,12 @@ pub fn draw_picture_surface_rect(
     );
 }
 
-/// Render all label widgets in a frame with a single native font.
+/// Render all label widgets in a frame with one native or TrueType font.
 pub fn draw_frame_labels(
     renderer: &mut Renderer,
     transform: MenuTransform,
     frame: &FrameWnd,
-    font: &NativeFont,
+    font: &crate::native_font::Font,
     align: super::layout::TextAlign,
 ) {
     for widget in frame.widgets() {
@@ -839,7 +851,7 @@ pub fn draw_frame_labels(
         let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
             continue;
         };
-        super::layout::render_text_in_box(
+        super::layout::render_text_in_box_font(
             renderer,
             font,
             transform,
@@ -948,10 +960,10 @@ pub fn draw_widget_radio(
         renderer.draw_rect_outline_screen(sx, sy, sx + w, sy + h, border);
     }
 
-    if let Some(font) = resources.menu_button_font(base.enabled) {
+    if let Some(font) = resources.menu_button_font_any(base.enabled) {
         let tx = sx + 4;
         let ty = sy + (h - font.height() as i32) / 2;
-        super::layout::render_text_screen(renderer, font, &base.text, tx, ty);
+        super::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
     }
 }
 
@@ -1185,5 +1197,28 @@ mod noisy_tracker_tests {
             .insert((1, WIDGET_NOISY_BUTTON), (UiState::Focused, true));
         tracker.clear();
         assert!(tracker.entries.is_empty());
+    }
+
+    #[test]
+    fn orphan_release_does_not_activate_a_new_modal() {
+        let mut input = ModalInputState::new();
+        input.update_from_event(
+            &GameEvent::MouseUp(20, 30, 1),
+            MenuTransform::centered(640, 480),
+        );
+
+        assert!(!input.buttons.contains(MouseButtons::LEFT_CLICK));
+        assert!(!input.buttons.contains(MouseButtons::LEFT_DOWN));
+    }
+
+    #[test]
+    fn matched_press_and_release_still_produces_click() {
+        let mut input = ModalInputState::new();
+        let transform = MenuTransform::centered(640, 480);
+        input.update_from_event(&GameEvent::MouseDown(20, 30, 1, 1), transform);
+        input.update_from_event(&GameEvent::MouseUp(20, 30, 1), transform);
+
+        assert!(input.buttons.contains(MouseButtons::LEFT_CLICK));
+        assert!(!input.buttons.contains(MouseButtons::LEFT_DOWN));
     }
 }

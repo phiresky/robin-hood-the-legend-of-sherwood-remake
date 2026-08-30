@@ -245,13 +245,16 @@ impl EngineInner {
 
 /// Original-RNG parity is an engine construction mode, not a caller
 /// convention. Normalize the deterministic identity before mission setup so
-/// no tool can accidentally run additive cloak behavior in an Original trace.
+/// no tool can accidentally run post-port gameplay rules in an Original trace.
 ///
 /// TODO(ranked-sessions): this rolling line has no ranked-session mode or
 /// policy surface. If one is introduced, its constructor must apply the same
 /// normalization before the starting snapshot is hashed.
-pub(crate) fn preserve_original_cloak_behavior(mut config: super::SimConfig) -> super::SimConfig {
+pub(crate) fn preserve_original_gameplay_behavior(
+    mut config: super::SimConfig,
+) -> super::SimConfig {
     config.reusable_cloaks = false;
+    config.difficulty = config.difficulty.original_parity_preset();
     config
 }
 
@@ -316,7 +319,16 @@ mod tests {
         assert!(!engine.reusable_cloak_command_is_authorized(&enter, 0));
         assert!(!engine.reusable_cloak_command_is_authorized(&enable, 0));
         assert!(
-            !preserve_original_cloak_behavior(super::super::SimConfig::default()).reusable_cloaks
+            !preserve_original_gameplay_behavior(super::super::SimConfig::default())
+                .reusable_cloaks
+        );
+
+        let mut legendary = super::super::SimConfig::default();
+        legendary.difficulty = crate::player_profile::DifficultyLevel::Legendary;
+        let normalized = preserve_original_gameplay_behavior(legendary);
+        assert_eq!(
+            normalized.difficulty,
+            crate::player_profile::DifficultyLevel::Hard
         );
     }
 

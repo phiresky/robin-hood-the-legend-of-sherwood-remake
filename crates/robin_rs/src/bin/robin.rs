@@ -242,6 +242,44 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
     Ok(())
 }
 
+/// Install the already shell-authenticated browser invitation before boot.
+/// Rust repeats the full signature/build/time/relay validation and consumes it
+/// exactly once when constructing the multiplayer mission.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_set_multiplayer_join_ticket(
+    code: String,
+    redeemed: bool,
+) -> Result<(), wasm_bindgen::JsValue> {
+    robin_rs::main_entry::set_pending_browser_join(code, redeemed)
+        .map_err(|error| wasm_bindgen::JsValue::from_str(&error))
+}
+
+/// Exact executable identity checked by the stable shell after instantiation
+/// and before it installs any host-selected mission or relay.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_multiplayer_compatibility() -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+    use serde::Serialize as _;
+
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Compatibility<'a> {
+        engine_commit: &'a str,
+        artifact_short: &'a str,
+        net_protocol: u32,
+        ticket_schema: u32,
+    }
+    Compatibility {
+        engine_commit: robin_rs::replay_format::ENGINE_SOURCE_COMMIT,
+        artifact_short: robin_rs::replay_format::ENGINE_VERSION_HASH,
+        net_protocol: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
+        ticket_schema: robin_rs::multiplayer::join_ticket::JOIN_TICKET_SCHEMA,
+    }
+    .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+    .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
+}
+
 /// Register one host-preloaded asset before `wasm_boot` starts the game loop.
 /// The browser loader currently uses this for audio assets that retain a
 /// synchronous read API; mission data uses the asynchronous shipping loader.
@@ -250,6 +288,28 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
 pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     robin_util::asset_fs::install_preloaded_asset(path, bytes.to_vec())
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("preload asset {path}: {e}")))
+}
+
+/// Decode-check and cache one host-authenticated local Full-content split
+/// payload. The shell calls this synchronously after `wasm_boot` installs the
+/// shipping index and before the spawned game future gets an event-loop turn.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_preload_shipping_file(
+    relative_path: &str,
+    compressed_bytes: &[u8],
+) -> Result<(), wasm_bindgen::JsValue> {
+    let shipping = assets_shipping_datadir::global().ok_or_else(|| {
+        wasm_bindgen::JsValue::from_str(
+            "preload shipping file: wasm_boot has not installed a shipping datadir",
+        )
+    })?;
+    robin_rs::shipping_mission::preload_compressed(
+        shipping.as_ref(),
+        relative_path,
+        compressed_bytes,
+    )
+    .map_err(|error| wasm_bindgen::JsValue::from_str(&format!("preload shipping file: {error:#}")))
 }
 
 /// Worker-pool bring-up for `wasm-threads` builds. Requires cross-origin
@@ -317,6 +377,20 @@ async fn wasm_main(
     #[cfg(feature = "wasm-threads")]
     wasm_init_thread_pool().await;
     let args = robin_rs::main_entry::parse_cli();
+    #[cfg(feature = "audio")]
+    if args.global_options.sound_enabled {
+        wasm_bindgen_futures::spawn_local(async {
+            if let Err(error) = robin_rs::audio_backend::preload_boot_catalog().await {
+                // Warmup runs alongside engine startup, so it never leaves the
+                // JS boot overlay waiting on an unreported blocking stage.
+                // First playback joins the same content-keyed load.
+                tracing::warn!(
+                    error,
+                    "browser boot/menu audio warmup failed; lazy playback will retry"
+                );
+            }
+        });
+    }
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
     tracing::info!("Rust initialization complete.");

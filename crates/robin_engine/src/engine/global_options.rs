@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::gameplay_config::ItemGameplayConfig;
 use crate::player_profile::DifficultyLevel;
 
 const fn enabled_by_default() -> bool {
@@ -39,10 +40,20 @@ pub struct SimConfig {
     /// Enable the post-port player interaction for releasing tied NPCs.
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
+    /// Optional Clean Hands rule for deaths caused by non-player NPCs.
+    #[serde(default)]
+    pub clean_hands_npc_kills_invalidate: bool,
     /// Enable the deterministic reusable-cloak extension for this session.
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
     pub reusable_cloaks: bool,
+    /// Deterministic item rules selected by the active profile.
+    #[serde(default = "ItemGameplayConfig::classic")]
+    pub item_gameplay: ItemGameplayConfig,
+    /// Optional distraction impact cue. Kept in snapshot state so peers agree
+    /// on the side-effect stream.
+    #[serde(default)]
+    pub noise_distraction_feedback: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -56,15 +67,26 @@ pub struct SimConfig {
     /// original-game parity harness so path-result timing is independent of
     /// worker/scheduler cadence.
     pub synchronous_pathfinding: bool,
+    /// Authoritative switch for Sherwood inventory trading.  Missing fields in
+    /// old deterministic state deserialize off; newly constructed contexts use
+    /// the active profile's explicit default-on value.
+    #[serde(default)]
+    pub sherwood_trading: bool,
 }
 
 impl SimConfig {
     pub fn from_options(options: &GlobalOptions, difficulty: DifficultyLevel) -> Self {
+        difficulty
+            .validate()
+            .expect("cannot construct simulation config with invalid difficulty rules");
         Self {
             difficulty,
             fix_hard_reaction_times: true,
             enable_unbinding: true,
+            clean_hands_npc_kills_invalidate: false,
             reusable_cloaks: true,
+            item_gameplay: ItemGameplayConfig::classic(),
+            noise_distraction_feedback: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -73,7 +95,13 @@ impl SimConfig {
             bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
             amount_of_speaking: 5,
             synchronous_pathfinding: false,
+            sherwood_trading: true,
         }
+    }
+
+    pub fn validate(self) -> Result<Self, crate::player_profile::InvalidDifficultyRules> {
+        self.difficulty.validate()?;
+        Ok(self)
     }
 }
 
@@ -196,11 +224,18 @@ impl GlobalOptions {
 #[cfg(test)]
 mod tests {
     use super::SimConfig;
+    use crate::gameplay_config::ItemGameplayConfig;
 
     #[test]
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
         assert!(SimConfig::default().fix_hard_reaction_times);
         assert!(SimConfig::default().enable_unbinding);
+        assert_eq!(
+            SimConfig::default().item_gameplay,
+            ItemGameplayConfig::classic()
+        );
+        assert!(SimConfig::default().noise_distraction_feedback);
+        assert!(SimConfig::default().sherwood_trading);
     }
 
     #[test]
@@ -219,11 +254,34 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("reusable_cloaks");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("item_gameplay");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("noise_distraction_feedback");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
         assert!(config.enable_unbinding);
         assert!(!config.reusable_cloaks);
+        assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
+        assert!(!config.noise_distraction_feedback);
+    }
+
+    #[test]
+    fn state_without_trading_does_not_opt_into_the_new_economy() {
+        let mut serialized =
+            serde_json::to_value(SimConfig::default()).expect("serialize simulation config");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("sherwood_trading");
+        let config: SimConfig =
+            serde_json::from_value(serialized).expect("deserialize legacy simulation config");
+        assert!(!config.sherwood_trading);
     }
 }

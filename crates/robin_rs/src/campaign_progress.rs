@@ -2,12 +2,26 @@
 
 use std::collections::HashMap;
 
+use robin_engine::achievement::{AchievementAggregationSummary, AchievementSet};
 use robin_engine::campaign::Campaign;
 use robin_engine::campaign_history::{MissionAttempt, MissionAttemptOutcome};
 use robin_engine::mission::MissionStatus;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 use serde::{Deserialize, Serialize};
 
+/// Effective per-mission badge row shown by every campaign presentation.
+/// Current-campaign evidence is retained, while the profile archive restores
+/// badges after a replaceable campaign slot is reset.
+pub(crate) fn combined_mission_badges(
+    mut current: AchievementSet,
+    mission_id: u32,
+    lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
+) -> AchievementSet {
+    if let Some(history) = lifetime {
+        current.union_with(history.eligible_badges_for_mission(mission_id));
+    }
+    current
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissionProgressState {
     Locked,
@@ -68,6 +82,8 @@ pub struct CampaignProgressNode {
     pub attempt_count: usize,
     pub win_count: usize,
     pub best: MissionBestStats,
+    /// Policy-attested badges earned for this mission across eligible runs.
+    pub badges: AchievementSet,
     pub badge_count: usize,
     pub lifetime_attempt_count: usize,
     pub lifetime_win_count: usize,
@@ -76,7 +92,7 @@ pub struct CampaignProgressNode {
 }
 
 impl CampaignProgressNode {
-    pub fn summary(&self) -> String {
+    pub fn summary(&self, include_badges: bool) -> String {
         let mut summary = format!(
             "{}  |  {:?}  |  {} attempt{} / {} win{}",
             self.name,
@@ -92,7 +108,7 @@ impl CampaignProgressNode {
         if let Some(score) = self.best.highest_score {
             summary.push_str(&format!("  |  score {score}"));
         }
-        if self.badge_count != 0 {
+        if include_badges && self.badge_count != 0 {
             summary.push_str(&format!("  |  {} badge(s)", self.badge_count));
         }
         if self.lifetime_attempt_count != self.attempt_count {
@@ -110,6 +126,10 @@ pub struct CampaignProgressGraph {
     pub nodes: Vec<CampaignProgressNode>,
     pub completed_missions: usize,
     pub known_missions: usize,
+    /// Derived achievement envelope for the replaceable current campaign.
+    pub campaign_achievements: AchievementAggregationSummary,
+    /// Derived all-time envelope retained by the active player profile.
+    pub lifetime_achievements: AchievementAggregationSummary,
     /// True when cyclic prerequisite input was detected. The graph remains
     /// inspectable; cyclic nodes are placed after the resolved frontier.
     pub cyclic_prerequisites: bool,
@@ -121,6 +141,10 @@ impl CampaignProgressGraph {
         profiles: &ProfileManager,
         lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
     ) -> Self {
+        let campaign_achievements = campaign.achievement_aggregation(profiles);
+        let lifetime_achievements = lifetime
+            .map(|history| history.achievement_aggregation())
+            .unwrap_or(campaign_achievements);
         let sherwood = campaign.get_sherwood_mission_idx();
         let mut mission_to_node = HashMap::new();
         let mut nodes = Vec::new();
@@ -130,13 +154,13 @@ impl CampaignProgressGraph {
             }
             let profile = mission.profile(profiles);
             let attempts = mission.attempt_history().attempts();
-            let has_win = attempts
+            let current_has_win = attempts
                 .iter()
                 .any(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
                 || mission.status == MissionStatus::Won;
             let accessible = campaign.accessible_mission_indices.contains(&mission_idx);
             let expired = mission.age >= profile.life_time;
-            let state = if has_win {
+            let state = if current_has_win {
                 MissionProgressState::Completed
             } else if accessible {
                 MissionProgressState::Available
@@ -179,6 +203,8 @@ impl CampaignProgressGraph {
                         .filter(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
                         .count()
                 });
+            let badges =
+                combined_mission_badges(mission.achievement_badges(), profile.id, lifetime);
             nodes.push(CampaignProgressNode {
                 mission_idx,
                 mission_id: profile.id,
@@ -197,11 +223,12 @@ impl CampaignProgressGraph {
                 // Raw calculated results remain on every immutable attempt for
                 // debrief/audit. Only the host-policy-approved achievement
                 // history is allowed to drive awarded badge presentation.
-                badge_count: mission.achievement_badges().len(),
+                badges,
+                badge_count: badges.len(),
                 lifetime_attempt_count,
                 lifetime_win_count,
-                selectable: accessible || has_win,
-                history_replay: !accessible && has_win,
+                selectable: accessible || current_has_win,
+                history_replay: !accessible && current_has_win,
             });
         }
 
@@ -267,6 +294,8 @@ impl CampaignProgressGraph {
             nodes,
             completed_missions,
             known_missions,
+            campaign_achievements,
+            lifetime_achievements,
             cyclic_prerequisites: cyclic,
         }
     }
@@ -431,5 +460,116 @@ mod tests {
         assert_eq!(graph.nodes[0].attempt_count, 1);
         assert_eq!(graph.nodes[0].lifetime_attempt_count, 2);
         assert_eq!(graph.nodes[0].lifetime_win_count, 2);
+    }
+    #[test]
+    fn lifetime_badge_survives_reset_without_unlocking_an_archived_replay() {
+        use robin_engine::achievement::{
+            AchievementEvaluation, AchievementId, AchievementRunContext, AchievementUnlockPolicy,
+            MissionAchievementState,
+        };
+
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 1,
+            mission_name: "Sherwood".into(),
+            location: MissionLocation::Sherwood,
+            ..Default::default()
+        });
+        profiles.missions.push(MissionProfile {
+            id: 10,
+            mission_name: "The Rescue".into(),
+            ..Default::default()
+        });
+
+        let mut completed_campaign = Campaign::default();
+        for idx in 0..2 {
+            completed_campaign.missions.push(Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            });
+        }
+        let mut tracker = MissionAchievementState::from_mission_start();
+        tracker
+            .record_evaluation(AchievementId::PileOBones, AchievementEvaluation::Earned)
+            .unwrap();
+        completed_campaign.current_mission_idx = Some(1);
+        completed_campaign.record_mission_attempt(
+            1,
+            MissionAttemptOutcome::Won,
+            Some(100),
+            Some(7),
+            60,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::mission_stat::MissionStat::default(),
+            Some(*tracker.finalize_success()),
+        );
+        completed_campaign
+            .attest_mission_achievement_attempt(
+                completed_campaign.latest_mission_attempt_key().unwrap(),
+                AchievementUnlockPolicy::default(),
+                AchievementRunContext::default(),
+                &profiles,
+            )
+            .unwrap();
+
+        let mut lifetime = robin_engine::campaign_history::ProfileCampaignHistory::default();
+        lifetime
+            .promote_campaign(&completed_campaign, &profiles)
+            .unwrap();
+
+        let mut reset_campaign = Campaign::default();
+        for idx in 0..2 {
+            reset_campaign.missions.push(Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            });
+        }
+        let graph = CampaignProgressGraph::build(&reset_campaign, &profiles, Some(&lifetime));
+        let node = &graph.nodes[0];
+
+        assert!(node.badges.contains(AchievementId::PileOBones));
+        assert_eq!(node.badge_count, 1);
+        assert!(!node.selectable);
+        assert!(!node.history_replay);
+        assert!(
+            graph
+                .lifetime_achievements
+                .get(AchievementId::PileOBones)
+                .earned()
+        );
+        assert!(
+            !graph
+                .campaign_achievements
+                .get(AchievementId::PileOBones)
+                .earned()
+        );
+    }
+
+    #[test]
+    fn node_summary_can_hide_badges_without_hiding_attempt_history() {
+        let node = CampaignProgressNode {
+            mission_idx: 0,
+            mission_id: 10,
+            name: "The Rescue".into(),
+            location: MissionLocation::Nottingham,
+            state: MissionProgressState::Completed,
+            prerequisite_nodes: Vec::new(),
+            depth: 0,
+            lane: 0,
+            attempt_count: 2,
+            win_count: 1,
+            best: MissionBestStats::default(),
+            badges: robin_engine::achievement::AchievementSet::empty(),
+            badge_count: 3,
+            lifetime_attempt_count: 2,
+            lifetime_win_count: 1,
+            selectable: true,
+            history_replay: false,
+        };
+
+        assert!(node.summary(true).contains("3 badge"));
+        let hidden = node.summary(false);
+        assert!(hidden.contains("2 attempts"));
+        assert!(!hidden.contains("badge"));
     }
 }

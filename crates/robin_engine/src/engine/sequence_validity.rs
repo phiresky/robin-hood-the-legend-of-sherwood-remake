@@ -866,6 +866,34 @@ impl EngineInner {
                 if !self.pc_has_ammo(actor_id, crate::profiles::Action::Stone) {
                     return false;
                 }
+                if element
+                    .get_property(crate::sequence::Field::NoiseDistractionTarget)
+                    .is_some()
+                {
+                    if !self
+                        .control
+                        .sim_config
+                        .item_gameplay
+                        .stone_ground_distraction
+                    {
+                        return false;
+                    }
+                    let Some(target_3d) = read_target_point_3d(
+                        element,
+                        crate::sequence::Field::NoiseDistractionTarget,
+                    ) else {
+                        return false;
+                    };
+                    let target = target_3d.to_map();
+                    return self.is_mouse_sector_valid_for_ground_target(target)
+                        && self.is_in_range_for_projectile(
+                            assets,
+                            actor_id,
+                            target,
+                            crate::profiles::Action::Stone,
+                            None,
+                        );
+                }
                 let Some(victim_id) = interaction_victim_id(element) else {
                     return false;
                 };

@@ -5,10 +5,11 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
+use super::interactive::MissionResources;
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
-    required_menu_resources,
+    request_sherwood_trading_panel, required_menu_resources, sherwood_trading_access,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -116,6 +117,11 @@ pub(super) fn handle_mouse_input(
                         | GameEvent::MouseUp(..)
                         | GameEvent::MouseMove { .. }
                         | GameEvent::ViewportPan { .. }
+                        | GameEvent::PointerCancel
+                        | GameEvent::TouchMotionStop
+                        | GameEvent::TouchTransformStart { .. }
+                        | GameEvent::TouchTransform { .. }
+                        | GameEvent::TouchTransformEnd { .. }
                 )
             {
                 continue;
@@ -125,6 +131,10 @@ pub(super) fn handle_mouse_input(
                 // `run_mission`'s always-on view-input pass so middle-
                 // drag panning works during replay; nothing to do here.
                 GameEvent::ViewportPan { .. } => {}
+                GameEvent::TouchMotionStop => {}
+                GameEvent::PointerCancel => {
+                    cancel_left_pointer(engine, host, assets, frame_cmds);
+                }
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
                     on_left_mouse_down(
                         engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
@@ -169,6 +179,36 @@ pub(super) fn handle_mouse_input(
             }
         }
     }
+}
+
+/// Tear down a touch-originated left drag without running any release action.
+/// In particular this must not box-select, perform a sword gesture, center the
+/// minimap, or dispatch a world click when a second finger takes over.
+fn cancel_left_pointer(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+) {
+    if host.engine_display.minimap().drag_start() {
+        dispatch_local_command(
+            host,
+            engine,
+            frame_cmds,
+            assets,
+            &PlayerCommand::MinimapMouseUp { on_minimap: false },
+        );
+    }
+    host.input.left_mouse_down = false;
+    host.input.is_dragging = false;
+    host.input.target_drag = None;
+    host.input.left_double_click_pending = false;
+    host.input.next_left_double_is_simple = false;
+    host.input.ignore_next_drag = false;
+    host.input.ignore_next_left_click = false;
+    host.input.cancel_multi_selection();
+    host.input.cancel_multi_unselection();
+    host.mouse_way.clear();
 }
 
 // ─── Per-event handlers ─────────────────────────────────────────────
@@ -1391,9 +1431,8 @@ pub(super) async fn handle_pause_menu_events(
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    menu_resources: &Option<IngameMenuResources>,
+    mission_resources: &mut MissionResources,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
@@ -1448,9 +1487,30 @@ pub(super) async fn handle_pause_menu_events(
                 // first frame after the menu closes.
                 threaded_input.queue_mouse_motion_resync();
             }
+            PauseMenuOutcome::OpenSherwoodTrading => {
+                match request_sherwood_trading_panel(host, engine, &assets.profile_manager) {
+                    Ok(()) => {
+                        *pause_menu = None;
+                        *pause_closed_this_frame = true;
+                        renderer.clear_frozen_scene();
+                        threaded_input.reset_input_state();
+                        input_translator.reset_state();
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                    }
+                    Err(reason) => {
+                        // The row was admitted when the menu opened, but the
+                        // host/rule/location can change before activation.
+                        // Revalidation keeps the stale button fail-closed.
+                        tracing::warn!(?reason, "pause-menu Sherwood trading request rejected");
+                        if let Some(menu) = pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                        }
+                    }
+                }
+            }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
-                if let Some(resources) = menu_resources.as_ref() {
+                if mission_resources.menu.is_some() {
                     // Snapshot profile-backed settings before entering the
                     // async modal. No ApplicationContext lock crosses await.
                     let profile = host
@@ -1463,6 +1523,7 @@ pub(super) async fn handle_pause_menu_events(
                         profile.id,
                         profile.graphic_config,
                         profile.gameplay_config,
+                        profile.multiplayer_config,
                         profile.sound_config,
                     ));
 
@@ -1470,6 +1531,7 @@ pub(super) async fn handle_pause_menu_events(
                         profile_id,
                         mut graphic_config,
                         mut gameplay_config,
+                        mut multiplayer_config,
                         mut sound_config,
                     )) = profile_settings
                     {
@@ -1478,24 +1540,44 @@ pub(super) async fn handle_pause_menu_events(
                         // so seed this deterministic option from the mission
                         // rather than showing a stale local preference.
                         gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
+                        gameplay_config.clean_hands_npc_kills_invalidate =
+                            engine.sim_config().clean_hands_npc_kills_invalidate;
                         gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
+                        gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
+                        gameplay_config.noise_distraction_feedback =
+                            engine.sim_config().noise_distraction_feedback;
+                        gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
+                        let simulation_clean_hands_npc_kills_invalidate =
+                            gameplay_config.clean_hands_npc_kills_invalidate;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                        let simulation_item_gameplay = gameplay_config.item_gameplay;
+                        let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
+                        let simulation_sherwood_trading = gameplay_config.sherwood_trading;
+                        let resources =
+                            required_menu_resources(&mission_resources.menu, "pause-menu options");
+                        let cursor = Some(default_modal_cursor(
+                            cursor_renderer,
+                            &mut mission_resources.cursor,
+                            renderer,
+                        ));
                         let options_outcome = ingame_menu::show_options(
+                            &host.application_context,
+                            false,
                             event_pump,
                             renderer,
                             resources,
                             cursor,
                             &mut graphic_config,
                             &mut gameplay_config,
+                            &mut multiplayer_config,
                             &mut sound_config,
                             &mut host.frontend.key_config,
                             &mut host.frontend.custom_key_config,
+                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
                             Some(&mut host.audio.sound),
                             audio_backend
                                 .as_mut()
@@ -1517,6 +1599,7 @@ pub(super) async fn handle_pause_menu_events(
                                         .expect("Options profile disappeared while modal was open");
                                     profile.graphic_config = graphic_config.clone();
                                     profile.gameplay_config = gameplay_config;
+                                    profile.multiplayer_config = multiplayer_config;
                                     profile.sound_config = sound_config;
                                     if let Err(err) = mgr.save() {
                                         tracing::error!(
@@ -1530,6 +1613,18 @@ pub(super) async fn handle_pause_menu_events(
                         }
 
                         host.control_tactical_units = gameplay_config.control_tactical_units;
+                        host.touch_camera_gestures = gameplay_config.touch_camera_gestures;
+                        host.gameplay_config = gameplay_config;
+                        host.native_refresh_presentation =
+                            graphic_config.native_refresh_presentation;
+                        event_pump.set_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                        );
+                        renderer.configure_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                            event_pump.surface_config.width,
+                            event_pump.surface_config.height,
+                        );
                         if !host.control_tactical_units {
                             dispatch_local_command(
                                 host,
@@ -1560,9 +1655,35 @@ pub(super) async fn handle_pause_menu_events(
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
+                        if gameplay_config.clean_hands_npc_kills_invalidate
+                            != simulation_clean_hands_npc_kills_invalidate
+                        {
+                            let cmd = PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                                enabled: gameplay_config.clean_hands_npc_kills_invalidate,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
                         if gameplay_config.reusable_cloaks != simulation_reusable_cloaks {
                             let cmd = PlayerCommand::SetReusableCloaks {
                                 enabled: gameplay_config.reusable_cloaks,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.item_gameplay != simulation_item_gameplay {
+                            let cmd = PlayerCommand::SetItemGameplayConfig {
+                                config: gameplay_config.item_gameplay,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.noise_distraction_feedback != simulation_noise_feedback {
+                            let cmd = PlayerCommand::SetNoiseDistractionFeedback {
+                                enabled: gameplay_config.noise_distraction_feedback,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.sherwood_trading != simulation_sherwood_trading {
+                            let cmd = PlayerCommand::SetSherwoodTrading {
+                                enabled: gameplay_config.sherwood_trading,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
@@ -1626,6 +1747,12 @@ pub(super) async fn handle_pause_menu_events(
                             host.minimap_fast_key =
                                 input_translator.get_binding(GameKey::DisplayMap);
                         }
+                        if options_outcome.language_changed {
+                            *pause_menu = mission_resources
+                                .menu
+                                .as_ref()
+                                .map(|resources| PauseMenu::new(resources, !game.is_sherwood));
+                        }
                     } else {
                         tracing::error!("Options: cannot open without an active player profile");
                     }
@@ -1645,10 +1772,14 @@ pub(super) async fn handle_pause_menu_events(
                 };
                 let mut close_pause_menu = false;
                 let resources =
-                    required_menu_resources(menu_resources, "pause-menu save/load picker");
+                    required_menu_resources(&mission_resources.menu, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let cursor = Some(default_modal_cursor(
+                    cursor_renderer,
+                    &mut mission_resources.cursor,
+                    renderer,
+                ));
                 let picker_outcome = ingame_menu::show_save_load(
                     event_pump,
                     renderer,
@@ -1705,10 +1836,16 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::Quit => {
                 // Show the "really quit?" Yes/No prompt.
-                let resources =
-                    required_menu_resources(menu_resources, "pause-menu Quit confirmation");
+                let resources = required_menu_resources(
+                    &mission_resources.menu,
+                    "pause-menu Quit confirmation",
+                );
                 let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let cursor = Some(default_modal_cursor(
+                    cursor_renderer,
+                    &mut mission_resources.cursor,
+                    renderer,
+                ));
                 let confirmed =
                     ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
                 if confirmed {
@@ -1852,6 +1989,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
     let engine = &mut manager.engine;
+    sherwood_enable.sherwood_trading = game.is_sherwood
+        && sherwood_trading_access(host, engine, &assets.profile_manager)
+            .validate()
+            .is_ok();
     // ── Sherwood HUD buttons ──
     //
     // Hit-test the Sherwood-only DisplayCampaignMap / GoToExit /
@@ -2067,6 +2208,14 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     );
                     return HandlerAction::Continue;
                 }
+                SherwoodButton::SherwoodTrading => {
+                    if let Err(reason) =
+                        request_sherwood_trading_panel(host, engine, &assets.profile_manager)
+                    {
+                        tracing::warn!(?reason, "live Sherwood trading button request rejected");
+                    }
+                    return HandlerAction::Continue;
+                }
             }
         }
     }
@@ -2142,6 +2291,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
         let choice = campaign_map::show_campaign_map(
+            &host.application_context,
             event_pump,
             renderer,
             game,
@@ -2154,6 +2304,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             cursor,
             pseudo_debrief_pending,
             campaign_view_config.campaign_presentation,
+            campaign_view_config.show_achievement_badges,
             &campaign_profile.campaign_history,
         )
         .await?;
@@ -2206,7 +2357,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(last_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path)
@@ -2291,7 +2442,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(mission_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path).ok()

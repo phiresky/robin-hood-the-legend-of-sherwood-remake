@@ -3551,6 +3551,15 @@ fn noise_type(
     field: &'static str,
 ) -> Result<NoiseType, LegacyElementAdoptError> {
     let value = raw_i32(value, creation_order, field)?;
+    // Legacy C++ payloads only contain the shipped 0..=Off ordinals. Rust's
+    // appended deterministic Distraction variant is never valid input here.
+    if value > NoiseType::Off as u32 {
+        return Err(LegacyElementAdoptError::UnknownEnum {
+            creation_order,
+            field,
+            value,
+        });
+    }
     NoiseType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
         creation_order,
         field,

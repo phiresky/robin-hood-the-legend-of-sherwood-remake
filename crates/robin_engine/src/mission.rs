@@ -81,8 +81,43 @@ impl Mission {
         self.attempt_history.eligible_badges()
     }
 
+    /// Host-attested badges suitable for campaign/lifetime aggregation.
+    pub fn attested_achievement_badges(&self) -> AchievementSet {
+        self.attempt_history.eligible_badges()
+    }
+
     pub fn best_achievement_result(&self, id: AchievementId) -> Option<AchievementEvaluation> {
         self.attempt_history.best_eligible_achievement(id)
+    }
+
+    /// Whether a successful historical record exists but cannot truthfully
+    /// answer whether `id` was eligible and earned.
+    ///
+    /// This is deliberately separate from a known failed or policy-blocked
+    /// attempt. Incomplete Original imports and missing calculated results are
+    /// unknown evidence; they must never be promoted to either success or a
+    /// fabricated failure.
+    pub fn achievement_evidence_incomplete(&self, id: AchievementId) -> bool {
+        if self.attested_achievement_badges().contains(id) {
+            return false;
+        }
+        self.attempt_history.attempts().iter().any(|attempt| {
+            if attempt.outcome() != crate::campaign_history::MissionAttemptOutcome::Won {
+                return false;
+            }
+            if attempt.source() == crate::campaign_history::MissionAttemptSource::OriginalSaveImport
+            {
+                return true;
+            }
+            let Some(results) = attempt.achievements() else {
+                return true;
+            };
+            match results.evaluation(id) {
+                AchievementEvaluation::Unverifiable => true,
+                AchievementEvaluation::Failed => false,
+                AchievementEvaluation::Earned => attempt.achievement_attestation().is_none(),
+            }
+        })
     }
 
     pub const fn attempt_history(&self) -> &MissionAttemptHistory {

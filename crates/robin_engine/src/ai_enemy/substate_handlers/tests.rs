@@ -121,6 +121,37 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
 }
 
 #[test]
+fn reliable_ale_only_expands_zero_beer_eligibility_outdoors_for_non_vips() {
+    let mut ai = EnemyAi::new(90);
+    ai.soldier_profile_beer = 0;
+    let outdoors = AiContext {
+        self_is_active: true,
+        in_building: false,
+        ..AiContext::default()
+    };
+    let indoors = AiContext {
+        self_is_active: true,
+        in_building: true,
+        ..AiContext::default()
+    };
+
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    ai.ale_reliable_distraction = true;
+    assert!(ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &indoors, false));
+
+    // VIP profiles cache the new-rule eligibility as false even when the
+    // setting itself is on.
+    ai.ale_reliable_distraction = false;
+    assert!(!ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false));
+    ai.soldier_profile_beer = 35;
+    assert!(
+        ai.answer_question_ex(Question::ShallITakeAle, &outdoors, false),
+        "positive authored beer remains eligible"
+    );
+}
+
+#[test]
 fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(90);
@@ -3280,6 +3311,39 @@ fn inactive_ranked_soldier_still_declines_to_follow_steps() {
     ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx, &AiPerTickData::stub());
 
     assert_eq!(ai.base.current_substate, Substate::SeekingJustWatching);
+}
+
+#[test]
+fn distraction_forces_a_running_investigation_even_for_reluctant_soldier() {
+    let mut ai = EnemyAi::new(127);
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+    ai.soldier_profile_rank = ProfileRank::Soldier;
+    ai.soldier_profile_duty = false;
+    ai.investigating_distraction = true;
+    ai.base.seek_position = Position {
+        x: 120.0,
+        y: 75.0,
+        ..Position::default()
+    };
+    let ctx = AiContext {
+        frame: 100,
+        self_is_active: true,
+        in_building: false,
+        ..AiContext::default()
+    };
+    let tick = AiPerTickData::stub();
+
+    ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx, &tick);
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::SeekingHeardstepsReactiontime
+    );
+
+    ai.seeking_heardsteps_reactiontime(StimulusType::EventTimer, &ctx, &tick);
+    assert_eq!(ai.base.current_substate, Substate::SeekingHeardsteps);
+    assert_eq!(ai.base.last_goto_flags, GotoFlags::RUN);
+    assert_eq!(ai.base.last_goto_destination, ai.base.seek_position);
 }
 
 #[test]

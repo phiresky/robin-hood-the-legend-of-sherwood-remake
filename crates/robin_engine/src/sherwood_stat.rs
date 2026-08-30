@@ -135,7 +135,7 @@ fn find_specialist<'a>(
 }
 
 /// Menu-text id for the item name of a production sector type.
-fn bonus_text_id(t: Type) -> usize {
+pub fn bonus_text_id(t: Type) -> usize {
     match t {
         Type::MakeArrow => MT_STR_DB_BONUS_ARROW,
         Type::MakePurse => MT_STR_DB_BONUS_PURSE,

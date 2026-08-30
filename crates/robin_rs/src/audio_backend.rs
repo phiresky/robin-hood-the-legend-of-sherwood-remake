@@ -25,6 +25,8 @@ use kira::{
 };
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use std::collections::HashMap;
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+use std::io::Cursor;
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 type MusicHandle = StreamingSoundHandle<FromFileError>;
@@ -130,6 +132,19 @@ impl KiraAudioBackend {
             ]
         };
         for candidate in candidates {
+            if let Some(full) = candidate.to_str()
+                && let Some(p) = robin_engine::sbfile::resolve_data_path(full)
+            {
+                return p;
+            }
+            match robin_util::asset_fs::global().try_exists(&candidate) {
+                Ok(true) => return candidate,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    path = %candidate.display(),
+                    "Audio VFS lookup failed: {error}"
+                ),
+            }
             if candidate.exists() {
                 return candidate;
             }
@@ -138,24 +153,22 @@ impl KiraAudioBackend {
             {
                 return p;
             }
-            if let Some(full) = candidate.to_str()
-                && let Some(p) = robin_engine::sbfile::resolve_data_path(full)
-            {
-                return p;
-            }
         }
         path
     }
 
     fn load_sample(&mut self, file_name: &str) -> Option<StaticSoundData> {
-        if let Some(s) = self.sample_cache.get(file_name) {
+        let path = self.resolve_path(file_name);
+        // Relative speech filenames are identical across retail locales. Key
+        // decoded data by its resolved locale path, never by that relative
+        // name, or a post-switch bark can replay the old language.
+        let cache_key = path.to_string_lossy().replace('\\', "/");
+        if let Some(s) = self.sample_cache.get(&cache_key) {
             return Some(s.clone());
         }
-        let path = self.resolve_path(file_name);
         match load_static_sound(&path) {
             Ok(data) => {
-                self.sample_cache
-                    .insert(file_name.to_string(), data.clone());
+                self.sample_cache.insert(cache_key, data.clone());
                 Some(data)
             }
             Err(e) => {
@@ -163,6 +176,14 @@ impl KiraAudioBackend {
                 None
             }
         }
+    }
+
+    /// Drop decoded localized samples after the locale lookup generation
+    /// changes. Native paths already make cache identities distinct; this is
+    /// still required for browser/Android VFS mounts whose logical path stays
+    /// constant while the mounted bytes change.
+    pub fn invalidate_localized_samples(&mut self) {
+        self.sample_cache.clear();
     }
 
     fn find_free_channel(&self) -> Option<usize> {
@@ -257,7 +278,10 @@ impl KiraAudioBackend {
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 fn load_static_sound(path: &Path) -> Result<StaticSoundData, FromFileError> {
-    StaticSoundData::from_file(path)
+    match robin_util::asset_fs::read(path) {
+        Ok(bytes) => StaticSoundData::from_cursor(Cursor::new(bytes)),
+        Err(_) => StaticSoundData::from_file(path),
+    }
 }
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -547,7 +571,8 @@ impl AudioBackend for KiraAudioBackend {
 
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 pub use crate::web_audio_backend::{
-    KiraAudioBackend, clear_mission, preload_boot, replace_mission,
+    AudioWarmProgress, KiraAudioBackend, clear_mission, preload_active_mission, preload_boot,
+    preload_boot_catalog, replace_mission,
 };
 
 #[cfg(not(feature = "audio"))]
@@ -558,6 +583,8 @@ impl KiraAudioBackend {
     pub fn new(_sound_dir: impl Into<PathBuf>, _num_channels: u32) -> Result<Self, String> {
         Err("audio feature disabled in this build".to_string())
     }
+
+    pub fn invalidate_localized_samples(&mut self) {}
 }
 
 #[cfg(not(feature = "audio"))]
@@ -785,6 +812,47 @@ pub fn sample_duration_ms(base_dir: &Path, file_name: &str) -> Option<u32> {
     }
 }
 
+/// Build the authoritative speech-duration loader for one installed pack.
+/// Playback continues through [`create_sample_loader`] and therefore follows
+/// the player's active locale; this loader is used only for simulation timing.
+pub fn create_language_pack_sample_loader(
+    base_dir: PathBuf,
+    pack: crate::localization::LanguagePack,
+    shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+) -> Box<SampleLoader> {
+    Box::new(move |file_name: &str| {
+        let normalised = file_name.replace('\\', "/");
+        if std::path::Path::new(&normalised).is_absolute() {
+            return create_sample_loader(base_dir.clone())(&normalised);
+        }
+        let candidates = [
+            base_dir.join(&normalised),
+            base_dir.join("Exclamations").join(&normalised),
+        ];
+        let data = if pack.data_root.is_empty() {
+            let shipping = shipping.as_deref()?;
+            candidates.iter().find_map(|candidate| {
+                shipping
+                    .locale_raw(&pack.locale, &candidate.to_string_lossy())
+                    .ok()
+                    .flatten()
+                    .map(<[u8]>::to_vec)
+            })
+        } else {
+            candidates.iter().find_map(|candidate| {
+                let rooted = PathBuf::from(&pack.data_root).join(candidate);
+                robin_util::asset_fs::read(&rooted).ok().or_else(|| {
+                    robin_engine::sbfile::resolve_data_path(&rooted.to_string_lossy())
+                        .and_then(|resolved| robin_util::asset_fs::read(resolved).ok())
+                })
+            })
+        }?;
+        let size = data.len() as u32;
+        let duration_ms = wav_duration_ms(&data)?;
+        Some((data, size, duration_ms))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,9 +871,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wav_duration_basic() {
-        let sample_rate: u32 = 44100;
+    fn one_second_wav() -> Vec<u8> {
+        let sample_rate: u32 = 44_100;
         let channels: u16 = 2;
         let bits_per_sample: u16 = 16;
         let byte_rate = sample_rate * channels as u32 * bits_per_sample as u32 / 8;
@@ -827,8 +894,34 @@ mod tests {
         wav.extend_from_slice(b"data");
         wav.extend_from_slice(&data_size.to_le_bytes());
         wav.resize(wav.len() + data_size as usize, 0);
+        wav
+    }
 
-        assert_eq!(wav_duration_ms(&wav), Some(1000));
+    #[test]
+    fn wav_duration_basic() {
+        assert_eq!(wav_duration_ms(&one_second_wav()), Some(1000));
+    }
+
+    #[test]
+    fn canonical_language_loader_reads_its_pack_without_switching_global_locale() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("Data/Sounds/Exclamations");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("robin.wav"), one_second_wav()).unwrap();
+        let pack = crate::localization::LanguagePack {
+            locale: "de-DE".to_owned(),
+            native_name: "Deutsch".to_owned(),
+            data_root: root.path().to_string_lossy().into_owned(),
+            has_voice: true,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: Default::default(),
+        };
+
+        let loader = create_language_pack_sample_loader(PathBuf::from("Data/Sounds"), pack, None);
+        let (_, _, duration_ms) = loader("robin.wav").expect("canonical sample");
+        assert_eq!(duration_ms, 1_000);
     }
 
     #[test]

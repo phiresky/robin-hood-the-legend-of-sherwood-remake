@@ -7,14 +7,106 @@ use anyhow::{Context, Result, anyhow};
 use futures::StreamExt as _;
 use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mission_compressed};
 
+enum CompressedPayload {
+    Owned(Vec<u8>),
+    Shared(Arc<Vec<u8>>),
+}
+
+impl std::ops::Deref for CompressedPayload {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+}
+
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
 const MISSION_FETCH_CONCURRENCY: usize = 8;
 
 /// One observable step at the asynchronous shipping-data boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MissionLoadPhase {
+    Data,
+    Audio,
+}
+
 pub struct MissionLoadProgress<'a> {
+    pub phase: MissionLoadPhase,
     pub completed: usize,
     pub total: usize,
     pub file: Option<&'a str>,
+}
+
+/// Validate and stage one exact local Full-content payload before the game
+/// future can select a mission. The installed shipping index remains the
+/// authority for which relative files are admissible.
+pub fn preload_compressed(
+    shipping: &ShippingDatadir,
+    relative: &str,
+    compressed: &[u8],
+) -> Result<()> {
+    let key = canonical_relative_file_key(relative)?;
+    let referenced = shipping
+        .missions
+        .values()
+        .flat_map(|mission| mission.files.iter())
+        .chain(
+            shipping
+                .character_rhs_files
+                .values()
+                .flat_map(|files| files.iter()),
+        )
+        .chain(
+            shipping
+                .character_audio_files
+                .values()
+                .flat_map(|files| files.iter()),
+        )
+        .chain(shipping.saved_world_rhs_files.iter())
+        .try_fold(false, |found, manifest_path| {
+            Ok::<_, anyhow::Error>(found || canonical_relative_file_key(manifest_path)? == key)
+        })?;
+    if !referenced {
+        return Err(anyhow!(
+            "shipping file {relative:?} is not referenced by the installed manifest"
+        ));
+    }
+    if shipping.preloaded_file(&key).is_some() {
+        return Err(anyhow!("shipping file {relative:?} is already preloaded"));
+    }
+    decode_mission_compressed(compressed)
+        .with_context(|| format!("decode preloaded shipping file {relative}"))?;
+    shipping.cache_preloaded_file(key, compressed.to_vec())
+}
+
+fn canonical_relative_file_key(relative: &str) -> Result<String> {
+    if relative.is_empty() || relative.trim() != relative {
+        return Err(anyhow!(
+            "shipping file path must be a non-empty relative path without surrounding whitespace"
+        ));
+    }
+    if relative
+        .chars()
+        .any(|character| character.is_control() || matches!(character, ':' | '?' | '#' | '%'))
+    {
+        return Err(anyhow!(
+            "shipping file path {relative:?} contains a forbidden character"
+        ));
+    }
+    let normalized = relative.replace('\\', "/");
+    if normalized.starts_with('/')
+        || normalized
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return Err(anyhow!(
+            "shipping file path {relative:?} is not a contained relative path"
+        ));
+    }
+    Ok(normalized)
 }
 
 /// Ensure the selected mission's independently compressed shipping payload is
@@ -25,6 +117,7 @@ pub async fn ensure_loaded<F>(
     campaign: &robin_engine::campaign::Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
     has_decoded_saved_world: bool,
+    _warm_audio: bool,
     mut progress: F,
 ) -> Result<()>
 where
@@ -47,12 +140,13 @@ where
     )?;
     let total = dependencies.files.len();
     progress(MissionLoadProgress {
+        phase: MissionLoadPhase::Data,
         completed: 0,
         total,
         file: None,
     });
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-    if datadir.active_mission_name().as_deref() != Some(mission) {
+    if _warm_audio && datadir.active_mission_name().as_deref() != Some(mission) {
         crate::audio_backend::clear_mission()
             .map_err(anyhow::Error::msg)
             .context("clear browser audio for mission transition")?;
@@ -63,10 +157,25 @@ where
             .with_context(|| format!("activate shipping mission {mission}"))?;
         datadir.set_active_exclamation_ids(dependencies.exclamation_ids);
         progress(MissionLoadProgress {
+            phase: MissionLoadPhase::Data,
             completed: total,
             total,
             file: None,
         });
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        if _warm_audio {
+            crate::audio_backend::preload_active_mission(|audio| {
+                progress(MissionLoadProgress {
+                    phase: MissionLoadPhase::Audio,
+                    completed: audio.completed,
+                    total: audio.total,
+                    file: audio.file,
+                });
+            })
+            .await
+            .map_err(anyhow::Error::msg)
+            .context("warm active mission browser audio")?;
+        }
         return Ok(());
     }
     let files = dependencies.files;
@@ -104,6 +213,7 @@ where
                 .with_context(|| format!("merge shipping file {file}"))?;
             completed += 1;
             progress(MissionLoadProgress {
+                phase: MissionLoadPhase::Data,
                 completed,
                 total,
                 file: Some(&file),
@@ -151,6 +261,20 @@ where
         rhs_files = payload.rhs_files.len(),
         "shipping mission payload loaded"
     );
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    if _warm_audio {
+        crate::audio_backend::preload_active_mission(|audio| {
+            progress(MissionLoadProgress {
+                phase: MissionLoadPhase::Audio,
+                completed: audio.completed,
+                total: audio.total,
+                file: audio.file,
+            });
+        })
+        .await
+        .map_err(anyhow::Error::msg)
+        .context("warm active mission browser audio")?;
+    }
     Ok(())
 }
 
@@ -260,6 +384,7 @@ impl InstallWorkModel {
         }
         self.last_units = completed;
         progress(MissionLoadProgress {
+            phase: MissionLoadPhase::Data,
             completed,
             total: Self::UNITS,
             file: Some(label),
@@ -768,6 +893,7 @@ where
             .with_context(|| format!("materialize RLE-JXL sprite chunks for mission {mission}"))?;
     }
     progress(MissionLoadProgress {
+        phase: MissionLoadPhase::Data,
         completed: InstallWorkModel::UNITS,
         total: InstallWorkModel::UNITS,
         file: None,
@@ -1057,20 +1183,27 @@ fn normalize_robin_profile(
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<Vec<u8>> {
+async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<CompressedPayload> {
     let path = datadir.source_file_path(relative)?;
-    std::fs::read(&path).with_context(|| format!("read {}", path.display()))
+    std::fs::read(&path)
+        .map(CompressedPayload::Owned)
+        .with_context(|| format!("read {}", path.display()))
 }
 
 #[cfg(target_os = "android")]
-async fn fetch(_datadir: &ShippingDatadir, relative: &str) -> Result<Vec<u8>> {
-    crate::android::read_bundled_asset(&format!("Data/{relative}"))
+async fn fetch(_datadir: &ShippingDatadir, relative: &str) -> Result<CompressedPayload> {
+    crate::android::read_bundled_asset(&format!("Data/{relative}")).map(CompressedPayload::Owned)
 }
 
 #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
-async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<Vec<u8>> {
+async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<CompressedPayload> {
     use wasm_bindgen::JsCast as _;
     use wasm_bindgen_futures::JsFuture;
+
+    let key = canonical_relative_file_key(relative)?;
+    if let Some(bytes) = datadir.preloaded_file(&key) {
+        return Ok(CompressedPayload::Shared(bytes));
+    }
 
     let base = datadir
         .remote_base_url()
@@ -1091,7 +1224,9 @@ async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<Vec<u8>> {
     let buffer = JsFuture::from(buffer)
         .await
         .map_err(|error| anyhow!("fetch {url}: read body: {error:?}"))?;
-    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+    Ok(CompressedPayload::Owned(
+        js_sys::Uint8Array::new(&buffer).to_vec(),
+    ))
 }
 
 /// Like [`fetch`], but with live byte accounting for the install-progress
@@ -1107,10 +1242,18 @@ async fn fetch_counted(
     datadir: &ShippingDatadir,
     relative: &str,
     progress: &FetchByteProgress,
-) -> Result<Vec<u8>> {
+) -> Result<CompressedPayload> {
     use std::sync::atomic::Ordering;
     use wasm_bindgen::JsCast as _;
     use wasm_bindgen_futures::JsFuture;
+
+    let key = canonical_relative_file_key(relative)?;
+    if let Some(bytes) = datadir.preloaded_file(&key) {
+        let len = bytes.len() as u64;
+        progress.add_known(len);
+        progress.received.fetch_add(len, Ordering::Relaxed);
+        return Ok(CompressedPayload::Shared(bytes));
+    }
 
     let base = datadir
         .remote_base_url()
@@ -1195,13 +1338,16 @@ async fn fetch_counted(
             }
         }
     }
-    Ok(bytes)
+    Ok(CompressedPayload::Owned(bytes))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SpriteDeferral, required_dependencies};
-    use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMissionRef, SpriteVqChunk};
+    use super::{SpriteDeferral, preload_compressed, required_dependencies};
+    use robin_assets::shipping_datadir::{
+        ShippingDatadir, ShippingMission, ShippingMissionRef, SpriteVqChunk, encode_mission_native,
+        zstd_max_compress,
+    };
     use robin_engine::campaign::{Campaign, PcDescription};
     use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
 
@@ -1211,6 +1357,45 @@ mod tests {
             instanced,
             ..PcDescription::default()
         }
+    }
+
+    fn compressed_empty_payload() -> Vec<u8> {
+        zstd_max_compress(&encode_mission_native(&ShippingMission::default())).unwrap()
+    }
+
+    #[test]
+    fn full_content_preload_accepts_only_manifest_references() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.missions.insert(
+            "Mission".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["missions/part.rhmission.zst".into()],
+            },
+        );
+        let compressed = compressed_empty_payload();
+        preload_compressed(&datadir, "missions\\part.rhmission.zst", &compressed).unwrap();
+        assert!(
+            datadir
+                .preloaded_file("missions/part.rhmission.zst")
+                .is_some()
+        );
+        assert!(preload_compressed(&datadir, "../part", &compressed).is_err());
+        assert!(preload_compressed(&datadir, "missions/other", &compressed).is_err());
+    }
+
+    #[test]
+    fn full_content_preload_fails_before_caching_invalid_payload() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.missions.insert(
+            "Mission".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["missions/part".into()],
+            },
+        );
+        assert!(preload_compressed(&datadir, "missions/part", b"not zstd").is_err());
+        assert!(datadir.preloaded_file("missions/part").is_none());
     }
 
     // ── Critical-set partition (`SpriteDeferral`) ────────────────────

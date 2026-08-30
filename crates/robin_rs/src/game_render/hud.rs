@@ -272,6 +272,40 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
     }
 }
 
+/// Draw the host-only impact area and a concise explanation for the item
+/// currently being aimed. This deliberately reads no simulation-owned state:
+/// disabling it changes neither commands nor rollback hashes.
+pub(crate) fn render_item_effect_preview(
+    host: &mut Host,
+    renderer: &mut Renderer,
+    fonts: Option<&HudFonts>,
+) {
+    let Some(preview) = host.item_effect_preview else {
+        return;
+    };
+
+    if let Some(radius) = preview.radius {
+        host.draw_manager.draw_circle(
+            renderer,
+            preview.center,
+            radius,
+            if preview.blocked { 0xF81F } else { 0x07FF },
+        );
+    }
+
+    let Some(fonts) = fonts else { return };
+    let view = host.viewport.view_position;
+    let zoom = host.viewport.zoom_factor;
+    let screen_x = ((preview.center.x - view.x) * zoom) as i32;
+    let screen_y = ((preview.center.y - view.y) * zoom) as i32;
+    let text_width = fonts.tooltip_font.text_width(preview.fallback_text);
+    let max_x = (renderer.screen_width() as i32 - text_width - 4).max(2);
+    let x = (screen_x - text_width / 2).clamp(2, max_x);
+    let y = (screen_y - 24).clamp(2, renderer.screen_height() as i32 - 18);
+    let _localization_key = preview.localization_key;
+    render_text_with_shadow(renderer, fonts, preview.fallback_text, x, y);
+}
+
 // ─── Listen / Whistle ability radar ping ─────────────────────────────
 
 /// Draw the expanding radar-ping circle at a PC's feet during the
@@ -394,11 +428,18 @@ fn substitute_int(template: &str, value: i32) -> String {
 ///   subsequent frames paint the box even if the pointer briefly
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
-pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn draw_multi_selection_box(
+    host: &mut Host,
+    engine: &Engine,
+    renderer: &mut Renderer,
+    advance_transients: bool,
+) {
     // ── Swordfighting cancel ──
     if crate::game_input::is_selected_unit_swordfighting(engine, host.transport.local_seat) {
-        host.input.multi_selection_active = false;
-        host.input.multi_unselection_active = false;
+        if advance_transients {
+            host.input.multi_selection_active = false;
+            host.input.multi_unselection_active = false;
+        }
         return;
     }
 
@@ -412,15 +453,19 @@ pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, rendere
     // ── Latch draw_multi_selection once the drag clears the
     //    threshold.  The square norm is in map units; compared to
     //    `MULTI_SELECTION_THRESHOLD` (1600). ──
-    if !host.input.draw_multi_selection {
+    let mut draw_multi_selection = host.input.draw_multi_selection;
+    if !draw_multi_selection {
         let dx = p1.x - p2.x;
         let dy = p1.y - p2.y;
         if dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD {
-            host.input.draw_multi_selection = true;
+            draw_multi_selection = true;
+            if advance_transients {
+                host.input.draw_multi_selection = true;
+            }
         }
     }
 
-    if !host.input.draw_multi_selection {
+    if !draw_multi_selection {
         return;
     }
 

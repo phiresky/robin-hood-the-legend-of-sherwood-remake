@@ -257,9 +257,13 @@ impl TraceSimConfig {
             fix_hard_reaction_times: false,
             // Untying is a post-port extension and stays off in Original traces.
             enable_unbinding: false,
+            clean_hands_npc_kills_invalidate: false,
             // Reusable cloaks are an opt-in extension and must never alter
             // original-parity traces.
             reusable_cloaks: false,
+            // Item rebalances and their extra cue are post-port extensions.
+            item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
+            noise_distraction_feedback: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -268,6 +272,7 @@ impl TraceSimConfig {
             bypass_fog_sprites_crash: self.bypass_fog_sprites_crash,
             amount_of_speaking: self.amount_of_speaking,
             synchronous_pathfinding,
+            sherwood_trading: false,
         }
     }
 }
@@ -7778,9 +7783,14 @@ fn restore_campaign(
                 profile_idx: Some(source.profile_index),
                 ares_state_override: (source.ares_state_succeeded != profile.ares_state_succeeded)
                     .then_some(source.ares_state_succeeded),
+                attempt_history: Default::default(),
             }
         })
         .collect();
+    // The Original trace retains mission status but not replay-grade attempt
+    // evidence. Reconstruct the same honest incomplete history used by C++
+    // save import instead of leaving won missions with fabricated emptiness.
+    campaign.reconstruct_original_save_history(&[]);
     let mission_count = campaign.missions.len();
     let validate_mission_index = |index: usize| {
         assert!(

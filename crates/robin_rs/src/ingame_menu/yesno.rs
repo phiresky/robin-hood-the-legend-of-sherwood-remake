@@ -23,7 +23,7 @@ use crate::ui::{UiEvent, UiMsg};
 
 use super::layout::{
     MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_aligned,
+    enter_modal_gpu_phase, render_text_in_box_aligned_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -67,7 +67,7 @@ pub async fn show_yesno(
         if let Some(result) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
             return result;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -287,8 +287,8 @@ impl YesNoModalState {
             );
         }
 
-        if let Some(font) = resources.popup_font() {
-            let _ = render_text_in_box_aligned(
+        if let Some(font) = resources.popup_font_any() {
+            let _ = render_text_in_box_aligned_font(
                 renderer,
                 font,
                 self.transform,
@@ -310,7 +310,7 @@ impl YesNoModalState {
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             self.tooltip
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
         }

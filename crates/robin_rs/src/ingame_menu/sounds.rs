@@ -22,7 +22,7 @@ use robin_engine::sound_config::SoundConfig;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, align_on_first_widget, dim_screen,
-    draw_screen_background, draw_slider, enter_modal_gpu_phase, render_text_virt,
+    draw_screen_background, draw_slider, enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_SOUND_3D, MT_STR_SOUND_COMMENT_FREQUENCY,
@@ -389,13 +389,13 @@ pub async fn show_sounds(
             draw_screen_background(renderer, &bg);
         }
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&title);
-            render_text_virt(renderer, font, transform, &title, (460 - tw) / 2, 20);
+            render_text_virt_font(renderer, font, transform, &title, (460 - tw) / 2, 20);
         }
-        if let Some(font) = resources.label_font() {
+        if let Some(font) = resources.label_font_any() {
             for (i, label) in slider_labels.iter().enumerate() {
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -448,7 +448,7 @@ pub async fn show_sounds(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     // The `dirty` flag is set on every widget event — even a click on

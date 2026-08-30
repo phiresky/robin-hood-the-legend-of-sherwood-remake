@@ -235,6 +235,9 @@ pub enum AbilityTickResult {
     ThrowStoneDone {
         actor_id: EntityId,
         target: Option<EntityId>,
+        /// Set only for the extension's ground-targeted distraction throw.
+        /// Entity-targeted original throws continue to use `target`.
+        ground_target: Option<crate::coordinates::WorldPoint3D>,
         seq_id: SequenceId,
         elem_idx: usize,
     },
@@ -1585,6 +1588,68 @@ pub fn begin_throw_stone(
     )
 }
 
+/// Start the original stone-throw animation toward a ground point.
+///
+/// This deliberately shares [`AbilityKind::ThrowStone`] and
+/// [`OrderType::ThrowingStone`] with the entity-targeted action, while a null
+/// `ActiveAbility::target` identifies the deterministic ground completion
+/// path.
+pub fn begin_throw_stone_at_ground(
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    actor_id: EntityId,
+    target_pos: MapPoint,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    order_id_counter: &mut u32,
+) -> BeginResult {
+    let actor_entity = match entities.get_mut(actor_id) {
+        Some(entity) => entity,
+        None => return BeginResult::Impossible,
+    };
+    if actor_entity.is_dead() || !actor_entity.is_pc() {
+        return BeginResult::Impossible;
+    }
+
+    let order_id = alloc_order_id(order_id_counter);
+    let actor = match actor_entity.actor_data_mut() {
+        Some(actor) => actor,
+        None => return BeginResult::Impossible,
+    };
+    if actor.active_ability.is_active() {
+        return BeginResult::Impossible;
+    }
+    actor.active_ability = ActiveAbility {
+        kind: Some(AbilityKind::ThrowStone),
+        done_effect_applied: false,
+        strangle_initialized: false,
+        sequence_id: Some(seq_id),
+        element_index: elem_idx,
+        target: None,
+        order_id: Some(order_id),
+    };
+    actor.clear_path();
+    actor.action_state = ActionState::Waiting;
+
+    let mut order = Order::new(
+        OrderType::ThrowingStone,
+        target_pos.x,
+        target_pos.y,
+        order_id,
+    );
+    order.compute_direction = false;
+    sequence_manager.push_order_on(seq_id, elem_idx, order);
+
+    let actor_pos = actor_entity.element_data().position_map();
+    actor_entity.element_data_mut().set_direction_instantly(
+        crate::position_interface::vector_to_sector_0_to_15_iso(
+            target_pos.x - actor_pos.x,
+            target_pos.y - actor_pos.y,
+        ),
+    );
+    BeginResult::Started
+}
+
 /// Shared begin path for entity-targeted throws (apple, stone).  The
 /// antagonist entity is stored on `ActiveAbility.target` so the
 /// completion handler can compute the target's eyes / center as the
@@ -2789,12 +2854,34 @@ pub fn tick_ability(
             seq_id,
             elem_idx,
         },
-        AbilityKind::ThrowStone => AbilityTickResult::ThrowStoneDone {
-            actor_id: entity_id,
-            target: ability.target,
-            seq_id,
-            elem_idx,
-        },
+        AbilityKind::ThrowStone => {
+            let ground_target = ability.target.is_none().then(|| {
+                sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| {
+                        element.get_property(crate::sequence::Field::NoiseDistractionTarget)
+                    })
+                    .and_then(|value| match value {
+                        crate::sequence::FieldValue::Point3D { x, y, z } => {
+                            Some(crate::coordinates::WorldPoint3D::new(*x, *y, *z))
+                        }
+                        crate::sequence::FieldValue::GeoPoint2D { x, y } => {
+                            Some(crate::coordinates::WorldPoint3D::new(*x, *y, 0.0))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("ground ThrowStone selected without its required 3D target")
+                    })
+            });
+            AbilityTickResult::ThrowStoneDone {
+                actor_id: entity_id,
+                target: ability.target,
+                ground_target,
+                seq_id,
+                elem_idx,
+            }
+        }
         AbilityKind::Hit => AbilityTickResult::HitDone {
             actor_id: entity_id,
             target_id: ability

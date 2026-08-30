@@ -34,13 +34,14 @@ pub(crate) async fn show_main_menu_options(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
-) {
+) -> bool {
     let profile = application_context
         .active_profile_snapshot()
         .unwrap_or_else(|error| panic!("Main menu Options requires an active profile: {error}"));
     let active_profile_id = profile.id;
     let mut graphic = profile.graphic_config;
     let mut gameplay = profile.gameplay_config;
+    let mut multiplayer = profile.multiplayer_config;
     let mut sound_cfg = profile.sound_config;
     let (active, custom) = application_context
         .active_key_configs()
@@ -89,6 +90,8 @@ pub(crate) async fn show_main_menu_options(
         .map(|b| b as &mut dyn crate::sound::AudioBackend);
 
     let outcome = show_options(
+        application_context,
+        true,
         event_pump,
         renderer,
         resources,
@@ -99,9 +102,11 @@ pub(crate) async fn show_main_menu_options(
         )),
         &mut graphic,
         &mut gameplay,
+        &mut multiplayer,
         &mut sound_cfg,
         &mut key_cfg.active,
         &mut key_cfg.custom,
+        true,
         Some(&mut sound_mgr),
         backend_opt,
         Some(&*sample_loader),
@@ -112,6 +117,12 @@ pub(crate) async fn show_main_menu_options(
         renderer.sync_window_size(event_pump);
     }
     renderer.apply_upscale_config(&graphic);
+    event_pump.set_native_refresh_presentation(graphic.native_refresh_presentation);
+    renderer.configure_native_refresh_presentation(
+        graphic.native_refresh_presentation,
+        event_pump.surface_config.width,
+        event_pump.surface_config.height,
+    );
 
     if outcome.changed {
         application_context
@@ -123,6 +134,7 @@ pub(crate) async fn show_main_menu_options(
                     .expect("active profile disappeared while Options was open");
                 profile.graphic_config = graphic;
                 profile.gameplay_config = gameplay;
+                profile.multiplayer_config = multiplayer;
                 profile.sound_config = sound_cfg;
                 if let Err(err) = mgr.save() {
                     tracing::error!("Main menu Options: failed to save profile manager: {err:#}");
@@ -142,4 +154,5 @@ pub(crate) async fn show_main_menu_options(
     }
     // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.
+    outcome.language_changed
 }

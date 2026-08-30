@@ -25,9 +25,10 @@ use crate::ingame_menu::layout::{
 };
 use crate::ingame_menu::resources::{
     MT_BTN_LOAD, MT_BTN_OPTIONS, MT_BTN_QUIT_GAME, MT_BTN_SELECT_PLAYER, MT_BTN_SHOW_CREDITS,
-    MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_STR_CARNAGE_FACTOR,
-    MT_STR_DIFFICULTY_EASY, MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL,
-    MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY, MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE,
+    MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_PORT_STR_DIFFICULTY_CUSTOM,
+    MT_PORT_STR_DIFFICULTY_LEGENDARY, MT_STR_CARNAGE_FACTOR, MT_STR_DIFFICULTY_EASY,
+    MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY,
+    MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
@@ -53,6 +54,9 @@ pub(crate) mod save_load;
 /// What the player chose from the main menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainMenuChoice {
+    /// Reconstruct all eager menu labels/fonts after a host language change,
+    /// then reopen Options at the same navigation depth.
+    RedisplayOptions,
     Start,
     Multiplayer(multiplayer_menu::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
@@ -108,6 +112,14 @@ const PROFILE_NAME_Y: i32 = 100;
 const PROFILE_INFO_Y: i32 = 125;
 const PROFILE_INFO_BOX_X: i32 = 0;
 const PROFILE_INFO_BOX_W: i32 = 480;
+
+/// Project one anchor from the main menu's virtual 640x480 window into the
+/// active logical canvas. Keeping sprite and text projection on this shared
+/// path makes their draw coordinates agree with `ModalInputState`, which
+/// applies the inverse [`MenuTransform`] to pointer input.
+fn main_menu_to_screen(transform: MenuTransform, x: i32, y: i32) -> (i32, i32) {
+    transform.to_screen(x, y)
+}
 
 struct MainMenuAudio {
     backend: KiraAudioBackend,
@@ -180,6 +192,7 @@ pub(crate) async fn show_main_menu(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
+    open_options_initially: bool,
 ) -> Result<MainMenuChoice, String> {
     let shipping = application_context.shipping()?;
     let initial_profile = application_context
@@ -187,6 +200,8 @@ pub(crate) async fn show_main_menu(
         .map_err(|error| format!("main menu requires an active profile: {error}"))?;
     window.set_logical_resolution_policy(&initial_profile.graphic_config);
     let (logical_width, logical_height) = window.logical_size();
+    let initial_native_refresh = initial_profile.graphic_config.native_refresh_presentation;
+    window.set_native_refresh_presentation(initial_native_refresh);
     let mut renderer = Renderer::new(
         window,
         logical_width as u16,
@@ -194,6 +209,11 @@ pub(crate) async fn show_main_menu(
         initial_profile.graphic_config.scale_mode,
     );
     renderer.apply_upscale_config(&initial_profile.graphic_config);
+    renderer.configure_native_refresh_presentation(
+        initial_native_refresh,
+        window.surface_config.width,
+        window.surface_config.height,
+    );
 
     // Shared menu resources (buttons, fonts, menu text table) — reused
     // by every sub-menu launched from here.
@@ -319,6 +339,19 @@ pub(crate) async fn show_main_menu(
     // stale target. The session layer follows the same rule by constructing
     // callbacks only after the menu returns.
     let mut save_manager = SaveGameManager::open_for_context(application_context);
+
+    if open_options_initially
+        && options::show_main_menu_options(
+            application_context,
+            window,
+            &mut renderer,
+            &menu_resources,
+            &mut cursor_renderer,
+        )
+        .await
+    {
+        return Ok(MainMenuChoice::RedisplayOptions);
+    }
 
     // ── Event-loop state ─────────────────────────────────────────────
     let mut input_state = ModalInputState::new();
@@ -482,8 +515,7 @@ pub(crate) async fn show_main_menu(
             let pressed = base.state == UiState::Pushed;
             let state_idx = button_sprite_state(enabled, hovered, pressed);
             let Some(rect) = base.bbox.0 else { continue };
-            let bx = rect.min().x as i32;
-            let by = rect.min().y as i32;
+            let (bx, by) = main_menu_to_screen(transform, rect.min().x as i32, rect.min().y as i32);
             let bw = (rect.max().x - rect.min().x) as i32;
             let bh = (rect.max().y - rect.min().y) as i32;
             if let Some(surf) = menu_resources.button_surface(state_idx) {
@@ -503,11 +535,12 @@ pub(crate) async fn show_main_menu(
             &menu_resources,
             &frame,
             keyboard_selection,
+            transform,
         );
 
         // Custom cursor on top — the OS cursor is hidden, so skip this
         // and the mouse appears to vanish.
-        cursor_renderer.advance_animation();
+        cursor_renderer.advance_ui_animation();
         ModalCursor::new(&mut cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             &mut renderer,
             transform,
@@ -515,7 +548,7 @@ pub(crate) async fn show_main_menu(
         );
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -661,10 +694,18 @@ async fn dispatch_click(
             event_pump.set_logical_resolution_policy(&profile.graphic_config);
             renderer.sync_window_size(event_pump);
             renderer.apply_upscale_config(&profile.graphic_config);
+            event_pump.set_native_refresh_presentation(
+                profile.graphic_config.native_refresh_presentation,
+            );
+            renderer.configure_native_refresh_presentation(
+                profile.graphic_config.native_refresh_presentation,
+                event_pump.surface_config.width,
+                event_pump.surface_config.height,
+            );
             None
         }
         ClickAction::Options => {
-            options::show_main_menu_options(
+            let language_changed = options::show_main_menu_options(
                 application_context,
                 event_pump,
                 renderer,
@@ -672,6 +713,9 @@ async fn dispatch_click(
                 cursor_renderer,
             )
             .await;
+            if language_changed {
+                return Some(MainMenuChoice::RedisplayOptions);
+            }
             let profile = application_context
                 .active_profile_snapshot()
                 .unwrap_or_else(|error| panic!("Options removed the active profile: {error}"));
@@ -710,6 +754,7 @@ fn render_text_layer(
     resources: &IngameMenuResources,
     frame: &FrameWnd,
     keyboard_selection: u32,
+    transform: MenuTransform,
 ) {
     // Clone before rendering so the profile lock never reaches the GPU path.
     let profile = application_context
@@ -719,19 +764,26 @@ fn render_text_layer(
     let profile_info_lines = build_profile_info_lines(resources, &profile);
 
     let name_font = resources
-        .edit_field_font()
-        .or_else(|| resources.title_font());
+        .edit_field_font_any()
+        .or_else(|| resources.title_font_any());
     let info_font = resources
-        .menu_text_font()
-        .or_else(|| resources.edit_field_font());
-    let enabled_font = resources.menu_button_font(true);
-    let disabled_font = resources.menu_button_font(false);
+        .menu_text_font_any()
+        .or_else(|| resources.edit_field_font_any());
+    let enabled_font = resources.menu_button_font_any(true);
+    let disabled_font = resources.menu_button_font_any(false);
 
     // ── Profile info block (left side) ──────────────────────────────
     if let (Some(name), Some(font)) = (profile_name.as_deref(), name_font) {
         let tw = font.text_width(name);
         let x = PROFILE_INFO_BOX_X + (PROFILE_INFO_BOX_W - tw) / 2;
-        renderer.render_text_argb(font, name, x, PROFILE_NAME_Y);
+        crate::ingame_menu::layout::render_text_virt_font(
+            renderer,
+            font,
+            transform,
+            name,
+            x,
+            PROFILE_NAME_Y,
+        );
     }
     if let Some(font) = info_font {
         let line_h = font.height() as i32;
@@ -739,7 +791,9 @@ fn render_text_layer(
             let tw = font.text_width(line);
             let x = PROFILE_INFO_BOX_X + (PROFILE_INFO_BOX_W - tw) / 2;
             let y = PROFILE_INFO_Y + i as i32 * line_h;
-            renderer.render_text_argb(font, line, x, y);
+            crate::ingame_menu::layout::render_text_virt_font(
+                renderer, font, transform, line, x, y,
+            );
         }
     }
 
@@ -747,7 +801,7 @@ fn render_text_layer(
     if let Some(font) = info_font {
         let line = update_status_line();
         let y = MENU_H - font.height() as i32 - 4;
-        renderer.render_text_argb(font, &line, 8, y);
+        crate::ingame_menu::layout::render_text_virt_font(renderer, font, transform, &line, 8, y);
     }
 
     // ── Button labels ───────────────────────────────────────────────
@@ -773,7 +827,9 @@ fn render_text_layer(
         let th = font.height() as i32;
         let tx = bx + (bw - tw) / 2;
         let ty = by + (bh - th) / 2;
-        renderer.render_text_argb(font, &base.text, tx, ty);
+        crate::ingame_menu::layout::render_text_virt_font(
+            renderer, font, transform, &base.text, tx, ty,
+        );
         // Keyboard-selected widget keyboard-only: the hover sprite is
         // already handled by `button_sprite_state` in the sprite pass,
         // so no extra work here.
@@ -840,6 +896,8 @@ fn difficulty_to_string(resources: &IngameMenuResources, level: DifficultyLevel)
         DifficultyLevel::Easy => MT_STR_DIFFICULTY_EASY,
         DifficultyLevel::Medium => MT_STR_DIFFICULTY_MEDIUM,
         DifficultyLevel::Hard => MT_STR_DIFFICULTY_HARD,
+        DifficultyLevel::Legendary => MT_PORT_STR_DIFFICULTY_LEGENDARY,
+        DifficultyLevel::Custom(_) => MT_PORT_STR_DIFFICULTY_CUSTOM,
     };
     resources.menu_text.get(id)
 }
@@ -872,6 +930,58 @@ fn substitute_i(template: &str, value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_main_menu_projection(
+        screen_w: i32,
+        screen_h: i32,
+        expected_origin: (i32, i32),
+        expected_first_button: (i32, i32),
+        expected_profile_anchor: (i32, i32),
+        expected_status_anchor: (i32, i32),
+    ) {
+        let transform = MenuTransform::centered(screen_w, screen_h);
+        assert_eq!((transform.origin_x, transform.origin_y), expected_origin);
+
+        // DEFAULT.RES uses 168x39 main-menu buttons. Nine entries occupy the
+        // bottom-right of the virtual 640x480 frame on current main.
+        let labels = [("button", true); 9];
+        let buttons = align_bottom_right(&labels, 168, 39);
+        let first = &buttons[0];
+        assert_eq!((first.x, first.y), (472, 113));
+        let first_button = main_menu_to_screen(transform, first.x, first.y);
+        assert_eq!(first_button, expected_first_button);
+        assert_eq!(
+            transform.from_screen(first_button.0, first_button.1),
+            (first.x, first.y)
+        );
+
+        // Representative text anchors cover the profile block and the
+        // bottom-left status line. They must receive the identical offset as
+        // the sprites rather than remaining at raw virtual coordinates.
+        let profile_anchor = main_menu_to_screen(transform, 200, PROFILE_NAME_Y);
+        assert_eq!(profile_anchor, expected_profile_anchor);
+        assert_eq!(
+            transform.from_screen(profile_anchor.0, profile_anchor.1),
+            (200, PROFILE_NAME_Y)
+        );
+
+        let status_anchor = main_menu_to_screen(transform, 8, 458);
+        assert_eq!(status_anchor, expected_status_anchor);
+        assert_eq!(
+            transform.from_screen(status_anchor.0, status_anchor.1),
+            (8, 458)
+        );
+    }
+
+    #[test]
+    fn main_menu_draw_and_input_align_on_low_widescreen_canvas() {
+        assert_main_menu_projection(853, 480, (106, 0), (578, 113), (306, 100), (114, 458));
+    }
+
+    #[test]
+    fn main_menu_draw_and_input_align_on_high_widescreen_canvas() {
+        assert_main_menu_projection(1280, 720, (320, 120), (792, 233), (520, 220), (328, 578));
+    }
 
     #[test]
     fn seconds_to_time_zero() {

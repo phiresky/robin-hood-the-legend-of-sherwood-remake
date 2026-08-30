@@ -9,7 +9,7 @@ use crate::renderer::Renderer;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, dim_screen, draw_background, enter_modal_gpu_phase,
-    render_text_in_box,
+    render_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON};
 use super::widget_bridge::ModalCursor;
@@ -57,7 +57,7 @@ pub async fn show_mission_state_popup(
         ) {
             return result;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -281,14 +281,21 @@ impl MissionStateTransition {
         // so the body stays inside the shrinking frame.
         let scale_x = cur_w as f32 / POPUP_W as f32;
         let scale_y = cur_h as f32 / POPUP_H as f32;
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&self.title);
             let tx = tl_x + (cur_w - tw) / 2;
             let ty = tl_y + (20.0 * scale_y) as i32;
-            super::layout::render_text_virt(renderer, font, self.transform, &self.title, tx, ty);
+            super::layout::render_text_virt_font(
+                renderer,
+                font,
+                self.transform,
+                &self.title,
+                tx,
+                ty,
+            );
         }
-        if let Some(font) = resources.popup_font() {
-            let _ = render_text_in_box(
+        if let Some(font) = resources.popup_font_any() {
+            let _ = render_text_in_box_font(
                 renderer,
                 font,
                 self.transform,

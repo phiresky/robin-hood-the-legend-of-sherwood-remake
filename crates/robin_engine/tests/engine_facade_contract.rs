@@ -132,9 +132,16 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
 
     let mut allowed = vec![
         "advance_frame",
+        // Mutates only the non-authoritative presentation clone used for
+        // render interpolation; it cannot open the live simulation owner.
+        "apply_spatial_presentation",
         "host_console",
         "mission_setup",
         "parity_replay_setup",
+        // Host-side, exactly-once policy attestation for the terminal attempt.
+        // Calculation itself remains deterministic engine state; this opener
+        // attaches eligibility before profile-history promotion.
+        "promote_mission_achievement_results",
         "test_add_entity",
         "test_set_camera_transition_inputs",
         "test_set_engine_scalars",

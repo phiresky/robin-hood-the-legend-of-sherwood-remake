@@ -390,12 +390,7 @@ impl EngineInner {
                     .is_hostile_to(crate::element::Camp::Royalists)
                 {
                     let diff = self.control.sim_config.difficulty;
-                    diff.modify_capacity(
-                        profile.shooting,
-                        crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
-                        crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
-                        100,
-                    ) as u32
+                    diff.rules().enemy_shooting(profile.shooting, 100) as u32
                 } else {
                     profile.shooting as u32
                 };
@@ -1263,14 +1258,16 @@ impl EngineInner {
         }
 
         // ── (D) Base hurtable filter ────────────────────────────────
-        // For NPC shooters (or PC shooters on non-Hard difficulty),
-        // civilian victims and same-camp victims are flagged
-        // non-hurtable. Hard-difficulty PC shooters skip this filter
-        // entirely (civilian friendly fire allowed).
+        // NPC shooters always keep the retail protection. PC shooters use the
+        // resolved difficulty rule; Hard and Legendary disable it, preserving
+        // the retail Hard civilian-friendly-fire behavior.
         let apply_hurtable_filter = if shooter_is_npc {
             true
         } else if shooter_is_pc {
-            sim.config().difficulty != crate::player_profile::DifficultyLevel::Hard
+            sim.config()
+                .difficulty
+                .rules()
+                .protect_allies_from_pc_arrows
         } else {
             false
         };
@@ -1688,6 +1685,61 @@ impl EngineInner {
             "Throw projectile spawned"
         );
         self.decrement_ability_ammo(assets, actor_id, action);
+    }
+
+    /// Spawn the ground-targeted stone extension after the original throw
+    /// animation completes. The projectile carries the one-shot noise latch,
+    /// so saving or rolling back mid-flight cannot lose or duplicate the
+    /// impact stimulus.
+    fn on_throw_noise_distraction_done(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        target: crate::coordinates::WorldPoint3D,
+    ) {
+        // Admission was validated when the sequence began. Disabling the
+        // option during the throw animation prevents future throws but does
+        // not erase this already-authoritative command.
+        let (throw_pos, layer) =
+            self.projectile_throw_origin(actor_id, "ThrowNoiseDistractionDone");
+        let thrower = self.get_entity(actor_id).unwrap_or_else(|| {
+            panic!("noise-distraction thrower {actor_id:?} disappeared before Done")
+        });
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, thrower.element_data());
+        let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles: self.sight_obstacles(assets),
+            water_zones: Some(&assets.water_zones),
+        };
+        let mut projectile = crate::bow_shot::spawn_stone(
+            actor_id,
+            throw_pos,
+            target,
+            None,
+            None,
+            layer,
+            Some(&obstacle_check),
+        );
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            panic!("ground stone spawn returned a non-projectile entity");
+        };
+        projectile_data.projectile.noise_distraction = true;
+        set_projectile_trajectory_origin(
+            &mut projectile_data.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
+        let projectile_id = self.add_entity(projectile);
+        self.attach_accessory_sprite(assets, projectile_id);
+        self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Stone);
+        tracing::debug!(
+            actor = ?actor_id,
+            projectile = ?projectile_id,
+            x = target.x,
+            y = target.y,
+            "ground noise-distraction stone spawned"
+        );
     }
 
     fn projectile_throw_origin(
@@ -2285,6 +2337,50 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    #[test]
+    fn distraction_projectile_latch_survives_serialization_and_emits_once() {
+        std::thread::Builder::new()
+            .name("distraction-projectile-latch-roundtrip".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(distraction_projectile_latch_survives_serialization_and_emits_once_inner)
+            .expect("spawn large-stack projectile round-trip regression")
+            .join()
+            .expect("large-stack projectile round-trip regression panicked");
+    }
+
+    fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
+        let mut engine = EngineInner::new();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Stone,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                noise_distraction: true,
+                ..Default::default()
+            },
+        });
+        projectile.element_data_mut().set_layer(2);
+
+        let encoded = bitcode::encode(&projectile);
+        let restored: Entity = bitcode::decode(&encoded).expect("decode distraction projectile");
+        assert!(matches!(
+            &restored,
+            Entity::Projectile(projectile) if projectile.projectile.noise_distraction
+        ));
+
+        let projectile_id = engine.add_entity(restored);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
+        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
     }
 
     fn purse_publication_assets() -> LevelAssets {
@@ -3555,7 +3651,15 @@ impl EngineInner {
                     command = ?activation_cmd,
                     "FX target activated by projectile"
                 );
-                if let Some(fx_id) = result.impact_fx {
+                let was_distraction = self.emit_noise_distraction_impact(
+                    sim,
+                    assets,
+                    result.arrow,
+                    result.impact_pos,
+                );
+                if let Some(fx_id) = result.impact_fx
+                    && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+                {
                     self.feedback
                         .pending_side_effects
                         .sounds
@@ -3727,7 +3831,11 @@ impl EngineInner {
             // Impact sound: apple 509, stone 508.  The arrow's 510
             // plays only on shield deflection (handled above), so
             // non-shield arrow impacts stay silent.
-            if let Some(fx_id) = result.impact_fx {
+            let was_distraction =
+                self.emit_noise_distraction_impact(sim, assets, result.arrow, result.impact_pos);
+            if let Some(fx_id) = result.impact_fx
+                && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+            {
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -3756,6 +3864,47 @@ impl EngineInner {
                 self.deactivate_projectile_tombstone(result.arrow, result.hit_target.is_none());
             }
         }
+    }
+
+    /// Consume a ground-stone's one-shot impact latch and synchronously feed
+    /// the resulting authored noise into the existing AI hearing pipeline.
+    /// Returns whether this impact was the distraction terminal, allowing the
+    /// caller to apply the independently configurable feedback gate.
+    fn emit_noise_distraction_impact(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+        impact: MapPoint,
+    ) -> bool {
+        let (layer, elevation) = {
+            let entity = self.get_entity_mut(projectile_id).unwrap_or_else(|| {
+                panic!("noise-distraction impact projectile {projectile_id:?} is missing")
+            });
+            let Entity::Projectile(projectile) = entity else {
+                panic!("noise-distraction impact id {projectile_id:?} is not a projectile");
+            };
+            if !projectile.projectile.noise_distraction {
+                return false;
+            }
+            projectile.projectile.noise_distraction = false;
+            (
+                projectile.element.optional_layer(),
+                projectile.element.sprite.position_iface.get_elevation() as u16,
+            )
+        };
+
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Distraction,
+            impact,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_DISTRACTION as u16,
+            elevation,
+            Some(projectile_id),
+        );
+        true
     }
 
     pub(super) fn deactivate_projectile_tombstone(
@@ -4012,9 +4161,9 @@ impl EngineInner {
     ///
     /// * If the PC is immortal and below the max, bump HP by 1
     ///   (snapping up to 75 first if below that floor).
-    /// * Otherwise on Easy difficulty, once every `TIME_AUTO_HEAL`
-    ///   frames and while the PC is neither sword-fighting nor in
-    ///   coma, bump HP by 1.
+    /// * Otherwise, when the resolved difficulty enables auto-heal, use its
+    ///   configured cadence while the PC is neither sword-fighting nor in
+    ///   coma. The Easy preset remains exactly once every 100 frames.
     ///
     /// The shared human prelude (concussion decrement, tiredness
     /// recovery, produced-noise refresh) is handled by
@@ -4027,11 +4176,12 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         pc_id: EntityId,
     ) {
-        /// Auto-heal cadence in frames.
-        const TIME_AUTO_HEAL: u32 = 100;
-
-        let tick_easy = sim.config().difficulty == crate::player_profile::DifficultyLevel::Easy
-            && self.control.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
+        let auto_heal_interval = sim.config().difficulty.rules().pc_auto_heal_interval_frames;
+        let tick_auto_heal = auto_heal_interval != 0
+            && self
+                .control
+                .frame_counter
+                .is_multiple_of(u32::from(auto_heal_interval));
 
         let (lp, immortal, swordfighting, in_coma) = {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
@@ -4062,7 +4212,7 @@ impl EngineInner {
         let new_lp = if immortal {
             // Snap up to a 75 floor before incrementing.
             if lp < 75 { 75 } else { lp + 1 }
-        } else if tick_easy && !swordfighting {
+        } else if tick_auto_heal && !swordfighting {
             if in_coma {
                 return;
             }
@@ -5663,17 +5813,24 @@ impl EngineInner {
                 AbilityTickResult::ThrowStoneDone {
                     actor_id,
                     target,
+                    ground_target,
                     seq_id,
                     elem_idx,
-                } => {
-                    self.on_throw_projectile_done(
+                } => match (target, ground_target) {
+                    (Some(target), None) => self.on_throw_projectile_done(
                         assets,
                         actor_id,
-                        target,
+                        Some(target),
                         crate::profiles::Action::Stone,
                         crate::element::ObjectType::Stone,
-                    );
-                }
+                    ),
+                    (None, Some(target)) => {
+                        self.on_throw_noise_distraction_done(assets, actor_id, target)
+                    }
+                    pair => panic!(
+                        "completed ThrowStone must carry exactly one target kind, got {pair:?}"
+                    ),
+                },
                 AbilityTickResult::PayDone {
                     pc_id,
                     beggar_id,
@@ -5877,18 +6034,16 @@ impl EngineInner {
                             } else {
                                 (80u16, false)
                             };
-                            if self.control.sim_config.difficulty
-                                == crate::player_profile::DifficultyLevel::Hard
-                            {
-                                (
-                                    (base.0 as f32
-                                        * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS)
-                                        as u16,
-                                    base.1,
-                                )
-                            } else {
-                                base
-                            }
+                            let percent = self
+                                .control
+                                .sim_config
+                                .difficulty
+                                .rules()
+                                .pc_punch_concussion_percent;
+                            (
+                                (u32::from(base.0) * u32::from(percent) / 100) as u16,
+                                base.1,
+                            )
                         } else {
                             (40u16, false)
                         }

@@ -15,7 +15,7 @@ use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_fallback_rect,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_ALPHA_VISION_FIELD,
@@ -25,7 +25,7 @@ use super::resources::{
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
-// Widget ID ranges: resolution 100..102, widescreen 150, options 200..204,
+// Widget ID ranges: resolution 100..102, widescreen 150, options 200..205,
 // scaling 400.., ok/cancel 300..301.
 const ID_RES_BASE: u32 = 100;
 const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
@@ -33,6 +33,7 @@ const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
+const OPTION_COUNT: u32 = 6;
 const ID_EFFECT_BASE: u32 = 500;
 const PRESET_LIST_X: i32 = 360;
 const PRESET_LIST_Y: i32 = 350;
@@ -169,7 +170,21 @@ pub async fn show_graphics(
             w: field_w,
             h: field_h,
         },
+        super::layout::MenuButton {
+            // Rust extension; the original string table has no label for it.
+            label: "Native Refresh Rate".to_string(),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
     ];
+    assert_eq!(
+        opt_layout.len(),
+        OPTION_COUNT as usize,
+        "graphics option layout/count drifted"
+    );
     align_on_first_widget(&mut opt_layout, 2);
 
     // ── Scaling radios (right column, stacked from (360, 100)) ─────
@@ -435,7 +450,7 @@ pub async fn show_graphics(
                     working.adaptive_widescreen = !working.adaptive_widescreen;
                     dirty = true;
                 }
-                id if (ID_OPT_BASE..ID_OPT_BASE + 5).contains(&id) => {
+                id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_COUNT).contains(&id) => {
                     apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
                     dirty = true;
                 }
@@ -465,15 +480,15 @@ pub async fn show_graphics(
             draw_screen_background(renderer, &bg);
         }
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&title);
-            render_text_virt(renderer, font, transform, &title, (490 - tw) / 2, 20);
+            render_text_virt_font(renderer, font, transform, &title, (490 - tw) / 2, 20);
         }
-        if let Some(font) = resources.label_font() {
-            render_text_virt(renderer, font, transform, &res_label, 30, 80);
-            render_text_virt(renderer, font, transform, &fx_label, 30, 250);
-            render_text_virt(renderer, font, transform, "Scaling", scale_x, 80);
-            render_text_virt(
+        if let Some(font) = resources.label_font_any() {
+            render_text_virt_font(renderer, font, transform, &res_label, 30, 80);
+            render_text_virt_font(renderer, font, transform, &fx_label, 30, 250);
+            render_text_virt_font(renderer, font, transform, "Scaling", scale_x, 80);
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -482,7 +497,7 @@ pub async fn show_graphics(
                 effect_y - 12,
             );
             if working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -490,7 +505,7 @@ pub async fn show_graphics(
                     PRESET_LIST_X,
                     PRESET_LIST_Y - 18,
                 );
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -504,10 +519,10 @@ pub async fn show_graphics(
                 } else {
                     "Upscaler parameters (Tab)"
                 };
-                render_text_virt(renderer, font, transform, page, scale_x, parameter_y - 12);
+                render_text_virt_font(renderer, font, transform, page, scale_x, parameter_y - 12);
             }
             if !parameter_status.is_empty() {
-                render_text_virt(renderer, font, transform, &parameter_status, 30, 410);
+                render_text_virt_font(renderer, font, transform, &parameter_status, 30, 410);
             }
         }
 
@@ -532,7 +547,7 @@ pub async fn show_graphics(
                 working.adaptive_widescreen,
             );
         }
-        for i in 0..5u32 {
+        for i in 0..OPTION_COUNT {
             if let Some(w) = frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
@@ -601,7 +616,7 @@ pub async fn show_graphics(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty {
@@ -652,7 +667,7 @@ fn draw_preset_list(
         false,
     );
 
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
     for row in 0..PRESET_LIST_ROWS {
@@ -674,11 +689,11 @@ fn draw_preset_list(
             );
         }
         let label = fit_label(font, &preset.label, PRESET_LIST_W - 8);
-        render_text_virt(renderer, font, transform, &label, PRESET_LIST_X + 4, y + 1);
+        render_text_virt_font(renderer, font, transform, &label, PRESET_LIST_X + 4, y + 1);
     }
 }
 
-fn fit_label(font: &crate::native_font::NativeFont, label: &str, max_w: i32) -> String {
+fn fit_label(font: &crate::native_font::Font, label: &str, max_w: i32) -> String {
     if font.text_width(label) <= max_w {
         return label.to_string();
     }
@@ -725,7 +740,7 @@ fn draw_parameter_panel(
     y: i32,
     width: i32,
 ) {
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
     let upscale_values = [
@@ -756,7 +771,7 @@ fn draw_parameter_panel(
     };
     for (row, (label, value)) in values.iter().enumerate() {
         let row_y = y + row as i32 * 12;
-        render_text_virt(
+        render_text_virt_font(
             renderer,
             font,
             transform,
@@ -840,6 +855,7 @@ fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
         2 => config.display_titbits = !config.display_titbits,
         3 => config.display_anim = !config.display_anim,
         4 => config.apply_fog_to_all_sprites = !config.apply_fog_to_all_sprites,
+        5 => config.native_refresh_presentation = !config.native_refresh_presentation,
         _ => {}
     }
 }
@@ -851,6 +867,7 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         2 => config.display_titbits,
         3 => config.display_anim,
         4 => config.apply_fog_to_all_sprites,
+        5 => config.native_refresh_presentation,
         _ => false,
     }
 }
@@ -858,6 +875,19 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_refresh_is_the_last_reachable_graphics_option() {
+        let mut config = GraphicConfig::default();
+        let adaptive_widescreen = config.adaptive_widescreen;
+        let native_refresh_index = OPTION_COUNT as usize - 1;
+
+        apply_option_toggle(&mut config, native_refresh_index);
+
+        assert!(!config.native_refresh_presentation);
+        assert_eq!(config.adaptive_widescreen, adaptive_widescreen);
+        assert!(!is_option_selected(&config, native_refresh_index));
+    }
 
     #[test]
     fn parameter_edits_are_quantized_and_saturating() {

@@ -850,12 +850,7 @@ impl EngineInner {
                 let base = soldier_profile.fighting;
                 if s.soldier.cached_camp.is_hostile_to(Camp::Royalists) {
                     let diff = self.control.sim_config.difficulty;
-                    diff.modify_capacity(
-                        base,
-                        crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
-                        crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
-                        100,
-                    )
+                    diff.rules().enemy_fighting(base, 100)
                 } else {
                     base
                 }

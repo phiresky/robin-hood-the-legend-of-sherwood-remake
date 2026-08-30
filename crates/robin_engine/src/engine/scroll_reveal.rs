@@ -290,7 +290,7 @@ impl EngineInner {
         scroll: EntityId,
     ) -> bool {
         let difficulty = sim.config().difficulty;
-        if difficulty != crate::player_profile::DifficultyLevel::Easy {
+        if difficulty.rules().legacy_level != crate::player_profile::LegacyDifficultyLevel::Easy {
             return false;
         }
         let Some(Entity::Scroll(s)) = self.get_entity(scroll) else {

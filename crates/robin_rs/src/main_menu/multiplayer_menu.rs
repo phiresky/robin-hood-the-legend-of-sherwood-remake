@@ -7,7 +7,7 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
+    enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::resources::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -81,7 +81,7 @@ pub(crate) async fn show_multiplayer_menu(
     application_context: &ApplicationContext,
 ) -> Option<MultiplayerLaunch> {
     let nickname = multiplayer_nickname(application_context);
-    let missions = mission_choices(campaign, profiles);
+    let missions = mission_choices(campaign, profiles, application_context);
     let (matchmaking_client, mut matchmaking_label) =
         match matchmaking::MatchmakingSession::open(nickname.clone()) {
             Ok(session) => (
@@ -152,7 +152,8 @@ pub(crate) async fn show_multiplayer_menu(
                     } else if joined.start_at_epoch_ms.is_some() {
                         return Some(MultiplayerLaunch {
                             mission_id: joined.mission_id,
-                            mission_name: joined.mission_name,
+                            mission_name: application_context
+                                .localized_mission_name(joined.mission_id, &joined.mission_name),
                             role: MultiplayerRole::Client {
                                 connect_addr: joined.connect_addr,
                             },
@@ -175,7 +176,8 @@ pub(crate) async fn show_multiplayer_menu(
                     {
                         return Some(MultiplayerLaunch {
                             mission_id: started.mission_id,
-                            mission_name: started.mission_name,
+                            mission_name: application_context
+                                .localized_mission_name(started.mission_id, &started.mission_name),
                             role: MultiplayerRole::Host,
                             expected_players: started.expected_players,
                             start_at_epoch_ms: started.start_at_epoch_ms,
@@ -213,7 +215,8 @@ pub(crate) async fn show_multiplayer_menu(
                     {
                         return Some(MultiplayerLaunch {
                             mission_id: game.mission_id,
-                            mission_name: game.mission_name.clone(),
+                            mission_name: application_context
+                                .localized_mission_name(game.mission_id, &game.mission_name),
                             role: MultiplayerRole::Client {
                                 connect_addr: game.connect_addr.clone(),
                             },
@@ -463,6 +466,7 @@ pub(crate) async fn show_multiplayer_menu(
             renderer,
             resources,
             transform,
+            application_context,
             &mode,
             &games,
             &missions,
@@ -471,14 +475,14 @@ pub(crate) async fn show_multiplayer_menu(
             &status,
         );
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
-        cursor_renderer.advance_animation();
+        cursor_renderer.advance_ui_animation();
         ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             renderer,
             transform,
             &input_state,
         );
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -497,6 +501,7 @@ fn render_menu(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     transform: MenuTransform,
+    application_context: &ApplicationContext,
     mode: &MenuMode,
     games: &[GameListing],
     missions: &[MissionChoice],
@@ -504,7 +509,7 @@ fn render_menu(
     scroll_offset: usize,
     status: &str,
 ) {
-    if let Some(font) = resources.title_font() {
+    if let Some(font) = resources.title_font_any() {
         let title = match mode {
             MenuMode::Games => "Multiplayer",
             MenuMode::Missions => "Create Multiplayer Game",
@@ -512,7 +517,7 @@ fn render_menu(
             MenuMode::Joined { .. } => "Game Lobby",
         };
         let tw = font.text_width(title);
-        render_text_virt(renderer, font, transform, title, (MENU_W - tw) / 2, 24);
+        render_text_virt_font(renderer, font, transform, title, (MENU_W - tw) / 2, 24);
     }
 
     draw_panel(renderer, transform, &LIST_RECT);
@@ -521,15 +526,24 @@ fn render_menu(
             if games.is_empty() {
                 vec!["No games listed".to_string()]
             } else {
-                games.iter().map(format_game_row).collect()
+                games
+                    .iter()
+                    .map(|game| format_game_row(game, application_context))
+                    .collect()
             }
         }
-        MenuMode::Hosted { game, .. } => vec![format_game_row(game)],
+        MenuMode::Hosted { game, .. } => vec![format_game_row(game, application_context)],
         MenuMode::Joined { game, listing } => vec![
             listing
                 .as_ref()
-                .map(format_game_row)
-                .unwrap_or_else(|| format!("{} | joined |  | waiting", game.mission_name)),
+                .map(|listing| format_game_row(listing, application_context))
+                .unwrap_or_else(|| {
+                    format!(
+                        "{} | joined |  | waiting",
+                        application_context
+                            .localized_mission_name(game.mission_id, &game.mission_name)
+                    )
+                }),
         ],
         MenuMode::Missions => missions
             .iter()
@@ -591,8 +605,8 @@ fn render_menu(
         draw_scrollbar(renderer, transform, rows.len(), scroll_offset);
     }
 
-    if let Some(font) = resources.menu_text_font() {
-        render_text_virt(
+    if let Some(font) = resources.menu_text_font_any() {
+        render_text_virt_font(
             renderer,
             font,
             transform,
@@ -669,13 +683,14 @@ fn draw_scrollbar(
 fn mission_choices(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
+    application_context: &ApplicationContext,
 ) -> Vec<MissionChoice> {
     campaign
         .missions
         .iter()
         .map(|m| {
             let profile = m.profile(profiles);
-            let label = if profile.mission_name.trim().is_empty() {
+            let fallback = if profile.mission_name.trim().is_empty() {
                 if profile.mission_filename.trim().is_empty() {
                     format!("Mission {}", profile.id)
                 } else {
@@ -684,6 +699,7 @@ fn mission_choices(
             } else {
                 profile.mission_name.clone()
             };
+            let label = application_context.localized_mission_name(profile.id, &fallback);
             MissionChoice {
                 mission_id: profile.id,
                 mission_name: label.clone(),
@@ -714,7 +730,7 @@ fn upsert_game(games: &mut Vec<GameListing>, game: GameListing) {
     }
 }
 
-fn format_game_row(game: &GameListing) -> String {
+fn format_game_row(game: &GameListing, application_context: &ApplicationContext) -> String {
     let players = if game.max_players == 0 {
         game.players.to_string()
     } else {
@@ -725,7 +741,9 @@ fn format_game_row(game: &GameListing) -> String {
     } else {
         &game.state
     };
-    format!("{}|{}|{}|{}", game.mission_name, game.host, players, state)
+    let mission_name =
+        application_context.localized_mission_name(game.mission_id, &game.mission_name);
+    format!("{}|{}|{}|{}", mission_name, game.host, players, state)
 }
 
 fn menu_column_layout(mode: &MenuMode) -> ColumnLayout {
