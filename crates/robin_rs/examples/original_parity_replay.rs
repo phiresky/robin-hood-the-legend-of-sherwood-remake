@@ -272,6 +272,7 @@ impl TraceSimConfig {
             bypass_fog_sprites_crash: self.bypass_fog_sprites_crash,
             amount_of_speaking: self.amount_of_speaking,
             synchronous_pathfinding,
+            sherwood_trading: false,
         }
     }
 }

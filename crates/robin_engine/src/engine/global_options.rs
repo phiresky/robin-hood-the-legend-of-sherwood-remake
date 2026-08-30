@@ -67,6 +67,11 @@ pub struct SimConfig {
     /// original-game parity harness so path-result timing is independent of
     /// worker/scheduler cadence.
     pub synchronous_pathfinding: bool,
+    /// Authoritative switch for Sherwood inventory trading.  Missing fields in
+    /// old deterministic state deserialize off; newly constructed contexts use
+    /// the active profile's explicit default-on value.
+    #[serde(default)]
+    pub sherwood_trading: bool,
 }
 
 impl SimConfig {
@@ -87,6 +92,7 @@ impl SimConfig {
             bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
             amount_of_speaking: 5,
             synchronous_pathfinding: false,
+            sherwood_trading: true,
         }
     }
 }
@@ -221,6 +227,7 @@ mod tests {
             ItemGameplayConfig::classic()
         );
         assert!(SimConfig::default().noise_distraction_feedback);
+        assert!(SimConfig::default().sherwood_trading);
     }
 
     #[test]
@@ -255,5 +262,18 @@ mod tests {
         assert!(!config.reusable_cloaks);
         assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
         assert!(!config.noise_distraction_feedback);
+    }
+
+    #[test]
+    fn state_without_trading_does_not_opt_into_the_new_economy() {
+        let mut serialized =
+            serde_json::to_value(SimConfig::default()).expect("serialize simulation config");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("sherwood_trading");
+        let config: SimConfig =
+            serde_json::from_value(serialized).expect("deserialize legacy simulation config");
+        assert!(!config.sherwood_trading);
     }
 }

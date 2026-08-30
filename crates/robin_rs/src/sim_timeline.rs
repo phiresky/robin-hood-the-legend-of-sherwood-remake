@@ -750,6 +750,12 @@ pub fn run_engine_frame_core(
         dev,
         output.events.clone().into_side_effects(),
     );
+    apply_engine_side_effects(
+        host,
+        display,
+        dev,
+        output.post_boundary_events.clone().into_side_effects(),
+    );
     if let Some(events) = output.post_initialize_events.clone() {
         apply_engine_side_effects(host, display, dev, events.into_side_effects());
     }

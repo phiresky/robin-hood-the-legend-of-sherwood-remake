@@ -508,7 +508,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   tracker state and the NPC-on-NPC Clean Hands rule.
 /// - **v59** (2026-08-30, item rebalance): combines that state with expanded
 ///   item rules, cached ale eligibility, and ground-stone command/projectiles.
-pub const SAVE_FORMAT_VERSION: u32 = 59;
+/// - **v60** (2026-08-30, authoritative Sherwood trading): combines those
+///   item-rebalance fields with the
+///   deterministic trading rule, exact sale commands, receipts, campaign
+///   ransom, and production-item inventory state.
+pub const SAVE_FORMAT_VERSION: u32 = 60;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -765,8 +769,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_identifies_achievements_and_item_rebalance_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 59);
+    fn save_format_version_requires_item_rebalances_and_authoritative_trading() {
+        assert_eq!(SAVE_FORMAT_VERSION, 60);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -1016,7 +1020,7 @@ mod tests {
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 58,
+                "version": 59,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -1030,7 +1034,7 @@ mod tests {
             .expect("previous Rust achievement schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 58")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 59")
         );
     }
 

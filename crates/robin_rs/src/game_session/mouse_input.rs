@@ -8,7 +8,7 @@
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
-    required_menu_resources,
+    request_sherwood_trading_panel, required_menu_resources, sherwood_trading_access,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -1487,6 +1487,27 @@ pub(super) async fn handle_pause_menu_events(
                 // first frame after the menu closes.
                 threaded_input.queue_mouse_motion_resync();
             }
+            PauseMenuOutcome::OpenSherwoodTrading => {
+                match request_sherwood_trading_panel(host, engine, &assets.profile_manager) {
+                    Ok(()) => {
+                        *pause_menu = None;
+                        *pause_closed_this_frame = true;
+                        renderer.clear_frozen_scene();
+                        threaded_input.reset_input_state();
+                        input_translator.reset_state();
+                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                    }
+                    Err(reason) => {
+                        // The row was admitted when the menu opened, but the
+                        // host/rule/location can change before activation.
+                        // Revalidation keeps the stale button fail-closed.
+                        tracing::warn!(?reason, "pause-menu Sherwood trading request rejected");
+                        if let Some(menu) = pause_menu.as_mut() {
+                            menu.reset_after_side_menu();
+                        }
+                    }
+                }
+            }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
                 if let Some(resources) = menu_resources.as_ref() {
@@ -1523,6 +1544,7 @@ pub(super) async fn handle_pause_menu_events(
                         gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
                         gameplay_config.noise_distraction_feedback =
                             engine.sim_config().noise_distraction_feedback;
+                        gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
@@ -1532,6 +1554,7 @@ pub(super) async fn handle_pause_menu_events(
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let simulation_item_gameplay = gameplay_config.item_gameplay;
                         let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
+                        let simulation_sherwood_trading = gameplay_config.sherwood_trading;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1544,6 +1567,7 @@ pub(super) async fn handle_pause_menu_events(
                             &mut sound_config,
                             &mut host.frontend.key_config,
                             &mut host.frontend.custom_key_config,
+                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
                             Some(&mut host.audio.sound),
                             audio_backend
                                 .as_mut()
@@ -1643,6 +1667,12 @@ pub(super) async fn handle_pause_menu_events(
                         if gameplay_config.noise_distraction_feedback != simulation_noise_feedback {
                             let cmd = PlayerCommand::SetNoiseDistractionFeedback {
                                 enabled: gameplay_config.noise_distraction_feedback,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.sherwood_trading != simulation_sherwood_trading {
+                            let cmd = PlayerCommand::SetSherwoodTrading {
+                                enabled: gameplay_config.sherwood_trading,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
@@ -1932,6 +1962,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
     let engine = &mut manager.engine;
+    sherwood_enable.sherwood_trading = game.is_sherwood
+        && sherwood_trading_access(host, engine, &assets.profile_manager)
+            .validate()
+            .is_ok();
     // ── Sherwood HUD buttons ──
     //
     // Hit-test the Sherwood-only DisplayCampaignMap / GoToExit /
@@ -2145,6 +2179,14 @@ pub(super) async fn handle_sherwood_hud_buttons(
                             arg2: 0,
                         },
                     );
+                    return HandlerAction::Continue;
+                }
+                SherwoodButton::SherwoodTrading => {
+                    if let Err(reason) =
+                        request_sherwood_trading_panel(host, engine, &assets.profile_manager)
+                    {
+                        tracing::warn!(?reason, "live Sherwood trading button request rejected");
+                    }
                     return HandlerAction::Continue;
                 }
             }

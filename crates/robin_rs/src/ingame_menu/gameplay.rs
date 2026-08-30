@@ -25,6 +25,8 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
+const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
+const AUTOSAVE_OPTION_INDEX: usize = 17;
 
 /// Toggle rows shown on the screen, in display order.
 const OPTION_LABELS: &[&str] = &[
@@ -44,6 +46,7 @@ const OPTION_LABELS: &[&str] = &[
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
     "Touch Camera Gestures",
+    "Sherwood Item Trading",
     "Rotating Autosaves",
     "Apple Combat Interrupt",
     "Reliable Wasp Acquisition",
@@ -79,6 +82,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show achievement badges in campaign presentations.",
     "Include achievement details in mission debriefs.",
     "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
+    "Allow the host to sell Sherwood production inventory for campaign ransom.",
     "Keep rotating campaign and mission autosaves according to the autosave policy.",
     "Let direct apple hits interrupt active swordfights.",
     "Increase initial wasp acquisition from 50 to 75 world units.",
@@ -105,6 +109,7 @@ pub async fn show_gameplay(
     resources: &IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     config: &mut GameplayConfig,
+    sherwood_trading_editable: bool,
 ) -> bool {
     let sw = renderer.screen_width() as i32;
     let sh = renderer.screen_height() as i32;
@@ -143,9 +148,10 @@ pub async fn show_gameplay(
     frame.input_enabled = true;
 
     for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+        frame.add_widget_absolute(widget_bridge::make_button_enabled(
             ID_OPT_BASE + i as u32,
             &mb.label,
+            i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
             mb.x,
             mb.y,
             mb.w,
@@ -219,8 +225,11 @@ pub async fn show_gameplay(
                 }
                 ID_CANCEL => done = true,
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
-                    apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
-                    dirty = true;
+                    let index = (id - ID_OPT_BASE) as usize;
+                    if index != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable {
+                        apply_option_toggle(&mut working, index);
+                        dirty = true;
+                    }
                 }
                 _ => {}
             }
@@ -314,43 +323,44 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         13 => config.show_achievement_badges = !config.show_achievement_badges,
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
         15 => config.touch_camera_gestures = !config.touch_camera_gestures,
-        16 => config.autosave_enabled = !config.autosave_enabled,
-        17 => {
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading = !config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled = !config.autosave_enabled,
+        18 => {
             config.item_gameplay.apple_combat_interrupt =
                 !config.item_gameplay.apple_combat_interrupt
         }
-        18 => {
+        19 => {
             config.item_gameplay.wasp_reliable_acquisition =
                 !config.item_gameplay.wasp_reliable_acquisition
         }
-        19 => {
+        20 => {
             config.item_gameplay.stone_ground_distraction =
                 !config.item_gameplay.stone_ground_distraction
         }
-        20 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
-        21 => {
+        21 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        22 => {
             config.item_gameplay.net_selective_immunity =
                 !config.item_gameplay.net_selective_immunity
         }
-        22 => {
+        23 => {
             config.item_gameplay.ale_reliable_distraction =
                 !config.item_gameplay.ale_reliable_distraction
         }
-        23 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
-        24 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
-        25 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
-        26 => {
+        24 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        25 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        26 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
+        27 => {
             config.item_previews.stone_distraction_area =
                 !config.item_previews.stone_distraction_area
         }
-        27 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
-        28 => {
+        28 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        29 => {
             config.item_previews.net_crumple_prediction =
                 !config.item_previews.net_crumple_prediction
         }
-        29 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
-        30 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
-        31 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -376,22 +386,23 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         13 => config.show_achievement_badges,
         14 => config.show_achievement_debrief,
         15 => config.touch_camera_gestures,
-        16 => config.autosave_enabled,
-        17 => config.item_gameplay.apple_combat_interrupt,
-        18 => config.item_gameplay.wasp_reliable_acquisition,
-        19 => config.item_gameplay.stone_ground_distraction,
-        20 => config.item_gameplay.stone_longer_range,
-        21 => config.item_gameplay.net_selective_immunity,
-        22 => config.item_gameplay.ale_reliable_distraction,
-        23 => config.noise_distraction_feedback,
-        24 => config.item_previews.apple_effect,
-        25 => config.item_previews.stone_direct_effect,
-        26 => config.item_previews.stone_distraction_area,
-        27 => config.item_previews.net_capture_area,
-        28 => config.item_previews.net_crumple_prediction,
-        29 => config.item_previews.ale_effect,
-        30 => config.item_previews.purse_effect,
-        31 => config.item_previews.wasp_area,
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled,
+        18 => config.item_gameplay.apple_combat_interrupt,
+        19 => config.item_gameplay.wasp_reliable_acquisition,
+        20 => config.item_gameplay.stone_ground_distraction,
+        21 => config.item_gameplay.stone_longer_range,
+        22 => config.item_gameplay.net_selective_immunity,
+        23 => config.item_gameplay.ale_reliable_distraction,
+        24 => config.noise_distraction_feedback,
+        25 => config.item_previews.apple_effect,
+        26 => config.item_previews.stone_direct_effect,
+        27 => config.item_previews.stone_distraction_area,
+        28 => config.item_previews.net_capture_area,
+        29 => config.item_previews.net_crumple_prediction,
+        30 => config.item_previews.ale_effect,
+        31 => config.item_previews.purse_effect,
+        32 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -421,6 +432,7 @@ mod tests {
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
                 "Touch Camera Gestures",
+                "Sherwood Item Trading",
                 "Rotating Autosaves",
                 "Apple Combat Interrupt",
                 "Reliable Wasp Acquisition",
@@ -451,8 +463,9 @@ mod tests {
         assert!(is_option_selected(&config, 13));
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
-        assert!(is_option_selected(&config, 16));
-        assert!(is_option_selected(&config, 31));
+        assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert!(is_option_selected(&config, 32));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -512,24 +525,26 @@ mod tests {
         assert!(!is_option_selected(&config, 15));
 
         let autosave_enabled = config.autosave_enabled;
-        apply_option_toggle(&mut config, 20);
+        apply_option_toggle(&mut config, 21);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(config.item_gameplay.net_selective_immunity);
-        apply_option_toggle(&mut config, 21);
+        apply_option_toggle(&mut config, 22);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(!config.item_gameplay.net_selective_immunity);
         assert!(config.item_gameplay.ale_reliable_distraction);
         assert_eq!(config.autosave_enabled, autosave_enabled);
+        apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
+        assert!(!config.sherwood_trading);
     }
 
     #[test]
     fn autosave_has_an_independent_gameplay_toggle() {
         let mut config = GameplayConfig::default();
         let before = config;
-        assert_eq!(OPTION_LABELS[16], "Rotating Autosaves");
-        assert!(is_option_selected(&config, 16));
-        apply_option_toggle(&mut config, 16);
-        assert!(!is_option_selected(&config, 16));
+        assert_eq!(OPTION_LABELS[AUTOSAVE_OPTION_INDEX], "Rotating Autosaves");
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        apply_option_toggle(&mut config, AUTOSAVE_OPTION_INDEX);
+        assert!(!is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert_eq!(
             config.fix_hard_reaction_times,
             before.fix_hard_reaction_times

@@ -251,6 +251,12 @@ pub struct GameplayConfig {
     #[serde(default = "default_show_production_forecast")]
     pub show_production_forecast: bool,
 
+    /// Enable authoritative Sherwood inventory sales and their trading UI.
+    /// Missing fields deserialize as `false`, preserving pre-feature profiles
+    /// without silently opting them into a new economy.
+    #[serde(default)]
+    pub sherwood_trading: bool,
+
     /// Allow PCs to put their shipped cape disguise back on.
     ///
     /// Missing means an existing/migrated profile and deliberately preserves
@@ -330,6 +336,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
@@ -361,6 +368,7 @@ impl GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: true,
             reusable_cloaks: false,
@@ -389,6 +397,7 @@ mod tests {
     fn hard_reaction_time_fix_is_the_default() {
         assert!(GameplayConfig::default().fix_hard_reaction_times);
         assert!(GameplayConfig::default().show_production_forecast);
+        assert!(GameplayConfig::default().sherwood_trading);
     }
 
     #[test]
@@ -404,6 +413,7 @@ mod tests {
         assert!(!config.show_achievement_badges);
         assert!(!config.show_achievement_debrief);
         assert!(config.show_production_forecast);
+        assert!(!config.sherwood_trading);
         assert!(!config.reusable_cloaks);
         assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
         assert_eq!(config.item_previews, ItemPreviewConfig::classic());
@@ -612,5 +622,17 @@ mod tests {
             ItemPreviewConfig::default().effective_for_original_parity(true),
             ItemPreviewConfig::classic()
         );
+    }
+
+    #[test]
+    fn sherwood_trading_toggle_round_trips_with_profile_config() {
+        let config = GameplayConfig {
+            sherwood_trading: false,
+            ..GameplayConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.sherwood_trading);
     }
 }

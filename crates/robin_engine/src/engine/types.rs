@@ -2688,6 +2688,9 @@ pub struct SideEffects {
     pub pending_debriefings: Vec<crate::player_command::DebriefingTextId>,
     /// Set when the `DisplaySherwoodReport` script native fired this tick.
     pub pending_sherwood_report: bool,
+    /// Exact authoritative outcomes for Sherwood sale commands.  Presentation
+    /// waits for these receipts instead of assuming a click succeeded.
+    pub trade_receipts: Vec<crate::trading::TradeReceipt>,
     /// Set when the `DisplayConsole` script native (or cheat key) fired
     /// this tick.
     pub pending_show_console: bool,
