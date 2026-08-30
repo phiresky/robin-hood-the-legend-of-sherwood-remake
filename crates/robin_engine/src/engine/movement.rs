@@ -126,6 +126,70 @@ fn movement_flags_force_direct_dispatch(flags: crate::sequence::MoveFlags) -> bo
         || flags.contains(crate::sequence::MoveFlags::STRAIGHT)
 }
 
+/// Detect the re-entrant door handoff where a postponed Move is translated
+/// before the route continuation registered by the completed PassDoor.
+///
+/// Original evaluates that postponed movement on the actor's current layer.
+/// The retained explicit goal layer can be stale across the door transit, and
+/// reconstructed spatial geometry can reject the otherwise direct corridor.
+/// The exact `PassDoor -> AssertPosition -> deferred Move` topology proves
+/// this is the terminal door seam rather than an arbitrary cross-layer move.
+fn has_deferred_post_door_route_continuation(
+    manager: &crate::sequence::SequenceManager,
+    owner: EntityId,
+    source: MapPoint,
+    entity_layer: u16,
+) -> bool {
+    use crate::element::Command;
+    use crate::sequence::{SequenceElementData, SequenceState};
+
+    manager
+        .deferred_elements_to_go()
+        .into_iter()
+        .any(|(route_id, move_idx)| {
+            let Some(sequence) = manager.get_sequence(route_id) else {
+                return false;
+            };
+            let Some(route_move) = sequence.get(move_idx) else {
+                return false;
+            };
+            if move_idx < 2
+                || route_move.owner != Some(owner)
+                || route_move.command != Command::Move
+                || route_move.state != SequenceState::Todo
+            {
+                return false;
+            }
+
+            let route_assert = &sequence.elements[move_idx - 1];
+            let pass_door = &sequence.elements[move_idx - 2];
+            if route_assert.owner != Some(owner)
+                || route_assert.command != Command::AssertPosition
+                || route_assert.state != SequenceState::Terminated
+                || pass_door.owner != Some(owner)
+                || pass_door.command != Command::PassDoor
+                || pass_door.state != SequenceState::Terminated
+            {
+                return false;
+            }
+
+            let assert_at_source = matches!(
+                &route_assert.data,
+                SequenceElementData::Movement { destination, .. } if *destination == source
+            );
+            let pass_exits_here = matches!(
+                &pass_door.data,
+                SequenceElementData::Movement {
+                    destination,
+                    layer,
+                    gate_id: Some(_),
+                    ..
+                } if *destination == source && *layer == entity_layer
+            );
+            assert_at_source && pass_exits_here
+        })
+}
+
 /// `RHPathFinder::AddPathRequest` runs this gate for every request it receives;
 /// command type and actor posture do not provide bypasses.
 #[inline]
@@ -11587,13 +11651,20 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.command == crate::element::Command::PassDoor);
-        let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
-            true
-        } else {
-            self.world
-                .fast_grid
-                .is_reachable_thick(source, dest, entity_layer, half_diagonal)
-        };
+        let post_door_route_handoff = has_deferred_post_door_route_continuation(
+            &self.orders.sequence_manager,
+            owner,
+            source,
+            entity_layer,
+        );
+        let straight_ok =
+            if movement_flags_force_direct_dispatch(move_flags) || post_door_route_handoff {
+                true
+            } else {
+                self.world
+                    .fast_grid
+                    .is_reachable_thick(source, dest, entity_layer, half_diagonal)
+            };
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation

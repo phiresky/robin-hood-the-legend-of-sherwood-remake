@@ -96,15 +96,16 @@ pub enum EngineCommand {
     /// pick up this frame.
     MarkPc { actor_handle: i32 },
     /// Fire a scripted `MakeNoise`: broadcast a one-shot noise from a
-    /// location so nearby NPCs react.  `layer` and `sector` identify the
-    /// source projection area used to recover its terrain elevation; volume
-    /// is derived from the noise type using the `NOISE_VOLUME_*` table.
+    /// location so nearby NPCs react. `layer` and the exact retained `sector`
+    /// identity select the source projection area used to recover its terrain
+    /// elevation; volume is derived from the noise type using the
+    /// `NOISE_VOLUME_*` table.
     MakeNoise {
         noise_type: crate::ai::NoiseType,
         x: f32,
         y: f32,
         layer: u16,
-        sector: u16,
+        sector: crate::position_interface::SectorHandle,
     },
     /// Finish a script scroll-status update after the native has already
     /// written the canonical status synchronously. The engine-side barrier

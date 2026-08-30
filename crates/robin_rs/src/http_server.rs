@@ -202,11 +202,10 @@ pub enum HttpPayload {
     /// toggle the single-player mission loop's manual pause flag. Live
     /// multiplayer rejects local pause changes.
     SetPaused { paused: bool },
-    /// `GET /get-replay` — snapshot the current recorder's byte
-    /// stream.  Served from an in-memory mirror populated by the
-    /// recorder's tee-writer; no filesystem read required, so the
-    /// same path works on native and wasm.  Returns the raw JSONL
-    /// text so callers don't have to base64-wrap binary data.
+    /// `GET /get-replay` — snapshot the current recorder's byte stream and
+    /// export the one canonical compact-bitcode replay. Served from a bounded
+    /// in-memory spool populated by the recorder's tee-writer, so native and
+    /// wasm use the same source without reading the filesystem.
     GetReplay,
     /// `POST /load-replay` — stash replay bytes + a `paused` flag into
     /// a process-global slot that [`init_replay_and_rollback`] consumes
@@ -782,8 +781,8 @@ fn list_natives_json() -> serde_json::Value {
 /// tick from the game-session frame loop.  No-op when the transport
 /// isn't running.
 /// Drain the RPC queue without an engine — for use during the
-/// `--wait-for-command` idle phase, where only `load-replay` makes
-/// sense.  Replies `503` to anything that needs engine state.
+/// `--wait-for-command` idle phase, where replay import/export does not need
+/// engine state. Replies `503` to requests that do.
 pub fn drain_pre_engine() {
     let Some(server) = GLOBAL.get() else { return };
     let pending: Vec<HttpRequest> = {
@@ -792,12 +791,13 @@ pub fn drain_pre_engine() {
     };
     for req in pending {
         match req.payload {
+            HttpPayload::GetReplay => start_replay_export(req.response_tx),
             HttpPayload::LoadReplay { data, paused } => {
                 let reply = decode_load_replay(&data, paused);
                 req.response_tx.send(reply);
             }
             _ => req.response_tx.send(Err(
-                "engine not ready — only `load-replay` / `info` work during --wait-for-command"
+                "engine not ready — only `load-replay`, `get-replay`, and `info` work during --wait-for-command"
                     .into(),
             )),
         }
@@ -929,6 +929,7 @@ pub fn drain_global(
                     engine, host, assets,
                 ))));
             }
+            HttpPayload::GetReplay => start_replay_export(req.response_tx),
             other => {
                 let reply = dispatch_in_engine(
                     other,
@@ -1036,6 +1037,7 @@ pub fn drain_global_headless(
                     .map_err(|e| format!("engine serialize: {e}"));
                 req.response_tx.send(reply);
             }
+            HttpPayload::GetReplay => start_replay_export(req.response_tx),
             other => {
                 let reply = dispatch_in_engine(
                     other,
@@ -1199,12 +1201,9 @@ fn dispatch_in_engine(
         | HttpPayload::StepBack { .. }
         | HttpPayload::GoToFrame { .. }
         | HttpPayload::SetPaused { .. } => Err("step must be routed via drain_global".into()),
-        HttpPayload::GetReplay => match get_current_replay() {
-            Ok(content) => Ok(ReplyBody::Json(serde_json::json!({
-                "content": content,
-            }))),
-            Err(e) => Err(e),
-        },
+        HttpPayload::GetReplay => {
+            Err("get-replay must be routed to the replay export worker".into())
+        }
         HttpPayload::LoadReplay { data, paused } => decode_load_replay(&data, paused),
     }
 }
@@ -1806,44 +1805,350 @@ pub fn peek_pending_replay_mission_id() -> Option<String> {
         .map(|p| p.data.header.mission_id.clone())
 }
 
-/// Shared handle to the replay-recording mirror buffer.  Cloned into
-/// [`crate::game_session::init_replay_and_rollback`]; wrapped inside a
-/// tee-writer so every byte the `ReplayRecorder` emits is mirrored
-/// here alongside the real file sink (native) or *instead of* one
-/// (wasm — no filesystem).  `get-replay` serializes this buffer
-/// straight back to the caller.
-pub type ReplayBuffer = Arc<Mutex<Vec<u8>>>;
+/// Hard local limits for the active JSONL recorder. Public replay admission is
+/// a separate boundary; these limits protect the in-process native/browser
+/// recording path before canonical compact export.
+const MAX_ACTIVE_REPLAY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ACTIVE_REPLAY_LINE_BYTES: usize = 16 * 1024 * 1024;
+const REPLAY_SPOOL_CHUNK_BYTES: usize = 64 * 1024;
 
-fn replay_buffer_slot() -> &'static ReplayBuffer {
-    static SLOT: OnceLock<ReplayBuffer> = OnceLock::new();
-    SLOT.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+#[derive(Clone)]
+struct ReplaySpool {
+    inner: Arc<Mutex<ReplaySpoolState>>,
+    max_bytes: usize,
+    max_pending_bytes: usize,
 }
 
-/// Global mirror of the active recorder's byte stream.  Cleared by
-/// [`reset_replay_buffer`] at mission init.  `get-replay` reads a
-/// snapshot of this buffer without touching the filesystem.
-pub fn replay_buffer_handle() -> ReplayBuffer {
-    replay_buffer_slot().clone()
+struct ReplaySpoolState {
+    generation: u64,
+    chunks: Vec<Arc<[u8]>>,
+    tail: Vec<u8>,
+    committed_bytes: usize,
+    failure: Option<String>,
 }
 
-/// Clear the mirror buffer — call from [`crate::game_session`] just
-/// before constructing a new recorder, so the first bytes in the new
-/// buffer are that recorder's freshly-written header.
-pub fn reset_replay_buffer() {
-    replay_buffer_slot()
-        .lock()
-        .expect("replay buffer poisoned")
-        .clear();
+impl ReplaySpool {
+    fn new(max_bytes: usize) -> Self {
+        assert!(max_bytes > 0, "replay spool limit must be positive");
+        Self {
+            inner: Arc::new(Mutex::new(ReplaySpoolState {
+                generation: 0,
+                chunks: Vec::new(),
+                tail: Vec::with_capacity(REPLAY_SPOOL_CHUNK_BYTES),
+                committed_bytes: 0,
+                failure: None,
+            })),
+            max_bytes,
+            max_pending_bytes: MAX_ACTIVE_REPLAY_LINE_BYTES.min(max_bytes),
+        }
+    }
+
+    fn begin(&self) -> ReplaySpoolWriter {
+        let mut state = self.inner.lock().expect("replay spool poisoned");
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .expect("replay spool generation overflow");
+        state.chunks.clear();
+        state.tail.clear();
+        state.committed_bytes = 0;
+        state.failure = None;
+        ReplaySpoolWriter {
+            spool: self.clone(),
+            generation: state.generation,
+            pending: Vec::new(),
+        }
+    }
+
+    fn snapshot(&self) -> Result<ReplaySnapshot, String> {
+        let state = self.inner.lock().expect("replay spool poisoned");
+        if let Some(error) = &state.failure {
+            return Err(format!("active replay spool is unavailable: {error}"));
+        }
+        let mut chunks = state.chunks.clone();
+        if !state.tail.is_empty() {
+            // Complete chunks are Arc clones. Snapshotting on the game thread
+            // copies at most the one incomplete 64-KiB tail.
+            chunks.push(Arc::from(state.tail.clone()));
+        }
+        Ok(ReplaySnapshot {
+            generation: state.generation,
+            byte_length: state.committed_bytes,
+            chunks,
+        })
+    }
 }
 
-/// Snapshot of the current recorder's byte stream.  Empty `Vec` when
-/// no recording is active (or when it's been explicitly reset and no
-/// frames have been written yet).
-pub fn replay_buffer_snapshot() -> Vec<u8> {
-    replay_buffer_slot()
-        .lock()
-        .expect("replay buffer poisoned")
-        .clone()
+/// Recorder-owned staging writer. Bytes become visible to readers only after
+/// the recorder flushes a complete header/record, so export never observes a
+/// partial JSONL line.
+pub struct ReplaySpoolWriter {
+    spool: ReplaySpool,
+    generation: u64,
+    pending: Vec<u8>,
+}
+
+impl ReplaySpoolWriter {
+    fn io_error(message: impl Into<String>) -> std::io::Error {
+        std::io::Error::other(message.into())
+    }
+
+    fn preflight(&self, additional: usize) -> std::io::Result<()> {
+        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        if state.generation != self.generation {
+            return Err(Self::io_error(
+                "replay spool writer belongs to an earlier mission",
+            ));
+        }
+        if let Some(error) = &state.failure {
+            return Err(Self::io_error(error.clone()));
+        }
+        let observed = state
+            .committed_bytes
+            .checked_add(self.pending.len())
+            .and_then(|value| value.checked_add(additional))
+            .ok_or_else(|| Self::io_error("replay spool byte count overflow"))?;
+        let pending = self
+            .pending
+            .len()
+            .checked_add(additional)
+            .ok_or_else(|| Self::io_error("replay spool pending-line byte count overflow"))?;
+        if observed > self.spool.max_bytes {
+            let error = format!(
+                "replay recording reached {observed} bytes, bounded spool limit is {} bytes",
+                self.spool.max_bytes
+            );
+            state.failure = Some(error.clone());
+            return Err(Self::io_error(error));
+        }
+        if pending > self.spool.max_pending_bytes {
+            let error = format!(
+                "replay JSONL record reached {pending} bytes, local line limit is {} bytes",
+                self.spool.max_pending_bytes
+            );
+            state.failure = Some(error.clone());
+            return Err(Self::io_error(error));
+        }
+        Ok(())
+    }
+
+    /// Reject known backpressure before a tee writer changes its durable
+    /// primary. Primary short writes are mirrored by their exact returned
+    /// length and retried normally by `Write::write_all`.
+    pub fn preflight_write(&self, bytes: usize) -> std::io::Result<()> {
+        self.preflight(bytes)
+    }
+
+    /// Permanently invalidate this mission's spool after the durable primary
+    /// reports an ambiguous write or flush failure.
+    pub fn poison(&self, reason: impl Into<String>) {
+        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        if state.generation == self.generation && state.failure.is_none() {
+            state.failure = Some(reason.into());
+        }
+    }
+}
+
+impl std::io::Write for ReplaySpoolWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.preflight(buf.len())?;
+        self.pending.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        if state.generation != self.generation {
+            return Err(Self::io_error(
+                "replay spool writer belongs to an earlier mission",
+            ));
+        }
+        if let Some(error) = &state.failure {
+            return Err(Self::io_error(error.clone()));
+        }
+        let pending_len = self.pending.len();
+        let mut source = self.pending.as_slice();
+        while !source.is_empty() {
+            let available = REPLAY_SPOOL_CHUNK_BYTES - state.tail.len();
+            let take = available.min(source.len());
+            state.tail.extend_from_slice(&source[..take]);
+            source = &source[take..];
+            if state.tail.len() == REPLAY_SPOOL_CHUNK_BYTES {
+                let full = std::mem::replace(
+                    &mut state.tail,
+                    Vec::with_capacity(REPLAY_SPOOL_CHUNK_BYTES),
+                );
+                state.chunks.push(Arc::from(full));
+            }
+        }
+        state.committed_bytes = state
+            .committed_bytes
+            .checked_add(pending_len)
+            .expect("replay spool committed byte count overflow after preflight");
+        self.pending.clear();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ReplaySnapshot {
+    #[cfg_attr(not(test), allow(dead_code))]
+    generation: u64,
+    byte_length: usize,
+    chunks: Vec<Arc<[u8]>>,
+}
+
+impl ReplaySnapshot {
+    fn to_vec(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.byte_length);
+        for chunk in &self.chunks {
+            bytes.extend_from_slice(chunk);
+        }
+        assert_eq!(
+            bytes.len(),
+            self.byte_length,
+            "replay spool snapshot length disagrees with its chunks"
+        );
+        bytes
+    }
+
+    fn compact_sync(&self) -> Result<String, String> {
+        if self.byte_length == 0 {
+            return Err("no active replay recording".to_owned());
+        }
+        let bytes = self.to_vec();
+        let data = engine_replay::ReplayData::from_reader(std::io::Cursor::new(bytes))
+            .map_err(|error| format!("parse mirrored replay buffer: {error}"))?;
+        crate::replay_format::encode_compact(&data, crate::replay_format::ENGINE_VERSION_HASH)
+            .map_err(|error| format!("encode compact replay: {error}"))
+    }
+}
+
+fn replay_spool_slot() -> &'static ReplaySpool {
+    static SLOT: OnceLock<ReplaySpool> = OnceLock::new();
+    SLOT.get_or_init(|| ReplaySpool::new(MAX_ACTIVE_REPLAY_BYTES))
+}
+
+/// Start a fresh mission-scoped replay spool and return its sole writer.
+/// Existing writer handles become stale and fail closed on their next write.
+pub fn reset_replay_buffer() -> ReplaySpoolWriter {
+    replay_spool_slot().begin()
+}
+
+/// Materialize the exact committed JSONL bytes for canonical compact export.
+/// A poisoned or overflowed spool returns an explicit error; it never returns
+/// a plausible truncated replay.
+pub fn replay_buffer_snapshot() -> Result<Vec<u8>, String> {
+    replay_spool_slot()
+        .snapshot()
+        .map(|snapshot| snapshot.to_vec())
+}
+
+fn replay_export_reply(result: Result<String, String>) -> Reply {
+    result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content })))
+}
+
+fn start_replay_export(response_tx: Responder) {
+    let snapshot = match replay_spool_slot().snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            response_tx.send(Err(error));
+            return;
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    enqueue_native_replay_export(snapshot, response_tx);
+    #[cfg(target_arch = "wasm32")]
+    enqueue_browser_replay_export(snapshot, response_tx);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct NativeReplayExportJob {
+    snapshot: ReplaySnapshot,
+    response_tx: Responder,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_replay_export_worker()
+-> Result<&'static std::sync::mpsc::SyncSender<NativeReplayExportJob>, String> {
+    static WORKER: OnceLock<Result<std::sync::mpsc::SyncSender<NativeReplayExportJob>, String>> =
+        OnceLock::new();
+    WORKER
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
+            std::thread::Builder::new()
+                .name("robin-replay-export".to_owned())
+                .spawn(move || {
+                    while let Ok(job) = rx.recv() {
+                        let result = job.snapshot.compact_sync();
+                        job.response_tx.send(replay_export_reply(result));
+                    }
+                })
+                .map_err(|error| format!("spawn replay export worker: {error}"))?;
+            Ok(tx)
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn enqueue_native_replay_export(snapshot: ReplaySnapshot, response_tx: Responder) {
+    let worker = match native_replay_export_worker() {
+        Ok(worker) => worker,
+        Err(error) => {
+            response_tx.send(Err(error));
+            return;
+        }
+    };
+    try_enqueue_native_replay_export(worker, snapshot, response_tx);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn try_enqueue_native_replay_export(
+    worker: &std::sync::mpsc::SyncSender<NativeReplayExportJob>,
+    snapshot: ReplaySnapshot,
+    response_tx: Responder,
+) {
+    let job = NativeReplayExportJob {
+        snapshot,
+        response_tx,
+    };
+    match worker.try_send(job) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::TrySendError::Full(job)) => job.response_tx.send(Err(
+            "replay export worker is busy; retry after the current export finishes".to_owned(),
+        )),
+        Err(std::sync::mpsc::TrySendError::Disconnected(job)) => job
+            .response_tx
+            .send(Err("replay export worker stopped unexpectedly".to_owned())),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn enqueue_browser_replay_export(snapshot: ReplaySnapshot, response_tx: Responder) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    if BUSY.swap(true, Ordering::AcqRel) {
+        response_tx.send(Err(
+            "replay export is already running; retry after it finishes".to_owned(),
+        ));
+        return;
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        struct ReleaseBusy(&'static AtomicBool);
+        impl Drop for ReleaseBusy {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _release = ReleaseBusy(&BUSY);
+        // Return control to rendering/input before the canonical compact
+        // bitcode encode. A different JSONL-in-compact representation is not
+        // a valid shortcut for incremental browser encoding.
+        gloo_timers::future::TimeoutFuture::new(0).await;
+        response_tx.send(replay_export_reply(snapshot.compact_sync()));
+    });
 }
 
 /// Per-frame replay-playback status surfaced to the script-RPC
@@ -1874,23 +2179,6 @@ pub fn set_replay_status(s: Option<ReplayStatus>) {
 /// if no replay is currently playing.
 pub fn replay_status() -> Option<ReplayStatus> {
     *replay_status_slot().lock().expect("replay status poisoned")
-}
-
-/// `GET /get-replay` backing: parse the active recorder's JSONL
-/// buffer and return a compact `rhrec-{hash}-{base64}` share string.
-///
-/// The share string is ~10× smaller than the raw JSONL (zstd-bitcode
-/// over the structured command stream) and is ready to paste into a
-/// URL as-is — no additional encoding on the JS side.
-fn get_current_replay() -> Result<String, String> {
-    let bytes = replay_buffer_snapshot();
-    if bytes.is_empty() {
-        return Err("no active replay recording".into());
-    }
-    let data = engine_replay::ReplayData::from_reader(std::io::Cursor::new(&bytes[..]))
-        .map_err(|e| format!("parse mirrored replay buffer: {e}"))?;
-    crate::replay_format::encode_compact(&data, crate::replay_format::ENGINE_VERSION_HASH)
-        .map_err(|e| format!("encode compact replay: {e}"))
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -2183,6 +2471,150 @@ fn screenshot_target_dimensions(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn replay_spool_publishes_only_complete_flush_boundaries() {
+        let spool = ReplaySpool::new(1024);
+        let mut writer = spool.begin();
+        writer.write_all(b"header\n").unwrap();
+        let before_flush = spool.snapshot().unwrap();
+        assert_eq!(before_flush.generation, 1);
+        assert_eq!(before_flush.byte_length, 0);
+        assert!(before_flush.to_vec().is_empty());
+
+        writer.flush().unwrap();
+        writer.write_all(b"partial record").unwrap();
+        assert_eq!(spool.snapshot().unwrap().to_vec(), b"header\n");
+
+        writer.write_all(b" end\n").unwrap();
+        writer.flush().unwrap();
+        assert_eq!(
+            spool.snapshot().unwrap().to_vec(),
+            b"header\npartial record end\n"
+        );
+    }
+
+    #[test]
+    fn replay_spool_overflow_poison_is_atomic_and_generational() {
+        let spool = ReplaySpool::new(8);
+        let mut old = spool.begin();
+        old.write_all(b"12345678").unwrap();
+        old.flush().unwrap();
+        assert_eq!(spool.snapshot().unwrap().to_vec(), b"12345678");
+
+        let error = old.write_all(b"9").unwrap_err().to_string();
+        assert!(error.contains("bounded spool limit"), "{error}");
+        let state = spool.inner.lock().unwrap();
+        assert_eq!(state.committed_bytes, 8);
+        assert_eq!(state.tail.as_slice(), b"12345678");
+        drop(state);
+        let snapshot_error = spool.snapshot().unwrap_err();
+        assert!(
+            snapshot_error.contains("reached 9 bytes"),
+            "{snapshot_error}"
+        );
+
+        let mut current = spool.begin();
+        assert!(
+            old.flush()
+                .unwrap_err()
+                .to_string()
+                .contains("earlier mission")
+        );
+        current.write_all(b"new\n").unwrap();
+        current.flush().unwrap();
+        assert_eq!(spool.snapshot().unwrap().to_vec(), b"new\n");
+    }
+
+    #[test]
+    fn active_replay_spool_exports_the_single_canonical_compact_format() {
+        let spool = ReplaySpool::new(2 * 1024 * 1024);
+        let writer = spool.begin();
+        let mut recorder = engine_replay::ReplayRecorder::with_writer(
+            Box::new(writer),
+            "active-snapshot".to_owned(),
+            17,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::campaign::Campaign::default(),
+        )
+        .unwrap();
+        assert!(recorder.write_frame(
+            0,
+            0,
+            1,
+            robin_engine::engine::SimulationFrameInput {
+                run_hourglass: true,
+                ..robin_engine::engine::SimulationFrameInput::default()
+            },
+            Vec::new(),
+            None,
+        ));
+
+        let jsonl = spool.snapshot().unwrap().to_vec();
+        let replay = engine_replay::ReplayData::from_reader(std::io::Cursor::new(jsonl)).unwrap();
+        let compact = crate::replay_format::encode_compact(
+            &replay,
+            crate::replay_format::ENGINE_VERSION_HASH,
+        )
+        .unwrap();
+        let (_, decoded) = crate::replay_format::decode_compact(&compact).unwrap();
+        assert_eq!(decoded.frame_count(), 1);
+        assert!(decoded.frame(0).unwrap().input.run_hourglass);
+    }
+
+    #[test]
+    fn replay_spool_long_run_uses_fixed_chunks_and_bounded_staging() {
+        let limit = 8 * 1024 * 1024;
+        let spool = ReplaySpool::new(limit);
+        let mut writer = spool.begin();
+        let record = [b'x'; 511];
+        let mut expected_len = 0;
+        for _ in 0..10_000 {
+            writer.write_all(&record).unwrap();
+            writer.write_all(b"\n").unwrap();
+            writer.flush().unwrap();
+            expected_len += record.len() + 1;
+            assert!(writer.pending.capacity() <= MAX_ACTIVE_REPLAY_LINE_BYTES);
+        }
+        let snapshot = spool.snapshot().unwrap();
+        assert_eq!(snapshot.byte_length, expected_len);
+        let state = spool.inner.lock().unwrap();
+        assert!(
+            state
+                .chunks
+                .iter()
+                .all(|chunk| chunk.len() == REPLAY_SPOOL_CHUNK_BYTES)
+        );
+        assert!(state.tail.len() < REPLAY_SPOOL_CHUNK_BYTES);
+        assert!(state.chunks.len() <= limit.div_ceil(REPLAY_SPOOL_CHUNK_BYTES));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn saturated_native_replay_export_queue_returns_explicit_backpressure() {
+        let (worker, held) = std::sync::mpsc::sync_channel(1);
+        let snapshot = ReplaySnapshot {
+            generation: 7,
+            byte_length: 2,
+            chunks: vec![Arc::from(&b"x\n"[..])],
+        };
+        let (held_response, _held_rx) = std::sync::mpsc::sync_channel(1);
+        worker
+            .send(NativeReplayExportJob {
+                snapshot: snapshot.clone(),
+                response_tx: Responder::Channel(held_response),
+            })
+            .unwrap();
+        let (response, response_rx) = std::sync::mpsc::sync_channel(1);
+        try_enqueue_native_replay_export(&worker, snapshot, Responder::Channel(response));
+        let error = match response_rx.recv().unwrap() {
+            Ok(_) => panic!("saturated export queue unexpectedly accepted work"),
+            Err(error) => error,
+        };
+        assert!(error.contains("worker is busy"), "{error}");
+        drop(held);
+    }
 
     #[test]
     fn step_request_defaults_to_one_tick_and_auto_dismiss() {

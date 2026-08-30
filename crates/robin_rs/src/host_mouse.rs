@@ -1048,7 +1048,8 @@ fn cursor_for_bow(
                                 };
                                 opacity = 50;
                                 shadow_color = MOUSE_BOW_VIP_COLOR;
-                            } else if camp.is_hostile_to(
+                            } else if engine.camps_are_hostile(
+                                camp,
                                 engine
                                     .get_entity(pc_id)
                                     .unwrap_or_else(|| {

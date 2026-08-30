@@ -22,6 +22,25 @@ pub fn should_add_enemy_detectable(
     target_is_soldier: bool,
     target_camp: Camp,
 ) -> bool {
+    should_add_enemy_detectable_with(
+        &crate::diplomacy::DiplomacyState::default(),
+        npc_camp,
+        npc_is_soldier,
+        target_is_pc,
+        target_is_soldier,
+        target_camp,
+    )
+}
+
+/// Authoritative variant using the mission relationship matrix.
+pub fn should_add_enemy_detectable_with(
+    diplomacy: &crate::diplomacy::DiplomacyState,
+    npc_camp: Camp,
+    npc_is_soldier: bool,
+    target_is_pc: bool,
+    target_is_soldier: bool,
+    target_camp: Camp,
+) -> bool {
     if npc_camp == Camp::Error || target_camp == Camp::Error {
         tracing::warn!(
             ?npc_camp,
@@ -37,11 +56,16 @@ pub fn should_add_enemy_detectable(
         // Preserve Original's unusual legacy behavior for both built-in
         // civilian camps. Custom civilians compare the target PC's authored
         // allegiance instead of inheriting Original's all-PCs-are-Royalist
-        // assumption.
+        // assumption. Once mission diplomacy is enabled, every allegiance
+        // follows the authored relationship matrix.
         return target_is_pc
-            && (!matches!(npc_camp, Camp::Custom(_)) || npc_camp.is_hostile_to(target_camp));
+            && ((!diplomacy.enabled() && !matches!(npc_camp, Camp::Custom(_)))
+                || diplomacy.is_hostile(npc_camp, target_camp));
     }
-    (target_is_soldier || target_is_pc) && npc_camp.is_hostile_to(target_camp)
+    if target_is_soldier && !diplomacy.npc_faction_wars() {
+        return false;
+    }
+    (target_is_soldier || target_is_pc) && diplomacy.is_hostile(npc_camp, target_camp)
 }
 
 #[cfg(test)]
@@ -149,6 +173,53 @@ mod tests {
             true,
             true,
             Camp::Royalists
+        ));
+    }
+
+    #[test]
+    fn npc_faction_wars_toggle_disables_soldier_on_soldier_detection() {
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(true, false, None)
+            .expect("empty definition");
+        assert!(!should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Royalists,
+            true,
+            false,
+            true,
+            Camp::Lacklandists,
+        ));
+        assert!(should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Lacklandists,
+            true,
+            true,
+            false,
+            Camp::Royalists,
+        ));
+    }
+
+    #[test]
+    fn enabled_diplomacy_applies_to_builtin_civilian_perception() {
+        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+            true,
+            true,
+            Some(&crate::diplomacy::DiplomacyDefinition {
+                player_coalition: vec![0],
+                relationships: vec![crate::diplomacy::DiplomacyRule {
+                    first: 0,
+                    second: 1,
+                    relationship: crate::diplomacy::Relationship::Neutral,
+                }],
+            }),
+        )
+        .expect("neutral relationship");
+        assert!(!should_add_enemy_detectable_with(
+            &diplomacy,
+            Camp::Lacklandists,
+            false,
+            true,
+            false,
+            Camp::Royalists,
         ));
     }
 

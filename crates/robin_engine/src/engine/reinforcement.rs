@@ -362,7 +362,8 @@ impl EngineInner {
                 let Some(npc_entity) = self.get_entity(npc_id) else {
                     continue;
                 };
-                if !crate::ai_detectable_filter::should_add_enemy_detectable(
+                if !crate::ai_detectable_filter::should_add_enemy_detectable_with(
+                    &self.mission_domain.diplomacy,
                     npc_entity.camp(),
                     npc_entity.is_soldier(),
                     tgt_pc,

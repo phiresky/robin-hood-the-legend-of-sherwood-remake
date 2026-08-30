@@ -384,11 +384,7 @@ impl EngineInner {
                 // The shooting-ability lookup applies FIGHTING modifiers
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
-                let mut shooting = if s
-                    .soldier
-                    .cached_camp
-                    .is_hostile_to(crate::element::Camp::Royalists)
-                {
+                let mut shooting = if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
                     let diff = self.control.sim_config.difficulty;
                     diff.rules().enemy_shooting(profile.shooting, 100) as u32
                 } else {
@@ -1219,7 +1215,7 @@ impl EngineInner {
         let victim_camp = victim.is_human().then(|| victim.camp());
         let same_camp = matches!(
             (shooter_camp, victim_camp),
-            (Some(sc), Some(vc)) if sc == vc,
+            (Some(sc), Some(vc)) if self.camps_are_allied(sc, vc),
         );
         let victim_is_pc_with_shield = if victim.is_pc() {
             match victim.actor_data() {
@@ -3482,17 +3478,22 @@ impl EngineInner {
     /// Awards `BOW_KILL_EXPERIENCE_POINTS` to the shooter's Bow skill
     /// via the campaign's `PcStatus`.
     pub(super) fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
-        let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return, // Only PCs get XP
+        let Some(entity) = self.get_entity(shooter_id) else {
+            return;
         };
+        let Entity::Pc(pc) = entity else {
+            return; // Only PCs get XP
+        };
+        let character_idx = self
+            .pc_description_index_for_pc_data(&pc.pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "bow-kill XP shooter {shooter_id:?} has no valid campaign character identity"
+                )
+            });
 
         let capacity_increased = self.mission_domain.campaign.add_pc_experience(
-            usize::from(profile_idx),
+            character_idx,
             crate::pc_status::SkillName::Bow,
             bow_shot::BOW_KILL_EXPERIENCE_POINTS,
         );
@@ -3536,6 +3537,7 @@ impl EngineInner {
             Some(&obstacle_check),
             projectile_id,
             &actor_order,
+            &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }
@@ -3557,13 +3559,14 @@ impl EngineInner {
             water_zones: Some(&assets.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
-        let results = bow_shot::tick_arrow_in_actor_order(
+        let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
             sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             arrow_id,
             &actor_order,
+            &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }

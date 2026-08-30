@@ -67,6 +67,10 @@ pub struct GraphicConfig {
     #[serde(default = "default_adaptive_widescreen")]
     pub adaptive_widescreen: bool,
 
+    /// Show relationship-aware neutral/ally/hostile colours and legends.
+    #[serde(default)]
+    pub diplomacy_visuals: bool,
+
     /// Present host-only camera/world interpolation between 25 Hz simulation
     /// ticks at the display's vsync cadence. Turning this off restores legacy
     /// one-present-per-tick behavior and the non-vsync swapchain mode.
@@ -383,6 +387,7 @@ impl Default for GraphicConfig {
             texture_effect_parameters: TextureEffectParameters::default(),
             apply_fog_to_all_sprites: true,
             adaptive_widescreen: true,
+            diplomacy_visuals: true,
             native_refresh_presentation: true,
             show_mission_countdown: true,
             dynamic_ambience_visuals: true,
@@ -476,6 +481,7 @@ mod tests {
         assert!(cfg.hardware_cursor);
         assert!(cfg.apply_fog_to_all_sprites);
         assert!(cfg.adaptive_widescreen);
+        assert!(cfg.diplomacy_visuals);
         assert!(cfg.native_refresh_presentation);
         assert!(cfg.show_mission_countdown);
         assert!(cfg.dynamic_ambience_visuals);
@@ -526,6 +532,7 @@ mod tests {
         assert!(restored.hardware_cursor);
         assert!(restored.apply_fog_to_all_sprites);
         assert!(restored.adaptive_widescreen);
+        assert!(restored.diplomacy_visuals);
         assert!(restored.native_refresh_presentation);
         assert_eq!(restored.scale_mode, TextureScaleMode::Anime4kB);
         assert_eq!(restored.texture_effect, TextureEffect::CrtRoyale);
@@ -619,6 +626,14 @@ mod tests {
         let restored: GraphicConfig = serde_json::from_value(json).unwrap();
 
         assert!(restored.native_refresh_presentation);
+    }
+
+    #[test]
+    fn old_profiles_disable_diplomacy_visuals() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut().unwrap().remove("diplomacy_visuals");
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+        assert!(!restored.diplomacy_visuals);
     }
 
     #[test]

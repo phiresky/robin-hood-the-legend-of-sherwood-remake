@@ -307,6 +307,16 @@ impl ElementData {
     pub fn set_sector(&mut self, s: Option<crate::position_interface::SectorHandle>) {
         self.sprite.position_iface.set_sector(s);
     }
+    #[inline]
+    pub fn set_sector_topology(
+        &mut self,
+        sector: Option<crate::position_interface::SectorHandle>,
+        sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    ) {
+        self.sprite
+            .position_iface
+            .set_sector_topology(sector, sector_index);
+    }
 
     /// Door-transit half of "is inside a building": true while the
     /// actor is in the middle of a pass-door animation, before its
@@ -369,6 +379,7 @@ impl ElementData {
     pub fn set_posture(&mut self, p: Posture) {
         if self.posture.allows_transition_to(p) {
             self.posture = p;
+            self.sprite.position_iface.set_posture(p);
         }
     }
 
@@ -5236,6 +5247,8 @@ pub trait Human: Actor {
     fn tiredness(&self) -> u16 {
         self.human_data().tiredness
     }
+    /// Legacy distinct-allegiance fallback for isolated entity tests. Runtime
+    /// combat and AI must query the mission `DiplomacyState` instead.
     fn is_enemy_of(&self, other_camp: Camp) -> bool {
         self.camp().is_hostile_to(other_camp)
     }
@@ -6272,11 +6285,19 @@ mod tests {
 
     #[test]
     fn entity_set_posture_updates_authoritative_posture() {
+        let mut element = ElementData {
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        let mut saved_position = element.sprite.position_iface.v48_serialized_state();
+        saved_position.posture = Posture::Upright;
+        saved_position.old_posture = Posture::Upright;
+        element
+            .sprite
+            .position_iface
+            .restore_v48_serialized_state(saved_position);
         let mut entity = Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                posture: Posture::Upright,
-                ..Default::default()
-            },
+            element,
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
@@ -6287,12 +6308,20 @@ mod tests {
 
         assert_eq!(entity.element_data().posture, Posture::Crouched);
         assert_eq!(entity.posture(), Posture::Crouched);
+        let position = entity.position_iface().v48_serialized_state();
+        assert_eq!(position.posture, Posture::Crouched);
+        assert_eq!(position.old_posture, Posture::Upright);
 
         entity.set_posture(Posture::Dead);
         entity.set_posture(Posture::Upright);
 
         assert_eq!(entity.element_data().posture, Posture::Dead);
         assert_eq!(entity.posture(), Posture::Dead);
+        assert_eq!(
+            entity.position_iface().v48_serialized_state().posture,
+            Posture::Dead,
+            "a rejected corpse transition must not advance position posture"
+        );
     }
 
     #[test]

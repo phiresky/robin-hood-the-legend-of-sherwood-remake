@@ -1202,7 +1202,17 @@ pub fn tick_arrows(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, None, None, false, &[], None)
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+    )
 }
 
 /// Advance every projectile except the ones listed in `skip_arrow_ids`.
@@ -1225,6 +1235,7 @@ pub fn tick_arrows_excluding(
         None,
         false,
         skip_arrow_ids,
+        None,
         None,
     )
 }
@@ -1251,6 +1262,7 @@ pub fn tick_arrow(
         true,
         &[],
         None,
+        None,
     )
 }
 
@@ -1273,6 +1285,29 @@ pub(crate) fn tick_arrow_in_actor_order(
         true,
         &[],
         Some(actor_order),
+        None,
+    )
+}
+
+pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+    arrow_id: EntityId,
+    actor_order: &[EntityId],
+    diplomacy: &crate::diplomacy::DiplomacyState,
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        obstacle_check,
+        Some(arrow_id),
+        true,
+        &[],
+        Some(actor_order),
+        Some(diplomacy),
     )
 }
 
@@ -1299,6 +1334,7 @@ pub fn tick_existing_projectile(
         false,
         &[],
         None,
+        None,
     )
 }
 
@@ -1311,6 +1347,7 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     projectile_id: EntityId,
     actor_order: &[EntityId],
+    diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
         sim,
@@ -1321,6 +1358,7 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
         false,
         &[],
         Some(actor_order),
+        Some(diplomacy),
     )
 }
 
@@ -1334,6 +1372,7 @@ fn tick_arrows_matching(
     primed_segment_already_advanced: bool,
     skip_arrow_ids: &[EntityId],
     actor_order: Option<&[EntityId]>,
+    diplomacy: Option<&crate::diplomacy::DiplomacyState>,
 ) -> Vec<ArrowTickResult> {
     let mut results = Vec::new();
 
@@ -1954,14 +1993,25 @@ fn tick_arrows_matching(
         fn projectile_victim_prefilter_allows(
             shooter: Option<&ShooterTraits>,
             victim: &HumanSnapshot,
+            diplomacy: Option<&crate::diplomacy::DiplomacyState>,
         ) -> bool {
             let Some(shooter) = shooter else {
                 return true;
             };
-            let same_camp = matches!(
+            let protected_relationship = matches!(
                 (shooter.camp, victim.camp),
-                (Some(shooter_camp), Some(victim_camp)) if shooter_camp == victim_camp
+                (Some(shooter_camp), Some(victim_camp)) if diplomacy.map_or_else(
+                    || shooter_camp == victim_camp,
+                    |matrix| {
+                        !matrix.is_hostile(shooter_camp, victim_camp)
+                            || (!matrix.npc_faction_wars()
+                                && !shooter.is_pc
+                                && !victim.is_pc)
+                    },
+                )
             );
+            let diplomacy_protects =
+                diplomacy.is_some_and(|matrix| matrix.enabled()) && protected_relationship;
 
             // C++ filters these candidates inside `FindHumanVictim`
             // before geometric hit selection:
@@ -1970,7 +2020,11 @@ fn tick_arrows_matching(
             //   - PC projectiles do not hit shield-holding PCs
             // The separate forest GoodSoldier rule is covered by the
             // same-camp soldier branch for Royalist soldiers.
-            !(shooter.is_soldier && (victim.is_civilian || same_camp)
+            // Enabled mission diplomacy additionally protects every
+            // non-hostile relationship from PC projectiles. Disabling the
+            // extension retains Original's PC-friendly-fire behavior.
+            !(diplomacy_protects
+                || shooter.is_soldier && (victim.is_civilian || protected_relationship)
                 || shooter.is_pc && victim.is_pc && victim.holding_shield)
         }
 
@@ -2011,7 +2065,7 @@ fn tick_arrows_matching(
                 if Some(snap.id) == shooter_id {
                     continue;
                 }
-                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap) {
+                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap, diplomacy) {
                     continue;
                 }
                 let anchor = if uses_eyes_anchor {

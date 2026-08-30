@@ -929,7 +929,7 @@ impl EnemyAi {
                 let h = self.list_them[idx];
                 let (drop_entry, decrement_visible_count) = match ctx.entity_view(h) {
                     Some(view) => {
-                        let is_friend = view.camp == ctx.camp;
+                        let is_friend = ctx.is_allied_with(view.camp);
                         if !is_friend && !view.is_dead && view.is_unconscious && !view.is_carried {
                             // Original builds listUnconsciousEnemies from
                             // entries removed from the persistent mlistThem
@@ -1306,7 +1306,7 @@ impl EnemyAi {
                 {
                     // Too proud to fight alongside commoners.
                     decision = Decision::TooProudToAttack;
-                } else if ctx.camp.is_hostile_to(crate::element::Camp::Royalists)
+                } else if ctx.is_hostile_to_player()
                     && !soldiers_with_lower_pride
                     && enough_nearer_friends_to_observe(
                         friends_nearer_to_enemy,
@@ -2007,17 +2007,16 @@ impl EnemyAi {
                                 // otherwise-best candidate when its interior
                                 // already contains any PC. A rejected house
                                 // does not update the running minimum.
-                                let dangerous_house =
-                                    ctx.camp.is_hostile_to(crate::element::Camp::Royalists)
-                                        && global
-                                            .houses
-                                            .iter()
-                                            .find(|h| h.sector_index == door.sector_in as u32)
-                                            .is_some_and(|h| {
-                                                h.occupant_ids.iter().any(|id| {
-                                                    matches!(id, crate::element::EntityId::Pc(_))
-                                                })
-                                            });
+                                let dangerous_house = ctx.is_hostile_to_player()
+                                    && global
+                                        .houses
+                                        .iter()
+                                        .find(|h| h.sector_index == door.sector_in as u32)
+                                        .is_some_and(|h| {
+                                            h.occupant_ids.iter().any(|id| {
+                                                matches!(id, crate::element::EntityId::Pc(_))
+                                            })
+                                        });
                                 if !dangerous_house {
                                     best = Some(door.position_in);
                                     minimum_distance = distance;
@@ -2629,7 +2628,7 @@ impl EnemyAi {
         }
         debug_assert!(
             ctx.entity_view(enemy)
-                .map(|v| v.camp != ctx.camp)
+                .map(|v| ctx.is_hostile_with(v.camp))
                 .unwrap_or(true),
             "attack_enemy: target is a friend",
         );

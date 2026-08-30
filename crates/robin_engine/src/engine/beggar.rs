@@ -99,16 +99,17 @@ pub(super) fn set_flags_of_near_coins_on_ground(
 /// requires the pair not to be present already.
 pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
     entities: &mut crate::entities::Entities,
+    diplomacy: &crate::diplomacy::DiplomacyState,
     beggar_id: EntityId,
     difficulty: crate::player_profile::DifficultyLevel,
 ) {
-    use crate::element::{Camp, Detectable, DetectableType};
+    use crate::element::{Detectable, DetectableType};
     let eligible: Vec<_> = entities
         .soldiers()
         .filter_map(|(soldier_id, soldier)| {
             let ai = soldier.npc.ai_brain.enemy()?;
             let iq = difficulty.rules().enemy_iq(ai.soldier_profile_iq, 100);
-            (soldier.soldier.cached_camp.is_hostile_to(Camp::Royalists)
+            (diplomacy.is_hostile_to_player(soldier.soldier.cached_camp)
                 && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())
             .then_some(soldier_id)

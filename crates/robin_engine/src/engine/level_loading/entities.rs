@@ -235,7 +235,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(
@@ -430,7 +430,7 @@ impl EngineInner {
             sprite.apply_placement(
                 initial_position,
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(
@@ -795,7 +795,7 @@ impl EngineInner {
             // We scale cached_max_lp itself so both cached_max_life_points
             // and initial life_points start at the difficulty-adjusted
             // value.
-            if cached_camp.is_hostile_to(crate::element::Camp::Royalists) && !soldier_profile.vip {
+            if self.is_hostile_to_player_camp(cached_camp) && !soldier_profile.vip {
                 let diff = config.difficulty;
                 cached_max_lp = diff.rules().enemy_life_points(cached_max_lp as u16, 10000) as i16;
             }
@@ -862,7 +862,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
@@ -964,7 +964,10 @@ impl EngineInner {
             // debriefing screen stay at 0 — and the `money` console cheat
             // miscomputes the delta.
             self.mission_domain.mission_stat.soldier_money += raw.money;
-            if cached_camp.is_hostile_to(crate::element::Camp::Royalists) {
+            self.mission_domain
+                .mission_stat
+                .record_soldier_encounter(cached_camp);
+            if self.is_hostile_to_player_camp(cached_camp) {
                 self.mission_domain.mission_stat.total_soldier_count += 1;
             }
         }
@@ -1044,7 +1047,7 @@ impl EngineInner {
                 // point (see below).
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
@@ -1253,7 +1256,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
@@ -1378,7 +1381,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(

@@ -83,7 +83,7 @@ impl EngineInner {
                     let is_vip = self.is_entity_vip(assets, victim);
                     let is_rider = victim.soldier_data().map(|s| s.rider).unwrap_or(false);
                     let out_of_order = is_human_out_of_order(victim);
-                    let camp_ok = victim.camp().is_hostile_to(actor.camp());
+                    let camp_ok = self.camps_are_hostile(victim.camp(), actor.camp());
                     let hit_civilian_ok = element.command == Command::HitCmd || !is_civilian;
                     if in_building
                         || victim.element_data().blipped
@@ -166,7 +166,7 @@ impl EngineInner {
                         return false;
                     }
                     if victim.is_npc() {
-                        let is_ally = victim.camp() == actor.camp();
+                        let is_ally = self.camps_are_allied(victim.camp(), actor.camp());
                         let is_civilian = victim.is_civilian();
                         let is_vip = self.is_entity_vip(assets, victim);
                         if is_ally || is_civilian || is_vip {
@@ -837,7 +837,7 @@ impl EngineInner {
                 let target_ok = if victim.is_human() {
                     !victim.element_data().blipped
                         && victim.is_soldier()
-                        && victim.camp().is_hostile_to(actor.camp())
+                        && self.camps_are_hostile(victim.camp(), actor.camp())
                         && !is_human_out_of_order(victim)
                 } else {
                     true
@@ -903,7 +903,7 @@ impl EngineInner {
                 let target_ok = if victim.is_human() {
                     !victim.element_data().blipped
                         && victim.is_soldier()
-                        && victim.camp().is_hostile_to(actor.camp())
+                        && self.camps_are_hostile(victim.camp(), actor.camp())
                         && !is_human_out_of_order(victim)
                         && !self.is_entity_vip(assets, victim)
                 } else {

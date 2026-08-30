@@ -206,6 +206,7 @@ pub struct MissionAttemptStats {
     pub killed_allies: Option<u32>,
     pub added_score: Option<u32>,
     pub recruited_characters: Option<Vec<crate::mission_stat::PcStatName>>,
+    pub factions: Option<std::collections::BTreeMap<u16, crate::mission_stat::FactionMissionStat>>,
 }
 
 impl MissionAttemptStats {
@@ -221,6 +222,7 @@ impl MissionAttemptStats {
             killed_allies: Some(stat.killed_allied_count),
             added_score: Some(stat.added_score),
             recruited_characters: Some(stat.pc_names.clone()),
+            factions: Some(stat.factions.clone()),
         }
     }
 
@@ -235,6 +237,7 @@ impl MissionAttemptStats {
             && self.killed_allies.is_some()
             && self.added_score.is_some()
             && self.recruited_characters.is_some()
+            && self.factions.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -248,6 +251,7 @@ impl MissionAttemptStats {
             && self.killed_allies.is_none()
             && self.added_score.is_none()
             && self.recruited_characters.is_none()
+            && self.factions.is_none()
     }
 }
 
@@ -1383,6 +1387,16 @@ mod tests {
                 "Rescued outlaw".into(),
                 Some(crate::pc_status::SpecialPeasantName::B),
             )],
+            factions: [(
+                7,
+                crate::mission_stat::FactionMissionStat {
+                    encountered_soldiers: 11,
+                    living_soldiers_at_end: 9,
+                    soldier_deaths: 2,
+                    player_caused_soldier_deaths: 1,
+                },
+            )]
+            .into(),
         };
         let frozen = MissionAttemptStats::from_native(&original);
 
@@ -1395,7 +1409,8 @@ mod tests {
         assert_eq!(frozen.killed_peasants, Some(original.killed_peasant_count));
         assert_eq!(frozen.killed_allies, Some(original.killed_allied_count));
         assert_eq!(frozen.added_score, Some(original.added_score));
-        assert_eq!(frozen.recruited_characters, Some(original.pc_names));
+        assert_eq!(frozen.recruited_characters, Some(original.pc_names.clone()));
+        assert_eq!(frozen.factions, Some(original.factions));
         assert!(frozen.is_complete());
     }
 

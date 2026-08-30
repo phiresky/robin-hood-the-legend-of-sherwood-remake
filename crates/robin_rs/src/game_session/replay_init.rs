@@ -11,28 +11,41 @@ use std::sync::Arc;
 
 /// `Write` adapter that forwards bytes to a primary sink (the
 /// `.rhrec.jsonl` file on disk on native; [`std::io::sink`] on wasm
-/// where the browser has no filesystem) and also appends them to a
-/// shared in-memory mirror so the script-RPC `get-replay` endpoint
-/// can snapshot the recording directly from memory.
+/// where the browser has no filesystem) and to the bounded segmented replay
+/// spool used by the script-RPC `get-replay` endpoint.
 ///
 /// Only used by `init_replay_and_rollback`; kept here (rather than in
 /// `replay`) so the recorder itself stays filesystem-agnostic.
 struct TeeWriter {
     primary: Box<dyn std::io::Write + Send>,
-    mirror: crate::http_server::ReplayBuffer,
+    mirror: crate::http_server::ReplaySpoolWriter,
 }
 
 impl std::io::Write for TeeWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.mirror
-            .lock()
-            .expect("replay mirror poisoned")
-            .extend_from_slice(buf);
-        self.primary.write(buf)
+        // Reject known spool backpressure before changing the durable file. If
+        // the primary performs a legitimate short write, mirror only the
+        // accepted prefix and let `write_all` retry the remainder.
+        self.mirror.preflight_write(buf.len())?;
+        let written = match self.primary.write(buf) {
+            Ok(written) => written,
+            Err(error) => {
+                self.mirror
+                    .poison(format!("primary replay write failed: {error}"));
+                return Err(error);
+            }
+        };
+        std::io::Write::write_all(&mut self.mirror, &buf[..written])?;
+        Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.primary.flush()
+        if let Err(error) = self.primary.flush() {
+            self.mirror
+                .poison(format!("primary replay flush failed: {error}"));
+            return Err(error);
+        }
+        std::io::Write::flush(&mut self.mirror)
     }
 }
 
@@ -122,12 +135,9 @@ pub(super) fn init_replay_and_rollback(
     };
     #[cfg(target_arch = "wasm32")]
     let replay_path: Option<String> = None;
-    // The script-RPC `get-replay` endpoint serves a byte-for-byte
-    // mirror of the recorder's output.  Reset it here (fresh mission =
-    // fresh buffer) and tee every recorder write into it via
-    // `TeeWriter` below.
-    crate::http_server::reset_replay_buffer();
-    let rpc_buffer = crate::http_server::replay_buffer_handle();
+    // A fresh mission gets a fresh generation of the bounded spool. The
+    // returned sole writer publishes only complete recorder flush boundaries.
+    let rpc_spool = crate::http_server::reset_replay_buffer();
     // One-shot mission-map rendering exits before the first simulation
     // frame, so producing an empty replay (and its debug log) would only be
     // an unrelated filesystem side effect of the capture tool.
@@ -193,7 +203,7 @@ pub(super) fn init_replay_and_rollback(
         primary.and_then(|primary| {
             let writer: Box<dyn std::io::Write + Send> = Box::new(TeeWriter {
                 primary,
-                mirror: rpc_buffer.clone(),
+                mirror: rpc_spool,
             });
             match ReplayRecorder::with_writer(
                 writer,
@@ -280,5 +290,123 @@ pub(super) fn init_replay_and_rollback(
         rollback_checker,
         rewind_buffer,
         start_paused: args.start_paused || pending_paused,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("replay spool test lock poisoned")
+    }
+
+    struct ControlledPrimary {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        max_write: usize,
+        fail_write: Arc<AtomicBool>,
+        fail_flush: Arc<AtomicBool>,
+    }
+
+    impl std::io::Write for ControlledPrimary {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write.swap(false, Ordering::SeqCst) {
+                return Err(std::io::Error::other("injected primary write failure"));
+            }
+            let written = self.max_write.min(buf.len());
+            self.bytes
+                .lock()
+                .expect("controlled replay primary poisoned")
+                .extend_from_slice(&buf[..written]);
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_flush.swap(false, Ordering::SeqCst) {
+                Err(std::io::Error::other("injected primary flush failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn tee_mirrors_exact_primary_short_write_prefixes() {
+        let _serial = replay_spool_test_lock();
+        let primary_bytes = Arc::new(Mutex::new(Vec::new()));
+        let mut tee = TeeWriter {
+            primary: Box::new(ControlledPrimary {
+                bytes: Arc::clone(&primary_bytes),
+                max_write: 3,
+                fail_write: Arc::new(AtomicBool::new(false)),
+                fail_flush: Arc::new(AtomicBool::new(false)),
+            }),
+            mirror: crate::http_server::reset_replay_buffer(),
+        };
+        tee.write_all(b"complete replay record\n").unwrap();
+        tee.flush().unwrap();
+        assert_eq!(
+            primary_bytes
+                .lock()
+                .expect("controlled replay primary poisoned")
+                .as_slice(),
+            b"complete replay record\n"
+        );
+        assert_eq!(
+            crate::http_server::replay_buffer_snapshot().unwrap(),
+            b"complete replay record\n"
+        );
+    }
+
+    #[test]
+    fn tee_never_publishes_primary_write_or_flush_failures() {
+        let _serial = replay_spool_test_lock();
+        let primary_bytes = Arc::new(Mutex::new(Vec::new()));
+        let mut tee = TeeWriter {
+            primary: Box::new(ControlledPrimary {
+                bytes: Arc::clone(&primary_bytes),
+                max_write: usize::MAX,
+                fail_write: Arc::new(AtomicBool::new(true)),
+                fail_flush: Arc::new(AtomicBool::new(false)),
+            }),
+            mirror: crate::http_server::reset_replay_buffer(),
+        };
+        assert!(tee.write_all(b"rejected\n").is_err());
+        let error = crate::http_server::replay_buffer_snapshot().unwrap_err();
+        assert!(error.contains("primary replay write failed"), "{error}");
+        assert!(
+            primary_bytes
+                .lock()
+                .expect("controlled replay primary poisoned")
+                .is_empty()
+        );
+
+        let mut tee = TeeWriter {
+            primary: Box::new(ControlledPrimary {
+                bytes: Arc::clone(&primary_bytes),
+                max_write: usize::MAX,
+                fail_write: Arc::new(AtomicBool::new(false)),
+                fail_flush: Arc::new(AtomicBool::new(true)),
+            }),
+            mirror: crate::http_server::reset_replay_buffer(),
+        };
+        tee.write_all(b"accepted by primary\n").unwrap();
+        assert!(tee.flush().is_err());
+        assert_eq!(
+            primary_bytes
+                .lock()
+                .expect("controlled replay primary poisoned")
+                .as_slice(),
+            b"accepted by primary\n"
+        );
+        let error = crate::http_server::replay_buffer_snapshot().unwrap_err();
+        assert!(error.contains("primary replay flush failed"), "{error}");
+        assert!(tee.flush().is_err(), "poisoned mirror must not recover");
     }
 }

@@ -6,6 +6,46 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
+type RawOwnerBoundaryPosition = (
+    crate::coordinates::MapPoint,
+    Option<crate::position_interface::SectorHandle>,
+    Option<crate::position_interface::Layer>,
+);
+
+fn collect_raw_owner_boundary_positions<I>(
+    engine: &EngineInner,
+    handles: I,
+) -> std::collections::HashMap<u32, RawOwnerBoundaryPosition>
+where
+    I: IntoIterator<Item = u32>,
+{
+    handles
+        .into_iter()
+        .filter_map(|handle| {
+            let (_, entity) = engine.world.entities.get_legacy_slot(handle)?;
+            let element = entity.element_data();
+            Some((
+                handle,
+                (
+                    element.position_map(),
+                    element.sector(),
+                    element.optional_layer(),
+                ),
+            ))
+        })
+        .collect()
+}
+
+fn raw_owner_boundary_position_to_ai(raw: RawOwnerBoundaryPosition) -> Option<crate::ai::Position> {
+    let (point, sector, layer) = raw;
+    Some(crate::ai::Position {
+        x: point.x,
+        y: point.y,
+        sector,
+        level: layer?.into(),
+    })
+}
+
 #[derive(Clone, Copy)]
 struct ThinkStimulusDebugFilter {
     frame: u32,
@@ -1454,6 +1494,7 @@ impl EngineInner {
             )
             .with_selected_action(&mut host_seat.selected_action)
             .with_campaign(campaign, &mut mission_domain.mission_stat)
+            .with_diplomacy(&mut mission_domain.diplomacy)
             .with_short_briefings(&mut mission_domain.short_briefings)
             .with_standard_view_radius(&mut ai.standard_view_polygon_radius)
             .with_view_radius_cache(&mut ai.view_radius_cache);
@@ -4113,36 +4154,32 @@ impl EngineInner {
                     // callback A. Pre-existing sibling stimuli and owner work
                     // belong after CMD_CHANGE_WAY's explicit tail B; work A
                     // creates remains visible and settles depth-first here.
-                    let raw_positions = |engine: &EngineInner| {
-                        engine
-                            .world
-                            .entities
-                            .occupied()
-                            .map(|(entity_id, entity)| {
-                                let element = entity.element_data();
-                                let point = element.position_map();
-                                (
-                                    entity_id.index(),
-                                    crate::ai::Position {
-                                        x: point.x,
-                                        y: point.y,
-                                        sector: element.sector(),
-                                        level: element.layer(),
-                                    },
-                                )
-                            })
-                            .collect::<std::collections::HashMap<_, _>>()
-                    };
-                    let raw_positions_before_callback = raw_positions(self);
+                    let mut boundary_handles = owner_boundary_positions
+                        .iter()
+                        .map(|(handle, _)| *handle)
+                        .collect::<Vec<_>>();
+                    if !boundary_handles.contains(&owner.index()) {
+                        // Original CMD_CHANGE_WAY always reads mpMe through
+                        // GetPosition independently of the surrounding
+                        // actor-boundary snapshot. A focused continuation may
+                        // therefore have no frozen entity views while its
+                        // owner still needs exact live mutation tracking.
+                        boundary_handles.push(owner.index());
+                    }
+                    let raw_positions_before_callback = collect_raw_owner_boundary_positions(
+                        self,
+                        boundary_handles.iter().copied(),
+                    );
                     let effective_positions_before_callback = self
                         .build_owner_context_scratch_without_forecast(assets)
                         .ai_entity_views;
                     let raw_owner_position_before_callback = raw_positions_before_callback
                         .get(&owner.index())
                         .copied()
+                        .and_then(raw_owner_boundary_position_to_ai)
                         .unwrap_or_else(|| {
                             panic!(
-                                "ChangeWay owner {} disappeared before assignment callback",
+                                "ChangeWay owner {} disappeared or lost its layer before assignment callback",
                                 owner.index()
                             )
                         });
@@ -4183,16 +4220,20 @@ impl EngineInner {
                     // reads it. Preserve the originating legacy-slot snapshot
                     // for unchanged actors, but overlay exact live positions
                     // for actors A actually changed on this call stack.
-                    let raw_positions_after_callback = raw_positions(self);
+                    let raw_positions_after_callback = collect_raw_owner_boundary_positions(
+                        self,
+                        boundary_handles.iter().copied(),
+                    );
                     let effective_positions_after_callback = self
                         .build_owner_context_scratch_without_forecast(assets)
                         .ai_entity_views;
                     let raw_owner_position_after_callback = raw_positions_after_callback
                         .get(&owner.index())
                         .copied()
+                        .and_then(raw_owner_boundary_position_to_ai)
                         .unwrap_or_else(|| {
                             panic!(
-                                "ChangeWay owner {} disappeared during assignment callback",
+                                "ChangeWay owner {} disappeared or lost its layer during assignment callback",
                                 owner.index()
                             )
                         });
@@ -4231,8 +4272,20 @@ impl EngineInner {
                                 // raw element coordinates and the effective
                                 // selected-door position. Once owned by A, B
                                 // observes Original `Position(actor)` semantics.
-                                *position = effective_after.unwrap_or(after);
-                                true
+                                if let Some(after) = effective_after
+                                    .or_else(|| raw_owner_boundary_position_to_ai(after))
+                                {
+                                    *position = after;
+                                    true
+                                } else {
+                                    // A callback may legitimately move a
+                                    // projectile or detached object into the
+                                    // legacy no-layer state. Such an entity is
+                                    // absent from a freshly built AI context,
+                                    // so its frozen boundary overlay must be
+                                    // absent as well.
+                                    false
+                                }
                             }
                             (Some(_), Some(_)) => true,
                             // A removed actor is absent from B's freshly built
@@ -6080,19 +6133,13 @@ impl EngineInner {
                     // hearing test.  Preserve the location sector so noises
                     // on roofs and other raised projection areas originate at
                     // their actual elevation.
-                    let source = self.position_to_point_3d(
-                        assets,
-                        crate::position_interface::SectorHandle::new(sector),
-                        layer,
-                        x,
-                        y,
-                    );
+                    let source = self.position_to_point_3d(assets, Some(sector), layer, x, y);
                     tracing::debug!(
                         noise_type = ?noise_type,
                         x,
                         y,
                         layer,
-                        sector,
+                        sector = sector.get(),
                         elevation = source.z,
                         "dispatching scripted noise"
                     );
@@ -6295,6 +6342,56 @@ impl EngineInner {
             point_in.x,
             point_in.y,
         );
+    }
+}
+
+#[cfg(test)]
+mod owner_boundary_position_tests {
+    use super::*;
+    use crate::element::{ElementData, ElementProjectile, ObjectData, ProjectileData};
+
+    fn projectile_with_layer(layer: Option<u16>) -> Entity {
+        let mut element = ElementData {
+            active: true,
+            ..Default::default()
+        };
+        element.set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
+        match layer {
+            Some(layer) => element.set_layer(layer),
+            None => element.clear_layer(),
+        }
+        Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData::default(),
+            projectile: ProjectileData::default(),
+        })
+    }
+
+    #[test]
+    fn raw_owner_boundary_snapshot_preserves_no_layer_entities_without_ai_projection() {
+        let mut engine = EngineInner::new();
+        let detached = engine.add_entity(projectile_with_layer(None));
+        let placed = engine.add_entity(projectile_with_layer(Some(3)));
+
+        let positions =
+            collect_raw_owner_boundary_positions(&engine, [detached.index(), placed.index()]);
+        let detached_raw = positions
+            .get(&detached.index())
+            .copied()
+            .expect("detached projectile remains visible to raw mutation tracking");
+        assert_eq!(detached_raw.2, None);
+        assert_eq!(raw_owner_boundary_position_to_ai(detached_raw), None);
+
+        let placed_position = positions
+            .get(&placed.index())
+            .copied()
+            .and_then(raw_owner_boundary_position_to_ai)
+            .expect("placed projectile has an AI-compatible boundary position");
+        assert_eq!(placed_position.level, 3);
+        assert_eq!((placed_position.x, placed_position.y), (12.0, 34.0));
+
+        let ai_boundary_positions = collect_raw_owner_boundary_positions(&engine, [placed.index()]);
+        assert!(!ai_boundary_positions.contains_key(&detached.index()));
     }
 }
 

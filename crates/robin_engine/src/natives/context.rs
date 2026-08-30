@@ -20,6 +20,7 @@ pub struct NativeSessionCapabilities<'a> {
     fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
     campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
     mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
+    diplomacy: Option<RefCell<&'a mut crate::diplomacy::DiplomacyState>>,
     sequence_manager: Option<RefCell<&'a mut crate::sequence::SequenceManager>>,
     selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
     selected_action: Option<RefCell<&'a mut crate::profiles::Action>>,
@@ -47,6 +48,7 @@ impl<'a> NativeSessionCapabilities<'a> {
             fast_grid: RefCell::new(fast_grid),
             campaign: None,
             mission_stat: None,
+            diplomacy: None,
             sequence_manager: None,
             selected_pcs: None,
             selected_action: None,
@@ -118,6 +120,11 @@ impl<'a> NativeSessionCapabilities<'a> {
         self
     }
 
+    pub fn with_diplomacy(mut self, diplomacy: &'a mut crate::diplomacy::DiplomacyState) -> Self {
+        self.diplomacy = Some(RefCell::new(diplomacy));
+        self
+    }
+
     /// Attach the canonical objective/short-briefing model. Both vanilla
     /// briefing natives and Spellforge objective extensions write this owner
     /// before returning to the VM.
@@ -174,6 +181,12 @@ impl<'a> NativeSessionCapabilities<'a> {
                 &mut **mission_stat
             })
         })
+    }
+
+    fn diplomacy(&self) -> Option<RefMut<'_, crate::diplomacy::DiplomacyState>> {
+        self.diplomacy
+            .as_ref()
+            .map(|diplomacy| RefMut::map(diplomacy.borrow_mut(), |value| &mut **value))
     }
 
     #[cfg(test)]
@@ -346,6 +359,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) bindings: ScriptBindings<'ctx>,
     pub(crate) campaign: Option<RefMut<'ctx, crate::campaign::Campaign>>,
     pub(crate) mission_stat: Option<RefMut<'ctx, crate::mission_stat::MissionStat>>,
+    pub(crate) diplomacy: Option<RefMut<'ctx, crate::diplomacy::DiplomacyState>>,
     pub(crate) sequence_manager: Option<RefMut<'ctx, crate::sequence::SequenceManager>>,
     pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
     pub(crate) selected_action: Option<RefMut<'ctx, crate::profiles::Action>>,
@@ -362,6 +376,31 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 }
 
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
+    pub(crate) fn relationship(
+        &self,
+        first: crate::element::Camp,
+        second: crate::element::Camp,
+    ) -> crate::diplomacy::Relationship {
+        self.diplomacy.as_deref().map_or_else(
+            || crate::diplomacy::DiplomacyState::default().relationship(first, second),
+            |diplomacy| diplomacy.relationship(first, second),
+        )
+    }
+
+    pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
+        self.diplomacy.as_deref().map_or_else(
+            || crate::diplomacy::DiplomacyState::default().is_player_aligned(camp),
+            |diplomacy| diplomacy.is_player_aligned(camp),
+        )
+    }
+
+    pub(crate) fn is_hostile_to_player(&self, camp: crate::element::Camp) -> bool {
+        self.diplomacy.as_deref().map_or_else(
+            || crate::diplomacy::DiplomacyState::default().is_hostile_to_player(camp),
+            |diplomacy| diplomacy.is_hostile_to_player(camp),
+        )
+    }
+
     pub fn new(
         script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
@@ -380,6 +419,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             bindings: ScriptBindings::empty(),
             campaign: capabilities.campaign(),
             mission_stat: capabilities.mission_stat(),
+            diplomacy: capabilities.diplomacy(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
             selected_action: capabilities.selected_action_option(),
@@ -415,6 +455,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             bindings: bindings.view(),
             campaign: capabilities.campaign(),
             mission_stat: capabilities.mission_stat(),
+            diplomacy: capabilities.diplomacy(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
             selected_action: capabilities.selected_action_option(),
@@ -451,6 +492,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             bindings: bindings.view(),
             campaign: capabilities.campaign(),
             mission_stat: capabilities.mission_stat(),
+            diplomacy: capabilities.diplomacy(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
             selected_action: capabilities.selected_action_option(),

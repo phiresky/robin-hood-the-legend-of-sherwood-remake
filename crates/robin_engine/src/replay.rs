@@ -79,10 +79,12 @@ pub struct ReplayHeader {
 /// slot zero is a live entity and absence is encoded by `Option`, so the
 /// preceding raw-zero layout cannot be decoded safely. Version 23 adds
 /// deterministic authored-mission timers and runtime ambience scheduling to
-/// the simulation config and recorded engine state. There is deliberately
+/// the simulation config and recorded engine state. Version 24 adds mission
+/// diplomacy state, player-coalition policy, faction statistics, and runtime
+/// relationship commands. There is deliberately
 /// no Rust-schema compatibility adapter; earlier incompatible layouts are
 /// rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 23;
+pub const REPLAY_SCHEMA_VERSION: u32 = 24;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -788,8 +790,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_timed_ambience_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 23);
+    fn replay_schema_version_identifies_diplomacy_state() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 24);
     }
 
     fn unique_replay_path(label: &str) -> String {

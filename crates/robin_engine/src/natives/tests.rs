@@ -2033,6 +2033,42 @@ fn register_production_sector() {
 }
 
 #[test]
+fn make_noise_preserves_the_script_points_exact_sector_identity() {
+    let mut host = BoundScriptEffects::new();
+    host.bindings.script_location_count = 1;
+    host.bindings.script_point_count = 1;
+    // H01_Lin_VL Node_15: DrawBridgeRoom passes this point to MakeNoise.
+    host.bindings.location_positions = std::sync::Arc::new(vec![(1135.0, 1843.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![0]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![24]);
+    // Deliberately use a sparse arena slot which differs from the public
+    // sector number: reducing this to `u16` would lose the identity that
+    // Original carries in `RHposition::pSector`.
+    let exact_sector = crate::position_interface::SectorHandle::new(24)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(10_024).unwrap());
+    host.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(exact_sector)]);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(ScriptHandleCodec::location_handle_from_index(0));
+    stack.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::MakeNoise, &mut stack),
+        0
+    );
+    assert!(matches!(
+        host.engine_commands().as_slice(),
+        [EngineCommand::MakeNoise {
+            noise_type: crate::ai::NoiseType::Drawbridge,
+            x: 1135.0,
+            y: 1843.0,
+            layer: 0,
+            sector,
+        }] if *sector == exact_sector
+    ));
+}
+
+#[test]
 #[should_panic(expected = "is already attached")]
 fn production_sector_rejects_duplicate_attachment() {
     let mut host = BoundScriptEffects::new();

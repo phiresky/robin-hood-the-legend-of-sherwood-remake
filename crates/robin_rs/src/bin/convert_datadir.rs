@@ -2979,10 +2979,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         // authoritative and no raw-file fallback exists.
         add_all_saved_world_object_rhs_profiles(required_rhs_profiles);
 
-        build
-            .payload
-            .levels
-            .insert(mp.mission_filename.clone(), LoadedLevel { proto, mission });
+        build.payload.levels.insert(
+            mp.mission_filename.clone(),
+            LoadedLevel {
+                proto,
+                mission,
+                diplomacy: None,
+            },
+        );
 
         if let Some(p) = in_path(&scb_rel) {
             let parsed = scb::parse_file(&p).map_err(|e| anyhow!("scb: {e}"))?;

@@ -192,7 +192,7 @@ impl NativeContext<'_, '_> {
                         tracing::error!("Script Error: GetAIAttitude target {actor} is not an NPC");
                         0
                     }
-                    Some(e) => i32::from(e.camp().is_hostile_to(Camp::Royalists)),
+                    Some(e) => i32::from(self.is_hostile_to_player(e.camp())),
                 }
             }
             SetAILevel => {
@@ -442,9 +442,9 @@ impl NativeContext<'_, '_> {
                 // full `broadcast_noise` path (deafness, state
                 // filter, `AddNoiseToDisplay`), identical to the
                 // gameplay callsites.
-                let Some((layer, sector)) = self.resolve_location_layer_sector(loc) else {
+                let Some((layer, sector)) = self.resolve_location_layer_sector_handle(loc) else {
                     tracing::error!(
-                        "Script error: MakeNoise location {loc} has no layer/sector metadata"
+                        "Script error: MakeNoise location {loc} has no exact layer/sector metadata"
                     );
                     return 0;
                 };
@@ -457,7 +457,8 @@ impl NativeContext<'_, '_> {
                 });
                 tracing::debug!(
                     "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) \
-                     layer {layer} sector {sector}"
+                     layer {layer} sector {}",
+                    sector.get()
                 );
                 0
             }

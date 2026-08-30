@@ -303,8 +303,13 @@ impl EngineInner {
         }
 
         // -- Phase 3: Build the detectable-enemy list for this NPC. --
-        let detectables =
-            build_detectable_enemies_for(self_camp, is_friendly, npc_id, potential_detectables);
+        let detectables = build_detectable_enemies_for_with(
+            &self.mission_domain.diplomacy,
+            self_camp,
+            is_friendly,
+            npc_id,
+            potential_detectables,
+        );
 
         // -- Phase 4: Re-read entity (post-fix) and mutate all the
         //    per-NPC state fields in one shot. --
@@ -332,7 +337,7 @@ impl EngineInner {
             };
             let is_archer = entity.enemy_ai().map(|e| e.is_archer()).unwrap_or(false);
             let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
-            self_camp == Camp::Royalists && is_forest_level && is_archer && !is_rider
+            self.is_player_aligned_camp(self_camp) && is_forest_level && is_archer && !is_rider
         } else {
             false
         };
