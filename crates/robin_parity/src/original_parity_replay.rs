@@ -12866,16 +12866,11 @@ mod tests {
 
     #[test]
     fn compression_window_is_bounded_for_parallel_replay_lanes() {
-        // Unknown and large streams use the fixed 32 MiB replay-memory budget.
+        // Unknown and sufficiently large streams use the 512 MiB maximum;
+        // known smaller streams retain only the power-of-two window they need.
         assert_eq!(native_stream_window_log(None), TRACE_NATIVE_WINDOW_LOG);
-        assert_eq!(
-            native_stream_window_log(Some(192 * 1024 * 1024)),
-            TRACE_NATIVE_WINDOW_LOG
-        );
-        assert_eq!(
-            native_stream_window_log(Some(256 * 1024 * 1024)),
-            TRACE_NATIVE_WINDOW_LOG
-        );
+        assert_eq!(native_stream_window_log(Some(192 * 1024 * 1024)), 28);
+        assert_eq!(native_stream_window_log(Some(256 * 1024 * 1024)), 28);
         assert_eq!(
             native_stream_window_log(Some(256 * 1024 * 1024 + 1)),
             TRACE_NATIVE_WINDOW_LOG
