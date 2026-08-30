@@ -17,8 +17,82 @@ pub(crate) use robin_engine::multiplayer::{
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
 
+/// A class byte precedes each frame length so an impossible client snapshot
+/// or oversized control message is rejected before allocating its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum NetFrameClass {
+    Control = 0,
+    Input = 1,
+    Snapshot = 2,
+}
+
+pub(crate) const MAX_SERVER_CONTROL_FRAME_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CLIENT_CONTROL_FRAME_BYTES: usize = 32 * 1024;
+pub(crate) const MAX_INPUT_FRAME_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_SNAPSHOT_FRAME_BYTES: usize =
+    robin_engine::multiplayer::MAX_SNAPSHOT_FRAME_BYTES;
+pub(crate) const MAX_HELLO_FRAME_BYTES: usize = 24 * 1024;
+
+impl NetFrameClass {
+    pub(crate) fn from_byte(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(Self::Control),
+            1 => Ok(Self::Input),
+            2 => Ok(Self::Snapshot),
+            _ => Err(format!("unknown multiplayer frame class {value}")),
+        }
+    }
+
+    pub(crate) const fn absolute_limit(self) -> usize {
+        match self {
+            Self::Control => MAX_SERVER_CONTROL_FRAME_BYTES,
+            Self::Input => MAX_INPUT_FRAME_BYTES,
+            Self::Snapshot => MAX_SNAPSHOT_FRAME_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InboundFramePolicy {
+    ClientHello,
+    ClientToServer,
+    ServerToClient,
+}
+
+impl InboundFramePolicy {
+    pub(crate) const fn limit(self, class: NetFrameClass) -> Option<usize> {
+        match (self, class) {
+            (Self::ClientHello, NetFrameClass::Control) => Some(MAX_HELLO_FRAME_BYTES),
+            (Self::ClientToServer, NetFrameClass::Control) => Some(MAX_CLIENT_CONTROL_FRAME_BYTES),
+            (Self::ClientToServer, NetFrameClass::Input) => Some(MAX_INPUT_FRAME_BYTES),
+            (Self::ServerToClient, NetFrameClass::Control) => Some(MAX_SERVER_CONTROL_FRAME_BYTES),
+            (Self::ServerToClient, NetFrameClass::Input) => Some(MAX_INPUT_FRAME_BYTES),
+            (Self::ServerToClient, NetFrameClass::Snapshot) => Some(MAX_SNAPSHOT_FRAME_BYTES),
+            (Self::ClientHello, NetFrameClass::Input | NetFrameClass::Snapshot)
+            | (Self::ClientToServer, NetFrameClass::Snapshot) => None,
+        }
+    }
+}
+
+pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
+    match message {
+        NetMsg::InitialSnapshot { .. } => NetFrameClass::Snapshot,
+        NetMsg::Input { .. } | NetMsg::BroadcastInput { .. } => NetFrameClass::Input,
+        NetMsg::Hello { .. }
+        | NetMsg::Welcome { .. }
+        | NetMsg::Reject { .. }
+        | NetMsg::Note(_)
+        | NetMsg::StateHash { .. }
+        | NetMsg::ReadyToSim { .. }
+        | NetMsg::BeginSim { .. }
+        | NetMsg::ModalDismiss { .. } => NetFrameClass::Control,
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod identity;
+pub mod join_ticket;
 pub mod matchmaking;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rendezvous;

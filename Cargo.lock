@@ -5519,6 +5519,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-wasm",
+ "url",
  "velopack",
  "wasm-bindgen",
  "wasm-bindgen-futures",
