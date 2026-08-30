@@ -307,6 +307,16 @@ impl ElementData {
     pub fn set_sector(&mut self, s: Option<crate::position_interface::SectorHandle>) {
         self.sprite.position_iface.set_sector(s);
     }
+    #[inline]
+    pub fn set_sector_topology(
+        &mut self,
+        sector: Option<crate::position_interface::SectorHandle>,
+        sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    ) {
+        self.sprite
+            .position_iface
+            .set_sector_topology(sector, sector_index);
+    }
 
     /// Door-transit half of "is inside a building": true while the
     /// actor is in the middle of a pass-door animation, before its
