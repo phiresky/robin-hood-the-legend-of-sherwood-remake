@@ -5,13 +5,13 @@ an optional gameplay rule (`Sherwood Item Trading` in Gameplay settings), is
 enabled for newly created profiles, and remains disabled when an older profile
 has no saved value for the setting.
 
-The panel is opened with **T** while in Sherwood. It is also available as a
-**Sherwood trading** row in the pause menu for mouse and touch users whenever
-the local player is the host and the rule is enabled. Both routes pass through
-the same typed input request and revalidate host ownership, setting, and
-location immediately before the modal opens. If the player assigns **T** to a
-custom shortcut, that binding takes precedence and the pause-menu row remains
-available. Select an inventory row and use
+The panel is opened with **T** while in Sherwood. Mouse and touch users can open
+it directly from the live Sherwood HUD's money icon, or from the **Sherwood
+trading** row in the pause menu, whenever the local player is the host and the
+rule is enabled. All routes pass through the same typed input request and
+revalidate host ownership, setting, and location immediately before the modal
+opens. If the player assigns **T** to a custom shortcut, that binding takes
+precedence and the two pointer routes remain available. Select an inventory row and use
 the explicit **Sell 1** or **Sell 5** action. `Sell 5` is disabled below five
 units. A second activation confirms the exact item, quantity, and proceeds; the
 UI does not change stock or currency until the authoritative simulation returns
@@ -67,6 +67,9 @@ could be manipulated between save/reload or network peers.
   mission-collected-money, score, or achievement statistics.
 - The command, configuration, resulting world/campaign state, and receipt are
   serialized/state-hashed for replay, rollback, saves, and multiplayer.
+- Multiplayer trading is a non-pausing overlay. Every host request carries a
+  session-local correlation id, so delayed or stale receipts cannot mutate a
+  newly opened panel; clients neither issue trades nor retain host receipts.
 
 Original behavior references: `original-code/RHSectorProduction.cpp` for the
 formula and item-to-action mapping, `original-code/RHScript.cpp` for production

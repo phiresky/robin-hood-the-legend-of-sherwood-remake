@@ -929,6 +929,7 @@ pub struct HostEffectBatches {
     modals: Vec<HostModalRequest>,
     signals: Vec<HostSignal>,
     trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+    next_trade_request_id: u64,
     pub background_blits: Vec<PendingBgBlit>,
 }
 
@@ -982,6 +983,17 @@ impl HostEffectBatches {
 
     pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
         std::mem::take(&mut self.trade_receipts)
+    }
+
+    /// Allocate a process-session correlation id for one authoritative sale.
+    /// This counter deliberately survives panel close/reopen and effect-queue
+    /// clears so a delayed network receipt cannot alias a newer request.
+    pub(crate) fn allocate_trade_request_id(&mut self) -> u64 {
+        self.next_trade_request_id = self
+            .next_trade_request_id
+            .checked_add(1)
+            .expect("Sherwood trade request id exhausted");
+        self.next_trade_request_id
     }
 
     pub fn dialogue_count(&self) -> usize {
@@ -1456,7 +1468,14 @@ impl Host {
         if fx.pending_sherwood_report {
             self.effects.request_sherwood_report();
         }
-        self.effects.extend_trade_receipts(fx.trade_receipts);
+        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
+            self.effects.extend_trade_receipts(fx.trade_receipts);
+        } else if !fx.trade_receipts.is_empty() {
+            tracing::trace!(
+                count = fx.trade_receipts.len(),
+                "discarding host-only Sherwood trade receipts on a client"
+            );
+        }
         if fx.pending_show_console {
             self.effects.request_signal(HostSignal::ShowConsole);
         }

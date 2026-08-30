@@ -966,7 +966,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let modal_pause = ui
             .active_modal
             .as_ref()
-            .is_some_and(|modal| !modal.is_empty());
+            .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()));
 
         // Drain once more at the last deterministic pre-tick boundary.
         // Packets can arrive after the top-of-loop drain while this

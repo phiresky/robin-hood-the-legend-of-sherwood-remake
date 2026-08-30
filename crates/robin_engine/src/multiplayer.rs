@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 24;
+pub const NET_PROTOCOL_VERSION: u32 = 25;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -355,11 +355,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_full_fidelity_campaign_history() {
-        // Version 24 carries the required append-only campaign history and
-        // exact practice-return snapshot. Older peers fail during the
+    fn protocol_version_includes_authoritative_sherwood_trading() {
+        // Version 25 carries Sherwood trading config, commands, receipts, and
+        // the resulting campaign/inventory state. Older peers fail during the
         // handshake before attempting to decode incompatible snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 24);
+        assert_eq!(NET_PROTOCOL_VERSION, 25);
     }
 
     #[test]

@@ -81,7 +81,7 @@ pub enum GameKey {
 }
 
 impl GameKey {
-    pub const COUNT: usize = 38;
+    pub const COUNT: usize = 39;
 
     /// All variants in enum order.
     pub const ALL: [GameKey; Self::COUNT] = [

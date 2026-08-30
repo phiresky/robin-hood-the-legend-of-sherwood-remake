@@ -50,10 +50,45 @@ fn remove_stored_units(entities: &mut Entities, action: Action, quantity: u16) {
 }
 
 impl EngineInner {
+    fn tradable_stock(&self, prod_type: Type) -> u16 {
+        let Some(action) = self
+            .mission_domain
+            .campaign
+            .production_sectors
+            .iter()
+            .find(|sector| sector.prod_type == prod_type)
+            .and_then(|sector| sector.associated_action())
+        else {
+            // A table entry without a matching item sector is programmer/data
+            // corruption; reporting zero would make the UI and authority hide
+            // a broken campaign definition.
+            panic!("tradable production type {prod_type:?} has no item sector/action")
+        };
+        stored_stock(&self.world.entities, action)
+    }
+
+    /// Current Sherwood production projection with inventory amounts replaced
+    /// by the exact bonus stacks that sale authority can remove. In-flight
+    /// arrows remain part of ordinary mission-exit harvesting but are never
+    /// advertised as sellable stock.
+    pub(crate) fn live_tradable_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
+        let mut sectors = self.live_production_sectors(profiles);
+        for sector in &mut sectors {
+            if trade_item(sector.prod_type).is_some() {
+                sector.amount = self.tradable_stock(sector.prod_type);
+            }
+        }
+        sectors
+    }
+
     pub(super) fn sell_sherwood_production_item(
         &mut self,
         assets: &LevelAssets,
         seat: usize,
+        request_id: u64,
         prod_type: Type,
         quantity: TradeQuantity,
     ) {
@@ -62,7 +97,9 @@ impl EngineInner {
                 .feedback
                 .pending_side_effects
                 .trade_receipts
-                .push(TradeReceipt::rejected(prod_type, quantity, reason));
+                .push(TradeReceipt::rejected(
+                    request_id, prod_type, quantity, reason,
+                ));
         };
 
         if seat != usize::from(PlayerId::HOST.0) {
@@ -89,20 +126,7 @@ impl EngineInner {
             reject(self, TradeRejectReason::UnsupportedProductionType);
             return;
         };
-        let Some(action) = self
-            .mission_domain
-            .campaign
-            .production_sectors
-            .iter()
-            .find(|sector| sector.prod_type == prod_type)
-            .and_then(|sector| sector.associated_action())
-        else {
-            // A table entry without a matching item sector is programmer/data
-            // corruption; returning "unsupported" would conceal the drift.
-            panic!("tradable production type {prod_type:?} has no item sector/action")
-        };
-
-        let available = stored_stock(&self.world.entities, action);
+        let available = self.tradable_stock(prod_type);
         let units = quantity.units();
         if available < units {
             reject(self, TradeRejectReason::InsufficientStock { available });
@@ -121,6 +145,14 @@ impl EngineInner {
             return;
         };
 
+        let action = self
+            .mission_domain
+            .campaign
+            .production_sectors
+            .iter()
+            .find(|sector| sector.prod_type == prod_type)
+            .and_then(|sector| sector.associated_action())
+            .expect("validated tradable production sector disappeared");
         remove_stored_units(&mut self.world.entities, action, units);
         // Deliberately bypass `add_campaign_value`: trade proceeds are
         // campaign currency, not mission-collected ransom or score/achievement
@@ -139,6 +171,7 @@ impl EngineInner {
             .pending_side_effects
             .trade_receipts
             .push(TradeReceipt {
+                request_id,
                 prod_type,
                 quantity,
                 outcome: TradeOutcome::Sold {
@@ -156,8 +189,13 @@ impl EngineInner {
 mod tests {
     use super::*;
     use crate::campaign::Campaign;
-    use crate::element::{ElementBonus, ElementData, ElementKind, Entity, ObjectData, ObjectType};
+    use crate::element::{
+        ElementBonus, ElementData, ElementKind, ElementProjectile, Entity, ObjectData, ObjectType,
+        ProjectileData,
+    };
+    use crate::engine::{HostDisplayState, InputState};
     use crate::mission::Mission;
+    use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use crate::profiles::{MissionProfile, ProfileManager};
     use std::sync::Arc;
 
@@ -204,6 +242,38 @@ mod tests {
         assert_eq!(stored_stock(&entities, Action::Bow), 0);
     }
 
+    #[test]
+    fn tradable_arrow_projection_excludes_in_flight_projectiles() {
+        let (mut engine, assets) = sherwood_engine();
+        engine
+            .world
+            .entities
+            .push(Some(Entity::Projectile(ElementProjectile {
+                element: ElementData {
+                    kind: ElementKind::ObjectProjectile,
+                    active: true,
+                    ..Default::default()
+                },
+                object: ObjectData {
+                    object_type: ObjectType::Arrow,
+                    ..Default::default()
+                },
+                projectile: ProjectileData::default(),
+            })));
+
+        let ordinary = engine.live_production_sectors(&assets.profile_manager);
+        let tradable = engine.live_tradable_production_sectors(&assets.profile_manager);
+        let arrow_amount = |sectors: &[crate::sector_production::SectorProduction]| {
+            sectors
+                .iter()
+                .find(|sector| sector.prod_type == Type::MakeArrow)
+                .expect("arrow production sector")
+                .amount
+        };
+        assert_eq!(arrow_amount(&ordinary), 7);
+        assert_eq!(arrow_amount(&tradable), 6);
+    }
+
     fn sherwood_engine() -> (EngineInner, LevelAssets) {
         let mut profiles = ProfileManager::default();
         profiles.missions.push(MissionProfile {
@@ -239,7 +309,7 @@ mod tests {
             .mission_domain
             .campaign
             .get_value(CampaignValue::Ransom);
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::Five);
+        engine.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::Five);
 
         assert_eq!(stored_stock(&engine.world.entities, Action::Bow), 1);
         assert_eq!(
@@ -253,6 +323,7 @@ mod tests {
         assert_eq!(
             engine.feedback.pending_side_effects.trade_receipts,
             vec![TradeReceipt {
+                request_id: 1,
                 prod_type: Type::MakeArrow,
                 quantity: TradeQuantity::Five,
                 outcome: TradeOutcome::Sold {
@@ -274,8 +345,8 @@ mod tests {
             .campaign
             .get_value(CampaignValue::Ransom);
 
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakePurse, TradeQuantity::One);
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakePurse, TradeQuantity::Five);
+        engine.sell_sherwood_production_item(&assets, 0, 1, Type::MakePurse, TradeQuantity::One);
+        engine.sell_sherwood_production_item(&assets, 0, 2, Type::MakePurse, TradeQuantity::Five);
 
         assert_eq!(stored_stock(&engine.world.entities, Action::Purse), 0);
         assert_eq!(
@@ -315,10 +386,10 @@ mod tests {
             .campaign
             .get_value(CampaignValue::Ransom);
 
-        engine.sell_sherwood_production_item(&assets, 1, Type::MakeArrow, TradeQuantity::One);
-        engine.sell_sherwood_production_item(&assets, 0, Type::TrainBow, TradeQuantity::One);
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::Five);
-        engine.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::Five);
+        engine.sell_sherwood_production_item(&assets, 1, 1, Type::MakeArrow, TradeQuantity::One);
+        engine.sell_sherwood_production_item(&assets, 0, 2, Type::TrainBow, TradeQuantity::One);
+        engine.sell_sherwood_production_item(&assets, 0, 3, Type::MakeArrow, TradeQuantity::Five);
+        engine.sell_sherwood_production_item(&assets, 0, 4, Type::MakeArrow, TradeQuantity::Five);
 
         assert_eq!(stored_stock(&engine.world.entities, Action::Bow), 1);
         assert_eq!(
@@ -347,7 +418,7 @@ mod tests {
     fn disabled_location_and_overflow_rejections_are_atomic() {
         let (mut disabled, assets) = sherwood_engine();
         disabled.control.sim_config.sherwood_trading = false;
-        disabled.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        disabled.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&disabled.world.entities, Action::Bow), 6);
         assert_eq!(
             disabled.feedback.pending_side_effects.trade_receipts[0].outcome,
@@ -356,7 +427,7 @@ mod tests {
 
         let (mut outside, assets) = sherwood_engine();
         outside.mission_domain.campaign.current_mission_idx = None;
-        outside.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        outside.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&outside.world.entities, Action::Bow), 6);
         assert_eq!(
             outside.feedback.pending_side_effects.trade_receipts[0].outcome,
@@ -368,11 +439,42 @@ mod tests {
             .mission_domain
             .campaign
             .set_value(CampaignValue::Ransom, i32::MAX);
-        overflow.sell_sherwood_production_item(&assets, 0, Type::MakeArrow, TradeQuantity::One);
+        overflow.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&overflow.world.entities, Action::Bow), 6);
         assert_eq!(
             overflow.feedback.pending_side_effects.trade_receipts[0].outcome,
             TradeOutcome::Rejected(TradeRejectReason::CurrencyOverflow)
         );
+    }
+
+    #[test]
+    fn only_host_can_change_the_authoritative_trading_rule() {
+        let (mut engine, assets) = sherwood_engine();
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_commands(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::new(
+                PlayerId(1),
+                PlayerCommand::SetSherwoodTrading { enabled: false },
+            )],
+        );
+        assert!(engine.control.sim_config.sherwood_trading);
+
+        engine.apply_commands(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::SetSherwoodTrading {
+                enabled: false,
+            })],
+        );
+        assert!(!engine.control.sim_config.sherwood_trading);
     }
 }

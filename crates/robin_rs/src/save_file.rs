@@ -466,7 +466,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-pub const SAVE_FORMAT_VERSION: u32 = 57;
+/// - **v58** (2026-08-30, authoritative Sherwood trading): records the
+///   deterministic trading rule, exact sale commands, receipts, campaign
+///   ransom, and production-item inventory state.
+pub const SAVE_FORMAT_VERSION: u32 = 58;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -726,8 +729,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_full_fidelity_campaign_history() {
-        assert_eq!(SAVE_FORMAT_VERSION, 57);
+    fn save_format_version_includes_authoritative_sherwood_trading() {
+        assert_eq!(SAVE_FORMAT_VERSION, 58);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -977,7 +980,7 @@ mod tests {
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 56,
+                "version": 57,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -991,7 +994,7 @@ mod tests {
             .expect("previous Rust campaign schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 56")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 57")
         );
     }
 

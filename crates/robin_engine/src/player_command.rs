@@ -854,6 +854,7 @@ pub enum PlayerCommand {
     /// authoritative handler validates host ownership, location, stock and
     /// currency overflow before mutating anything.
     CampaignSellProductionItem {
+        request_id: u64,
         prod_type: crate::sector_production::Type,
         quantity: crate::trading::TradeQuantity,
     },
@@ -1102,6 +1103,31 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(decoded).expect("serialize decoded cloak command"),
                 serde_json::to_value(command).expect("serialize cloak command")
+            );
+        }
+    }
+
+    #[test]
+    fn sherwood_trading_commands_roundtrip_in_current_native_codec() {
+        for command in [
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 41,
+                prod_type: crate::sector_production::Type::MakeNet,
+                quantity: crate::trading::TradeQuantity::One,
+            },
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 42,
+                prod_type: crate::sector_production::Type::MakeWaspNest,
+                quantity: crate::trading::TradeQuantity::Five,
+            },
+            PlayerCommand::SetSherwoodTrading { enabled: false },
+        ] {
+            let bytes = bitcode::encode(&command);
+            let decoded: PlayerCommand =
+                bitcode::decode(&bytes).expect("decode Sherwood trading command");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded trading command"),
+                serde_json::to_value(command).expect("serialize trading command")
             );
         }
     }

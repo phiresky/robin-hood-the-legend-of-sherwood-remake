@@ -45,6 +45,7 @@ pub async fn show_gameplay(
     resources: &IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     config: &mut GameplayConfig,
+    sherwood_trading_editable: bool,
 ) -> bool {
     let sw = renderer.screen_width() as i32;
     let sh = renderer.screen_height() as i32;
@@ -81,9 +82,10 @@ pub async fn show_gameplay(
     frame.input_enabled = true;
 
     for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+        frame.add_widget_absolute(widget_bridge::make_button_enabled(
             ID_OPT_BASE + i as u32,
             &mb.label,
+            i != 6 || sherwood_trading_editable,
             mb.x,
             mb.y,
             mb.w,
@@ -151,8 +153,11 @@ pub async fn show_gameplay(
                 }
                 ID_CANCEL => done = true,
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
-                    apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
-                    dirty = true;
+                    let index = (id - ID_OPT_BASE) as usize;
+                    if index != 6 || sherwood_trading_editable {
+                        apply_option_toggle(&mut working, index);
+                        dirty = true;
+                    }
                 }
                 _ => {}
             }
@@ -262,6 +267,7 @@ mod tests {
                 "Sherwood Production Forecast",
                 "Reusable Cloaks",
                 "Campaign Presentation",
+                "Sherwood Item Trading",
             ]
         );
 
@@ -271,6 +277,7 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
+        assert!(is_option_selected(&config, 6));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -295,5 +302,8 @@ mod tests {
             config.campaign_presentation,
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
+
+        apply_option_toggle(&mut config, 6);
+        assert!(!config.sherwood_trading);
     }
 }

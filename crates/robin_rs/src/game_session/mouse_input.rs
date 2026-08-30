@@ -8,7 +8,7 @@
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
-    request_sherwood_trading_panel, required_menu_resources,
+    request_sherwood_trading_panel, required_menu_resources, sherwood_trading_access,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -17,7 +17,7 @@ use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks};
 use crate::gfx_types::GameEvent;
-use crate::host::{Host, HostSignal, TacticalTargetMode};
+use crate::host::{Host, TacticalTargetMode};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
@@ -1519,6 +1519,7 @@ pub(super) async fn handle_pause_menu_events(
                             &mut sound_config,
                             &mut host.frontend.key_config,
                             &mut host.frontend.custom_key_config,
+                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
                             Some(&mut host.audio.sound),
                             audio_backend
                                 .as_mut()
@@ -1881,6 +1882,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
     let engine = &mut manager.engine;
+    sherwood_enable.sherwood_trading = game.is_sherwood
+        && sherwood_trading_access(host, engine, &assets.profile_manager)
+            .validate()
+            .is_ok();
     // ── Sherwood HUD buttons ──
     //
     // Hit-test the Sherwood-only DisplayCampaignMap / GoToExit /
@@ -2094,6 +2099,14 @@ pub(super) async fn handle_sherwood_hud_buttons(
                             arg2: 0,
                         },
                     );
+                    return HandlerAction::Continue;
+                }
+                SherwoodButton::SherwoodTrading => {
+                    if let Err(reason) =
+                        request_sherwood_trading_panel(host, engine, &assets.profile_manager)
+                    {
+                        tracing::warn!(?reason, "live Sherwood trading button request rejected");
+                    }
                     return HandlerAction::Continue;
                 }
             }

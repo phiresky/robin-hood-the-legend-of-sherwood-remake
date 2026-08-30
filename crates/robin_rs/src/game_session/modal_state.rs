@@ -447,6 +447,16 @@ impl ActiveModal {
             ActiveModal::Trading(_) => false,
         }
     }
+
+    /// Whether this local overlay freezes deterministic simulation. Trading
+    /// remains modal to host input, but connected peers must keep advancing;
+    /// pausing only the host would immediately diverge the multiplayer clock.
+    pub(super) fn pauses_simulation(&self, multiplayer_connected: bool) -> bool {
+        match self {
+            ActiveModal::Trading(_) if multiplayer_connected => false,
+            _ => !self.is_empty(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +464,7 @@ pub(super) enum ActiveModalOutcome {
     None,
     QuitMissionRequested,
     SellSherwoodItem {
+        request_id: u64,
         prod_type: robin_engine::sector_production::Type,
         quantity: robin_engine::trading::TradeQuantity,
     },
@@ -1077,7 +1088,7 @@ pub(super) fn tick_active_modal(
                 return ActiveModalOutcome::None;
             };
             let receipts = host.effects.take_trade_receipts();
-            let sectors = engine.live_production_sectors(profiles);
+            let sectors = engine.live_tradable_production_sectors(profiles);
             let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
             match state.tick(
                 window,
@@ -1094,10 +1105,15 @@ pub(super) fn tick_active_modal(
                 Some(TradingOutcome::Sell {
                     prod_type,
                     quantity,
-                }) => ActiveModalOutcome::SellSherwoodItem {
-                    prod_type,
-                    quantity,
-                },
+                }) => {
+                    let request_id = host.effects.allocate_trade_request_id();
+                    state.assign_request_id(request_id, prod_type, quantity);
+                    ActiveModalOutcome::SellSherwoodItem {
+                        request_id,
+                        prod_type,
+                        quantity,
+                    }
+                }
                 None => ActiveModalOutcome::None,
             }
         }

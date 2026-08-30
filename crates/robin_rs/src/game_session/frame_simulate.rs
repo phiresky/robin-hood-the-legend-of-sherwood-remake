@@ -178,7 +178,7 @@ async fn drive_scripted_modal_lanes(
                     tracing::warn!("Sherwood trading: menu resources unavailable — skipped");
                     return rendered;
                 };
-                let sectors = manager.engine.live_production_sectors(profiles);
+                let sectors = manager.engine.live_tradable_production_sectors(profiles);
                 let ransom = crate::ingame_menu::trading::ransom_from_engine(&manager.engine);
                 ui.active_modal = Some(ActiveModal::Trading(Box::new(
                     crate::ingame_menu::TradingModalState::new(
@@ -360,6 +360,7 @@ fn dispatch_trading_modal_outcome(
     match outcome {
         ActiveModalOutcome::None => {}
         ActiveModalOutcome::SellSherwoodItem {
+            request_id,
             prod_type,
             quantity,
         } => dispatch_local_command(
@@ -368,6 +369,7 @@ fn dispatch_trading_modal_outcome(
             post_commands,
             assets,
             &PlayerCommand::CampaignSellProductionItem {
+                request_id,
                 prod_type,
                 quantity,
             },

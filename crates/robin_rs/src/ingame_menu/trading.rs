@@ -55,7 +55,9 @@ pub struct TradingModalState {
     focus: usize,
     ransom: i32,
     pending_confirmation: Option<(Type, TradeQuantity)>,
-    awaiting_receipt: bool,
+    /// `(assigned request id, item, quantity)` for the one command in flight.
+    /// The id is filled by the host immediately after this state emits Sell.
+    awaiting_receipt: Option<(Option<u64>, Type, TradeQuantity)>,
     status: String,
     frame: FrameWnd,
     input: ModalInputState,
@@ -147,7 +149,7 @@ impl TradingModalState {
             focus: 0,
             ransom,
             pending_confirmation: None,
-            awaiting_receipt: false,
+            awaiting_receipt: None,
             status: String::new(),
             frame,
             input,
@@ -170,14 +172,27 @@ impl TradingModalState {
             self.apply_receipt(resources, receipt);
         }
 
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let mut keyboard_activation = None;
-        for event in window.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(window, renderer);
+        let outcome = self.handle_events(resources, &events, transform);
+
+        self.render(renderer, resources, transform, cursor);
+        outcome
+    }
+
+    /// Process pointer transitions in event order. Collapsing a complete
+    /// down/up tap into one final input snapshot loses the widget's required
+    /// Focused -> Pushed -> Activated transition on fast touchscreens.
+    fn handle_events(
+        &mut self,
+        resources: &IngameMenuResources,
+        events: &[GameEvent],
+        transform: MenuTransform,
+    ) -> Option<TradingOutcome> {
+        self.update_button_enablement();
+        let mut activated = None;
+        for event in events {
             self.input.update_from_event(&event, transform);
-            match event {
+            let keyboard_activation = match event {
                 GameEvent::Quit
                 | GameEvent::KeyDown {
                     keycode: Keycode::Escape,
@@ -186,50 +201,64 @@ impl TradingModalState {
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
                     ..
-                } => self.move_selection(-1),
+                } => {
+                    self.move_selection(-1);
+                    None
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
                     ..
-                } => self.move_selection(1),
+                } => {
+                    self.move_selection(1);
+                    None
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Tab | Keycode::Right,
                     ..
-                } => self.focus = (self.focus + 1) % 3,
+                } => {
+                    self.focus = (self.focus + 1) % 3;
+                    None
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Left,
                     ..
-                } => self.focus = (self.focus + 2) % 3,
+                } => {
+                    self.focus = (self.focus + 2) % 3;
+                    None
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter,
                     ..
-                } => keyboard_activation = Some([ID_SELL_ONE, ID_SELL_FIVE, ID_CLOSE][self.focus]),
+                } => Some([ID_SELL_ONE, ID_SELL_FIVE, ID_CLOSE][self.focus]),
                 GameEvent::KeyDown {
                     keycode: Keycode::Char(b'1'),
                     ..
-                } => keyboard_activation = Some(ID_SELL_ONE),
+                } => Some(ID_SELL_ONE),
                 GameEvent::KeyDown {
                     keycode: Keycode::Char(b'5'),
                     ..
-                } => keyboard_activation = Some(ID_SELL_FIVE),
-                GameEvent::MouseUp(_, _, 1) => self.select_row_at_cursor(),
-                _ => {}
+                } => Some(ID_SELL_FIVE),
+                _ => None,
+            };
+
+            let widget_input = self.input.as_widget_input();
+            let widget_events = self.frame.process_input(&widget_input);
+            self.input.end_frame();
+            activated = activated
+                .or_else(|| widget_bridge::find_activated(&widget_events))
+                .or(keyboard_activation);
+
+            if matches!(event, GameEvent::MouseUp(_, _, 1)) {
+                self.select_row_at_cursor();
             }
         }
 
-        self.update_button_enablement();
-        let widget_input = self.input.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input.end_frame();
-        let activated = widget_bridge::find_activated(&events).or(keyboard_activation);
-        let outcome = match activated {
+        match activated {
             Some(ID_SELL_ONE) => self.request_sale(resources, TradeQuantity::One),
             Some(ID_SELL_FIVE) => self.request_sale(resources, TradeQuantity::Five),
             Some(ID_CLOSE) => Some(TradingOutcome::Close),
             _ => None,
-        };
-
-        self.render(renderer, resources, transform, cursor);
-        outcome
+        }
     }
 
     fn refresh_stocks(&mut self, sectors: &[SectorProduction]) {
@@ -275,12 +304,12 @@ impl TradingModalState {
             .widget_mut(ID_SELL_ONE)
             .expect("Sell 1 widget")
             .base_mut()
-            .enabled = stock >= 1 && !self.awaiting_receipt;
+            .enabled = stock >= 1 && self.awaiting_receipt.is_none();
         self.frame
             .widget_mut(ID_SELL_FIVE)
             .expect("Sell 5 widget")
             .base_mut()
-            .enabled = stock >= 5 && !self.awaiting_receipt;
+            .enabled = stock >= 5 && self.awaiting_receipt.is_none();
     }
 
     fn request_sale(
@@ -288,7 +317,7 @@ impl TradingModalState {
         resources: &IngameMenuResources,
         quantity: TradeQuantity,
     ) -> Option<TradingOutcome> {
-        if self.awaiting_receipt || self.rows[self.selected].stock < quantity.units() {
+        if self.awaiting_receipt.is_some() || self.rows[self.selected].stock < quantity.units() {
             return None;
         }
         let row = &self.rows[self.selected];
@@ -303,7 +332,7 @@ impl TradingModalState {
             return None;
         }
         self.pending_confirmation = None;
-        self.awaiting_receipt = true;
+        self.awaiting_receipt = Some((None, row.prod_type, quantity));
         self.status = resources.menu_text.get(MT_STR_TRADE_WAITING);
         Some(TradingOutcome::Sell {
             prod_type: row.prod_type,
@@ -311,7 +340,38 @@ impl TradingModalState {
         })
     }
 
+    /// Bind the host-issued correlation id to the sale emitted by the last
+    /// tick. A missing or mismatched pending sale is a programming error.
+    pub(crate) fn assign_request_id(
+        &mut self,
+        request_id: u64,
+        prod_type: Type,
+        quantity: TradeQuantity,
+    ) {
+        let pending = self
+            .awaiting_receipt
+            .as_mut()
+            .expect("assigning a Sherwood request id without an awaiting sale");
+        assert_eq!((pending.1, pending.2), (prod_type, quantity));
+        assert!(pending.0.replace(request_id).is_none());
+    }
+
     fn apply_receipt(&mut self, resources: &IngameMenuResources, receipt: TradeReceipt) {
+        if self.awaiting_receipt
+            != Some((
+                Some(receipt.request_id),
+                receipt.prod_type,
+                receipt.quantity,
+            ))
+        {
+            tracing::warn!(
+                request_id = receipt.request_id,
+                ?receipt.prod_type,
+                ?receipt.quantity,
+                "discarding stale or unsolicited Sherwood trade receipt"
+            );
+            return;
+        }
         let row = self
             .rows
             .iter_mut()
@@ -363,7 +423,7 @@ impl TradingModalState {
                     substitute(&resources.menu_text.get(MT_STR_TRADE_REJECTED), &[&reason]);
             }
         }
-        self.awaiting_receipt = false;
+        self.awaiting_receipt = None;
         self.pending_confirmation = None;
         self.update_button_enablement();
     }
@@ -474,11 +534,42 @@ pub fn ransom_from_engine(engine: &robin_engine::engine::Engine) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROW_H, ROW_Y, TradingModalState, TradingOutcome, substitute};
+    use super::{
+        ID_CLOSE, ID_SELL_ONE, ROW_H, ROW_Y, TradingModalState, TradingOutcome, substitute,
+    };
+    use crate::gfx_types::GameEvent;
     use crate::ingame_menu::IngameMenuResources;
+    use crate::ingame_menu::layout::MenuTransform;
     use crate::ingame_menu::widget_bridge::ModalInputState;
     use robin_engine::sector_production::{SectorProduction, Type};
-    use robin_engine::trading::{TRADE_ITEMS, TradeQuantity};
+    use robin_engine::trading::{TRADE_ITEMS, TradeOutcome, TradeQuantity, TradeReceipt};
+
+    fn button_point(state: &TradingModalState, id: u32) -> (i32, i32) {
+        let rect = state
+            .frame
+            .widget(id)
+            .expect("trading button")
+            .base()
+            .bbox
+            .0
+            .expect("trading button bbox");
+        (rect.min().x as i32 + 2, rect.min().y as i32 + 2)
+    }
+
+    fn tap(x: i32, y: i32, include_hover: bool) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        if include_hover {
+            events.push(GameEvent::MouseMove {
+                x,
+                y,
+                xrel: 0,
+                yrel: 0,
+            });
+        }
+        events.push(GameEvent::MouseDown(x, y, 1, 1));
+        events.push(GameEvent::MouseUp(x, y, 1));
+        events
+    }
 
     #[test]
     fn localized_trade_templates_replace_placeholders_in_order() {
@@ -528,6 +619,69 @@ mod tests {
         let (resources, mut state) = trading_state(1);
         assert_eq!(state.request_sale(&resources, TradeQuantity::Five), None);
         assert_eq!(state.pending_confirmation, None);
-        assert!(!state.awaiting_receipt);
+        assert!(state.awaiting_receipt.is_none());
+    }
+
+    #[test]
+    fn complete_pointer_tap_in_one_poll_activates_buttons_exactly_once() {
+        let (resources, mut state) = trading_state(10);
+        let (sell_x, sell_y) = button_point(&state, ID_SELL_ONE);
+        let transform = MenuTransform::centered(640, 480);
+
+        assert_eq!(
+            state.handle_events(&resources, &tap(sell_x, sell_y, true), transform),
+            None,
+            "first tap arms the exact sale"
+        );
+        assert_eq!(
+            state.handle_events(&resources, &tap(sell_x, sell_y, false), transform),
+            Some(TradingOutcome::Sell {
+                prod_type: Type::MakeArrow,
+                quantity: TradeQuantity::One,
+            }),
+            "second fast tap confirms once"
+        );
+
+        let (_, mut close_state) = trading_state(10);
+        let (close_x, close_y) = button_point(&close_state, ID_CLOSE);
+        assert_eq!(
+            close_state.handle_events(&resources, &tap(close_x, close_y, true), transform,),
+            Some(TradingOutcome::Close)
+        );
+    }
+
+    #[test]
+    fn only_the_exact_correlated_receipt_can_unlock_or_mutate_a_sale() {
+        let (resources, mut state) = trading_state(10);
+        let receipt = |request_id, remaining_stock, ransom_after| TradeReceipt {
+            request_id,
+            prod_type: Type::MakeArrow,
+            quantity: TradeQuantity::One,
+            outcome: TradeOutcome::Sold {
+                units: 1,
+                unit_price: 1,
+                total_price: 1,
+                remaining_stock,
+                ransom_after,
+            },
+        };
+
+        state.apply_receipt(&resources, receipt(1, 0, 999));
+        assert_eq!(state.rows[0].stock, 10);
+        assert_eq!(state.ransom, 100);
+
+        assert_eq!(state.request_sale(&resources, TradeQuantity::One), None);
+        assert!(state.request_sale(&resources, TradeQuantity::One).is_some());
+        state.assign_request_id(42, Type::MakeArrow, TradeQuantity::One);
+
+        state.apply_receipt(&resources, receipt(41, 0, 999));
+        assert_eq!(state.rows[0].stock, 10);
+        assert_eq!(state.ransom, 100);
+        assert!(state.awaiting_receipt.is_some());
+
+        state.apply_receipt(&resources, receipt(42, 9, 101));
+        assert_eq!(state.rows[0].stock, 9);
+        assert_eq!(state.ransom, 101);
+        assert!(state.awaiting_receipt.is_none());
     }
 }

@@ -154,6 +154,10 @@ pub enum TradeOutcome {
     bitcode::Decode,
 )]
 pub struct TradeReceipt {
+    /// Host-assigned session-local correlation id carried through the
+    /// deterministic command stream. It prevents a delayed multiplayer
+    /// acknowledgement from a closed panel being mistaken for a later sale.
+    pub request_id: u64,
     pub prod_type: Type,
     pub quantity: TradeQuantity,
     pub outcome: TradeOutcome,
@@ -161,11 +165,13 @@ pub struct TradeReceipt {
 
 impl TradeReceipt {
     pub const fn rejected(
+        request_id: u64,
         prod_type: Type,
         quantity: TradeQuantity,
         reason: TradeRejectReason,
     ) -> Self {
         Self {
+            request_id,
             prod_type,
             quantity,
             outcome: TradeOutcome::Rejected(reason),
@@ -247,5 +253,28 @@ mod tests {
         assert!(price(Type::MakeApple) < price(Type::MakePlant));
         assert!(price(Type::MakePlant) < price(Type::MakeNet));
         assert!(price(Type::MakeNet) < price(Type::MakeWaspNest));
+    }
+
+    #[test]
+    fn shipped_full_stock_cannot_replace_campaign_ransom_progression() {
+        // Authored Sherwood capacities, in the same order as TRADE_ITEMS.
+        const CAPACITIES: [u16; 9] = [50, 25, 25, 25, 25, 25, 35, 15, 15];
+        let full_stock_proceeds: u32 = TRADE_ITEMS
+            .iter()
+            .zip(CAPACITIES)
+            .map(|(item, capacity)| u32::from(item.unit_price) * u32::from(capacity))
+            .sum();
+
+        assert_eq!(full_stock_proceeds, 815);
+        assert!(
+            full_stock_proceeds < 1_000,
+            "selling every authored storage slot must remain supplementary income"
+        );
+        assert!(
+            TRADE_ITEMS
+                .iter()
+                .all(|item| item.unit_price * TradeQuantity::Five.units() < 50),
+            "one Sell 5 action must remain below a £50 beggar payment"
+        );
     }
 }

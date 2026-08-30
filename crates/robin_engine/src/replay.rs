@@ -72,7 +72,9 @@ pub struct ReplayHeader {
 /// Version 17 requires the full-fidelity campaign history and practice-return
 /// snapshot. There is deliberately no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 17;
+/// Version 18 adds authoritative Sherwood trading configuration, commands,
+/// and receipts to deterministic replay state.
+pub const REPLAY_SCHEMA_VERSION: u32 = 18;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -779,7 +781,7 @@ mod tests {
 
     #[test]
     fn replay_schema_version_identifies_current_full_frame_native_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 17);
+        assert_eq!(REPLAY_SCHEMA_VERSION, 18);
     }
 
     fn unique_replay_path(label: &str) -> String {
