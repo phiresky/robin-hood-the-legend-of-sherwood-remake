@@ -512,7 +512,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   item-rebalance fields with the
 ///   deterministic trading rule, exact sale commands, receipts, campaign
 ///   ransom, and production-item inventory state.
-pub const SAVE_FORMAT_VERSION: u32 = 60;
+/// - **v61** (2026-08-30, resolved difficulty rules): combines the preceding
+///   feature state with Legendary or
+///   validated Custom difficulty, including independent hostile-soldier
+///   distance, cone-width, and hearing modifiers.
+pub const SAVE_FORMAT_VERSION: u32 = 61;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -769,8 +773,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_item_rebalances_and_authoritative_trading() {
-        assert_eq!(SAVE_FORMAT_VERSION, 60);
+    fn save_format_version_requires_items_trading_and_resolved_difficulty() {
+        assert_eq!(SAVE_FORMAT_VERSION, 61);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

@@ -63,6 +63,19 @@ A list of which additional features we have added, which ones we might still wan
   deleted. The independent Gameplay option is enabled by default. Multiplayer,
   replay playback, and headless automation never autosave.
 
+- **Legendary and custom difficulty.** Player profiles may select the three
+  retail presets, a fixed Legendary preset, or a validated Custom ruleset.
+  The resolved integer/boolean rules are authoritative simulation state and
+  travel through profiles, saves, replay snapshots, and multiplayer welcome
+  messages. Legendary continues the retail combat/health/reaction/capacity
+  progression and additionally gives hostile soldiers 135% view distance,
+  125% view-cone width, and 150% noise sensitivity. Those perception rules
+  are independently editable in Custom; Easy, Medium, and Hard remain at
+  their original 100% perception. Original-RNG parity maps Legendary/Custom
+  back to their explicit retail compatibility preset, and V1 ranked boards
+  accept only immutable Easy/Medium/Hard identities. Story mode is
+  intentionally absent.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -506,7 +519,6 @@ A list of which additional features we have added, which ones we might still wan
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
 - Allow switching language in settings mid-game.
-- More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Item reliability rebalances are implemented as independent Gameplay

@@ -390,12 +390,7 @@ impl EngineInner {
                     .is_hostile_to(crate::element::Camp::Royalists)
                 {
                     let diff = self.control.sim_config.difficulty;
-                    diff.modify_capacity(
-                        profile.shooting,
-                        crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
-                        crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
-                        100,
-                    ) as u32
+                    diff.rules().enemy_shooting(profile.shooting, 100) as u32
                 } else {
                     profile.shooting as u32
                 };
@@ -1259,14 +1254,16 @@ impl EngineInner {
         }
 
         // ── (D) Base hurtable filter ────────────────────────────────
-        // For NPC shooters (or PC shooters on non-Hard difficulty),
-        // civilian victims and same-camp victims are flagged
-        // non-hurtable. Hard-difficulty PC shooters skip this filter
-        // entirely (civilian friendly fire allowed).
+        // NPC shooters always keep the retail protection. PC shooters use the
+        // resolved difficulty rule; Hard and Legendary disable it, preserving
+        // the retail Hard civilian-friendly-fire behavior.
         let apply_hurtable_filter = if shooter_is_npc {
             true
         } else if shooter_is_pc {
-            sim.config().difficulty != crate::player_profile::DifficultyLevel::Hard
+            sim.config()
+                .difficulty
+                .rules()
+                .protect_allies_from_pc_arrows
         } else {
             false
         };
@@ -4157,9 +4154,9 @@ impl EngineInner {
     ///
     /// * If the PC is immortal and below the max, bump HP by 1
     ///   (snapping up to 75 first if below that floor).
-    /// * Otherwise on Easy difficulty, once every `TIME_AUTO_HEAL`
-    ///   frames and while the PC is neither sword-fighting nor in
-    ///   coma, bump HP by 1.
+    /// * Otherwise, when the resolved difficulty enables auto-heal, use its
+    ///   configured cadence while the PC is neither sword-fighting nor in
+    ///   coma. The Easy preset remains exactly once every 100 frames.
     ///
     /// The shared human prelude (concussion decrement, tiredness
     /// recovery, produced-noise refresh) is handled by
@@ -4172,11 +4169,12 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         pc_id: EntityId,
     ) {
-        /// Auto-heal cadence in frames.
-        const TIME_AUTO_HEAL: u32 = 100;
-
-        let tick_easy = sim.config().difficulty == crate::player_profile::DifficultyLevel::Easy
-            && self.control.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
+        let auto_heal_interval = sim.config().difficulty.rules().pc_auto_heal_interval_frames;
+        let tick_auto_heal = auto_heal_interval != 0
+            && self
+                .control
+                .frame_counter
+                .is_multiple_of(u32::from(auto_heal_interval));
 
         let (lp, immortal, swordfighting, in_coma) = {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
@@ -4207,7 +4205,7 @@ impl EngineInner {
         let new_lp = if immortal {
             // Snap up to a 75 floor before incrementing.
             if lp < 75 { 75 } else { lp + 1 }
-        } else if tick_easy && !swordfighting {
+        } else if tick_auto_heal && !swordfighting {
             if in_coma {
                 return;
             }
@@ -6032,18 +6030,16 @@ impl EngineInner {
                             } else {
                                 (80u16, false)
                             };
-                            if self.control.sim_config.difficulty
-                                == crate::player_profile::DifficultyLevel::Hard
-                            {
-                                (
-                                    (base.0 as f32
-                                        * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS)
-                                        as u16,
-                                    base.1,
-                                )
-                            } else {
-                                base
-                            }
+                            let percent = self
+                                .control
+                                .sim_config
+                                .difficulty
+                                .rules()
+                                .pc_punch_concussion_percent;
+                            (
+                                (u32::from(base.0) * u32::from(percent) / 100) as u16,
+                                base.1,
+                            )
                         } else {
                             (40u16, false)
                         }

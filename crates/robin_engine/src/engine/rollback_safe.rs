@@ -3071,7 +3071,7 @@ impl Engine {
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let original_parity = args.original_rng_replay.is_some();
         let mut sim_config = if original_parity {
-            super::cloak::preserve_original_cloak_behavior(args.sim_config)
+            super::cloak::preserve_original_gameplay_behavior(args.sim_config)
         } else {
             args.sim_config
         };

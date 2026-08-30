@@ -73,10 +73,11 @@ pub struct ReplayHeader {
 /// achievement tracker state, and version 19 combines that with expanded item
 /// rules, cached ale eligibility, and ground-stone state. Version 20 combines
 /// that state with authoritative Sherwood trading configuration, commands,
-/// and receipts. There is deliberately
+/// and receipts. Version 21 carries resolved Legendary/Custom difficulty
+/// rules alongside both feature families. There is deliberately
 /// no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 20;
+pub const REPLAY_SCHEMA_VERSION: u32 = 21;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -782,8 +783,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_item_rebalances_and_trading() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 20);
+    fn replay_schema_version_identifies_items_trading_and_resolved_difficulty() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 21);
     }
 
     fn unique_replay_path(label: &str) -> String {
