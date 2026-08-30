@@ -2312,3 +2312,47 @@ Open items, in the order they would pay:
   floor, instead of falling all the way back) would recover part of that.
 - **Interface/pak art now gets the same edge extension** but was not measured
   separately here; the earlier `--pak` numbers predate the smear.
+
+## Campaign close-out: 71.6 s -> 9.3 s, 41.7 MB -> 36.7 MB (2026-08-30)
+
+Everything from the two-day campaign, integrated and measured on one
+build and one conversion (canonical `scripts/build_web_shipping_datadir.sh`
+recipe): schema v14 chunks (RHDDNA14/RHMISN08), all JXL at q70 including
+minimaps and the RLE patch bucket, 48 kbit/s music from the lossless
+remasters, logical audio bundles, merged terrain payloads, wasm threads
+with a fully streamed install, deferred character-chunk streaming,
+overlapped session setup, jxl-rs SIMD, and GPU atlas sprite rendering.
+
+Fresh-profile headless Chrome, loopback COOP/COEP server, `H01_Lin_VL`:
+
+```
+                              v8 base    v10 (day 1)  v11        final
+navigation -> in-game         (untimed)  71.6 s       23.5 s     9.3 s
+  wasm VQ decode              —          61.7 s       12.3 s     (in the 8.1 s install)
+  mission bootstrap           —          6.7 s        6.7 s      1.29 s
+wasm gzip                     4,633,216  5,921,549    4,862,157  5,081,695
+boot datadir                  9,352,150  9,324,395    7,893,113  7,161,383
+blocking mission files       26,142,522 24,857,987   25,272,333 24,192,060
+total through first mission  41,659,633 41,699,607   39,623,279 36,727,000
+```
+
+The wasm carries threads, atomics, the rayon worker snippets and SIMD
+jxl/zstd at opt-level 3, and is still smaller than the v10 build.
+Startup audio no longer appears in the blocking set: sounds ship as 51
+logical bundles plus 16 standalone tracks (was 2,046 files), and the
+catalog prefetches in the background from first playback.
+
+Fullgame buckets: rhs 87,951,100 (193.7 MB in the v8 era, 2.2x),
+audio 26,771,451, terrain 17,222,400, missions 9,484,742.
+
+Verification: 223 chunks (133 VQ blobs, 60 RLE-JXL chunks / 904 JXL
+images), 402,303 sprites, 1,101,554,622 pixels — 396,621 bit-identical
+to the source bank; the 5,682 lossy RLE sprites verify structurally with
+keys and class bit-exact at 29.8 dB opaque PSNR, worst chunk 24.1 dB
+against a 24 dB conversion-time floor that demotes failures back to
+exact words. Sprite rendering is byte-identical: eight full-map captures
+across three missions and four frames, 0 differing pixels.
+
+Remaining bootstrap spans (browser): terrain decode join 426 ms,
+frontend assembly 695 ms, level load 447 ms. Headless SwiftShader
+inflates engine bring-up; a real GPU should land under 9 s.
