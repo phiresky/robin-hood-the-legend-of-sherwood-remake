@@ -132,6 +132,23 @@ const ADMISSION_WORKER_ARG: &str = "--internal-replay-admission-worker";
 const ADMISSION_WORKER_WALL_TIME: std::time::Duration = std::time::Duration::from_secs(15);
 #[cfg(not(target_arch = "wasm32"))]
 const ADMISSION_WORKER_REPLY_LIMIT: usize = 16 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
+const ADMISSION_WORKER_ERROR_LIMIT: usize = 8 * 1024;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn bounded_worker_error(error: impl std::fmt::Display) -> String {
+    let mut message = error.to_string();
+    if message.len() <= ADMISSION_WORKER_ERROR_LIMIT {
+        return message;
+    }
+    let mut end = ADMISSION_WORKER_ERROR_LIMIT;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message.truncate(end);
+    message.push_str(" [truncated]");
+    message
+}
 
 /// Hidden native child entry point. The game binary dispatches here before
 /// tracing, asset loading, clap, windowing, or networking.
@@ -147,7 +164,7 @@ pub fn run_native_admission_worker() -> i32 {
         .read_to_end(&mut bytes);
     let reply = match read_result {
         Err(error) => AdmissionWorkerReply::Rejected {
-            error: format!("read compact replay: {error}"),
+            error: bounded_worker_error(format_args!("read compact replay: {error}")),
         },
         Ok(_) if bytes.len() > limit => AdmissionWorkerReply::Rejected {
             error: format!(
@@ -159,14 +176,14 @@ pub fn run_native_admission_worker() -> i32 {
         },
         Ok(_) => match std::str::from_utf8(&bytes) {
             Err(error) => AdmissionWorkerReply::Rejected {
-                error: format!("compact replay is not UTF-8: {error}"),
+                error: bounded_worker_error(format_args!("compact replay is not UTF-8: {error}")),
             },
             Ok(text) => match robin_replay_format::decode_compact_for_admission(text) {
                 Ok(_) => AdmissionWorkerReply::Accepted {
-                    sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+                    sha256: hex::encode(sha2::Sha256::digest(&bytes)),
                 },
                 Err(error) => AdmissionWorkerReply::Rejected {
-                    error: error.to_string(),
+                    error: bounded_worker_error(error),
                 },
             },
         },
@@ -197,12 +214,25 @@ fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError> {
     let mut child = command.spawn().map_err(|error| {
         ReplayLoadError::WorkerProtocol(format!("spawn admission worker: {error}"))
     })?;
-    child
+    let write_result = child
         .stdin
         .take()
         .ok_or_else(|| ReplayLoadError::WorkerProtocol("worker stdin is unavailable".into()))?
-        .write_all(text.as_bytes())
-        .map_err(|error| ReplayLoadError::WorkerProtocol(format!("write worker input: {error}")))?;
+        .write_all(text.as_bytes());
+    if let Err(error) = write_result {
+        // A worker killed by its memory/CPU limit commonly closes stdin while
+        // the parent is still writing. Reap it here rather than leaving a
+        // zombie and report the failure as containment, not ordinary I/O.
+        let _ = child.kill();
+        let status = child.wait().ok();
+        return Err(ReplayLoadError::ResourceLimit {
+            stage: "worker-input",
+            detail: match status {
+                Some(status) => format!("worker closed input ({error}); exit status {status}"),
+                None => format!("worker closed input ({error})"),
+            },
+        });
+    }
 
     let started = std::time::Instant::now();
     let status = loop {
@@ -254,7 +284,7 @@ fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError> {
     match reply {
         AdmissionWorkerReply::Rejected { error } => Err(ReplayLoadError::AdmissionRejected(error)),
         AdmissionWorkerReply::Accepted { sha256 } => {
-            let actual = format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
+            let actual = hex::encode(sha2::Sha256::digest(text.as_bytes()));
             if sha256 != actual {
                 return Err(ReplayLoadError::WorkerProtocol(
                     "worker accepted a different replay digest".into(),
@@ -353,5 +383,14 @@ mod tests {
     #[test]
     fn public_worker_argument_is_not_a_user_cli_format() {
         assert!(ADMISSION_WORKER_ARG.starts_with("--internal-"));
+    }
+
+    #[test]
+    fn worker_errors_are_bounded_on_utf8_boundaries() {
+        let error = "é".repeat(ADMISSION_WORKER_ERROR_LIMIT);
+        let bounded = bounded_worker_error(error);
+        assert!(bounded.is_char_boundary(bounded.len()));
+        assert!(bounded.len() <= ADMISSION_WORKER_ERROR_LIMIT + " [truncated]".len());
+        assert!(bounded.ends_with(" [truncated]"));
     }
 }

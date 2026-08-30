@@ -66,10 +66,11 @@ export async function validateReplayInWorker(
                 action();
             };
             worker.addEventListener('message', (event: MessageEvent<Reply>) => {
-                if (event.data.status === 'accepted') {
+                const reply = event.data;
+                if (reply.status === 'accepted') {
                     finish(resolve);
                 } else {
-                    finish(() => reject(new Error(event.data.error)));
+                    finish(() => reject(new Error(reply.error)));
                 }
             }, { once: true });
             worker.addEventListener('error', (event) => {
