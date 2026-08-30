@@ -81,6 +81,7 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
 impl ApplicationContext {
@@ -112,6 +113,8 @@ impl ApplicationContext {
         let amount_of_speaking = active.sound_config.amount_of_speaking;
         let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
         let enable_unbinding = active.gameplay_config.enable_unbinding;
+        let clean_hands_npc_kills_invalidate =
+            active.gameplay_config.clean_hands_npc_kills_invalidate;
         let reusable_cloaks = active.gameplay_config.reusable_cloaks;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
@@ -128,6 +131,7 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
@@ -146,6 +150,7 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = existing.amount_of_speaking;
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
         *self
             .sim_config
@@ -205,6 +210,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
         ) = {
             let mut profiles = self
@@ -222,6 +228,7 @@ impl ApplicationContext {
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config.fix_hard_reaction_times,
                 active.gameplay_config.enable_unbinding,
+                active.gameplay_config.clean_hands_npc_kills_invalidate,
                 active.gameplay_config.reusable_cloaks,
             )
         };
@@ -230,6 +237,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
         )?;
         Ok(result)
@@ -251,6 +259,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
         ) = {
             // Keep this lock order (profiles, then keys) consistent for the
@@ -301,6 +310,8 @@ impl ApplicationContext {
             let amount_of_speaking = active.sound_config.amount_of_speaking;
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
             let enable_unbinding = active.gameplay_config.enable_unbinding;
+            let clean_hands_npc_kills_invalidate =
+                active.gameplay_config.clean_hands_npc_kills_invalidate;
             let reusable_cloaks = active.gameplay_config.reusable_cloaks;
 
             if let Err(error) = profiles.save() {
@@ -331,6 +342,7 @@ impl ApplicationContext {
                 amount_of_speaking,
                 fix_hard_reaction_times,
                 enable_unbinding,
+                clean_hands_npc_kills_invalidate,
                 reusable_cloaks,
             )
         };
@@ -340,6 +352,7 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
         )?;
         Ok(profile_id)
@@ -403,6 +416,7 @@ impl ApplicationContext {
                 .active_profile_snapshot()?
                 .gameplay_config
                 .control_tactical_units,
+            gameplay_config: self.active_profile_snapshot()?.gameplay_config,
         })
     }
 
@@ -418,12 +432,14 @@ impl ApplicationContext {
         amount_of_speaking: u16,
         fix_hard_reaction_times: bool,
         enable_unbinding: bool,
+        clean_hands_npc_kills_invalidate: bool,
         reusable_cloaks: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
         *self
             .sim_config
@@ -662,6 +678,16 @@ pub struct HostFrontend {
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
+
+    /// Host-local presentation settings copied from the active profile.
+    /// Deterministic settings are separately mirrored into `SimConfig`.
+    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+
+    /// Host-only eligibility facts consulted only after deterministic mission
+    /// results have been frozen.
+    pub achievement_run_kind: robin_engine::achievement::AchievementRunKind,
+    pub achievement_replay_playback: bool,
+    pub achievement_headless: bool,
 
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
@@ -1065,6 +1091,7 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },
             ..Default::default()

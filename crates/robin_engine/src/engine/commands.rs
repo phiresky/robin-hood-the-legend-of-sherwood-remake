@@ -1448,6 +1448,13 @@ impl EngineInner {
             SetUnbindingEnabled { enabled } => {
                 self.control.sim_config.enable_unbinding = *enabled;
             }
+            SetCleanHandsNpcKillsInvalidate { enabled } => {
+                self.control.sim_config.clean_hands_npc_kills_invalidate = *enabled;
+                self.mission_domain
+                    .achievements
+                    .refresh_clean_hands_rule(*enabled)
+                    .expect("achievement results changed after mission finalization");
+            }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(*enabled);
             }

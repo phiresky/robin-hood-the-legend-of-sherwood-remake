@@ -15,6 +15,11 @@ use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
 use crate::natives::EngineCommand;
 use crate::sequence::SequenceElement;
 
+/// Any authoritative console command makes the current attempt ineligible
+/// for persistent achievement unlocks. Host-only inspection/rendering never
+/// enters deterministic command admission.
+const CHEAT_CONSOLE_COMMAND: u32 = 0x0000_0002;
+
 /// Outcome of running a single console command.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConsoleResponse {
@@ -132,6 +137,9 @@ impl EngineInner {
         selected_view_element: &mut Option<EntityId>,
         cmd: &ConsoleCommand,
     ) -> ConsoleResponse {
+        if !cmd.is_host_only() {
+            self.mission_domain.cheat_used_flags |= CHEAT_CONSOLE_COMMAND;
+        }
         use ConsoleCommand::*;
         match cmd {
             // ── Campaign value mutations ─────────────────────────

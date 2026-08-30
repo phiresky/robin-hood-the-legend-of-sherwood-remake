@@ -2977,6 +2977,9 @@ impl Engine {
                 inner.dispatch_startup_message(sim, assets, 1001, 0, 0);
             });
         }
+        // Startup scripts and Sherwood setup may intentionally create or kill
+        // actors. Only the fully settled world is the Clean Hands baseline.
+        inner.initialize_achievement_tracking();
         inner
             .world
             .validate_level_attachments(assets, inner.script_domains.zones.scripts.len());
@@ -3459,6 +3462,37 @@ impl Engine {
         self.inner.control.sim_config
     }
 
+    /// Attach host-only run eligibility to the exact terminal campaign
+    /// attempt after its deterministic quit command has been admitted.
+    pub fn promote_mission_achievement_results(
+        &mut self,
+        policy: crate::achievement::AchievementUnlockPolicy,
+        context: crate::achievement::AchievementRunContext,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Result<Option<crate::achievement::AchievementHistoryUpdate>, String> {
+        self.inner
+            .promote_mission_achievement_results(policy, context, profiles)
+    }
+
+    /// Live deterministic achievement evidence for optional host HUDs.
+    pub fn achievement_progress(&self) -> crate::achievement::AchievementProgressSnapshot {
+        self.inner.achievement_progress()
+    }
+
+    /// Frozen successful-attempt evidence used by the terminal debrief.
+    pub fn mission_achievement_results(
+        &self,
+    ) -> Option<&crate::achievement::MissionAchievementResults> {
+        self.inner.mission_achievement_results()
+    }
+
+    /// Exact selected-character skill evidence for the detailed XP HUD.
+    pub fn pc_experience_snapshot(
+        &self,
+        entity: crate::element::EntityId,
+    ) -> Result<super::PcExperienceSnapshot, String> {
+        self.inner.pc_experience_snapshot(entity)
+    }
     /// Seed and configuration captured before this mission's frame-0 setup.
     pub fn mission_start_simulation(&self) -> (u64, SimConfig) {
         (
