@@ -4435,6 +4435,11 @@ const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
 // min/median/max corpus benchmark made level 19 16-19% smaller than level 9,
 // at the cost of substantially slower conversion. Long-distance matching was
 // neutral at level 19, so the native writer deliberately leaves it disabled.
+// Rechecked with the production 512 MiB window on interactive session 21
+// (11,594 frames, 8,028.68 MiB raw bitcode): LDM off and on both rounded to
+// 18.78 MiB (less than 0.01 MiB apart). The single-pass timings, which also
+// included native decode and bitcode encode, were 233.75s off and 225.13s on;
+// that is not a compression-density reason to pay LDM's extra working state.
 const TRACE_NATIVE_ZSTD_LEVEL: i32 = 19;
 const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
 /// Frames per on-disk block. A current-schema frame contains a complete Original
@@ -8130,12 +8135,20 @@ fn native_reblock_file_identity(path: &Path) -> (u64, String, u64, u64) {
 }
 
 fn native_reblock_semantic_identity(path: &Path) -> (u64, u64, String) {
+    native_reblock_semantic_identity_with_version_policy(path, true)
+}
+
+fn native_reblock_semantic_identity_with_version_policy(
+    path: &Path,
+    normalize_container_version: bool,
+) -> (u64, u64, String) {
     let footer = read_binary_trace_footer(path)
         .unwrap_or_else(|error| panic!("read native reblock footer {}: {error}", path.display()));
     validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
         panic!("validate native reblock footer {}: {error}", path.display())
     });
-    let (frame_count, digest) = digest_and_validate_native_trace(path);
+    let (frame_count, digest) =
+        digest_and_validate_native_trace_with_version_policy(path, normalize_container_version);
     assert_eq!(frame_count, footer.frame_count);
     (frame_count, footer.final_frame, sha256_hex(&digest))
 }
@@ -8204,11 +8217,14 @@ fn read_native_reblock_binding(path: &Path, native_path: &Path) -> NativeReblock
         .unwrap_or_else(|error| panic!("open native reblock binding {}: {error}", path.display()));
     let binding: NativeReblockBinding = serde_json::from_reader(BufReader::new(file))
         .unwrap_or_else(|error| panic!("read native reblock binding {}: {error}", path.display()));
-    assert_eq!(
-        binding.version,
-        TRACE_NATIVE_VERSION,
-        "native reblock binding {} has unsupported version",
-        path.display()
+    assert!(
+        matches!(
+            binding.version,
+            TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
+        ),
+        "native reblock binding {} has unsupported version {}",
+        path.display(),
+        binding.version
     );
     assert_eq!(
         binding.canonical_path,
@@ -8261,7 +8277,11 @@ fn native_reblock_file_identity_matches(
 }
 
 fn validate_native_reblock_semantics(path: &Path, binding: &NativeReblockBinding, label: &str) {
-    let (frame_count, final_frame, semantic_sha256) = native_reblock_semantic_identity(path);
+    let (frame_count, final_frame, semantic_sha256) =
+        native_reblock_semantic_identity_with_version_policy(
+            path,
+            binding.version == TRACE_NATIVE_VERSION,
+        );
     assert_eq!(
         frame_count, binding.frame_count,
         "{label} frame count changed"
@@ -8274,6 +8294,28 @@ fn validate_native_reblock_semantics(path: &Path, binding: &NativeReblockBinding
         semantic_sha256, binding.source_semantic_sha256,
         "{label} is not semantically identical to the bound source"
     );
+}
+
+fn upgrade_legacy_native_reblock_binding(
+    binding_path: &Path,
+    source_path: &Path,
+    mut binding: NativeReblockBinding,
+) -> NativeReblockBinding {
+    if binding.version == TRACE_NATIVE_VERSION {
+        return binding;
+    }
+    assert_eq!(binding.version, TRACE_NATIVE_LEGACY_VERSION);
+    let (frame_count, final_frame, semantic_sha256) = native_reblock_semantic_identity(source_path);
+    assert_eq!(frame_count, binding.frame_count);
+    assert_eq!(final_frame, binding.final_frame);
+    binding.version = TRACE_NATIVE_VERSION;
+    binding.source_semantic_sha256 = semantic_sha256;
+    write_native_reblock_binding(binding_path, &binding);
+    eprintln!(
+        "upgraded legacy native reblock binding {}",
+        binding_path.display()
+    );
+    binding
 }
 
 enum NativeReblockPreparation {
@@ -8366,6 +8408,7 @@ fn prepare_native_reblock_source(
             );
             validate_native_reblock_source_file_identity(source_path, &binding)
                 .unwrap_or_else(|error| panic!("{error}"));
+            let binding = upgrade_legacy_native_reblock_binding(binding_path, source_path, binding);
             return NativeReblockPreparation::Ready(binding);
         }
 
@@ -8390,6 +8433,7 @@ fn prepare_native_reblock_source(
     if native_path.exists() {
         validate_native_reblock_semantics(native_path, &binding, "canonical trace");
     }
+    let binding = upgrade_legacy_native_reblock_binding(binding_path, source_path, binding);
     eprintln!(
         "resuming authenticated reblock of {} from {}",
         native_path.display(),
@@ -8448,19 +8492,27 @@ fn reblock_native_trace(trace_path: &Path) {
     let source_bytes = binding.source_bytes;
     let started = Instant::now();
     let mut source = BinaryTraceReader::open(&source_path);
-    let footer = source.footer;
-    validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+    let source_footer = source.footer;
+    validate_binary_trace_footer(&source_footer).unwrap_or_else(|error| {
         panic!(
             "native parity trace reblock source {} has an invalid footer: {error}",
             source_path.display()
         )
     });
-    let header = source.read_header();
+    let mut header = source.read_header();
     assert_eq!(
-        header.version, TRACE_NATIVE_VERSION,
-        "native parity trace reblock source has version {}",
-        header.version
+        header.version, source_footer.version,
+        "native parity trace reblock source header/footer versions differ"
     );
+    // The reader has already projected every supported legacy layout into the
+    // current in-memory representation. Reblocking is therefore also the
+    // native-format migration boundary: always emit the current header/footer
+    // version, and compare semantic digests after the same normalization.
+    header.version = TRACE_NATIVE_VERSION;
+    let output_footer = BinaryTraceFooter {
+        version: TRACE_NATIVE_VERSION,
+        ..source_footer
+    };
     let mut source_digest = Sha256::new();
     update_native_semantic_digest(&mut source_digest, &header);
     let mut timeline = TraceTimeline::new(header.trace.initial_frame);
@@ -8537,7 +8589,7 @@ fn reblock_native_trace(trace_path: &Path) {
         let mut writer = encoder
             .finish()
             .unwrap_or_else(|error| panic!("finish native trace reblock compression: {error}"));
-        write_binary_trace_footer(&mut writer, footer)
+        write_binary_trace_footer(&mut writer, output_footer)
             .unwrap_or_else(|error| panic!("write reblocked native trace footer: {error}"));
         writer
             .flush()
@@ -8608,14 +8660,27 @@ fn validate_native_trace(trace_path: &Path) {
 }
 
 fn digest_and_validate_native_trace(path: &Path) -> (u64, sha2::digest::Output<Sha256>) {
+    digest_and_validate_native_trace_with_version_policy(path, true)
+}
+
+fn digest_and_validate_native_trace_with_version_policy(
+    path: &Path,
+    normalize_container_version: bool,
+) -> (u64, sha2::digest::Output<Sha256>) {
     let mut reader = BinaryTraceReader::open(path);
     validate_binary_trace_footer(&reader.footer)
         .unwrap_or_else(|error| panic!("reblocked native trace footer is invalid: {error}"));
-    let header = reader.read_header();
+    let mut header = reader.read_header();
     assert_eq!(
         header.version, reader.footer.version,
         "native parity trace header/footer versions differ"
     );
+    // Container versions describe encoding layouts, not replay semantics.
+    // Readers project supported legacy layouts into the current types, so
+    // normalize the header before hashing to compare migrations faithfully.
+    if normalize_container_version {
+        header.version = TRACE_NATIVE_VERSION;
+    }
     let mut digest = Sha256::new();
     update_native_semantic_digest(&mut digest, &header);
     let mut timeline = TraceTimeline::new(header.trace.initial_frame);
@@ -12668,6 +12733,42 @@ mod tests {
         writer.get_ref().sync_all().unwrap();
     }
 
+    fn write_synthetic_version_67_native_trace(path: &Path, source_fingerprint: &str) {
+        let file = File::create(path).unwrap();
+        let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
+        encoder.window_log(20).unwrap();
+        let header: BinaryTraceHeaderV67 = minimal_test_native_header(source_fingerprint).into();
+        write_binary_record(&mut encoder, &header, "synthetic version-67 native header");
+        let end = BinaryTraceRecordV67::End {
+            rng_suffix: Some(TraceRngBatch {
+                first_index: 0,
+                values: Vec::new(),
+                callsite_offsets: Vec::new(),
+                main_thread: Vec::new(),
+                domains: Vec::new(),
+            }),
+            final_frame: Some(0),
+            frame_count: Some(0),
+        };
+        write_binary_record(
+            &mut encoder,
+            std::slice::from_ref(&end),
+            "synthetic version-67 native block",
+        );
+        let mut writer = encoder.finish().unwrap();
+        write_binary_trace_footer(
+            &mut writer,
+            BinaryTraceFooter {
+                version: TRACE_NATIVE_LEGACY_VERSION,
+                frame_count: 0,
+                final_frame: 0,
+            },
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        writer.get_ref().sync_all().unwrap();
+    }
+
     fn write_test_native_records_with_compression(
         records: &[BinaryTraceRecord],
         footer: Option<BinaryTraceFooter>,
@@ -12746,6 +12847,59 @@ mod tests {
         assert_eq!(decoded.version, TRACE_NATIVE_V66_VERSION);
         assert_eq!(decoded.source_fingerprint, "legacy-v66");
         assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
+    }
+
+    #[test]
+    fn reblock_migrates_version_67_to_current_without_semantic_drift() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("legacy.parity.bitcode.zst");
+        write_synthetic_version_67_native_trace(&native, "legacy-reblock");
+        let before = native_reblock_semantic_identity(&native);
+
+        reblock_native_trace(&native);
+
+        let footer = read_binary_trace_footer(&native).unwrap();
+        let header = read_binary_trace_header(&native);
+        assert_eq!(footer.version, TRACE_NATIVE_VERSION);
+        assert_eq!(header.version, TRACE_NATIVE_VERSION);
+        assert_eq!(native_reblock_semantic_identity(&native), before);
+    }
+
+    #[test]
+    fn reblock_resumes_version_67_recovery_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("legacy-recovery.parity.bitcode.zst");
+        write_synthetic_version_67_native_trace(&native, "legacy-recovery");
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        let (source_bytes, source_content_sha256, source_device, source_inode) =
+            native_reblock_file_identity(&native);
+        let (frame_count, final_frame, source_semantic_sha256) =
+            native_reblock_semantic_identity_with_version_policy(&native, false);
+        let binding = NativeReblockBinding {
+            version: TRACE_NATIVE_LEGACY_VERSION,
+            canonical_path: native_reblock_canonical_path(&native),
+            source_content_sha256,
+            source_bytes,
+            source_semantic_sha256,
+            frame_count,
+            final_frame,
+            #[cfg(unix)]
+            source_device,
+            #[cfg(unix)]
+            source_inode,
+        };
+        write_native_reblock_binding(&binding_path, &binding);
+        std::fs::hard_link(&native, &source).unwrap();
+
+        reblock_native_trace(&native);
+
+        assert_eq!(
+            read_binary_trace_footer(&native).unwrap().version,
+            TRACE_NATIVE_VERSION
+        );
+        assert!(!source.exists());
+        assert!(!binding_path.exists());
     }
 
     #[test]
