@@ -35,6 +35,7 @@ use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 #[cfg(feature = "client")]
 use robin_engine::engine::{HostDisplayState, InputState};
 use robin_engine::fast_find_grid::LineIndex;
+use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
@@ -100,11 +101,11 @@ struct TraceHeader {
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
     /// Current session-boundary state omitted by Original's RHSG payload.
-    /// Early schema-16 interactive recordings predate this additive overlay.
-    /// An empty compatibility value leaves constructor/restored state intact;
-    /// a present nonempty overlay remains strictly validated below.
+    /// Early schema-16 interactive recordings predate this additive overlay;
+    /// `None` selects the narrowly-scoped legacy reconstruction below while a
+    /// present (including empty) list remains authoritative.
     #[serde(default)]
-    initial_npc_transients: Vec<TraceInitialNpcTransient>,
+    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
 }
@@ -412,6 +413,201 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
             .parity_replay_setup()
             .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
+}
+
+fn reconstruct_unrecorded_maximal_visibility(
+    leaning_out: bool,
+    visibilities: impl IntoIterator<Item = f32>,
+) -> u16 {
+    let view_speed = if leaning_out {
+        robin_engine::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+    } else {
+        robin_engine::ai_vision::BASE_VIEW_SPEED
+    };
+    visibilities
+        .into_iter()
+        .map(|visibility| (view_speed as f32 * visibility) as u16)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Reconstruct the process-local maximum omitted by old interactive segments.
+///
+/// Original clears this value before an ordinary vision pass, but dead and
+/// unconscious actors return first and retain the preceding segment's value.
+/// Their serialized detectable buckets retain the visibility which supplied
+/// that maximum, making this exact reconstruction possible.
+fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
+    let restorations = engine
+        .npc_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let entity = engine
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
+            let npc = entity
+                .npc_data()
+                .unwrap_or_else(|| panic!("legacy parity fallback found non-NPC {id:?}"));
+            let retains_maximum =
+                entity.is_dead() || entity.human_data().is_some_and(|human| human.unconscious);
+            retains_maximum.then(|| {
+                let value = reconstruct_unrecorded_maximal_visibility(
+                    npc.view_lean_out,
+                    npc.detectable_lists
+                        .iter()
+                        .flatten()
+                        .map(|detectable| detectable.last_visibility),
+                );
+                (id, value)
+            })
+        })
+        .collect::<Vec<_>>();
+    for &(id, value) in &restorations {
+        engine
+            .parity_replay_setup()
+            .restore_npc_maximal_visibility(id, value);
+    }
+    restorations.len()
+}
+
+/// An in-process load starts recording after save adoption and consequently
+/// has no setup RNG prefix. A nonempty prefix proves a fresh engine, whose
+/// constructor-zero process-local state is authoritative.
+fn legacy_loaded_save_retains_process_transients(prefix_draw_count: usize) -> bool {
+    prefix_draw_count == 0
+}
+
+fn preceding_interactive_session_path(path: &Path, session_index: u32) -> Option<PathBuf> {
+    if session_index <= 1 {
+        return None;
+    }
+    let previous = session_index.checked_sub(1)?;
+    let name = path.file_name()?.to_str()?;
+    let suffix = format!("-session-{session_index:04}.jsonl.zst");
+    let stem = name.strip_suffix(&suffix)?;
+    Some(path.with_file_name(format!("{stem}-session-{previous:04}.jsonl.zst")))
+}
+
+fn terminal_macro_waypoint(
+    element: &TraceElement,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    let ai = element.ai.as_ref()?;
+    terminal_macro_waypoint_at(
+        (element.position_map.x.bits, element.position_map.y.bits),
+        ai.macro_cursor,
+        ai.macro_in_progress,
+        paths,
+    )
+}
+
+fn terminal_macro_waypoint_at(
+    position_bits: (u32, u32),
+    cursor: Option<u16>,
+    macro_in_progress: bool,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    if !macro_in_progress {
+        return None;
+    }
+    let offset = usize::from(cursor?);
+    let mut matches = paths.iter().enumerate().flat_map(|(path_index, path)| {
+        path.waypoints
+            .iter()
+            .enumerate()
+            .filter_map(move |(waypoint_index, waypoint)| {
+                let robin_engine::level_data::WaypointCommand::Macro(command) = &waypoint.command
+                else {
+                    return None;
+                };
+                (offset <= command.len()
+                    && position_bits.0 == f32::from(waypoint.x).to_bits()
+                    && position_bits.1 == f32::from(waypoint.y).to_bits())
+                .then_some((path_index, waypoint_index))
+            })
+    });
+    let (path_index, waypoint_index) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some((
+        robin_engine::ai::PathId::new(u16::try_from(path_index).ok()?)?,
+        u8::try_from(waypoint_index).ok()?,
+        offset,
+    ))
+}
+
+fn apply_legacy_interactive_chain_macro_fallback(
+    trace_path: &Path,
+    header: &TraceHeader,
+    prefix_draw_count: usize,
+    engine: &mut Engine,
+    assets: &LevelAssets,
+) -> usize {
+    if header.schema != TRACE_SCHEMA_VERSION
+        || header.start_state != TraceStartState::LoadedSave
+        || header.initial_npc_transients.is_some()
+        || !legacy_loaded_save_retains_process_transients(prefix_draw_count)
+    {
+        return 0;
+    }
+    let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
+        .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
+    else {
+        return 0;
+    };
+    let previous_native = ensure_native_binary_trace(&previous_path);
+    let mut reader = BinaryTraceReader::open(&previous_native);
+    let previous_header = reader.read_header().trace;
+    if previous_header.schema != TRACE_SCHEMA_VERSION
+        || previous_header.session_index.checked_add(1) != Some(header.session_index)
+        || previous_header.mission != header.mission
+        || previous_header.proto_level != header.proto_level
+        || previous_header.rng_seed != header.rng_seed
+    {
+        return 0;
+    }
+    let mut final_frame = None;
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => final_frame = Some(frame),
+            BinaryTraceRecord::End {
+                final_frame: end,
+                frame_count,
+                ..
+            } => {
+                reader
+                    .validate_terminator(frame_count.unwrap(), end.unwrap())
+                    .unwrap_or_else(|error| panic!("invalid preceding interactive trace: {error}"));
+                break;
+            }
+        }
+    }
+    let mut runtime = engine
+        .npc_ids()
+        .into_iter()
+        .map(|id| (engine.original_creation_order(id), id))
+        .collect::<BTreeMap<_, _>>();
+    let mut restored = 0;
+    for element in &final_frame
+        .expect("preceding interactive trace has no frames")
+        .elements
+    {
+        let Some((path_id, waypoint, offset)) =
+            terminal_macro_waypoint(element, &assets.hiking_paths)
+        else {
+            continue;
+        };
+        let Some(id) = runtime.remove(&element.creation_order) else {
+            continue;
+        };
+        restored += usize::from(
+            engine
+                .parity_replay_setup()
+                .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
+        );
+    }
+    restored
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -1538,10 +1734,10 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
-    /// Missing in early schema-16 frames. The compatibility default is never
-    /// compared when the header identifies that legacy recorder generation.
+    /// Missing in early schema-16 frames. Presence, including an authoritative
+    /// `false`, must survive conversion to the native trace.
     #[serde(default)]
-    increment_map_valid: bool,
+    increment_map_valid: Option<bool>,
     movement_map: TracePoint,
     layer: u16,
     layer_goal: u16,
@@ -3226,6 +3422,62 @@ impl TraceTimeline {
     }
 }
 
+/// Recover the quit-mission message omitted by old schema-16 recorders.
+///
+/// `RHEngine::PerformHourglass` can report success without advancing only
+/// through its leading `mbQuitWon` branch. The UI message which set that flag
+/// was not captured, so this exact terminal envelope proves the omitted input.
+// TODO(parity-trace): record MSG_QUIT_MISSION in Original and remove this
+// compatibility inference after every surviving schema-16 trace includes it.
+fn is_legacy_retained_terminal_success(
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+) -> bool {
+    schema == TRACE_SCHEMA_VERSION
+        && frame_before == frame_after
+        && !simulation_body_ran
+        && game_code == GameCode::LevelSucceeded as i32
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_legacy_retained_terminal_success_repair(
+    commands: &mut Vec<PlayerCommand>,
+    difficulty: robin_engine::player_profile::DifficultyLevel,
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+    already_applied: &mut bool,
+) -> bool {
+    if *already_applied
+        || !is_legacy_retained_terminal_success(
+            schema,
+            frame_before,
+            frame_after,
+            simulation_body_ran,
+            game_code,
+        )
+    {
+        return false;
+    }
+
+    // Original MSG_QUIT_MISSION performs campaign/stat updates first and only
+    // then arms mbQuitWon for the retained Hourglass boundary.
+    *already_applied = true;
+    commands.push(PlayerCommand::ApplyQuitMissionUpdates {
+        exit_code: GameCode::LevelSucceeded,
+        difficulty,
+        completed_at_unix_seconds: None,
+        campaign_run_nonce: None,
+    });
+    commands.push(PlayerCommand::QuitMissionRequested);
+    true
+}
+
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
     engine
         .advance_frame(
@@ -3894,15 +4146,35 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
         );
         eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
-    if header.initial_npc_transients.is_empty() {
+    let restored_dormant_macros = apply_legacy_interactive_chain_macro_fallback(
+        &trace_path,
+        &header,
+        prefix_end,
+        &mut engine,
+        &assets,
+    );
+    if restored_dormant_macros != 0 {
         eprintln!(
-            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retaining restored/constructor NPC transient state"
+            "restored {restored_dormant_macros} dormant waypoint-macro cursors from the authoritative preceding interactive-session terminal snapshot"
         );
-    } else {
-        apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
+    }
+    if let Some(transients) = header.initial_npc_transients.as_deref() {
+        apply_initial_npc_transients(&mut engine, transients);
         eprintln!(
             "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
-            header.initial_npc_transients.len()
+            transients.len()
+        );
+    } else if header.start_state == TraceStartState::LoadedSave
+        && header.session_index > 1
+        && legacy_loaded_save_retains_process_transients(prefix_end)
+    {
+        let restored = apply_legacy_segment_visibility_fallback(&mut engine);
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
+        );
+    } else {
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retained authoritative constructor/restored NPC transient state"
         );
     }
     if rewind_loaded_save_rng {
@@ -3972,6 +4244,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
+    let mut legacy_terminal_success_repair_applied = false;
 
     #[cfg(feature = "client")]
     if let Some(port) = http_server {
@@ -4243,6 +4516,16 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 commands_before_hourglass_resolved.push(command);
             }
         }
+        append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass_resolved,
+            header.sim_config.difficulty.into(),
+            header.schema,
+            frame.frame_before,
+            frame.frame_after,
+            frame.simulation_body_ran,
+            frame.game_code,
+            &mut legacy_terminal_success_repair_applied,
+        );
         let commands_after_hourglass = commands_after_hourglass
             .into_iter()
             .filter_map(|command| {
@@ -4284,7 +4567,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
             delayed_drop_ale_route_engine,
         );
         if debug_stage_timing {
@@ -4470,7 +4753,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &frame,
             tick_effects.code as i32,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -9680,12 +9963,12 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
-        if !legacy_additive_omissions {
+        if let Some(expected_increment_map_valid) = expected.increment_map_valid {
             compare(
                 &mut differences,
                 id,
                 "increment_map_valid",
-                expected.increment_map_valid,
+                expected_increment_map_valid,
                 pi.is_increment_map_computed(),
             );
         }
@@ -10665,7 +10948,36 @@ mod tests {
             .remove("initial_npc_transients");
         let legacy = serde_json::from_value::<TraceHeader>(header)
             .expect("legacy schema-16 headers default the additive NPC transient boundary");
-        assert!(legacy.initial_npc_transients.is_empty());
+        assert!(legacy.initial_npc_transients.is_none());
+
+        let present_empty = minimal_test_native_header("test").trace;
+        assert_eq!(present_empty.initial_npc_transients, Some(Vec::new()));
+    }
+
+    #[test]
+    fn legacy_segment_visibility_fallback_matches_original_uword_conversion() {
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [0.0, 1.599_999_9, 0.25]),
+            31
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [2.399_999_9]),
+            47
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(true, [1.599_999_9]),
+            319
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
+            0
+        );
+    }
+
+    #[test]
+    fn legacy_visibility_fallback_only_applies_to_in_process_reload_envelopes() {
+        assert!(legacy_loaded_save_retains_process_transients(0));
+        assert!(!legacy_loaded_save_retains_process_transients(76));
     }
 
     fn write_test_native_records(
@@ -10732,7 +11044,7 @@ mod tests {
                     production_sectors: Vec::new(),
                 },
                 motion_grid: TraceMotionGrid { layers: Vec::new() },
-                initial_npc_transients: Vec::new(),
+                initial_npc_transients: Some(Vec::new()),
                 initial_save: None,
             },
             rng_prefix: TraceRngPrefix {
@@ -11342,6 +11654,73 @@ mod tests {
                 .unwrap_err()
                 .contains("retain or advance")
         );
+    }
+
+    #[test]
+    fn retained_terminal_success_selects_the_omitted_quit_repair_only() {
+        assert!(is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_601,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            true,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelFailed as i32,
+        ));
+    }
+
+    #[test]
+    fn retained_terminal_success_repair_is_emitted_exactly_once() {
+        let mut commands = Vec::new();
+        let mut applied = false;
+        assert!(append_legacy_retained_terminal_success_repair(
+            &mut commands,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert!(!append_legacy_retained_terminal_success_repair(
+            &mut commands,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            commands[0],
+            PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelSucceeded,
+                ..
+            }
+        ));
+        assert!(matches!(commands[1], PlayerCommand::QuitMissionRequested));
     }
 
     #[test]
@@ -12675,6 +13054,70 @@ mod tests {
     }
 
     #[test]
+    fn interactive_chain_requires_the_exact_adjacent_session_name() {
+        assert_eq!(
+            preceding_interactive_session_path(Path::new("chain-session-0007.jsonl.zst"), 7),
+            Some(PathBuf::from("chain-session-0006.jsonl.zst"))
+        );
+        assert!(
+            preceding_interactive_session_path(Path::new("chain-session-0001.jsonl.zst"), 1)
+                .is_none()
+        );
+        assert!(preceding_interactive_session_path(Path::new("unrelated.jsonl.zst"), 7).is_none());
+    }
+
+    #[test]
+    fn terminal_macro_identity_requires_active_cursor_and_unique_position() {
+        use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+        let waypoint = |x| RawWaypoint {
+            x,
+            y: 1050,
+            sector: 0,
+            level: 0,
+            command: WaypointCommand::Macro(vec![0; 19]),
+        };
+        let unique = vec![RawHikingPath {
+            waypoints: vec![waypoint(353)],
+        }];
+        assert_eq!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &unique,
+            )
+            .map(|(path, waypoint, offset)| (path.get(), waypoint, offset)),
+            Some((0, 0, 18))
+        );
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                false,
+                &unique,
+            )
+            .is_none()
+        );
+        let ambiguous = vec![
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+        ];
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &ambiguous,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn windows_i386_save_preserves_and_accepts_gshr_magic() {
         let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
         let decoded = save
@@ -12797,6 +13240,49 @@ mod tests {
                 "domains": []
             }
         })
+    }
+
+    fn minimal_element_json() -> serde_json::Value {
+        serde_json::json!({
+            "entity_id": {"kind": "pc", "index": 1},
+            "creation_order": 1,
+            "class_id": 0,
+            "kind": "pc",
+            "active": true,
+            "blipped": false,
+            "unreachable": false,
+            "surface_id": 0,
+            "posture": 0,
+            "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "old_position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "elevation": {"bits": 0},
+            "old_elevation": {"bits": 0},
+            "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "layer": 0,
+            "layer_goal": 0,
+            "sector": 0,
+            "direction": 0,
+            "direction_goal": 0,
+            "moving": false,
+            "moving_map": false,
+            "sprite_row": 0,
+            "sprite_frame": 0,
+            "sprite_frame_count": 0,
+            "runtime": {}
+        })
+    }
+
+    #[test]
+    fn increment_map_valid_preserves_absent_and_explicit_false() {
+        let absent: TraceElement = serde_json::from_value(minimal_element_json()).unwrap();
+        assert_eq!(absent.increment_map_valid, None);
+
+        let mut present = minimal_element_json();
+        present["increment_map_valid"] = serde_json::json!(false);
+        let present: TraceElement = serde_json::from_value(present).unwrap();
+        assert_eq!(present.increment_map_valid, Some(false));
     }
 
     #[test]
