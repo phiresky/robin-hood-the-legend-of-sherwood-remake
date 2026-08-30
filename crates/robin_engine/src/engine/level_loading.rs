@@ -1165,6 +1165,42 @@ mod legacy_grid_topology_tests {
     }
 
     #[test]
+    fn mission_element_placement_retains_sparse_sector_object_identity() {
+        let mut assets = LevelAssets::new();
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(18), Some(18)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(40),
+                crate::fast_find_grid::SectorIndex::new(41),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+
+        let exact = EngineInner::resolve_sparse_position_handle(&assets, 1);
+        let mut sprite = crate::sprite::Sprite::default();
+        sprite.apply_placement(
+            MapPoint::new(222.0, 2401.0),
+            0,
+            Some(exact),
+            0,
+            crate::element::GameMaterial::default(),
+            None,
+            None,
+        );
+
+        assert_eq!(exact.get(), 18);
+        assert_eq!(
+            sprite.position_iface.get_sector_topology(),
+            (Some(exact), crate::fast_find_grid::SectorIndex::new(41)),
+            "mission sector UWORD is a sparse array slot, not public sector number 1"
+        );
+    }
+
+    #[test]
     fn tactic_seek_position_resolves_sparse_slot_to_exact_sector_object() {
         let mut assets = LevelAssets::new();
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
@@ -3471,6 +3507,11 @@ impl EngineInner {
 
         self.load_motion_stage(assets, staging, &mut loaded, bg_pixel_dims)?;
         self.spawn_proto_entities_stage(assets, &loaded);
+        // Mission entity position UWORDs are sparse `marraySectors` slots,
+        // exactly like door endpoints and tactic positions. Retain that
+        // topology before constructing any mission sprite so placement can
+        // install the Original RHSector object identity immediately.
+        retain_legacy_grid_topology(assets, &loaded, config.script_enabled)?;
         if loaded.mission.reserve_null_ai_handle {
             self.reserve_null_ai_handle_slot_if_empty();
         }
@@ -3508,7 +3549,6 @@ impl EngineInner {
             force_visible_scroll_ids,
         );
 
-        retain_legacy_grid_topology(assets, &loaded, config.script_enabled)?;
         canonicalize_building_position_sectors(
             assets,
             &mut loaded,

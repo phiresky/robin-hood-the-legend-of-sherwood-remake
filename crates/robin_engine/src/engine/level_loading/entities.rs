@@ -235,7 +235,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(
@@ -430,7 +430,7 @@ impl EngineInner {
             sprite.apply_placement(
                 initial_position,
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(
@@ -862,7 +862,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
@@ -1044,7 +1044,7 @@ impl EngineInner {
                 // point (see below).
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
@@ -1253,7 +1253,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
@@ -1378,7 +1378,7 @@ impl EngineInner {
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
-                crate::position_interface::SectorHandle::new(raw.sector),
+                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
                 crate::position_interface::ObstacleHandle::from_serialized_pointer(

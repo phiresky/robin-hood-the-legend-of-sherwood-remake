@@ -621,7 +621,7 @@ impl EngineInner {
                 sprite.apply_placement(
                     beam_me.position,
                     beam_me.layer,
-                    crate::position_interface::SectorHandle::new(beam_me.sector),
+                    Some(Self::resolve_sparse_position_handle(assets, beam_me.sector)),
                     // Apply initial facing from the beam-me point (0-15 sector).
                     (beam_me.direction & 15) as i16,
                     material,
