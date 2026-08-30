@@ -2972,6 +2972,9 @@ mod tests {
     #[test]
     fn far_side_projection_selection_does_not_change_door_topology() {
         let mut engine = EngineInner::new();
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level)
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(50), 0);
         let owner = engine.add_entity(make_pc(62));
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();

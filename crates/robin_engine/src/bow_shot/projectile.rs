@@ -723,7 +723,7 @@ pub fn spawn_coin(
     source_purse: Option<EntityId>,
     source_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
-    _layer: u16,
+    _layer: Option<crate::position_interface::Layer>,
     layer_goal: Option<crate::position_interface::Layer>,
     sector_goal: Option<crate::position_interface::SectorHandle>,
     apex: f32,

@@ -3393,7 +3393,9 @@ mod tests {
             position: Position {
                 x: 277.4972,
                 y: 379.12796,
-                sector: crate::position_interface::SectorHandle::new(0),
+                sector: crate::position_interface::SectorHandle::new(0).map(|sector| {
+                    sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
+                }),
                 level: 0,
             },
             elevation: 1.387514,
@@ -5100,7 +5102,9 @@ mod tests {
             origin: NoiseOrigin::from_position(Position {
                 x: f32::from_bits(0x428b_1027),
                 y: f32::from_bits(0x43af_c940),
-                sector: crate::position_interface::SectorHandle::new(0),
+                sector: crate::position_interface::SectorHandle::new(0).map(|sector| {
+                    sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
+                }),
                 level: 0,
             }),
             noise_type: NoiseType::ZingZing,

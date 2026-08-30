@@ -1286,6 +1286,9 @@ mod suite {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -10.0, -5.0, 10.0, 5.0,
             ));
+        owner_entity
+            .position_iface_mut()
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         owner_entity.position_iface_mut().set_map_position(start);
         let owner = engine.add_entity(owner_entity);
         {

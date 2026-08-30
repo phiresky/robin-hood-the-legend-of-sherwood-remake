@@ -1275,7 +1275,33 @@ mod tests {
 
         let mut assets = crate::engine::LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles);
+        let mut level_grid = crate::fast_find_grid::LevelGrid::default();
+        level_grid
+            .move_box_half_diagonals
+            .push(crate::coordinates::MoveBoxHalfDiagonal::new(1.0, 1.0));
+        assets.level_grid = std::sync::Arc::new(level_grid);
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut graph_bytes = Vec::new();
+        graph_bytes.extend_from_slice(&1_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        graph_bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        loaded.proto.motion_data = Some(crate::level_data::RawMotionData {
+            layers: vec![vec![crate::level_data::RawMotionArea {
+                is_lift: false,
+                state_id: 0,
+                polygon: crate::level_data::SectorPolygon {
+                    points: vec![(0, 0), (1_000, 0), (1_000, 1_000), (0, 1_000)],
+                },
+                skeleton_segments: Vec::new(),
+                flags: 0,
+                obstacles: Vec::new(),
+            }]],
+            graph_bytes,
+        });
+        loaded.proto.grid_chunk_order = vec![crate::level_data::ProtoGridChunk::Motion];
         loaded.mission.beam_mes.push(crate::level_data::BeamMe {
             position: crate::coordinates::MapPoint::new(100.0, 200.0),
             direction: 0,
@@ -1324,7 +1350,10 @@ mod tests {
     fn sherwood_recording_reconstructs_frame_zero_team_pcs_and_hash() {
         let path = unique_replay_path("sherwood_frame_zero");
         let rng_seed = 0x5EED_5151;
-        let sim_config = crate::engine::SimConfig::default();
+        let sim_config = crate::engine::SimConfig {
+            script_enabled: false,
+            ..Default::default()
+        };
         let (campaign, assets, loaded) = sherwood_fixture();
         let pre_engine_campaign = campaign.clone();
         let (live, _live_assets) =

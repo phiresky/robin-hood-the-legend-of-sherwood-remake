@@ -1311,7 +1311,17 @@ impl EnemyAi {
                 self.base.launch_timer(1, ctx.frame);
             }
             StimulusType::EventReachPoint => {
-                let friend = self.required_friend_in_trouble("reaching a brawl opponent");
+                let Some(friend) = self.base.friend_in_trouble else {
+                    tracing::error!(
+                        actor = self.base.me,
+                        "brawl approach reached its target without a friend in trouble"
+                    );
+                    // Original asserts this invariant, then returns the actor
+                    // to duty. Log the bad state without making debug and
+                    // production simulation behavior diverge.
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    return false;
+                };
                 let friend_view =
                     ctx.expect_entity_view(friend, "brawl-approach friend in trouble");
                 if friend_view.ai_state == AiState::Sleeping {

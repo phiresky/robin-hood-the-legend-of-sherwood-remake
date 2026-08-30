@@ -2,7 +2,7 @@ use super::*;
 
 /// Build a minimal soldier entity for posture / command tests.
 pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
-    Entity::Soldier(crate::element::ActorSoldier {
+    let mut entity = Entity::Soldier(crate::element::ActorSoldier {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorSoldier,
             posture,
@@ -12,7 +12,11 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         npc: Default::default(),
         soldier: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]
@@ -2424,7 +2428,7 @@ fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier
 
 /// Build a minimal civilian entity for NPC-translate tests.
 pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
-    Entity::Civilian(crate::element::ActorCivilian {
+    let mut entity = Entity::Civilian(crate::element::ActorCivilian {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorCivilian,
             posture,
@@ -2434,7 +2438,11 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         npc: Default::default(),
         civilian: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]
@@ -2857,7 +2865,7 @@ fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() 
 }
 
 pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
-    Entity::Pc(crate::element::ActorPc {
+    let mut entity = Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorPc,
             posture,
@@ -2866,7 +2874,11 @@ pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
         actor: Default::default(),
         human: Default::default(),
         pc: Default::default(),
-    })
+    });
+    entity
+        .position_iface_mut()
+        .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+    entity
 }
 
 #[test]

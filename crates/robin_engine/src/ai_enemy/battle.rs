@@ -6341,7 +6341,9 @@ mod tests {
         let live_position = Position {
             x: 1386.0,
             y: 1356.0,
-            sector: crate::position_interface::SectorHandle::new(19),
+            sector: crate::position_interface::SectorHandle::new(19).map(|sector| {
+                sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
+            }),
             level: 1,
         };
         let stale_position = Position {

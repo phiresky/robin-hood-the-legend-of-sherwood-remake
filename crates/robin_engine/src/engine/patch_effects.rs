@@ -795,6 +795,10 @@ mod tests {
                 -10.0, -5.0, 10.0, 5.0,
             ));
         element.sprite.position_iface.set_map_position(start);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         let owner = engine.add_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData::default(),

@@ -6150,6 +6150,18 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     // their live state, and a fixture actor that starts dead, inactive or
     // unconscious still needs one the moment it revives or is scanned.
     for (_, pc) in engine.world.entities.pcs_mut() {
+        if pc
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            pc.element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         let profile_idx = usize::from(pc.pc.profile_index);
         profiles
             .characters
@@ -6184,6 +6196,19 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     }
 
     for (soldier_id, soldier) in engine.world.entities.soldiers_mut() {
+        if soldier
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            soldier
+                .element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         if soldier.npc.ai_brain.is_none() {
             soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
                 crate::ai_enemy::EnemyAi::new(soldier_id.0),
@@ -6210,6 +6235,19 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     }
 
     for (civilian_id, civilian) in engine.world.entities.civilians_mut() {
+        if civilian
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            civilian
+                .element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         if civilian.npc.ai_brain.is_none() {
             civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
                 crate::ai_friendly::FriendlyAi::new(civilian_id.0),

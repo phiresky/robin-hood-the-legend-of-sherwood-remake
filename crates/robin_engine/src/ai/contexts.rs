@@ -612,8 +612,10 @@ impl AiContext {
         ctx: &str,
     ) -> &crate::ai_entity_view::AiEntityView {
         let raw = handle.into_optional_ai_handle().map(AiEntityHandle::get);
-        self.entity_view(handle)
-            .unwrap_or_else(|| panic!("required entity view for handle {raw:?} missing ({ctx})"))
+        self.entity_view(handle).unwrap_or_else(|| match raw {
+            Some(raw) => panic!("required entity view for handle {raw} missing ({ctx})"),
+            None => panic!("required entity view for absent handle missing ({ctx})"),
+        })
     }
 
     /// Resolve a raw legacy human/object handle through the live entity-view

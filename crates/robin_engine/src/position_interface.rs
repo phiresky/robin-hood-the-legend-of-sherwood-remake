@@ -557,6 +557,7 @@ impl std::hash::Hash for SectorHandle {
 #[derive(Serialize, Deserialize)]
 struct SectorHandleSerde {
     number: crate::sector::SectorNumber,
+    #[serde(deserialize_with = "deserialize_required_option")]
     arena: Option<crate::fast_find_grid::SectorIndex>,
 }
 

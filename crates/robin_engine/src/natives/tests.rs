@@ -1933,6 +1933,11 @@ fn register_production_sector() {
     host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0), (20.0, 40.0)]);
     host.bindings.location_layers = std::sync::Arc::new(vec![2, 2]);
     host.bindings.location_sectors = std::sync::Arc::new(vec![7, 7]);
+    let exact_sector = crate::position_interface::SectorHandle::new(7)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+    host.bindings.location_sector_handles =
+        std::sync::Arc::new(vec![Some(exact_sector), Some(exact_sector)]);
     host.script_domains
         .zones
         .scripts
@@ -2023,6 +2028,11 @@ fn production_point_requires_registered_sector() {
     host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
     host.bindings.location_layers = std::sync::Arc::new(vec![2]);
     host.bindings.location_sectors = std::sync::Arc::new(vec![7]);
+    host.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(
+        crate::position_interface::SectorHandle::new(7)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+    )]);
     let point_handle = ScriptHandleCodec::location_handle_from_index(0);
     let mut point = NativeStack::default();
     point.push_i32(0);

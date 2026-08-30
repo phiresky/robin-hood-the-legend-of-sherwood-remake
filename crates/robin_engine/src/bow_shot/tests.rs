@@ -4504,7 +4504,16 @@ fn purse_and_coin_constructors_defer_their_virtual_primer_to_engine_owner() {
     let end = WorldPoint3D::new(200.0, 0.0, 0.0);
     for entity in [
         spawn_purse(thrower, start, end, 0, None),
-        spawn_coin(None, start, end, 0, None, None, APEX_BEGGAR_COIN, None),
+        spawn_coin(
+            None,
+            start,
+            end,
+            crate::position_interface::Layer::new(0),
+            None,
+            None,
+            APEX_BEGGAR_COIN,
+            None,
+        ),
     ] {
         let Entity::Projectile(projectile) = entity else {
             unreachable!()

@@ -770,9 +770,12 @@ impl EnemyAi {
                 )
             });
             if tick.primary_target_snapshot_handle != Some(target_handle) {
+                let snapshot_handle = tick
+                    .primary_target_snapshot_handle
+                    .map(AiEntityHandle::get)
+                    .map_or_else(|| "absent".to_owned(), |handle| handle.to_string());
                 panic!(
-                    "AttackingApproachingNewEnemy primary target {target_handle} does not match tick snapshot handle {:?}",
-                    tick.primary_target_snapshot_handle
+                    "AttackingApproachingNewEnemy primary target {target_handle} does not match tick snapshot handle {snapshot_handle}"
                 );
             }
             let target_live_position = tick.primary_target_live_position.unwrap_or_else(|| {

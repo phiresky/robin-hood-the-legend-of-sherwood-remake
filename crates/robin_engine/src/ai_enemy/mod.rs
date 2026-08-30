@@ -576,16 +576,6 @@ impl EnemyAi {
     }
 
     #[track_caller]
-    fn required_friend_in_trouble(&self, context: &'static str) -> AiEntityHandle {
-        self.base.friend_in_trouble.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a friend in trouble while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
     fn required_detected_body(&self, context: &'static str) -> AiEntityHandle {
         self.base.detected_body.unwrap_or_else(|| {
             panic!(

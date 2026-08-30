@@ -4395,6 +4395,17 @@ impl AiController {
                 }),
                 ctx,
             );
+        } else if noise.origin.layer.is_none() {
+            // A genuinely null Original RHposition is projected onto the
+            // ground plane and measured from the actor's raw 3D body point.
+            // This is distinct from a replay-normalized sector-less position,
+            // whose separately recorded elevation remains authoritative.
+            let body = ctx.self_body_position_world;
+            let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(
+                noise.origin.x - body.x,
+                noise.origin.y - body.y,
+            );
+            self.face_to_sector(target_dir, ctx, false);
         } else {
             let elevation_delta = noise
                 .origin

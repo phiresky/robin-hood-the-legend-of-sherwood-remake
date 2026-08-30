@@ -708,6 +708,11 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
         sq_self_view_radius: 1000.0 * 1000.0,
         entity_views: shared_entity_views(views),
         hiking_paths: std::sync::Arc::new(paths),
+        hiking_waypoint_sectors: Some(std::sync::Arc::new(vec![vec![
+            crate::position_interface::SectorHandle::new(0)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+        ]])),
         all_soldier_handles: std::sync::Arc::new(vec![1, 2]),
         self_is_soldier: true,
         ..AiContext::default()
@@ -2180,7 +2185,7 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
     ];
     obstacle.set_projection_area_ref(
         crate::position_interface::Layer::new(2).unwrap(),
-        crate::fast_find_grid::SectorIndex::new(7).unwrap(),
+        crate::fast_find_grid::SectorIndex::new(0).unwrap(),
     );
     obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
     obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
@@ -2206,7 +2211,9 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
     let point = ctx.position_to_point_3d(Position {
         x: 50.0,
         y: 50.0,
-        sector: SectorHandle::new(7),
+        sector: SectorHandle::new(7).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
+        }),
         level: 2,
     });
 
@@ -2245,7 +2252,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         point_in: MapPoint::new(50.0, 50.0),
         point_out: MapPoint::new(45.0, 55.0),
         sector_out: SectorNumber::new(8),
-        sector_out_index: None,
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(8),
         layer_out: 2,
     });
 

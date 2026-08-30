@@ -554,7 +554,10 @@ fn make_soldier(
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
         pos.x, pos.y, pos.z,
     ));
-    element.set_sector(sector);
+    element
+        .sprite
+        .position_iface
+        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
     Entity::Soldier(ActorSoldier {
         element,
         actor: ActorData::default(),
@@ -584,7 +587,10 @@ fn make_pc(pos: WorldPoint3D, sector: Option<crate::position_interface::SectorHa
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
         pos.x, pos.y, pos.z,
     ));
-    element.set_sector(sector);
+    element
+        .sprite
+        .position_iface
+        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
     Entity::Pc(ActorPc {
         element,
         actor: ActorData::default(),
@@ -1141,6 +1147,7 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
             point_out: crate::coordinates::MapPoint::new(30.0, 0.0),
             layer_out: 3,
             sector_out: crate::sector::SectorNumber::new(7),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(7),
             ..crate::gate::Door::default()
         });
 
@@ -7345,7 +7352,9 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
             y: 100.0,
             z: 0.0,
         },
-        crate::position_interface::SectorHandle::new(32),
+        crate::position_interface::SectorHandle::new(32).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(32).unwrap())
+        }),
     ));
 
     // The landing projection is ten units above the takeoff point. An
@@ -7488,7 +7497,9 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
             y: 100.0,
             z: 0.0,
         },
-        crate::position_interface::SectorHandle::new(32),
+        crate::position_interface::SectorHandle::new(32).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(32).unwrap())
+        }),
     ));
 
     let mut obstacle = crate::sight_obstacle::SightObstacle::new(

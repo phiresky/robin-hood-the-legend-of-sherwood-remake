@@ -4997,6 +4997,10 @@ impl EngineInner {
             "DropAle exact goal-sector identity requires a goal_override"
         );
         let (goal_sector, goal_layer) = if let Some((goal_sector, goal_layer)) = goal_override {
+            assert!(
+                goal_sector.get() >= 0,
+                "DropAle goal_override has invalid public sector {goal_sector}"
+            );
             let public_sector = u16::from(goal_sector);
             let mut sector = crate::position_interface::SectorHandle::new(public_sector)
                 .unwrap_or_else(|| {
@@ -6107,6 +6111,11 @@ mod tests {
                 ..PcData::default()
             },
         }));
+        engine
+            .get_entity_mut(pc_id)
+            .unwrap()
+            .position_iface_mut()
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
 
         (engine, assets, pc_id)
     }
@@ -7372,9 +7381,16 @@ mod tests {
         let element = engine.get_entity_mut(id).unwrap().element_data_mut();
         let position = element.position_map();
         let direction = element.direction();
+        let pathfinder_index = element.sprite.position_iface.get_pathfinder_index();
         element.sprite = sprite;
         element.set_position_map(position);
         element.set_direction_instantly(direction);
+        if let Some(pathfinder_index) = pathfinder_index {
+            element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(pathfinder_index);
+        }
     }
 
     fn setup_take_corpse_macro_scene(

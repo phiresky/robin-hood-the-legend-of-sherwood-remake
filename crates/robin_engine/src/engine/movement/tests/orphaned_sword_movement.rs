@@ -146,6 +146,10 @@ mod suite {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         element.sprite.position_iface.set_anti_collision_on(false);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
         if on_lift {
             use crate::fast_find_grid::GridSector;
@@ -382,6 +386,10 @@ mod suite {
             ..ElementData::default()
         };
         element.sprite.position_iface.set_anti_collision_on(false);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
         let owner = engine.add_entity(Entity::Pc(ActorPc {
             element,
@@ -1246,6 +1254,10 @@ mod suite {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         element.sprite.position_iface.set_anti_collision_on(false);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
         let owner = engine.add_entity(Entity::Pc(ActorPc {
             element,
