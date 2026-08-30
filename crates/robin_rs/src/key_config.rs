@@ -36,7 +36,7 @@ pub struct KeyConfig {
 
 // ── Index‐to‐action‐name mapping ──
 
-/// Action names indexed 0..27.  Index 28 is `Dummy` (the sentinel — excluded
+/// Action names indexed 0..29. Index 30 is `Dummy` (the sentinel — excluded
 /// from [`REAL_KEY_COUNT`]).
 const KEY_NAMES: &[&str] = &[
     "ZoomIn",
@@ -67,6 +67,7 @@ const KEY_NAMES: &[&str] = &[
     "ShowViewCone",
     "QuickSave1",
     "QuickLoad1",
+    "PlanQuickActions",
     "ToggleCloak",
     "Dummy",
 ];
@@ -75,6 +76,10 @@ const KEY_NAMES: &[&str] = &[
 pub const REAL_KEY_COUNT: u16 = (KEY_NAMES.len() - 1) as u16;
 /// Total key name count including the Dummy sentinel.
 pub const KEY_NAME_COUNT: u16 = KEY_NAMES.len() as u16;
+/// Stable row/index of the rebindable planned-action modifier.
+pub const PLAN_QUICK_ACTIONS_INDEX: u16 = 28;
+/// Stable row/index of the reusable-cloak action.
+pub const TOGGLE_CLOAK_INDEX: u16 = 29;
 
 impl KeyConfig {
     /// Add the reusable-cloak action to a key profile written before the
@@ -212,6 +217,7 @@ impl KeyConfig {
             Some(AltLeft),        // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(ShiftLeft),      // PlanQuickActions
             Some(KeyV),           // ToggleCloak
         ];
 
@@ -253,6 +259,7 @@ impl KeyConfig {
             Some(AltRight),       // ShowViewCone
             Some(F1),             // QuickSave1
             Some(F5),             // QuickLoad1
+            Some(ShiftRight),     // PlanQuickActions
             Some(KeyV),           // ToggleCloak
         ];
 
@@ -260,6 +267,20 @@ impl KeyConfig {
         cfg.load_keys_array(&ALTERNATE_KEYS);
         cfg.key_type = 3; // PresetBase + 1
         cfg
+    }
+
+    /// Add post-port bindings to a configuration written by an older build.
+    pub fn migrate_post_port_bindings(&mut self) {
+        if self.get_binding("PlanQuickActions").is_none() {
+            let shift_is_available = self.bindings.iter().all(|binding| {
+                let owns_shift = binding.primary_key == Some(KeyCode::ShiftLeft)
+                    || binding.secondary_key == Some(KeyCode::ShiftLeft);
+                !owns_shift || binding.action == "GoBehindBuildings"
+            });
+            let default_key = shift_is_available.then_some(KeyCode::ShiftLeft);
+            self.set_binding("PlanQuickActions", default_key, None);
+        }
+        self.ensure_reusable_cloak_binding();
     }
 }
 
@@ -394,6 +415,35 @@ mod tests {
     }
 
     #[test]
+    fn legacy_planning_binding_only_shares_the_intentional_shift_action() {
+        let mut intentional = KeyConfig::default();
+        intentional.set_binding("GoBehindBuildings", Some(KeyCode::ShiftLeft), None);
+        intentional.migrate_post_port_bindings();
+        assert_eq!(
+            intentional
+                .get_binding("PlanQuickActions")
+                .unwrap()
+                .primary_key,
+            Some(KeyCode::ShiftLeft)
+        );
+
+        let mut ambiguous = KeyConfig::default();
+        ambiguous.set_binding("Crouch", Some(KeyCode::ShiftLeft), None);
+        ambiguous.migrate_post_port_bindings();
+        assert_eq!(
+            ambiguous
+                .get_binding("PlanQuickActions")
+                .unwrap()
+                .primary_key,
+            None
+        );
+        assert_eq!(
+            ambiguous.get_binding("Crouch").unwrap().primary_key,
+            Some(KeyCode::ShiftLeft)
+        );
+    }
+
+    #[test]
     fn preset_bindings_remain_exact() {
         use KeyCode::*;
 
@@ -430,6 +480,7 @@ mod tests {
                 Some(AltLeft),
                 Some(F1),
                 Some(F5),
+                Some(ShiftLeft),
                 Some(KeyV),
             ]
         );
@@ -467,6 +518,7 @@ mod tests {
                 Some(AltRight),
                 Some(F1),
                 Some(F5),
+                Some(ShiftRight),
                 Some(KeyV),
             ]
         );

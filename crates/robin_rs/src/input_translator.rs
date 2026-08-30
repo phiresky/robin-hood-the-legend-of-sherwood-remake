@@ -61,6 +61,7 @@ pub enum GameKey {
 
     QuickSave1,
     QuickLoad1,
+    PlanQuickActions,
     ToggleCloak,
 
     // --- Non-rebindable / debug ---
@@ -81,7 +82,7 @@ pub enum GameKey {
 }
 
 impl GameKey {
-    pub const COUNT: usize = 39;
+    pub const COUNT: usize = 40;
 
     /// All variants in enum order.
     pub const ALL: [GameKey; Self::COUNT] = [
@@ -113,6 +114,7 @@ impl GameKey {
         Self::ShowViewCone,
         Self::QuickSave1,
         Self::QuickLoad1,
+        Self::PlanQuickActions,
         Self::ToggleCloak,
         Self::StartMission,
         Self::DisplayMenu,
@@ -157,6 +159,7 @@ impl GameKey {
             Self::ShowViewCone => "ShowViewCone",
             Self::QuickSave1 => "QuickSave1",
             Self::QuickLoad1 => "QuickLoad1",
+            Self::PlanQuickActions => "PlanQuickActions",
             Self::ToggleCloak => "ToggleCloak",
             Self::StartMission => "StartMission",
             Self::DisplayMenu => "DisplayMenu",
@@ -387,6 +390,7 @@ impl InputTranslator {
         // Save / Load
         self.bindings[GameKey::QuickSave1] = Some(F9);
         self.bindings[GameKey::QuickLoad1] = Some(F12);
+        self.bindings[GameKey::PlanQuickActions] = Some(ShiftLeft);
         self.bindings[GameKey::ToggleCloak] = Some(KeyV);
     }
 
@@ -428,6 +432,10 @@ impl InputTranslator {
 
     pub fn get_binding(&self, key: GameKey) -> Option<KeyCode> {
         self.bindings[key]
+    }
+
+    pub fn is_binding_held(&self, key: GameKey, current: &BTreeSet<KeyCode>) -> bool {
+        key_held(current, self.key(key))
     }
 
     /// Load rebindable keys from a [`KeyConfig`].
@@ -1096,6 +1104,19 @@ mod tests {
         for (i, key) in GameKey::ALL.iter().enumerate() {
             assert_eq!(*key as usize, i);
         }
+    }
+
+    #[test]
+    fn planning_binding_is_rebindable_and_held_independently() {
+        let mut translator = InputTranslator::new(1024.0, 768.0);
+        translator.set_binding(GameKey::PlanQuickActions, Some(KeyCode::KeyP));
+        assert!(
+            translator.is_binding_held(GameKey::PlanQuickActions, &keys_down(&[KeyCode::KeyP]))
+        );
+        assert!(
+            !translator
+                .is_binding_held(GameKey::PlanQuickActions, &keys_down(&[KeyCode::ShiftLeft]))
+        );
     }
 
     #[test]

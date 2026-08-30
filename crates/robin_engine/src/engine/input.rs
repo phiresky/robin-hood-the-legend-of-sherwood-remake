@@ -177,6 +177,19 @@ impl EngineInner {
             .unwrap_or(crate::profiles::Action::NoAction)
     }
 
+    pub fn planned_shield_protected_for_seat(
+        &self,
+        player: crate::player_command::PlayerId,
+        actor: crate::element::EntityId,
+    ) -> Option<crate::element::EntityId> {
+        self.players.seats.get(player.0 as usize).and_then(|seat| {
+            seat.planned_shield_target
+                .and_then(|(staged_actor, protected)| {
+                    (staged_actor == actor && seat.selection.contains(&actor)).then_some(protected)
+                })
+        })
+    }
+
     /// Map position at which the next Shift-planned action is expected to
     /// execute: the last queued QA destination, then the live movement goal,
     /// then the actor's current position.
@@ -190,6 +203,9 @@ impl EngineInner {
                     .rev()
                     .find_map(|entry| match entry.step.replay {
                         crate::macro_store::QaReplayCommand::Move { destination, .. }
+                        | crate::macro_store::QaReplayCommand::TacticalMove {
+                            destination, ..
+                        }
                         | crate::macro_store::QaReplayCommand::TargetInteraction {
                             destination,
                             ..
@@ -236,6 +252,12 @@ impl EngineInner {
                 self.get_entity(pc_id)
                     .map(|entity| entity.element_data().position_map())
             })
+    }
+
+    /// Number of pending post-port automatic actions for one controllable
+    /// actor. Manual macro slots are intentionally excluded.
+    pub fn automatic_quick_action_count(&self, actor: EntityId) -> usize {
+        self.players.auto_queues.len(actor)
     }
 
     /// Map-space per-pixel hit test for a sprite.

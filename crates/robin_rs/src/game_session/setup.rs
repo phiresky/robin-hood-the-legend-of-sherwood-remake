@@ -2471,6 +2471,19 @@ pub(super) fn setup_input_and_camera(
     ));
     let mut input_translator = InputTranslator::new(window_width as f32, window_height as f32);
 
+    // Playback and legacy-save parity capture must not admit post-port live
+    // planning input. Recorded QueueQuickAction commands remain authoritative
+    // and still replay through the deterministic command stream.
+    if args.replay_data.is_some()
+        || args.replay.is_some()
+        || args.mission_start_legacy_save.is_some()
+        || args.mission_start_viewport_capture
+    {
+        host.plan_quick_actions_forced_off = true;
+        host.plan_quick_actions = false;
+        host.touch_plan_quick_actions = false;
+    }
+
     // Host construction snapshots the active profile's bindings from the
     // ApplicationContext. The Original copies that active config at this
     // exact input-translator boundary (`ReflectActiveKeyConfig`).

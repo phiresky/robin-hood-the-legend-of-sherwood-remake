@@ -39,8 +39,8 @@ impl ProfileKeyConfig {
     }
 
     fn ensure_current_bindings(&mut self) {
-        self.active.ensure_reusable_cloak_binding();
-        self.custom.ensure_reusable_cloak_binding();
+        self.active.migrate_post_port_bindings();
+        self.custom.migrate_post_port_bindings();
     }
 }
 
@@ -228,6 +228,23 @@ mod tests {
             Some(KeyCode::KeyV)
         );
         assert_eq!(entry.custom.key_type, 2);
+        assert_eq!(
+            entry
+                .active
+                .get_binding("PlanQuickActions")
+                .expect("legacy active config is migrated")
+                .primary_key,
+            None,
+            "an unrelated custom Shift binding must not be duplicated"
+        );
+        assert_eq!(
+            entry
+                .custom
+                .get_binding("PlanQuickActions")
+                .expect("legacy custom config is migrated")
+                .primary_key,
+            Some(KeyCode::ShiftLeft)
+        );
     }
 
     #[test]

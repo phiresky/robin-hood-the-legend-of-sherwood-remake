@@ -846,6 +846,18 @@ impl InteractiveFrameSimulation {
                         host.frontend.key_config = result.key_config.clone();
                         host.frontend.custom_key_config = result.custom_key_config.clone();
                         host.control_tactical_units = result.gameplay_config.control_tactical_units;
+                        host.plan_quick_actions = result.gameplay_config.plan_quick_actions
+                            && !host.plan_quick_actions_forced_off;
+                        if !host.plan_quick_actions {
+                            host.touch_plan_quick_actions = false;
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::CancelPlannedAction,
+                            );
+                        }
                         host.touch_camera_gestures = result.gameplay_config.touch_camera_gestures;
                         host.gameplay_config = result.gameplay_config;
                         host.native_refresh_presentation =

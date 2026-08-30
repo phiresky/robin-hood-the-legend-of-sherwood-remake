@@ -792,6 +792,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                     ctrl: false,
                     shift: false,
                     alt: false,
+                    plan: false,
                 },
                 minimap_toggle_pressed: false,
                 pause_closed_this_frame: false,
@@ -844,7 +845,10 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 unreachable!("event/HUD collection must return data when it proceeds")
             }
         };
-        let shift_held = modifiers.shift;
+        // Presentation's planned-action cursor and action-bar highlight follow
+        // the rebindable planning control, not physical Shift. Physical Shift
+        // remains available in `modifiers.shift` for Original behaviours.
+        let shift_held = modifiers.plan;
 
         // ── View-only input (scroll / zoom): always allowed ──
         // These mutate host-side viewport state only — never the sim —

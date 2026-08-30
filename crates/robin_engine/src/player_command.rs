@@ -284,6 +284,13 @@ pub enum QueuedQuickActionCommand {
         recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
         recorded_failed_gate_routes: Vec<EntityId>,
     },
+    #[serde(rename = "MoveAlliedSoldiers")]
+    MoveTacticalUnits {
+        formation: TacticalFormation,
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+    },
     LaunchInteraction {
         actor: EntityId,
         target: EntityId,
@@ -323,6 +330,12 @@ pub enum QueuedQuickActionCommand {
         with_seek: bool,
         #[serde(deserialize_with = "deserialize_required_option")]
         seek_distance: Option<f32>,
+    },
+    RaiseShieldWithDanger {
+        actor: EntityId,
+        protected_pc: EntityId,
+        danger_point: WorldPoint3D,
+        danger_point_layer: u16,
     },
     DropAleAt {
         actor: EntityId,
@@ -388,6 +401,17 @@ impl QueuedQuickActionCommand {
                 recorded_gate_routes,
                 recorded_failed_gate_routes,
             },
+            MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            } => Self::MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            },
             LaunchInteraction {
                 actor,
                 target,
@@ -448,6 +472,17 @@ impl QueuedQuickActionCommand {
                 with_seek,
                 seek_distance,
             },
+            RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => Self::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            },
             DropAleAt {
                 actor,
                 target_pos,
@@ -494,6 +529,17 @@ impl QueuedQuickActionCommand {
                 door_route_override,
                 recorded_gate_routes,
                 recorded_failed_gate_routes,
+            },
+            MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            } => PlayerCommand::MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
             },
             LaunchInteraction {
                 actor,
@@ -556,6 +602,17 @@ impl QueuedQuickActionCommand {
                 gesture_quality,
                 with_seek,
                 seek_distance,
+            },
+            RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => PlayerCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
             },
             DropAleAt {
                 actor,
@@ -754,6 +811,11 @@ pub enum PlayerCommand {
     SelectPlannedAction {
         pc_id: EntityId,
         action: Action,
+    },
+    /// First click of a planned Shield/BigShield action.
+    SelectPlannedShieldProtected {
+        actor: EntityId,
+        protected_pc: EntityId,
     },
     /// Clear only the Shift-held planned action, leaving the live PC action
     /// and animation untouched.
@@ -1772,6 +1834,37 @@ mod tests {
             command.validate_sword_gesture(false, true),
             Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled)
         );
+
+        let reduced_quality = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: CompositeSwordTechnique::Vortex.first_command(),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::GOOD,
+                with_seek: false,
+                seek_distance: None,
+            }
+            .into(),
+        };
+        assert_eq!(
+            reduced_quality.validate_sword_gesture(true, false),
+            Err(InvalidSwordGestureCommand::QualityDamageDisabled)
+        );
+        let decoded: PlayerCommand = bitcode::decode(&bitcode::encode(&reduced_quality))
+            .expect("queued composite gesture roundtrips");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::QueueQuickAction {
+                action: Action::Hit,
+                command: QueuedQuickActionCommand::SwordStrikeCmd {
+                    composite: Some(CompositeSwordTechnique::Vortex),
+                    gesture_quality,
+                    ..
+                },
+            } if gesture_quality == GestureQuality::GOOD
+        ));
     }
 
     #[test]
