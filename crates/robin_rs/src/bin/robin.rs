@@ -255,6 +255,31 @@ pub fn wasm_set_multiplayer_join_ticket(
         .map_err(|error| wasm_bindgen::JsValue::from_str(&error))
 }
 
+/// Exact executable identity checked by the stable shell after instantiation
+/// and before it installs any host-selected mission or relay.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_multiplayer_compatibility() -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+    use serde::Serialize as _;
+
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Compatibility<'a> {
+        engine_commit: &'a str,
+        artifact_short: &'a str,
+        net_protocol: u32,
+        ticket_schema: u32,
+    }
+    Compatibility {
+        engine_commit: robin_rs::replay_format::ENGINE_SOURCE_COMMIT,
+        artifact_short: robin_rs::replay_format::ENGINE_VERSION_HASH,
+        net_protocol: robin_rs::multiplayer::NET_PROTOCOL_VERSION,
+        ticket_schema: robin_rs::multiplayer::join_ticket::JOIN_TICKET_SCHEMA,
+    }
+    .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+    .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
+}
+
 /// Register one host-preloaded asset before `wasm_boot` starts the game loop.
 /// The browser loader currently uses this for audio assets that retain a
 /// synchronous read API; mission data uses the asynchronous shipping loader.
@@ -263,6 +288,28 @@ pub fn wasm_set_multiplayer_join_ticket(
 pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     robin_util::asset_fs::install_preloaded_asset(path, bytes.to_vec())
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("preload asset {path}: {e}")))
+}
+
+/// Decode-check and cache one host-authenticated local Full-content split
+/// payload. The shell calls this synchronously after `wasm_boot` installs the
+/// shipping index and before the spawned game future gets an event-loop turn.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_preload_shipping_file(
+    relative_path: &str,
+    compressed_bytes: &[u8],
+) -> Result<(), wasm_bindgen::JsValue> {
+    let shipping = assets_shipping_datadir::global().ok_or_else(|| {
+        wasm_bindgen::JsValue::from_str(
+            "preload shipping file: wasm_boot has not installed a shipping datadir",
+        )
+    })?;
+    robin_rs::shipping_mission::preload_compressed(
+        shipping.as_ref(),
+        relative_path,
+        compressed_bytes,
+    )
+    .map_err(|error| wasm_bindgen::JsValue::from_str(&format!("preload shipping file: {error:#}")))
 }
 
 /// Worker-pool bring-up for `wasm-threads` builds. Requires cross-origin

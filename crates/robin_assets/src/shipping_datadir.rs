@@ -87,6 +87,12 @@ pub struct ShippingDatadir {
     #[serde(skip)]
     #[bitcode(skip)]
     loaded_missions: RwLock<BTreeMap<String, Arc<ShippingMission>>>,
+    /// Host-authenticated compressed split payloads staged by the browser
+    /// before mission selection. Values remain shared so decoding does not
+    /// copy a potentially large package file merely to cross the async seam.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    preloaded_files: RwLock<BTreeMap<String, Arc<Vec<u8>>>>,
     #[serde(skip)]
     #[bitcode(skip)]
     active_mission: RwLock<Option<String>>,
@@ -120,6 +126,7 @@ impl Default for ShippingDatadir {
             remote_base_url: None,
             boot_raw_bundle: OnceLock::new(),
             loaded_missions: RwLock::new(BTreeMap::new()),
+            preloaded_files: RwLock::new(BTreeMap::new()),
             active_mission: RwLock::new(None),
             active_exclamation_ids: RwLock::new(BTreeSet::new()),
         }
@@ -1294,6 +1301,26 @@ impl ShippingDatadir {
             .read()
             .expect("shipping mission lock poisoned")
             .contains_key(mission)
+    }
+
+    pub fn cache_preloaded_file(&self, file: String, bytes: Vec<u8>) -> Result<()> {
+        let replaced = self
+            .preloaded_files
+            .write()
+            .expect("shipping preloaded-file lock poisoned")
+            .insert(file.clone(), Arc::new(bytes));
+        if replaced.is_some() {
+            return Err(anyhow!("shipping file {file:?} was already preloaded"));
+        }
+        Ok(())
+    }
+
+    pub fn preloaded_file(&self, file: &str) -> Option<Arc<Vec<u8>>> {
+        self.preloaded_files
+            .read()
+            .expect("shipping preloaded-file lock poisoned")
+            .get(file)
+            .cloned()
     }
 
     pub fn install_mission(&self, mission: &str, mut payload: ShippingMission) -> Result<()> {
