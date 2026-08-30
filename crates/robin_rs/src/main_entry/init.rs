@@ -99,6 +99,13 @@ pub enum InitError {
         #[source]
         source: anyhow::Error,
     },
+
+    #[error("core overlay startup validation failed for {path}: {source:#}")]
+    PlatformCoreOverlay {
+        path: std::path::PathBuf,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 impl InitError {
@@ -118,7 +125,9 @@ impl InitError {
             | Self::ContentSoldierProfilePatch { .. }
             | Self::ContentLocalization { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
-            Self::PlatformShippingDatadirInstall { .. } => InitErrorCategory::Platform,
+            Self::PlatformShippingDatadirInstall { .. } | Self::PlatformCoreOverlay { .. } => {
+                InitErrorCategory::Platform
+            }
         }
     }
 }
@@ -188,21 +197,32 @@ pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn add_overlay_data_dirs() {
-    match resolve_install_resource_dir(CORE_OVERLAY_DIR) {
-        Some(dir) => {
-            let dir = dir.to_string_lossy().into_owned();
-            match SbFile::add_overlay_path(&dir) {
-                SBFILE_NO_ERROR => tracing::info!("Registered core overlay datadir: {dir}"),
-                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-                err => tracing::warn!("Core overlay datadir {dir} unavailable: {err}"),
-            }
+fn add_overlay_data_dirs() -> Result<(), InitError> {
+    let core_dir = resolve_install_resource_dir(CORE_OVERLAY_DIR).ok_or_else(|| {
+        InitError::PlatformCoreOverlay {
+            path: PathBuf::from(CORE_OVERLAY_DIR),
+            source: anyhow::anyhow!(
+                "required core overlay directory was not found next to the game"
+            ),
         }
-        None => tracing::warn!(
-            "Core overlay datadir {CORE_OVERLAY_DIR} was not found next to the game; \
-             engine-shipped assets (fonts, UI icons) will be missing"
-        ),
-    }
+    })?;
+    let manifest = crate::core_overlay::mount_validated_native_directory(
+        &core_dir,
+        SbFile::add_overlay_path,
+        |path| {
+            SbFile::read_all(path).map_err(|status| anyhow::anyhow!("SBFile read error {status}"))
+        },
+    )
+    .map_err(|source| InitError::PlatformCoreOverlay {
+        path: core_dir.clone(),
+        source,
+    })?;
+    tracing::info!(
+        path = %core_dir.display(),
+        files = manifest.files.len(),
+        shipping_schema = manifest.shipping_datadir_schema,
+        "Registered validated native core overlay datadir"
+    );
 
     if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
         && let Ok(entries) = std::fs::read_dir(mods_dir)
@@ -224,7 +244,7 @@ fn add_overlay_data_dirs() {
     }
 
     let Ok(value) = std::env::var(OVERLAY_DATA_DIRS_ENV) else {
-        return;
+        return Ok(());
     };
     for path in std::env::split_paths(&value) {
         if path.as_os_str().is_empty() {
@@ -239,6 +259,7 @@ fn add_overlay_data_dirs() {
             err => tracing::warn!("Failed to register overlay datadir {path}: {err}"),
         }
     }
+    Ok(())
 }
 
 /// Detect which locale subfolder is shipped with the data and register it
@@ -337,7 +358,8 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), InitError> {
         });
     }
 
-    add_overlay_data_dirs();
+    add_overlay_data_dirs()?;
+    add_language_folder();
     Ok(())
 }
 

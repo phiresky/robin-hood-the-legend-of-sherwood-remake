@@ -448,6 +448,7 @@ struct EnemyOpticalTarget {
     detection_speed_in_city: u16,
     order_type: crate::order::OrderType,
     blipped: bool,
+    camp: Camp,
 }
 
 /// Eye point of a human, in both spaces the visibility code needs: the
@@ -563,6 +564,10 @@ struct SoldierSightContext {
     ground_position: GroundPoint,
     camp: Camp,
     ignore_bodies: bool,
+    /// Original enemy-memory handles which keep a revealed reusable cloak
+    /// revealed until the ordinary AI forgets the target after LOS loss.
+    remembered_targets: Vec<u32>,
+    primary_target: u32,
 }
 
 fn lacklandist_visibility_refresh_always(
@@ -691,6 +696,11 @@ impl SoldierSightContext {
             ground_position,
             camp,
             ignore_bodies,
+            remembered_targets: entity
+                .enemy_ai()
+                .map(|enemy| enemy.list_them.clone())
+                .unwrap_or_default(),
+            primary_target: ai.primary_target,
         })
     }
 }
@@ -2422,6 +2432,7 @@ impl EngineInner {
         let mut think_tick_data: Option<AiPerTickData> = Some(AiPerTickData::stub());
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         let mut reveal_targets: Vec<EntityId> = Vec::new();
+        let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -2780,6 +2791,14 @@ impl EngineInner {
                         target_posture: target.posture,
                         target_action_state: target.action_state,
                         target_is_pc: target.is_pc,
+                        cloak_deception_applies: target.posture == crate::element::Posture::Cloaked
+                            && viewer.camp.is_hostile_to(target.camp),
+                        cloak_remembers_target: det.seen_last_frame
+                            || viewer.primary_target == target_id.index()
+                            || viewer.remembered_targets.contains(&target_id.index()),
+                        // TODO(cloak-authoring): connect this only when an
+                        // explicit modded profile schema supplies detector data.
+                        cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
                         sight_obstacles,
                         fast_grid: &self.world.fast_grid,
                         layer,
@@ -2924,6 +2943,9 @@ impl EngineInner {
                 // 10x faster detection (200 vs 20).
                 let sharpness = detection_sharpness(view_speed, visibility);
                 let is_visible = sharpness > 0;
+                if is_visible && target.is_pc && viewer.camp.is_hostile_to(Camp::Royalists) {
+                    achievement_observed_pcs.push(target_id);
+                }
                 tracing::trace!(
                     npc = ?npc_id,
                     target = ?target_id,
@@ -3977,6 +3999,13 @@ impl EngineInner {
             }
         }
 
+        // SoldierSightContext rejected dead, unconscious and tied viewers at
+        // entry. Record exact positive optical samples only after the mutable
+        // NPC-list borrow is released.
+        for pc in achievement_observed_pcs {
+            self.record_achievement_hostile_observation(npc_id, pc);
+        }
+
         // HandleDetection reveals newly seen blipped NPCs inline, after the
         // complete scan has built its FIFO but before the first queued Think.
         for target_id in reveal_targets {
@@ -4083,6 +4112,7 @@ impl EngineInner {
                         detection_speed_in_city: snapshot.detection_speed_in_city,
                         order_type,
                         blipped: pc.element.blipped,
+                        camp: pc.pc.cached_camp,
                     })
                 }
                 Entity::Soldier(soldier) => {
@@ -4134,6 +4164,7 @@ impl EngineInner {
                         detection_speed_in_city: 100,
                         order_type: crate::order::OrderType::WaitingUpright,
                         blipped: soldier.element.blipped,
+                        camp: soldier.soldier.cached_camp,
                     })
                 }
                 Entity::Civilian(_) => None,
@@ -4298,6 +4329,13 @@ impl EngineInner {
             target_posture,
             target_action_state,
             target_is_pc,
+            cloak_deception_applies: target_posture == crate::element::Posture::Cloaked
+                && viewer.camp.is_hostile_to(target.camp()),
+            cloak_remembers_target: viewer.primary_target == target_id.index()
+                || viewer.remembered_targets.contains(&target_id.index()),
+            // TODO(cloak-authoring): connect this only when an explicit
+            // modded profile schema supplies detector data.
+            cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
             sight_obstacles,
             fast_grid: &self.world.fast_grid,
             layer: viewer.layer,
@@ -5028,6 +5066,9 @@ impl EngineInner {
                     target_posture: target.posture,
                     target_action_state: target.action_state,
                     target_is_pc: target.is_pc,
+                    cloak_deception_applies: false,
+                    cloak_remembers_target: false,
+                    cloak_authored_detector: false,
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,

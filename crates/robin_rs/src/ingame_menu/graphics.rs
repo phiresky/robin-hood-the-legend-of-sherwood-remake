@@ -5,7 +5,7 @@
 //! via the [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
-use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::graphic_config::{TextureEffect, TextureScaleMode};
 use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
@@ -25,7 +25,7 @@ use super::resources::{
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
-// Widget ID ranges: resolution 100..102, widescreen 150, options 200..204,
+// Widget ID ranges: resolution 100..102, widescreen 150, options 200..205,
 // scaling 400.., ok/cancel 300..301.
 const ID_RES_BASE: u32 = 100;
 const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
@@ -33,15 +33,24 @@ const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
+const OPTION_COUNT: u32 = 6;
+const ID_EFFECT_BASE: u32 = 500;
 const PRESET_LIST_X: i32 = 360;
-const PRESET_LIST_Y: i32 = 286;
+const PRESET_LIST_Y: i32 = 350;
 const PRESET_LIST_W: i32 = 240;
 const PRESET_LIST_ROW_H: i32 = 15;
-const PRESET_LIST_ROWS: usize = 6;
+const PRESET_LIST_ROWS: usize = 4;
 
 /// Labels for the scaling radio column.
-fn scale_modes() -> &'static [TextureScaleMode] {
+fn scale_modes() -> Vec<TextureScaleMode> {
     TextureScaleMode::ALL
+        .iter()
+        .copied()
+        .filter(|mode| {
+            *mode != TextureScaleMode::RetroArch
+                || crate::shader_preset::retroarch_runtime_available()
+        })
+        .collect()
 }
 
 /// Display the graphics sub-screen.  Returns `(options_changed, resolution_changed)`.
@@ -161,20 +170,35 @@ pub async fn show_graphics(
             w: field_w,
             h: field_h,
         },
+        super::layout::MenuButton {
+            // Rust extension; the original string table has no label for it.
+            label: "Native Refresh Rate".to_string(),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
     ];
+    assert_eq!(
+        opt_layout.len(),
+        OPTION_COUNT as usize,
+        "graphics option layout/count drifted"
+    );
     align_on_first_widget(&mut opt_layout, 2);
 
     // ── Scaling radios (right column, stacked from (360, 100)) ─────
-    // One row per [`TextureScaleMode`]; shader-based modes fall back to
-    // Linear at draw time on backends that can't compile the shader.
+    // One row per supported [`TextureScaleMode`]. RetroArch is omitted when
+    // this build cannot execute presets; selected shaders fail explicitly
+    // instead of silently changing the requested presentation mode.
     // We use the OK/Cancel button width (not the full input-field
     // width) so the rows fit inside the menu frame without clipping
     // the right edge, and each row is shorter than a resolution button
     // so the column fits within the vertical space that's left.
     let scale_modes = scale_modes();
     let scale_btn_w = btn_w;
-    let scale_btn_h = btn_h / 2;
-    let scale_row_spacing = 2;
+    let scale_btn_h = 13;
+    let scale_row_spacing = 0;
     let scale_x = super::layout::MENU_W - 40 - scale_btn_w;
     let mut scale_layout: Vec<super::layout::MenuButton> = scale_modes
         .iter()
@@ -183,12 +207,30 @@ pub async fn show_graphics(
             label: mode.label().to_string(),
             enabled: true,
             x: scale_x,
-            y: if i == 0 { 100 } else { 0 },
+            y: if i == 0 { 94 } else { 0 },
             w: scale_btn_w,
             h: scale_btn_h,
         })
         .collect();
     align_on_first_widget(&mut scale_layout, scale_row_spacing);
+
+    let effect_y = 94 + scale_modes.len() as i32 * scale_btn_h + 8;
+    let mut effect_layout: Vec<super::layout::MenuButton> = TextureEffect::ALL
+        .iter()
+        .map(|effect| super::layout::MenuButton {
+            label: effect.label().to_string(),
+            enabled: true,
+            x: scale_x,
+            y: if *effect == TextureEffect::None {
+                effect_y
+            } else {
+                0
+            },
+            w: scale_btn_w,
+            h: scale_btn_h,
+        })
+        .collect();
+    align_on_first_widget(&mut effect_layout, 0);
 
     // Build the FrameWnd with all widgets.
     let mut frame = FrameWnd::default();
@@ -233,6 +275,16 @@ pub async fn show_graphics(
             mb.h,
         ));
     }
+    for (i, mb) in effect_layout.iter().enumerate() {
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_EFFECT_BASE + i as u32,
+            &mb.label,
+            mb.x,
+            mb.y,
+            mb.w,
+            mb.h,
+        ));
+    }
     frame.add_widget_absolute(widget_bridge::make_button(
         ID_OK,
         &bottom[0].label,
@@ -256,6 +308,9 @@ pub async fn show_graphics(
 
     let mut done = false;
     let mut accepted = false;
+    let mut parameter_page_effect = false;
+    let mut parameter_status = String::new();
+    let parameter_y = effect_y + TextureEffect::ALL.len() as i32 * scale_btn_h + 14;
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
 
@@ -265,21 +320,24 @@ pub async fn show_graphics(
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => done = true,
-                GameEvent::MouseWheel(delta)
-                    if working.scale_mode == TextureScaleMode::RetroArch =>
-                {
-                    if delta > 0 {
-                        preset_scroll = preset_scroll.saturating_sub(delta as usize);
-                    } else if delta < 0 {
-                        preset_scroll = (preset_scroll + (-delta) as usize)
-                            .min(retroarch_presets.len().saturating_sub(PRESET_LIST_ROWS));
-                    }
-                }
-                GameEvent::MouseDown(x, y, 1, _)
-                    if working.scale_mode == TextureScaleMode::RetroArch =>
-                {
+                GameEvent::MouseDown(x, y, 1, _) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if (PRESET_LIST_X..PRESET_LIST_X + PRESET_LIST_W).contains(&vx)
+                    let row_count = if parameter_page_effect { 5 } else { 3 };
+                    if (working.scale_mode != TextureScaleMode::RetroArch || parameter_page_effect)
+                        && (scale_x..scale_x + scale_btn_w).contains(&vx)
+                        && (parameter_y..parameter_y + row_count * 12).contains(&vy)
+                    {
+                        let row = ((vy - parameter_y) / 12) as usize;
+                        adjust_parameter(
+                            &mut working,
+                            parameter_page_effect,
+                            row,
+                            vx >= scale_x + scale_btn_w / 2,
+                        );
+                        dirty = true;
+                    } else if working.scale_mode == TextureScaleMode::RetroArch
+                        && !parameter_page_effect
+                        && (PRESET_LIST_X..PRESET_LIST_X + PRESET_LIST_W).contains(&vx)
                         && (PRESET_LIST_Y
                             ..PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32)
                             .contains(&vy)
@@ -288,8 +346,44 @@ pub async fn show_graphics(
                         let index = preset_scroll + row;
                         if let Some(preset) = retroarch_presets.get(index) {
                             working.shader_preset = preset.id.clone();
+                            parameter_status.clear();
                             dirty = true;
                         }
+                    }
+                }
+                GameEvent::MouseWheel(delta)
+                    if working.scale_mode == TextureScaleMode::RetroArch
+                        && !parameter_page_effect =>
+                {
+                    if delta > 0 {
+                        preset_scroll = preset_scroll.saturating_sub(delta as usize);
+                    } else if delta < 0 {
+                        preset_scroll = (preset_scroll + (-delta) as usize)
+                            .min(retroarch_presets.len().saturating_sub(PRESET_LIST_ROWS));
+                    }
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => parameter_page_effect = !parameter_page_effect,
+                GameEvent::KeyDown {
+                    keycode: Keycode::Char(b'i'),
+                    ..
+                } if working.scale_mode == TextureScaleMode::RetroArch => {
+                    match pick_retroarch_preset().await {
+                        Ok(Some(path)) => {
+                            let selected = path.to_string_lossy().to_string();
+                            match renderer.validate_retroarch_preset(&selected) {
+                                Ok(()) => {
+                                    working.shader_preset = selected;
+                                    parameter_status = "Imported preset validated".to_string();
+                                    dirty = true;
+                                }
+                                Err(error) => parameter_status = format!("Import failed: {error}"),
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => parameter_status = error,
                     }
                 }
                 GameEvent::KeyDown {
@@ -308,7 +402,8 @@ pub async fn show_graphics(
                     ..
                 } => done = true,
                 GameEvent::KeyDown { keycode, .. }
-                    if working.scale_mode == TextureScaleMode::RetroArch =>
+                    if working.scale_mode == TextureScaleMode::RetroArch
+                        && !parameter_page_effect =>
                 {
                     let current = preset_index(retroarch_presets, &working.shader_preset)
                         .unwrap_or(preset_scroll);
@@ -355,7 +450,7 @@ pub async fn show_graphics(
                     working.adaptive_widescreen = !working.adaptive_widescreen;
                     dirty = true;
                 }
-                id if (ID_OPT_BASE..ID_OPT_BASE + 5).contains(&id) => {
+                id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_COUNT).contains(&id) => {
                     apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
                     dirty = true;
                 }
@@ -366,6 +461,12 @@ pub async fn show_graphics(
                             preset_index(retroarch_presets, &working.shader_preset).unwrap_or(0);
                         preset_scroll = keep_visible(index, preset_scroll, retroarch_presets.len());
                     }
+                    dirty = true;
+                }
+                id if (ID_EFFECT_BASE..ID_EFFECT_BASE + TextureEffect::ALL.len() as u32)
+                    .contains(&id) =>
+                {
+                    working.texture_effect = TextureEffect::ALL[(id - ID_EFFECT_BASE) as usize];
                     dirty = true;
                 }
                 _ => {}
@@ -387,7 +488,15 @@ pub async fn show_graphics(
             render_text_virt_font(renderer, font, transform, &res_label, 30, 80);
             render_text_virt_font(renderer, font, transform, &fx_label, 30, 250);
             render_text_virt_font(renderer, font, transform, "Scaling", scale_x, 80);
-            if working.scale_mode == TextureScaleMode::RetroArch {
+            render_text_virt_font(
+                renderer,
+                font,
+                transform,
+                "Texture effect",
+                scale_x,
+                effect_y - 12,
+            );
+            if working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
                 render_text_virt_font(
                     renderer,
                     font,
@@ -396,6 +505,24 @@ pub async fn show_graphics(
                     PRESET_LIST_X,
                     PRESET_LIST_Y - 18,
                 );
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    "Press I to import a native .slangp preset",
+                    PRESET_LIST_X,
+                    PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32 + 2,
+                );
+            } else {
+                let page = if parameter_page_effect {
+                    "Effect parameters (Tab)"
+                } else {
+                    "Upscaler parameters (Tab)"
+                };
+                render_text_virt_font(renderer, font, transform, page, scale_x, parameter_y - 12);
+            }
+            if !parameter_status.is_empty() {
+                render_text_virt_font(renderer, font, transform, &parameter_status, 30, 410);
             }
         }
 
@@ -420,7 +547,7 @@ pub async fn show_graphics(
                 working.adaptive_widescreen,
             );
         }
-        for i in 0..5u32 {
+        for i in 0..OPTION_COUNT {
             if let Some(w) = frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
@@ -442,8 +569,19 @@ pub async fn show_graphics(
                 );
             }
         }
+        for (i, effect) in TextureEffect::ALL.iter().enumerate() {
+            if let Some(w) = frame.widget(ID_EFFECT_BASE + i as u32) {
+                widget_bridge::draw_widget_radio(
+                    renderer,
+                    resources,
+                    transform,
+                    w,
+                    working.texture_effect == *effect,
+                );
+            }
+        }
 
-        if working.scale_mode == TextureScaleMode::RetroArch {
+        if working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
             draw_preset_list(
                 renderer,
                 resources,
@@ -451,6 +589,17 @@ pub async fn show_graphics(
                 retroarch_presets,
                 preset_scroll,
                 &working.shader_preset,
+            );
+        } else {
+            draw_parameter_panel(
+                renderer,
+                resources,
+                transform,
+                &working,
+                parameter_page_effect,
+                scale_x,
+                parameter_y,
+                scale_btn_w,
             );
         }
 
@@ -467,7 +616,7 @@ pub async fn show_graphics(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty {
@@ -475,10 +624,7 @@ pub async fn show_graphics(
         let resolution_changed = (config.resolution_x - original.resolution_x).abs() > 0.5
             || (config.resolution_y - original.resolution_y).abs() > 0.5
             || config.adaptive_widescreen != original.adaptive_widescreen;
-        if config.scale_mode != original.scale_mode {
-            renderer.set_scale_mode(config.scale_mode);
-        }
-        renderer.set_shader_preset(config.shader_preset.clone());
+        renderer.apply_upscale_config(config);
         (true, resolution_changed)
     } else {
         (false, false)
@@ -558,6 +704,131 @@ fn fit_label(font: &crate::native_font::Font, label: &str, max_w: i32) -> String
     format!("{out}...")
 }
 
+fn adjust_parameter(config: &mut GraphicConfig, effect_page: bool, index: usize, increase: bool) {
+    let value = if effect_page {
+        match index {
+            0 => &mut config.texture_effect_parameters.scanlines,
+            1 => &mut config.texture_effect_parameters.phosphor_mask,
+            2 => &mut config.texture_effect_parameters.bloom,
+            3 => &mut config.texture_effect_parameters.curvature,
+            4 => &mut config.texture_effect_parameters.temporal_flicker,
+            _ => return,
+        }
+    } else {
+        match index {
+            0 => &mut config.upscale_parameters.strength,
+            1 => &mut config.upscale_parameters.edge_threshold,
+            2 => &mut config.upscale_parameters.artifact_removal,
+            _ => return,
+        }
+    };
+    *value = if increase {
+        value.saturating_add(5).min(100)
+    } else {
+        value.saturating_sub(5)
+    };
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_parameter_panel(
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    transform: MenuTransform,
+    config: &GraphicConfig,
+    effect_page: bool,
+    x: i32,
+    y: i32,
+    width: i32,
+) {
+    let Some(font) = resources.label_font() else {
+        return;
+    };
+    let upscale_values = [
+        ("Strength", config.upscale_parameters.strength),
+        ("Edge threshold", config.upscale_parameters.edge_threshold),
+        (
+            "Artifact removal",
+            config.upscale_parameters.artifact_removal,
+        ),
+    ];
+    let effect_values = [
+        ("Scanlines", config.texture_effect_parameters.scanlines),
+        (
+            "Phosphor mask",
+            config.texture_effect_parameters.phosphor_mask,
+        ),
+        ("Bloom", config.texture_effect_parameters.bloom),
+        ("Curvature", config.texture_effect_parameters.curvature),
+        (
+            "Temporal flicker",
+            config.texture_effect_parameters.temporal_flicker,
+        ),
+    ];
+    let values: &[(&str, u8)] = if effect_page {
+        &effect_values
+    } else {
+        &upscale_values
+    };
+    for (row, (label, value)) in values.iter().enumerate() {
+        let row_y = y + row as i32 * 12;
+        render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!("{label}: {value:3}%"),
+            x,
+            row_y,
+        );
+        let bar_x = x + width - 72;
+        let (screen_x, screen_y) = transform.to_screen(bar_x, row_y + 2);
+        let filled = (68 * i32::from(*value)) / 100;
+        renderer.fill_screen(
+            Some(&engine_sprite::BBox::from_coords(
+                screen_x as f32,
+                screen_y as f32,
+                (screen_x + 68) as f32,
+                (screen_y + 7) as f32,
+            )),
+            Renderer::create_color_16(25, 20, 16),
+        );
+        if filled > 0 {
+            renderer.fill_screen(
+                Some(&engine_sprite::BBox::from_coords(
+                    screen_x as f32,
+                    screen_y as f32,
+                    (screen_x + filled) as f32,
+                    (screen_y + 7) as f32,
+                )),
+                Renderer::create_color_16(175, 125, 55),
+            );
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .add_filter("RetroArch shader preset", &["slangp"])
+        .set_title("Import RetroArch shader preset")
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = file.path();
+    if path.extension().and_then(|extension| extension.to_str()) != Some("slangp") {
+        return Err(format!("{} is not a .slangp preset", path.display()));
+    }
+    std::fs::canonicalize(path)
+        .map(Some)
+        .map_err(|error| format!("cannot read imported preset {}: {error}", path.display()))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
+    Err("RetroArch preset import is only available in native desktop builds".to_string())
+}
+
 fn apply_resolution(config: &mut GraphicConfig, idx: usize) {
     match idx {
         0 => config.set_resolution(640.0, 480.0),
@@ -584,6 +855,7 @@ fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
         2 => config.display_titbits = !config.display_titbits,
         3 => config.display_anim = !config.display_anim,
         4 => config.apply_fog_to_all_sprites = !config.apply_fog_to_all_sprites,
+        5 => config.native_refresh_presentation = !config.native_refresh_presentation,
         _ => {}
     }
 }
@@ -595,6 +867,46 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         2 => config.display_titbits,
         3 => config.display_anim,
         4 => config.apply_fog_to_all_sprites,
+        5 => config.native_refresh_presentation,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_refresh_is_the_last_reachable_graphics_option() {
+        let mut config = GraphicConfig::default();
+        let adaptive_widescreen = config.adaptive_widescreen;
+        let native_refresh_index = OPTION_COUNT as usize - 1;
+
+        apply_option_toggle(&mut config, native_refresh_index);
+
+        assert!(!config.native_refresh_presentation);
+        assert_eq!(config.adaptive_widescreen, adaptive_widescreen);
+        assert!(!is_option_selected(&config, native_refresh_index));
+    }
+
+    #[test]
+    fn parameter_edits_are_quantized_and_saturating() {
+        let mut config = GraphicConfig::default();
+        config.upscale_parameters.strength = 98;
+        adjust_parameter(&mut config, false, 0, true);
+        assert_eq!(config.upscale_parameters.strength, 100);
+        adjust_parameter(&mut config, false, 0, false);
+        assert_eq!(config.upscale_parameters.strength, 95);
+
+        config.texture_effect_parameters.curvature = 2;
+        adjust_parameter(&mut config, true, 3, false);
+        assert_eq!(config.texture_effect_parameters.curvature, 0);
+    }
+
+    #[test]
+    fn every_effect_has_a_distinct_persisted_choice() {
+        assert_eq!(TextureEffect::ALL.len(), 3);
+        assert_eq!(TextureEffect::ALL[0], TextureEffect::None);
+        assert_ne!(TextureEffect::ALL[1], TextureEffect::ALL[2]);
     }
 }

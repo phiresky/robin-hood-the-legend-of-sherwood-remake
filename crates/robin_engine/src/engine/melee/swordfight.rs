@@ -1607,20 +1607,23 @@ impl EngineInner {
                 _ => None,
             })
             .unwrap_or_default();
-        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
-            // The PC experience-add awards a campaign-score bonus
-            // whenever the call crosses a 100-XP boundary.
-            campaign.add_pc_experience(
-                usize::from(profile_idx),
-                crate::pc_status::SkillName::HandToHand,
-                xp,
-            );
-            tracing::debug!(
-                attacker = ?attacker_id,
-                xp,
-                "Awarded sword kill XP"
+        let capacity_increased = self.mission_domain.campaign.add_pc_experience(
+            usize::from(profile_idx),
+            crate::pc_status::SkillName::HandToHand,
+            xp,
+        );
+        if capacity_increased {
+            self.add_campaign_value(
+                crate::campaign::CampaignValue::Score,
+                crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
             );
         }
+        tracing::debug!(
+            attacker = ?attacker_id,
+            xp,
+            capacity_increased,
+            "Awarded sword kill XP"
+        );
     }
 
     // ─── PC coma / amulet death-save ────────────────────────────────

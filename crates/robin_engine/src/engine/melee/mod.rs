@@ -396,6 +396,7 @@ fn compute_belt_point(entity: &crate::element::Entity) -> crate::coordinates::Wo
     let z_offset = match posture {
         Posture::Upright
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::LeaningOut
         | Posture::Leisure
         | Posture::Siesta
@@ -937,6 +938,10 @@ impl EngineInner {
         entity_id: EntityId,
         killer: Option<EntityId>,
     ) {
+        // Script/native life-point setters reach this virtual Kill boundary
+        // without allocating a Damage element. Preserve their exact optional
+        // killer instead of inferring responsibility from aggregate totals.
+        self.record_achievement_npc_death(entity_id, killer);
         let (is_pc, is_ai_owner, allied_soldier, killer_is_pc) = {
             let entity = self
                 .get_entity(entity_id)

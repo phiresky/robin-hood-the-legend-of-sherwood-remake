@@ -28,11 +28,16 @@ pub fn pool_threads() -> usize {
     POOL_THREADS.load(Ordering::Acquire)
 }
 
-/// Run one closure on the rayon worker pool and resolve with its result,
-/// without ever blocking the calling thread (the browser main thread must
-/// not `atomics.wait`). The pool must be initialized; callers check
+/// Receiver half of a pool task started with [`start_on_pool`]. Awaiting it
+/// never blocks the calling thread; `Err(Canceled)` means the task panicked
+/// on its worker (the sender was dropped without sending).
+pub type PoolReceiver<T> = futures_channel::oneshot::Receiver<T>;
+
+/// Start one closure on the rayon worker pool and hand back the receiver
+/// for its result, so the caller can keep doing other work and await the
+/// completion later. The pool must be initialized; callers check
 /// [`pool_threads`] and run inline otherwise.
-pub async fn run_on_pool<T, F>(task: F) -> Result<T>
+pub fn start_on_pool<T, F>(task: F) -> PoolReceiver<T>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
@@ -43,6 +48,18 @@ where
         let _ = sender.send(task());
     });
     receiver
+}
+
+/// Run one closure on the rayon worker pool and resolve with its result,
+/// without ever blocking the calling thread (the browser main thread must
+/// not `atomics.wait`). The pool must be initialized; callers check
+/// [`pool_threads`] and run inline otherwise.
+pub async fn run_on_pool<T, F>(task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    start_on_pool(task)
         .await
         .map_err(|_| anyhow!("wasm pool task dropped its result"))
 }

@@ -3,6 +3,7 @@
 //! A blocking modal that draws the DEFAULT.RES campaign map and waits
 //! for a location selection.
 
+use crate::campaign_progress::{CampaignProgressGraph, ExhibitGridNavigator, MissionProgressState};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::blazon_set;
@@ -20,6 +21,7 @@ use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::campaign::Campaign;
 use robin_engine::coordinates::ScreenBBox;
+use robin_engine::gameplay_config::CampaignPresentationMode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::resource_ids;
@@ -112,6 +114,7 @@ struct CampaignMapItem {
     description: String,
     remaining_lifetime: u32,
     show_blazons: bool,
+    achievement_badges: [crate::achievement_hud::AchievementBadgePresentation; 4],
 }
 
 #[derive(Default)]
@@ -196,12 +199,34 @@ pub(crate) async fn show_campaign_map(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     cursor: Option<ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
+    presentation: CampaignPresentationMode,
+    show_achievement_badges: bool,
+    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
 ) -> Result<CampaignMapChoice, String> {
     let mut menu_resources = menu_resources;
+    if presentation != CampaignPresentationMode::ClassicMap {
+        let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
+        return show_campaign_progress(
+            application_context,
+            window,
+            renderer,
+            game,
+            campaign,
+            profiles,
+            &assets,
+            cursor.as_ref(),
+            pseudo_debrief_pending,
+            presentation,
+            show_achievement_badges,
+            lifetime_history,
+        )
+        .await;
+    }
     let items = campaign_map_items(
         application_context,
         campaign,
         profiles,
+        Some(lifetime_history),
         campaign_map,
         text_resources,
         shipping,
@@ -250,6 +275,25 @@ pub(crate) async fn show_campaign_map(
                 } => {
                     final_choice = Some(CampaignMapChoice::Quit);
                     break;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => {
+                    return show_campaign_progress(
+                        window,
+                        renderer,
+                        game,
+                        campaign,
+                        profiles,
+                        &assets,
+                        cursor.as_ref(),
+                        pseudo_debrief_pending,
+                        CampaignPresentationMode::ProgressTree,
+                        show_achievement_badges,
+                        lifetime_history,
+                    )
+                    .await;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
@@ -334,8 +378,180 @@ pub(crate) async fn show_campaign_map(
             menu_resources.as_deref(),
             &input,
             &frame,
+            show_achievement_badges,
+            campaign.achievement_aggregation(profiles),
+            lifetime_history.achievement_aggregation(),
         );
         if let Some(cursor) = &cursor {
+            cursor.draw(renderer, transform, &input);
+        }
+        renderer.present();
+        crate::window::sleep_ui_frame().await;
+
+        if let Some(choice) = final_choice {
+            return Ok(choice);
+        }
+        if let Some(at) = pseudo_debrief_at
+            && std::time::Instant::now() >= at
+        {
+            return Ok(CampaignMapChoice::PseudoDebriefTimer);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn show_campaign_progress(
+    application_context: &ApplicationContext,
+    window: &mut crate::window::GameWindow,
+    renderer: &mut Renderer,
+    game: &mut crate::game::Game,
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    assets: &CampaignMapAssets,
+    cursor: Option<&ModalCursor<'_>>,
+    pseudo_debrief_pending: bool,
+    initial_presentation: CampaignPresentationMode,
+    show_achievement_badges: bool,
+    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
+) -> Result<CampaignMapChoice, String> {
+    let mut graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
+    for node in &mut graph.nodes {
+        node.name = application_context.localized_mission_name(node.mission_id, &node.name);
+    }
+    if graph.nodes.is_empty() {
+        tracing::warn!("Campaign history presentation has no non-Sherwood missions");
+        return Ok(CampaignMapChoice::Quit);
+    }
+    let mut presentation = initial_presentation;
+    let mut selected = graph.first_selectable().unwrap_or(0);
+    let mut exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+    let mut input = ModalInputState::new();
+    let pseudo_debrief_at = pseudo_debrief_pending
+        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
+
+    loop {
+        if game.take_campaign_map_redisplay() {
+            return Ok(CampaignMapChoice::Redisplay);
+        }
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let input_enabled = pseudo_debrief_at
+            .map(|at| std::time::Instant::now() >= at)
+            .unwrap_or(true);
+        let mut final_choice = None;
+        for event in window.poll_events() {
+            if !input_enabled {
+                input.update_from_event(&event, transform);
+                continue;
+            }
+            match event {
+                GameEvent::Quit
+                | GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => final_choice = Some(CampaignMapChoice::Quit),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Tab,
+                    ..
+                } => {
+                    presentation = match presentation {
+                        CampaignPresentationMode::ProgressTree => {
+                            exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+                            CampaignPresentationMode::SherwoodMuseum
+                        }
+                        CampaignPresentationMode::SherwoodMuseum => {
+                            CampaignPresentationMode::ProgressTree
+                        }
+                        CampaignPresentationMode::ClassicMap => unreachable!(),
+                    };
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } => match presentation {
+                    CampaignPresentationMode::ProgressTree => selected = selected.saturating_sub(1),
+                    CampaignPresentationMode::SherwoodMuseum => {
+                        exhibit_grid.navigate(0, -1);
+                        selected = exhibit_grid.selected;
+                    }
+                    CampaignPresentationMode::ClassicMap => unreachable!(),
+                },
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } => match presentation {
+                    CampaignPresentationMode::ProgressTree => {
+                        selected = (selected + 1).min(graph.nodes.len() - 1)
+                    }
+                    CampaignPresentationMode::SherwoodMuseum => {
+                        exhibit_grid.navigate(0, 1);
+                        selected = exhibit_grid.selected;
+                    }
+                    CampaignPresentationMode::ClassicMap => unreachable!(),
+                },
+                GameEvent::KeyDown {
+                    keycode: Keycode::Left,
+                    ..
+                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    exhibit_grid.navigate(-1, 0);
+                    selected = exhibit_grid.selected;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Right,
+                    ..
+                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    exhibit_grid.navigate(1, 0);
+                    selected = exhibit_grid.selected;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
+                    ..
+                } if graph.nodes[selected].selectable => {
+                    final_choice = Some(CampaignMapChoice::SelectMission(
+                        graph.nodes[selected].mission_idx,
+                    ));
+                }
+                GameEvent::MouseMove { x, y, .. } => {
+                    let (vx, vy) = transform.from_screen(x, y);
+                    input.virt_x = vx as f32;
+                    input.virt_y = vy as f32;
+                }
+                GameEvent::MouseDown(x, y, 1, _) => {
+                    let (vx, vy) = transform.from_screen(x, y);
+                    input.virt_x = vx as f32;
+                    input.virt_y = vy as f32;
+                    if let Some(index) = progress_hit_test(&graph, presentation, selected, vx, vy) {
+                        selected = index;
+                        exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+                        if graph.nodes[index].selectable {
+                            final_choice = Some(CampaignMapChoice::SelectMission(
+                                graph.nodes[index].mission_idx,
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            input.update_from_event(&event, transform);
+            if final_choice.is_some() {
+                break;
+            }
+        }
+
+        layout::enter_modal_gpu_phase(renderer);
+        render_campaign_progress(
+            renderer,
+            transform,
+            &graph,
+            selected,
+            presentation,
+            assets,
+            show_achievement_badges,
+            lifetime_history.totals(),
+        );
+        if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
@@ -352,10 +568,390 @@ pub(crate) async fn show_campaign_map(
     }
 }
 
+fn progress_hit_test(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    x: i32,
+    y: i32,
+) -> Option<usize> {
+    graph.nodes.iter().enumerate().find_map(|(idx, _)| {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            return None;
+        }
+        let (rx, ry, rw, rh) = progress_node_rect(graph, presentation, idx);
+        (x >= rx && x < rx + rw && y >= ry && y < ry + rh).then_some(idx)
+    })
+}
+
+fn progress_node_rect(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    index: usize,
+) -> (i32, i32, i32, i32) {
+    match presentation {
+        CampaignPresentationMode::ProgressTree => {
+            let node = &graph.nodes[index];
+            let max_depth = graph.nodes.iter().map(|node| node.depth).max().unwrap_or(0);
+            let x_step = if max_depth == 0 {
+                0
+            } else {
+                480 / max_depth as i32
+            };
+            let lane_count = graph
+                .nodes
+                .iter()
+                .filter(|candidate| candidate.depth == node.depth)
+                .count()
+                .max(1);
+            let y_step = 245 / lane_count as i32;
+            (
+                30 + node.depth as i32 * x_step,
+                124 + node.lane as i32 * y_step,
+                112,
+                38,
+            )
+        }
+        CampaignPresentationMode::SherwoodMuseum => {
+            let page_index = index % 16;
+            let col = page_index % 4;
+            let row = page_index / 4;
+            (35 + col as i32 * 150, 124 + row as i32 * 64, 126, 58)
+        }
+        CampaignPresentationMode::ClassicMap => unreachable!(),
+    }
+}
+
+fn render_campaign_progress(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    selected: usize,
+    presentation: CampaignPresentationMode,
+    assets: &CampaignMapAssets,
+    show_achievement_badges: bool,
+    lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
+) {
+    if let Some(background) = assets.background.as_ref() {
+        layout::draw_background(renderer, transform, background, 0, 0, MAP_W, MAP_H);
+    } else {
+        renderer.render_gpu_rect(
+            transform.origin_x,
+            transform.origin_y,
+            MAP_W,
+            MAP_H,
+            38,
+            31,
+            20,
+            255,
+        );
+    }
+    // The translucent wash leaves the original campaign artwork visible as
+    // the museum/tree room while keeping graph text readable.
+    renderer.render_gpu_rect(
+        transform.origin_x + 10,
+        transform.origin_y + 10,
+        620,
+        455,
+        18,
+        23,
+        25,
+        215,
+    );
+
+    let color_for = |state: MissionProgressState| match state {
+        MissionProgressState::Completed => (40, 105, 62),
+        MissionProgressState::Available => (132, 102, 30),
+        MissionProgressState::Lost => (125, 45, 38),
+        MissionProgressState::Expired => (78, 55, 55),
+        MissionProgressState::Locked => (58, 61, 65),
+    };
+
+    if presentation == CampaignPresentationMode::ProgressTree {
+        for (idx, node) in graph.nodes.iter().enumerate() {
+            let (x, y, _w, h) = progress_node_rect(graph, presentation, idx);
+            for &parent in &node.prerequisite_nodes {
+                let (px, py, pw, ph) = progress_node_rect(graph, presentation, parent);
+                renderer.render_gpu_line(
+                    transform.origin_x + px + pw,
+                    transform.origin_y + py + ph / 2,
+                    transform.origin_x + x,
+                    transform.origin_y + y + h / 2,
+                    155,
+                    137,
+                    91,
+                );
+            }
+        }
+    }
+
+    for (idx, node) in graph.nodes.iter().enumerate() {
+        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+            continue;
+        }
+        let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
+        let (r, g, b) = color_for(node.state);
+        renderer.render_gpu_rect(
+            transform.origin_x + x,
+            transform.origin_y + y,
+            w,
+            h,
+            r,
+            g,
+            b,
+            245,
+        );
+        if idx == selected {
+            renderer.draw_rect_outline_screen(
+                transform.origin_x + x - 3,
+                transform.origin_y + y - 3,
+                transform.origin_x + x + w + 3,
+                transform.origin_y + y + h + 3,
+                Renderer::create_color_16(255, 230, 95),
+            );
+        }
+
+        if presentation == CampaignPresentationMode::SherwoodMuseum {
+            let loc_idx = node.location as usize;
+            if let Some(surface) = assets.locations.get(loc_idx).copied().flatten() {
+                layout::draw_background(renderer, transform, &surface, x + 4, y + 4, 22, 22);
+            }
+        }
+        if let Some(font) = assets.font.as_ref() {
+            let max_chars = if presentation == CampaignPresentationMode::SherwoodMuseum {
+                15
+            } else {
+                13
+            };
+            let name: String = node.name.chars().take(max_chars).collect();
+            layout::render_text_virt(renderer, font, transform, &name, x + 5, y + h - 17);
+            if node.attempt_count != 0 {
+                let detail = if show_achievement_badges {
+                    format!("{}x  {} badge", node.attempt_count, node.badge_count)
+                } else {
+                    format!("{}x", node.attempt_count)
+                };
+                layout::render_text_virt(renderer, font, transform, &detail, x + 31, y + 5);
+            }
+        }
+    }
+
+    // Existing flag art marks the selected exhibit in the modal grid.
+    if presentation == CampaignPresentationMode::SherwoodMuseum
+        && let Some(flag) = assets.flag.as_ref()
+    {
+        let (x, y, _, h) = progress_node_rect(graph, presentation, selected);
+        layout::draw_background(renderer, transform, flag, x + 52, y + h + 2, 20, 24);
+    }
+
+    if let Some(font) = assets.font.as_ref() {
+        let title = match presentation {
+            CampaignPresentationMode::ProgressTree => "Campaign Progress Tree".to_owned(),
+            CampaignPresentationMode::SherwoodMuseum => format!(
+                "Sherwood Hall of Deeds - Gallery {}/{}",
+                selected / 16 + 1,
+                (graph.nodes.len() + 15) / 16
+            ),
+            CampaignPresentationMode::ClassicMap => unreachable!(),
+        };
+        layout::render_text_virt(renderer, font, transform, &title, 25, 22);
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "{} / {} missions completed    Tab: switch view    Esc: leave",
+                graph.completed_missions, graph.known_missions
+            ),
+            25,
+            43,
+        );
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "Lifetime: {} attempts / {} wins / {}h {:02}m",
+                lifetime_totals.attempts,
+                lifetime_totals.wins,
+                lifetime_totals.known_duration_seconds / 3600,
+                (lifetime_totals.known_duration_seconds / 60) % 60,
+            ),
+            315,
+            43,
+        );
+        if show_achievement_badges {
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Campaign",
+                graph.campaign_achievements,
+                font,
+                58,
+            );
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Lifetime",
+                graph.lifetime_achievements,
+                font,
+                90,
+            );
+        }
+        let node = &graph.nodes[selected];
+        let action = if node.history_replay {
+            "Enter: replay (campaign changes discarded)"
+        } else if node.selectable {
+            "Enter: inspect and launch"
+        } else {
+            "Locked: inspect only"
+        };
+        layout::render_text_virt(renderer, font, transform, action, 25, 414);
+        if show_achievement_badges {
+            render_progress_achievement_badges(renderer, transform, node.badges, Some(font));
+        }
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &node.summary(show_achievement_badges),
+            25,
+            437,
+        );
+        if graph.cyclic_prerequisites {
+            layout::render_text_virt(
+                renderer,
+                font,
+                transform,
+                "Warning: cyclic mission prerequisites detected",
+                355,
+                22,
+            );
+        }
+    }
+}
+
+fn render_achievement_aggregation_summary(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    scope_label: &str,
+    summary: robin_engine::achievement::AchievementAggregationSummary,
+    font: &NativeFont,
+    y: i32,
+) {
+    layout::render_text_virt(renderer, font, transform, scope_label, 25, y);
+    for (index, presentation) in
+        crate::achievement_hud::achievement_aggregation_presentations(summary)
+            .iter()
+            .enumerate()
+    {
+        let column = index % 2;
+        let row = index / 2;
+        let x = 105 + i32::try_from(column).expect("two achievement columns fit i32") * 255;
+        let item_y = y + i32::try_from(row).expect("two achievement rows fit i32") * 15;
+        draw_achievement_badge_icon(
+            renderer,
+            presentation.badge.id,
+            presentation.progress.earned(),
+            transform.origin_x + x,
+            transform.origin_y + item_y + 1,
+        );
+        layout::render_text_virt(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "{}: {}",
+                presentation.badge.label, presentation.compact_status
+            ),
+            x + 14,
+            item_y,
+        );
+    }
+}
+
+fn render_progress_achievement_badges(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    badges: robin_engine::achievement::AchievementSet,
+    font: Option<&NativeFont>,
+) {
+    let Some(font) = font else {
+        return;
+    };
+    for (index, badge) in crate::achievement_hud::mission_badge_presentations(badges, |_| None)
+        .iter()
+        .enumerate()
+    {
+        let x = 25 + i32::try_from(index).expect("four achievement badges fit i32") * 150;
+        let y = 389;
+        draw_achievement_badge_icon(
+            renderer,
+            badge.id,
+            badge.earned,
+            transform.origin_x + x,
+            transform.origin_y + y + 1,
+        );
+        layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+    }
+}
+
+/// Small code-native fallback icons. Stable badge icon keys remain available
+/// to future asset packs without coupling campaign data to presentation art.
+fn draw_achievement_badge_icon(
+    renderer: &mut Renderer,
+    id: robin_engine::achievement::AchievementId,
+    earned: bool,
+    x: i32,
+    y: i32,
+) {
+    let color = if earned {
+        Renderer::create_color_16(245, 210, 95)
+    } else {
+        Renderer::create_color_16(92, 82, 68)
+    };
+    use robin_engine::achievement::AchievementId;
+    match id {
+        AchievementId::CleanHands => {
+            renderer.draw_rect_outline_screen(x + 3, y + 5, x + 9, y + 12, color);
+            for finger in 0..4 {
+                renderer.draw_line_screen(
+                    x + 2 + finger * 2,
+                    y + 5,
+                    x + 2 + finger * 2,
+                    y + 1 + (finger & 1),
+                    color,
+                );
+            }
+        }
+        AchievementId::Ghost => {
+            renderer.draw_rect_outline_screen(x + 2, y + 3, x + 10, y + 11, color);
+            renderer.draw_line_screen(x + 2, y + 11, x + 4, y + 9, color);
+            renderer.draw_line_screen(x + 4, y + 9, x + 6, y + 11, color);
+            renderer.draw_line_screen(x + 6, y + 11, x + 8, y + 9, color);
+            renderer.render_gpu_rect(x + 4, y + 5, 1, 1, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x + 8, y + 5, 1, 1, 245, 225, 160, 255);
+        }
+        AchievementId::PileOBones => {
+            renderer.draw_line_screen(x + 1, y + 2, x + 11, y + 11, color);
+            renderer.draw_line_screen(x + 11, y + 2, x + 1, y + 11, color);
+            renderer.render_gpu_rect(x, y + 1, 3, 3, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x + 10, y + 10, 3, 3, 245, 225, 160, 255);
+        }
+        AchievementId::AllEnemiesOneBuilding => {
+            renderer.draw_rect_outline_screen(x + 2, y + 5, x + 11, y + 12, color);
+            renderer.draw_line_screen(x + 1, y + 5, x + 6, y + 1, color);
+            renderer.draw_line_screen(x + 6, y + 1, x + 12, y + 5, color);
+            renderer.draw_rect_outline_screen(x + 5, y + 8, x + 8, y + 12, color);
+        }
+    }
+}
+
 fn campaign_map_items(
     application_context: &ApplicationContext,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
+    lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
     campaign_map: &CampaignMapState,
     text_resources: &mut ResourceManager,
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
@@ -394,6 +990,14 @@ fn campaign_map_items(
                 description,
                 remaining_lifetime,
                 show_blazons: mission.requires_blazons(profiles),
+                achievement_badges: crate::achievement_hud::mission_badge_presentations(
+                    crate::campaign_progress::combined_mission_badges(
+                        mission.achievement_badges(),
+                        profile.id,
+                        lifetime,
+                    ),
+                    |_| None,
+                ),
             })
         })
         .collect()
@@ -549,6 +1153,9 @@ fn render_campaign_map(
     resources: Option<&IngameMenuResources>,
     input: &ModalInputState,
     frame: &FrameWnd,
+    show_achievement_badges: bool,
+    campaign_achievements: robin_engine::achievement::AchievementAggregationSummary,
+    lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
 ) {
     if assets.background.is_none() {
         renderer.render_gpu_rect(
@@ -608,7 +1215,15 @@ fn render_campaign_map(
     if let Some(item) = items.get(selected) {
         draw_selection(renderer, transform, item.loc_idx, &assets.locations);
         render_tooltip(
-            renderer, transform, campaign, profiles, item, assets, resources, input,
+            renderer,
+            transform,
+            campaign,
+            profiles,
+            item,
+            assets,
+            resources,
+            input,
+            show_achievement_badges,
         );
     } else {
         draw_close_button(renderer, transform, assets, frame);
@@ -616,6 +1231,25 @@ fn render_campaign_map(
 
     if let Some(font) = assets.font.as_ref() {
         widget_bridge::draw_frame_labels(renderer, transform, frame, font, TextAlign::Center);
+        layout::render_text_virt(renderer, font, transform, "Tab: History & Practice", 18, 12);
+        if show_achievement_badges {
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Campaign",
+                campaign_achievements,
+                font,
+                28,
+            );
+            render_achievement_aggregation_summary(
+                renderer,
+                transform,
+                "Lifetime",
+                lifetime_achievements,
+                font,
+                60,
+            );
+        }
     }
 }
 
@@ -629,6 +1263,7 @@ fn render_tooltip(
     assets: &CampaignMapAssets,
     resources: Option<&IngameMenuResources>,
     input: &ModalInputState,
+    show_achievement_badges: bool,
 ) {
     let Some(font) = resources
         .and_then(IngameMenuResources::popup_font_any)
@@ -637,14 +1272,22 @@ fn render_tooltip(
         return;
     };
 
-    let short_desc = ShortMissionDescriptionWindow::new(campaign, profiles, item, input, assets);
+    let short_desc = ShortMissionDescriptionWindow::new(
+        campaign,
+        profiles,
+        item,
+        input,
+        assets,
+        show_achievement_badges,
+    );
+    let tooltip_height = if show_achievement_badges { 156 } else { 100 };
 
     if assets.tooltip_bg.is_none() {
         renderer.render_gpu_rect(
             transform.origin_x + short_desc.x,
             transform.origin_y + short_desc.y,
             220,
-            100,
+            tooltip_height,
             42,
             32,
             18,
@@ -654,8 +1297,23 @@ fn render_tooltip(
             transform.origin_x + short_desc.x,
             transform.origin_y + short_desc.y,
             transform.origin_x + short_desc.x + 220,
-            transform.origin_y + short_desc.y + 100,
+            transform.origin_y + short_desc.y + tooltip_height,
             Renderer::create_color_16(210, 180, 110),
+        );
+    }
+
+    if show_achievement_badges {
+        // The shipped tooltip bitmap is only 100 pixels tall. Extend it with
+        // a neutral panel for the port's four durable per-mission badges.
+        renderer.render_gpu_rect(
+            transform.origin_x + short_desc.x,
+            transform.origin_y + short_desc.y + 98,
+            220,
+            58,
+            42,
+            32,
+            18,
+            235,
         );
     }
 
@@ -690,6 +1348,24 @@ fn render_tooltip(
             short_desc.y,
         );
     }
+
+    if show_achievement_badges {
+        for (index, badge) in item.achievement_badges.iter().enumerate() {
+            let column = index % 2;
+            let row = index / 2;
+            let x =
+                short_desc.x + 8 + i32::try_from(column).expect("two badge columns fit i32") * 106;
+            let y = short_desc.y + 104 + i32::try_from(row).expect("two badge rows fit i32") * 24;
+            draw_achievement_badge_icon(
+                renderer,
+                badge.id,
+                badge.earned,
+                transform.origin_x + x,
+                transform.origin_y + y + 1,
+            );
+            layout::render_text_virt(renderer, font, transform, &badge.label, x + 14, y);
+        }
+    }
 }
 
 impl ShortMissionDescriptionWindow {
@@ -699,15 +1375,17 @@ impl ShortMissionDescriptionWindow {
         item: &CampaignMapItem,
         input: &ModalInputState,
         assets: &CampaignMapAssets,
+        show_achievement_badges: bool,
     ) -> Self {
         let mut x = input.virt_x as i32 + 25;
         let mut y = input.virt_y as i32 + 25;
         x = x.clamp(0, MAP_W - 220);
-        y = y.clamp(0, MAP_H - 100);
+        let height = if show_achievement_badges { 156 } else { 100 };
+        y = y.clamp(0, MAP_H - height);
 
         let mut frame = FrameWnd::new(
             "Short mission description",
-            ScreenBBox::from_coords(x as f32, y as f32, (x + 220) as f32, (y + 100) as f32),
+            ScreenBBox::from_coords(x as f32, y as f32, (x + 220) as f32, (y + height) as f32),
             0,
         );
         frame.add_widget_absolute(widget_bridge::make_picture_with_resource(

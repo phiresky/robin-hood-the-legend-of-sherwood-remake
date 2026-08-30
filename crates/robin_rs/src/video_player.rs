@@ -255,7 +255,16 @@ pub async fn play_video(
     };
 
     // ── wgpu video blit pipeline (self-contained) ──────────────────
-    let blit = VideoBlit::new(&window.gpu, window.gpu.surface_format, vid_w, vid_h);
+    let graphics = application_context
+        .active_profile_snapshot()?
+        .graphic_config;
+    let mut blit = VideoBlit::new(
+        &window.gpu,
+        window.gpu.surface_format,
+        vid_w,
+        vid_h,
+        graphics,
+    );
 
     // ── Main decode / display loop ──────────────────────────────────
     let wall_start = web_time::Instant::now();
@@ -296,7 +305,7 @@ pub async fn play_video(
                 }
             }
             blit.upload_frame(&window.gpu, rgba.data(0), rgba.stride(0), vid_w, vid_h);
-            blit.present(window);
+            blit.present(window)?;
         }
     }
 
@@ -337,6 +346,9 @@ struct VideoBlit {
     letterbox_buffer: wgpu::Buffer,
     vid_w: u32,
     vid_h: u32,
+    upscale: crate::gpu_upscale::GpuUpscale,
+    graphics: robin_engine::graphic_config::GraphicConfig,
+    presentation_frame: usize,
 }
 
 #[cfg(feature = "video")]
@@ -387,6 +399,7 @@ impl VideoBlit {
         target_format: wgpu::TextureFormat,
         vid_w: u32,
         vid_h: u32,
+        graphics: robin_engine::graphic_config::GraphicConfig,
     ) -> Self {
         let module = gpu
             .device
@@ -522,6 +535,9 @@ impl VideoBlit {
             letterbox_buffer: buffer,
             vid_w,
             vid_h,
+            upscale: crate::gpu_upscale::GpuUpscale::new(gpu.clone(), target_format),
+            graphics,
+            presentation_frame: 0,
         }
     }
 
@@ -556,13 +572,13 @@ impl VideoBlit {
         );
     }
 
-    fn present(&self, window: &mut GameWindow) {
+    fn present(&mut self, window: &mut GameWindow) -> Result<(), String> {
         let frame = match window.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             status => {
                 tracing::warn!("video present: get_current_texture: {status:?}");
-                return;
+                return Ok(());
             }
         };
         let view = frame
@@ -594,7 +610,34 @@ impl VideoBlit {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("video present"),
                 });
-        {
+        let shader_rendered = if crate::gpu_upscale::GpuUpscale::is_multipass_mode(
+            self.graphics.scale_mode,
+            self.graphics.texture_effect,
+        ) {
+            self.upscale
+                .render_multipass(
+                    self.graphics.scale_mode,
+                    &mut encoder,
+                    &self.texture,
+                    &view,
+                    [swap_w as u32, swap_h as u32],
+                    [
+                        (x_ndc + 1.0) * swap_w * 0.5,
+                        (y_ndc + 1.0) * swap_h * 0.5,
+                        w_ndc * swap_w * 0.5,
+                        h_ndc * swap_h * 0.5,
+                    ],
+                    Some(self.presentation_frame),
+                    Some(self.graphics.shader_preset.as_str()),
+                    self.graphics.texture_effect,
+                    self.graphics.upscale_parameters,
+                    self.graphics.texture_effect_parameters,
+                )
+                .map_err(|error| format!("video upscaler/effect failed: {error}"))?
+        } else {
+            false
+        };
+        if !shader_rendered {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("video blit pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -617,8 +660,10 @@ impl VideoBlit {
         }
         window.gpu.queue.submit(Some(encoder.finish()));
         window.gpu.queue.present(frame);
+        self.presentation_frame = self.presentation_frame.wrapping_add(1);
         // Silence "unused" warnings — these fields exist to keep the
         // bind-group layout / sampler alive for the pipeline's life.
         let _ = (&self.bgl, &self.sampler);
+        Ok(())
     }
 }

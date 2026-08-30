@@ -240,7 +240,9 @@ pub const MT_INFOBULLE_BLAZON_WON: usize = 322;
 //   C02 — "led by %s" specialist suffix (Sherwood)      (1x s)
 pub(crate) use robin_engine::sherwood_stat::{
     MT_STR_DB_C01, MT_STR_DB_C02, MT_STR_DB_S01, MT_STR_DB_S02, MT_STR_DB_S03, MT_STR_DB_S04,
-    MT_STR_DB_S05, MT_STR_DB_S12, MT_STR_DB_S14, MT_STR_DB_S16,
+    MT_STR_DB_S05, MT_STR_DB_S12, MT_STR_DB_S14, MT_STR_DB_S16, MT_STR_PRODUCTION_FORECAST_LINE,
+    MT_STR_PRODUCTION_FORECAST_RATE, MT_STR_PRODUCTION_FORECAST_SELECTED,
+    MT_STR_PRODUCTION_FORECAST_SPECIALIST,
 };
 pub const MT_STR_DB_S06: usize = 73;
 pub const MT_STR_DB_S07: usize = 74;
@@ -560,6 +562,19 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m.insert(MT_STR_DB_S16, "Play time: %s");
     m.insert(MT_STR_DB_C01, "with");
     m.insert(MT_STR_DB_C02, "led by %s");
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_SELECTED,
+        "Next production — %s (%s cycle):",
+    );
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_RATE,
+        "Production rate (%s; select a mission for exact cycle totals):",
+    );
+    m.insert(
+        MT_STR_PRODUCTION_FORECAST_LINE,
+        "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
+    );
+    m.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
     m.insert(MT_STR_DB_S06, "You collected %u gold pieces.");
     m.insert(MT_STR_DB_S07, "%u of %u enemy soldiers still alive.");
     m.insert(MT_STR_DB_S08, "%u new gang members.");
@@ -900,6 +915,23 @@ impl IngameMenuResources {
             tracing::warn!("Ingame menu resources: DEFAULT.RES unavailable: {e}");
             return None;
         }
+        Self::from_manager(renderer, shipping, res)
+    }
+
+    /// Build the shared menu resources from an already-attached (ideally
+    /// eagerly pre-decoded) `DEFAULT.RES` manager. `shipping` is still
+    /// needed for the menu text tables (`Level.res` / `Start.sxt`).
+    pub fn from_manager(
+        renderer: &mut Renderer,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+        mut res: ResourceManager,
+    ) -> Option<Self> {
+        let mut timer = crate::game_session::PhaseTimer::new("ingame menu load");
+        if res.is_empty() {
+            tracing::warn!("Ingame menu resources: provided DEFAULT.RES manager is empty");
+            return None;
+        }
+        timer.step("attach DEFAULT.RES");
 
         // `Data/Text/Level.res` is already attached by the game session
         // loop for portrait names; it also contains the menu text string
@@ -909,6 +941,7 @@ impl IngameMenuResources {
         let _ = text_res.attach_or_from_shipping("Data/Text/Level.res", shipping);
         let _ = text_res.attach_or_from_shipping("Data/Interface/Start.sxt", shipping);
         let menu_text = MenuText::load(&mut text_res);
+        timer.step("menu text");
 
         let (button_w, button_h, button_surfaces) =
             load_sprite_pack(&mut res, renderer, resource_ids::RHID_MENU_BUTTON);
@@ -941,6 +974,7 @@ impl IngameMenuResources {
             }
         }
 
+        timer.step("button sprite packs");
         let parchment_huge = load_surface(&mut res, renderer, resource_ids::RHID_PARCHMENT_HUGE);
         let menu_bg_small =
             load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_SMALL);
@@ -981,7 +1015,10 @@ impl IngameMenuResources {
             load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_HUGE, 2),
         ];
 
+        timer.step("backgrounds + widgets + blazons");
         let fonts = MenuFonts::load();
+        timer.step("fonts");
+        timer.total();
 
         tracing::info!(
             "Ingame menus: button={}x{} ({} frames), input_field={}x{}, parchment={:?}, menu_text={} entries",

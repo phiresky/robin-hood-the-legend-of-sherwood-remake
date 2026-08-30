@@ -298,7 +298,7 @@ pub(crate) async fn show_custom_missions(
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
         cursor.draw(renderer, transform, &input_state);
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

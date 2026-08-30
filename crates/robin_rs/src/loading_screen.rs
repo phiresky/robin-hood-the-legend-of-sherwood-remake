@@ -753,6 +753,10 @@ impl LoadingScreenRenderer {
         self.renderer
             .render_loading_dissolve(&self.loading_dissolve, self.state.sand_threshold());
 
+        // The loading artwork belongs to the effected presentation layer;
+        // progress/version text is UI and must stay legible and sharp.
+        self.renderer.begin_ui_layer();
+
         // Overlay version / demo text
         self.render_version_text(w);
 

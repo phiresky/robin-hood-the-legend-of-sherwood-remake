@@ -1062,8 +1062,40 @@ fn apply_custom_mission_text_patch(
 /// audio device. None of these values belongs in an engine snapshot.
 pub(super) struct MissionProcessResources {
     pub(super) text: ResourceManager,
-    pub(super) cursor: ResourceManager,
+    /// The `DEFAULT.RES` interface archive; `Some` until frontend assembly
+    /// consumes it via [`Self::take_interface`].
+    interface: Option<PendingInterfaceResources>,
     pub(super) audio_backend: Option<KiraAudioBackend>,
+}
+
+/// The interface archive, possibly off on a worker getting its JXL pictures
+/// eagerly decoded while the level loads (see
+/// [`MissionProcessResources::start_interface_decode`]). The joined pair is
+/// `(cursor, menu)` — two identical fully-decoded `DEFAULT.RES` views, one
+/// for the mission sprite caches and one owned by the in-game menus.
+enum PendingInterfaceResources {
+    Ready {
+        cursor: ResourceManager,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    Thread(std::thread::JoinHandle<(ResourceManager, ResourceManager)>),
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    Pool(robin_assets::wasm_threads::PoolReceiver<(ResourceManager, ResourceManager)>),
+}
+
+/// Worker-side body of the interface pre-decode: decode every encoded (JXL)
+/// picture once, then duplicate the decoded manager for the menu owner —
+/// a memcpy of decoded pixels, far cheaper than a second decode pass.
+fn decode_interface_managers(mut cursor: ResourceManager) -> (ResourceManager, ResourceManager) {
+    let started = web_time::Instant::now();
+    let decoded = cursor.decode_all_encoded_pictures();
+    let menu = cursor.duplicate();
+    tracing::info!(
+        resources = decoded,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "interface pictures pre-decoded off the loading path"
+    );
+    (cursor, menu)
 }
 
 /// Engine-construction resources for true headless mode. This owner contains
@@ -1131,8 +1163,75 @@ impl MissionProcessResources {
 
         Self {
             text,
-            cursor,
+            interface: Some(PendingInterfaceResources::Ready { cursor }),
             audio_backend,
+        }
+    }
+
+    /// The interface archive for pre-engine metadata extraction. Panics if
+    /// the pre-decode was already dispatched — extraction must come first.
+    fn interface_cursor_mut(&mut self) -> &mut ResourceManager {
+        match self.interface.as_mut() {
+            Some(PendingInterfaceResources::Ready { cursor }) => cursor,
+            _ => panic!("interface archive already dispatched to the pre-decode worker"),
+        }
+    }
+
+    /// Move the interface archive onto a worker that eagerly decodes every
+    /// encoded (JXL) picture, so frontend assembly finds them ready instead
+    /// of decoding hundreds of interface images on the loading path. No-op
+    /// when no worker can run it (single-threaded wasm) — the lazy per-
+    /// resource decode then behaves exactly as before.
+    pub(super) fn start_interface_decode(&mut self) {
+        let Some(PendingInterfaceResources::Ready { cursor }) = self.interface.take() else {
+            panic!("interface pre-decode dispatched twice");
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let handle = std::thread::Builder::new()
+                .name("interface-decode".into())
+                .spawn(move || decode_interface_managers(cursor))
+                .expect("failed to spawn interface decode thread");
+            self.interface = Some(PendingInterfaceResources::Thread(handle));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            #[cfg(feature = "wasm-threads")]
+            if robin_assets::wasm_threads::pool_threads() > 0 {
+                self.interface = Some(PendingInterfaceResources::Pool(
+                    robin_assets::wasm_threads::start_on_pool(move || {
+                        decode_interface_managers(cursor)
+                    }),
+                ));
+                return;
+            }
+            self.interface = Some(PendingInterfaceResources::Ready { cursor });
+        }
+    }
+
+    /// Collect the `(cursor, menu)` interface managers for frontend
+    /// assembly, waiting for the pre-decode worker when one is running.
+    /// Never blocks the wasm main thread (the pool variant is awaited).
+    pub(super) async fn take_interface(&mut self) -> (ResourceManager, ResourceManager) {
+        match self
+            .interface
+            .take()
+            .expect("interface archive already consumed")
+        {
+            PendingInterfaceResources::Ready { cursor } => {
+                // No worker ran: hand the menus their own lazily-decoded
+                // copy, exactly like the old second attach.
+                let menu = cursor.duplicate();
+                (cursor, menu)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            PendingInterfaceResources::Thread(handle) => {
+                handle.join().expect("interface decode thread panicked")
+            }
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+            PendingInterfaceResources::Pool(receiver) => receiver
+                .await
+                .expect("interface decode worker dropped its result"),
         }
     }
 
@@ -1144,15 +1243,14 @@ impl MissionProcessResources {
         Vec<u16>,
         Option<engine_api::MinimapWidgetSetup>,
     ) {
-        let ground_mark_sprite = extract_ground_mark_sprite_data(&mut self.cursor);
+        let cursor = self.interface_cursor_mut();
+        let ground_mark_sprite = extract_ground_mark_sprite_data(cursor);
+        let titbit_rows = extract_titbit_row_frame_counts(cursor);
+        let minimap_widget = extract_minimap_widget_setup(cursor);
         if let Some(data) = ground_mark_sprite.as_ref() {
             host.install_trajectory_ground_mark_sprite(data);
         }
-        (
-            ground_mark_sprite,
-            extract_titbit_row_frame_counts(&mut self.cursor),
-            extract_minimap_widget_setup(&mut self.cursor),
-        )
+        (ground_mark_sprite, titbit_rows, minimap_widget)
     }
 
     pub(super) fn resolve_short_briefings(
@@ -1714,6 +1812,13 @@ pub(super) struct LoadedMissionCore {
     pub(super) dev: engine_api::DevState,
     pub(super) pre_decoded_background: Option<engine_api::level_loading::PreDecodedBackground>,
     pub(super) pre_decoded_minimap: Option<engine_api::level_loading::PreDecodedMinimap>,
+    /// Still-running background+minimap decode for interactive missions
+    /// (`defer_terrain_join`): joined during frontend assembly, right before
+    /// the GPU upload needs the pixels.
+    pub(super) pending_terrain: Option<crate::level_loading_host::PendingTerrainDecode>,
+    /// Grid dimensions the engine was constructed with, for the divergence
+    /// assert at the deferred join.
+    pub(super) bg_pixel_dims: (f32, f32),
     pub(super) engine_rng_seed: u64,
     pub(super) engine_sim_config: engine_api::SimConfig,
 }
@@ -1789,6 +1894,7 @@ pub(super) fn load_level_and_sprite_bank(
     minimap_widget: Option<engine_api::MinimapWidgetSetup>,
     authoritative_rng_seed: u64,
     authoritative_sim_config: engine_api::SimConfig,
+    defer_terrain_join: bool,
 ) -> Result<LoadedMissionCore, MissionLoadError> {
     let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
@@ -1845,34 +1951,22 @@ pub(super) fn load_level_and_sprite_bank(
         .to_string();
     let map_name = loaded.mission.header.map_filename.clone();
 
-    // Start the background-map decode (bzip2/JXL — the slowest CPU-only
-    // step of level setup) on a worker thread so it overlaps the rest of
-    // this function: `Engine::new` needs only the pixel *dimensions*
-    // (probed cheaply from the map header below), so the join can wait
-    // until after engine construction. Wasm has no threads; it decodes
-    // synchronously at the pre-engine join point. Loading-bar phase
-    // text/ticks for this step are skipped on native — the bar keeps
-    // advancing through the overlapped steps instead.
-    #[cfg(not(target_arch = "wasm32"))]
-    let bg_decode_thread = {
-        let map_name = map_name.clone();
-        let ambiance_dir = ambiance_dir.clone();
-        let level_directory = level_directory.clone();
-        let shipping = host.shipping.clone();
-        std::thread::Builder::new()
-            .name("bg-map-decode".into())
-            .spawn(move || {
-                crate::level_loading_host::pre_decode_background_map(
-                    &map_name,
-                    &ambiance_dir,
-                    &level_directory,
-                    shipping.as_deref(),
-                    &mut |_| {},
-                )
-                .map_err(|e| format!("Background map load failed: {e}"))
-            })
-            .expect("failed to spawn background-map decode thread")
-    };
+    // Start the background-map + minimap decode (bzip2/JXL — the slowest
+    // CPU-only step of level setup) off the loading path so it overlaps the
+    // rest of this function and, for interactive missions, everything up to
+    // the GPU upload during frontend assembly: `Engine::new` needs only the
+    // pixel *dimensions* (probed cheaply from the map header below).
+    // Native uses a dedicated thread; wasm uses the rayon worker pool when
+    // the `wasm-threads` build initialized one, and otherwise decodes
+    // synchronously right here (single-threaded browser fallback — the
+    // progress closure keeps feeding the loading bar in that case).
+    let pending_terrain = crate::level_loading_host::PendingTerrainDecode::start(
+        &map_name,
+        &ambiance_dir,
+        &level_directory,
+        host.shipping.clone(),
+    );
+    timer.step("terrain decode start");
 
     // Install the sprite bank — must happen before entity sprite
     // loading in initialize_for_mission. The parsed bank comes from the
@@ -1967,29 +2061,11 @@ pub(super) fn load_level_and_sprite_bank(
     (assets.peasant_firstnames, assets.peasant_surnames) = load_peasant_name_pool(text_res);
     assets.fixed_vip_names = load_fixed_vip_name_map(text_res);
 
-    let pre_decoded_mm = {
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        crate::level_loading_host::pre_decode_minimap(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.shipping.as_deref(),
-            &mut progress,
-        )
-    };
-    timer.step("minimap pre-decode");
-
-    // `Engine::new` needs the background bitmap's pixel dimensions to size
-    // the fast-find grid. Wasm decodes the whole bitmap here; native
-    // probes the dimensions from the map header and lets the worker thread
-    // keep decoding pixels through engine construction, falling back to an
-    // early join when the header can't be probed (missing/corrupt map, or
-    // no map at all) so the existing pre-engine error path reports it.
-    #[cfg(target_arch = "wasm32")]
-    let pre_decoded_bg = {
-        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
+    // Run the single-threaded wasm fallback decode here — the exact point
+    // the old synchronous branch used — so the loading bar behaves the same
+    // when no worker pool exists. Threaded decodes pass through untouched.
+    let pending_terrain = {
+        let mut sync_progress = |u: assets_frame_holder::ProgressUpdate| match u {
             assets_frame_holder::ProgressUpdate::Tick(d) => {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), d);
             }
@@ -1999,51 +2075,53 @@ pub(super) fn load_level_and_sprite_bank(
                 }
             }
         };
-        match crate::level_loading_host::pre_decode_background_map(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.shipping.as_deref(),
-            &mut update,
-        ) {
-            Ok(background) => background,
-            Err(e) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Background map load failed: {e}"),
-                ));
+        pending_terrain.decode_inline_if_pending(&mut sync_progress)
+    };
+
+    // `Engine::new` needs the background bitmap's pixel dimensions to size
+    // the fast-find grid. They are probed cheaply from the map header while
+    // the decode keeps running; when the probe cannot say (missing/corrupt
+    // map, or no map at all) the decode outcome is resolved right here so
+    // the existing pre-engine error path reports it.
+    let mut pre_decoded_bg: Option<engine_api::level_loading::PreDecodedBackground> = None;
+    let mut pre_decoded_mm: Option<engine_api::level_loading::PreDecodedMinimap> = None;
+    let install_decoded_terrain =
+        |decoded: crate::level_loading_host::DecodedTerrainBitmaps,
+         bg: &mut Option<engine_api::level_loading::PreDecodedBackground>,
+         mm: &mut Option<engine_api::level_loading::PreDecodedMinimap>|
+         -> Result<(f32, f32), String> {
+            let background = decoded.background?;
+            let dims = background
+                .as_ref()
+                .map(|b| (b.width as f32, b.height as f32))
+                .unwrap_or((0.0, 0.0));
+            *bg = background;
+            *mm = decoded.minimap;
+            Ok(dims)
+        };
+    let (bg_pixel_dims, bg_pending) = match pending_terrain.try_take_ready() {
+        Ok(decoded) => {
+            match install_decoded_terrain(decoded, &mut pre_decoded_bg, &mut pre_decoded_mm) {
+                Ok(dims) => (dims, None),
+                Err(message) => return Err(MissionLoadError::new(campaign, message)),
             }
         }
-    };
-    #[cfg(target_arch = "wasm32")]
-    let bg_pixel_dims = pre_decoded_bg
-        .as_ref()
-        .map(|b| (b.width as f32, b.height as f32))
-        .unwrap_or((0.0, 0.0));
-    #[cfg(not(target_arch = "wasm32"))]
-    let (mut pre_decoded_bg, bg_pixel_dims, bg_pending) =
-        match crate::level_loading_host::probe_background_map_dims(
+        Err(pending) => match crate::level_loading_host::probe_background_map_dims(
             &map_name,
             &ambiance_dir,
             &level_directory,
             host.shipping.as_deref(),
         ) {
-            Some((w, h)) => (None, (w as f32, h as f32), Some(bg_decode_thread)),
+            Some((w, h)) => ((w as f32, h as f32), Some(pending)),
             None => {
-                let background = match bg_decode_thread
-                    .join()
-                    .expect("background-map decode thread panicked")
-                {
-                    Ok(background) => background,
+                let decoded = pending.join_now_or_redecode(&mut |_| {});
+                match install_decoded_terrain(decoded, &mut pre_decoded_bg, &mut pre_decoded_mm) {
+                    Ok(dims) => (dims, None),
                     Err(message) => return Err(MissionLoadError::new(campaign, message)),
-                };
-                let dims = background
-                    .as_ref()
-                    .map(|b| (b.width as f32, b.height as f32))
-                    .unwrap_or((0.0, 0.0));
-                (background, dims, None)
+                }
             }
-        };
+        },
+    };
     timer.step("background map dims");
 
     // Resolve the engine's initial RNG seed before construction so
@@ -2107,29 +2185,36 @@ pub(super) fn load_level_and_sprite_bank(
     };
     timer.step("engine construction");
 
-    // Engine construction ran on probed header dimensions; collect the
-    // decoded pixels now. A decode failure still fails the mission load
-    // (via the replay campaign clone — `campaign` moved into the engine),
-    // and diverging dimensions would corrupt the already-built grid, so
-    // that is a hard error rather than a fallback.
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(handle) = bg_pending {
-        let background = match handle
-            .join()
-            .expect("background-map decode thread panicked")
-        {
-            Ok(background) => background,
-            Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
-        };
-        if let Some(bg) = background.as_ref() {
-            assert_eq!(
-                (bg.width as f32, bg.height as f32),
-                bg_pixel_dims,
-                "background map header dimensions diverge from decoded bitmap"
-            );
+    // Engine construction ran on probed header dimensions. Callers that
+    // cannot defer (true-headless bootstrap) collect the decoded pixels now
+    // — a decode failure still fails the mission load (via the replay
+    // campaign clone — `campaign` moved into the engine), and diverging
+    // dimensions would corrupt the already-built grid, so that is a hard
+    // error rather than a fallback. Interactive callers instead carry the
+    // pending decode into frontend assembly and join right before the GPU
+    // upload, so the decode also overlaps audio setup, descriptors, HUD
+    // fonts, and renderer bring-up.
+    let mut pending_terrain_out = None;
+    if let Some(pending) = bg_pending {
+        if defer_terrain_join {
+            pending_terrain_out = Some(pending);
+        } else {
+            let decoded = pending.join_blocking();
+            let background = match decoded.background {
+                Ok(background) => background,
+                Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
+            };
+            if let Some(bg) = background.as_ref() {
+                assert_eq!(
+                    (bg.width as f32, bg.height as f32),
+                    bg_pixel_dims,
+                    "background map header dimensions diverge from decoded bitmap"
+                );
+            }
+            pre_decoded_bg = background;
+            pre_decoded_mm = decoded.minimap;
+            timer.step("background map join");
         }
-        pre_decoded_bg = background;
-        timer.step("background map join");
     }
 
     if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
@@ -2211,6 +2296,8 @@ pub(super) fn load_level_and_sprite_bank(
         dev,
         pre_decoded_background: pre_decoded_bg,
         pre_decoded_minimap: pre_decoded_mm,
+        pending_terrain: pending_terrain_out,
+        bg_pixel_dims,
         engine_rng_seed: rng_seed,
         engine_sim_config: sim_config,
     })

@@ -156,6 +156,14 @@ pub(super) fn pre_render_engine_setup(
     _assets: &engine_api::LevelAssets,
     _renderer: &mut crate::renderer::Renderer,
 ) {
+    sync_render_camera(host);
+    crate::blit_to_map::drain_pending_bg_blits(host);
+}
+
+/// Refresh camera-derived draw parameters without consuming any fixed-tick
+/// side-effect queues. Native-refresh interpolation calls this for each
+/// sampled camera pose.
+pub(super) fn sync_render_camera(host: &mut Host) {
     let view = host.viewport.view_position;
     let screen = host.viewport.screen_size;
     let zoom = host.viewport.zoom_factor;
@@ -174,8 +182,6 @@ pub(super) fn pre_render_engine_setup(
             zoom,
         );
     }
-
-    crate::blit_to_map::drain_pending_bg_blits(host);
 }
 
 /// Pump any host-side deferred console output into the overlay. Keeps

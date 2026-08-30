@@ -5,6 +5,9 @@ Android packaging. The Rust side exports `android_main` from the
 `robin_rs` cdylib and uses winit's `android-native-activity` feature.
 `assets/Data/datadir.bin` is copied from
 `../../../binaries/datadirs/demo-leicester/v3-lossless.rhdata.zst`.
+The engine-owned, retail-content-free `../assets/core-datadir/` is a separate
+Gradle asset root. `validateCoreOverlay` verifies its exact 32-file hashed
+inventory against shipping-datadir schema 14 before every APK build.
 
 Build the shared library from the repo root:
 
@@ -28,8 +31,12 @@ toolchain on `PATH`. This worktree was verified with
 builds if the workspace `sccache` wrapper fails under the sandbox. The
 manifest expects the native library name `robin_rs`.
 
-The Android boot path reads the bundled shipping datadir from APK
-assets. Loose filesystem data remains available for debug installs by
+The Android boot path reads the bundled shipping datadir and the core-overlay
+manifest from APK assets. It validates every declared core file by size and
+SHA-256, mounts the complete bundle at engine-overlay priority, and probes all
+required VFS paths before Rust initialization can construct fonts or UI. A
+missing/corrupt core asset is a fatal packaging error. Loose filesystem data
+remains available for debug installs by
 putting a `Data/` directory in the app external files directory, or by
 setting `ROBINHOOD_DATA_DIR` before startup in a custom launcher.
 

@@ -343,6 +343,12 @@ pub struct ShippingSpriteBank {
     /// index grids are decoded out of the blob by
     /// [`ShippingSpriteBank::materialize_vq_chunks`] at mission install time.
     pub vq_chunks: Vec<SpriteVqChunk>,
+    /// Schema v13 (web recipe only): lossy-JXL payloads for RLE patch /
+    /// ambient-animation sprites. Like VQ chunk sprites, the listed rows
+    /// carry empty `packed_data` until
+    /// [`ShippingSpriteBank::materialize_rle_jxl_chunks`] rebuilds their
+    /// exact-format RLE words at mission install time.
+    pub rle_jxl_chunks: Vec<SpriteRleJxlChunk>,
 }
 
 /// One RHS chunk's VQ sprite grids, coded with [`crate::sprite_codec`].
@@ -387,6 +393,45 @@ pub struct SpriteVqChunk {
     /// `sprite_codec::encode_grids_shipping` output for all grids of this
     /// chunk.
     pub blob: Vec<u8>,
+}
+
+/// One RHS chunk's lossy-JXL RLE sprite payload (schema v13, WEB recipe
+/// only — native shipping keeps exact RLE words because parity traces
+/// screenshot composited RGB565 framebuffers).
+///
+/// Each listed sprite is a `width x height` region of one RGBA JXL image
+/// in `jxl_blobs` (a per-animation-group atlas or a single-sprite image;
+/// the converter decides per sprite and keeps exact RLE when that is
+/// smaller). The color channels carry the opaque RGB lossily; the ALPHA
+/// channel carries the per-pixel class losslessly (see [`crate::rle_jxl`]),
+/// which is what reconstructs run extents, shadow-key literals, and
+/// transparent-key literals EXACTLY — there is no sidecar structure data.
+/// Only opaque RGB values are lossy (requantized to RGB565 at
+/// materialization).
+///
+/// Unlike VQ chunks there are no cross-chunk dependencies: every sprite id
+/// listed here appears in exactly one chunk of the whole tree (sprites
+/// referenced by several RHS chunks keep exact RLE words instead, because
+/// two independent lossy encodes of one bank slot would conflict at merge).
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct SpriteRleJxlChunk {
+    /// Relative RHS path this chunk was built from (diagnostics only).
+    pub rhs: String,
+    /// Encoded RGBA JXL images: lossy color, lossless class-marker alpha.
+    pub jxl_blobs: Vec<Vec<u8>>,
+    /// Bank ids of the coded sprites, strictly ascending.
+    pub sprite_ids: Vec<u32>,
+    /// Per sprite, aligned with `sprite_ids`: which blob and the top-left
+    /// pixel of its region inside that blob.
+    pub placements: Vec<RleJxlPlacement>,
+}
+
+/// Placement of one sprite inside its chunk's JXL blob list.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct RleJxlPlacement {
+    pub blob: u32,
+    pub x: u16,
+    pub y: u16,
 }
 
 /// Derive the deterministic within-chunk auxiliary references for a VQ
@@ -492,8 +537,16 @@ pub struct ShippingSprite {
     pub height: u16,
     pub dictionary_index: u16,
     /// Packed pixel data (RLE or dictionary-indexed). Empty for VQ sprites
-    /// whose grid lives in a [`SpriteVqChunk`] blob until materialization.
+    /// whose grid lives in a [`SpriteVqChunk`] blob until materialization,
+    /// and for web-lossy RLE sprites, which materialize into `raster`
+    /// instead and never have packed words at all.
     pub packed_data: Arc<Vec<u16>>,
+    /// Runtime-only: decoded RGB565 atlas window produced by
+    /// [`ShippingSpriteBank::materialize_rle_jxl_chunks`]. Never
+    /// serialized — the shipped form is the JXL blob it came from.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    pub raster: Option<crate::frame_holder::SpriteRaster>,
 }
 
 /// Dispatcher state for worker-pool VQ chunk decode (wasm-threads builds).
@@ -1025,6 +1078,267 @@ impl ShippingSpriteBank {
         }
         Ok(())
     }
+
+    /// Per-sprite `(width, height)` for one RLE-JXL chunk, validating that
+    /// every listed sprite row is present and RLE-coded. Rows always ship in
+    /// the same mission part as their chunk, so on a fully merged payload a
+    /// missing row is a broken manifest, never a timing question.
+    fn prepare_rle_jxl_chunk_dims(&self, chunk: &SpriteRleJxlChunk) -> Result<Vec<(u16, u16)>> {
+        if chunk.placements.len() != chunk.sprite_ids.len() {
+            return Err(anyhow!(
+                "RLE-JXL chunk for {} lists {} sprites but {} placements",
+                chunk.rhs,
+                chunk.sprite_ids.len(),
+                chunk.placements.len()
+            ));
+        }
+        let mut dims = Vec::with_capacity(chunk.sprite_ids.len());
+        for sprite_id in &chunk.sprite_ids {
+            let sprite = self.sprite_row(*sprite_id).ok_or_else(|| {
+                anyhow!(
+                    "RLE-JXL chunk for {} names sprite {sprite_id}, which is not part of this \
+                     mission payload",
+                    chunk.rhs
+                )
+            })?;
+            if sprite.dictionary_index != UNMAPPED_DICT {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} names sprite {sprite_id}, which is dictionary-coded",
+                    chunk.rhs
+                ));
+            }
+            if sprite.width == 0 || sprite.height == 0 {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} names empty sprite {sprite_id}",
+                    chunk.rhs
+                ));
+            }
+            dims.push((sprite.width, sprite.height));
+        }
+        Ok(dims)
+    }
+
+    /// Streaming-time readiness: `Ok(false)` while a listed sprite row has
+    /// not been merged yet (its part is still downloading).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    fn rle_jxl_chunk_ready_lenient(&self, chunk: &SpriteRleJxlChunk) -> bool {
+        chunk
+            .sprite_ids
+            .iter()
+            .all(|sprite_id| self.sprite_row(*sprite_id).is_some())
+    }
+
+    /// Decode one RLE-JXL chunk into `(sprite id, raster window)` pairs.
+    /// Pure compute over the prepared dims — no `self` access, so a wasm
+    /// worker thread can run it.
+    ///
+    /// Each atlas becomes ONE shared RGB565 canvas (classes from the
+    /// lossless alpha channel, visible color requantized from the lossy
+    /// color channels); sprites reference sub-rects of it rather than
+    /// copying pixels out. The packed RLE run format is deliberately not
+    /// rebuilt — nothing draws from runs, so every consumer would only
+    /// decompress them straight back to this raster.
+    fn run_rle_jxl_chunk_decode(
+        chunk: &SpriteRleJxlChunk,
+        dims: &[(u16, u16)],
+    ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
+        use crate::rle_jxl;
+        let atlases: Vec<(usize, usize, Arc<Vec<u16>>)> = chunk
+            .jxl_blobs
+            .iter()
+            .enumerate()
+            .map(|(index, blob)| {
+                let (width, height, rgba) = rle_jxl::decode_jxl_rgba8(blob)
+                    .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+                let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
+                    format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
+                })?;
+                Ok((width, height, Arc::new(canvas)))
+            })
+            .collect::<Result<_>>()?;
+        let mut out = Vec::with_capacity(chunk.sprite_ids.len());
+        for ((&sprite_id, placement), &(width, height)) in chunk
+            .sprite_ids
+            .iter()
+            .zip(&chunk.placements)
+            .zip(dims.iter())
+        {
+            let (atlas_w, atlas_h, canvas) =
+                atlases.get(placement.blob as usize).ok_or_else(|| {
+                    anyhow!(
+                        "RLE-JXL chunk for {} places sprite {sprite_id} in missing blob {}",
+                        chunk.rhs,
+                        placement.blob
+                    )
+                })?;
+            if placement.x as usize + width as usize > *atlas_w
+                || placement.y as usize + height as usize > *atlas_h
+            {
+                return Err(anyhow!(
+                    "RLE-JXL chunk for {} places sprite {sprite_id} ({width}x{height}) at \
+                     ({},{}) outside its {atlas_w}x{atlas_h} atlas",
+                    chunk.rhs,
+                    placement.x,
+                    placement.y
+                ));
+            }
+            out.push((
+                sprite_id,
+                crate::frame_holder::SpriteRaster {
+                    atlas: Arc::clone(canvas),
+                    stride: *atlas_w as u32,
+                    x: placement.x,
+                    y: placement.y,
+                },
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Attach one chunk's decoded raster windows to its sprite rows. The
+    /// converter guarantees each bank sprite is JXL-coded by at most one
+    /// chunk, so a row that already carries packed words or a raster is a
+    /// broken payload rather than something to reconcile.
+    pub fn apply_decoded_rle_jxl_chunk(
+        &mut self,
+        chunk: &SpriteRleJxlChunk,
+        rasters: Vec<(u32, crate::frame_holder::SpriteRaster)>,
+    ) -> Result<()> {
+        for (sprite_id, raster) in rasters {
+            let position = self
+                .sprites
+                .binary_search_by_key(&sprite_id, |(id, _)| *id)
+                .map_err(|_| {
+                    anyhow!("sprite {sprite_id} disappeared during RLE-JXL materialization")
+                })?;
+            let sprite = &mut self.sprites[position].1;
+            if !sprite.packed_data.is_empty() {
+                return Err(anyhow!(
+                    "sprite {sprite_id} is JXL-coded by {} but also ships packed words",
+                    chunk.rhs
+                ));
+            }
+            if sprite.raster.is_some() {
+                return Err(anyhow!(
+                    "sprite {sprite_id} is JXL-coded by two RLE-JXL chunks (latest {})",
+                    chunk.rhs
+                ));
+            }
+            sprite.raster = Some(raster);
+        }
+        Ok(())
+    }
+
+    /// Decode every [`SpriteRleJxlChunk`] back into exact-format packed RLE
+    /// words, consuming the chunk list. Chunks are mutually independent, so
+    /// native builds decode them in parallel; wasm (without the worker pool)
+    /// stays serial.
+    pub fn materialize_rle_jxl_chunks(&mut self) -> Result<()> {
+        let pending = std::mem::take(&mut self.rle_jxl_chunks);
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let inputs = pending
+            .iter()
+            .map(|chunk| self.prepare_rle_jxl_chunk_dims(chunk))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = {
+            use rayon::prelude::*;
+            pending
+                .par_iter()
+                .zip(&inputs)
+                .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
+                .collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = pending
+            .iter()
+            .zip(&inputs)
+            .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
+            .collect();
+        for (chunk, rasters) in pending.iter().zip(decoded) {
+            let rasters = rasters
+                .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            self.apply_decoded_rle_jxl_chunk(chunk, rasters)?;
+        }
+        Ok(())
+    }
+}
+
+/// Dispatcher state for worker-pool RLE-JXL chunk decode (wasm-threads
+/// builds), mirroring [`VqDecodeScheduler`]. RLE-JXL chunks have no
+/// cross-chunk dependencies — a chunk is ready as soon as its own sprite
+/// rows (which ship in the same mission part) have merged.
+///
+/// Transient scheduling state, never serialized — deliberately no serde.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+#[derive(Default)]
+pub struct RleJxlDecodeScheduler {
+    in_flight: futures_util::stream::FuturesUnordered<
+        futures_channel::oneshot::Receiver<(
+            SpriteRleJxlChunk,
+            Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>,
+            f64,
+        )>,
+    >,
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+impl RleJxlDecodeScheduler {
+    /// Move every ready chunk of `pending` onto the worker pool.
+    pub fn dispatch_ready(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteRleJxlChunk>,
+    ) -> Result<()> {
+        let mut index = 0;
+        while index < pending.len() {
+            if !bank.rle_jxl_chunk_ready_lenient(&pending[index]) {
+                index += 1;
+                continue;
+            }
+            let chunk = pending.swap_remove(index);
+            let dims = bank
+                .prepare_rle_jxl_chunk_dims(&chunk)
+                .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            rayon::spawn(move || {
+                let started = js_sys::Date::now();
+                let packed = ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims);
+                let elapsed = js_sys::Date::now() - started;
+                let _ = sender.send((chunk, packed, elapsed));
+            });
+            self.in_flight.push(receiver);
+        }
+        Ok(())
+    }
+
+    /// Await the next completed decode. `Ok(None)` when none is in flight.
+    pub async fn next_decoded(
+        &mut self,
+    ) -> Result<
+        Option<(
+            SpriteRleJxlChunk,
+            Vec<(u32, crate::frame_holder::SpriteRaster)>,
+        )>,
+    > {
+        use futures_util::StreamExt as _;
+        let Some(result) = self.in_flight.next().await else {
+            return Ok(None);
+        };
+        let (chunk, packed, decode_ms) =
+            result.map_err(|_| anyhow!("RLE-JXL decode worker dropped its result"))?;
+        let packed =
+            packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+        tracing::debug!(chunk = %chunk.rhs, decode_ms, "RLE-JXL sprite chunk decoded on worker");
+        Ok(Some((chunk, packed)))
+    }
+
+    /// True while at least one decode is running on the pool.
+    pub fn has_in_flight(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1651,9 @@ impl ShippingDatadir {
         if let Some(bank) = payload.sprite_bank.as_mut() {
             bank.materialize_vq_chunks(&payload.rhs_files)
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
+            bank.materialize_rle_jxl_chunks().with_context(|| {
+                format!("materialize RLE-JXL sprite chunks for mission {mission}")
+            })?;
         }
         let raw = std::mem::take(&mut payload.raw)
             .into_iter()
@@ -1578,14 +1895,19 @@ impl ShippingDatadir {
         })
     }
 
-    /// Iterate every catalog key (normalized logical Opus path). Used by the
-    /// browser's background audio prefetch to enumerate what exists.
-    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
-        self.audio_assets.keys().map(String::as_str)
+    /// Catalog keys required before any mission is selected (menu effects
+    /// and menu music). Browser startup decodes this deliberately small set;
+    /// it must not infer boot membership by scanning the whole catalog.
+    pub fn boot_audio_keys(&self) -> Vec<String> {
+        self.audio_durations_ms
+            .keys()
+            .filter(|key| self.audio_assets.contains_key(*key))
+            .cloned()
+            .collect()
     }
 
     /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
-    /// required actor voices, music, ambience): the prefetch-first set.
+    /// required actor voices, music, ambience): the exact mission warmup set.
     pub fn active_audio_keys(&self) -> Vec<String> {
         let Some(mission) = self.active_mission_name() else {
             return Vec::new();
@@ -1685,6 +2007,7 @@ impl ShippingMission {
             sprite_count: source_bank.sprite_count,
             sprites: Vec::new(),
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         });
         if bank.signature != source_bank.signature || bank.sprite_count != source_bank.sprite_count
         {
@@ -1698,6 +2021,7 @@ impl ShippingMission {
             return Err(anyhow!("shipping sprite-bank dictionaries conflict"));
         }
         bank.vq_chunks.append(&mut source_bank.vq_chunks);
+        bank.rle_jxl_chunks.append(&mut source_bank.rle_jxl_chunks);
         for (index, sprite) in source_bank.sprites {
             if index >= bank.sprite_count {
                 return Err(anyhow!(
@@ -1826,12 +2150,20 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // (the audio catalog lives only in `datadir.bin`), so only the datadir
 // magic advances.
 //
-// Datadir v14: `ShippingDatadir::locales` adds explicit canonicalized
-// multi-locale payloads. Mission payloads remain structurally unchanged.
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA14";
-const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN07";
-pub const SHIPPING_DATADIR_VERSION: u32 = 14;
-pub const SHIPPING_MISSION_VERSION: u32 = 7;
+// Schema v14 / mission v8: [`ShippingSpriteBank`] gains `rle_jxl_chunks` —
+// lossy-JXL atlases plus lossless 2-bit class maps for RLE patch/ambient
+// sprites, emitted only by the WEB recipe (`--rle-sprite-format jxl-q70`;
+// the default keeps exact RLE words and native shipping stays
+// byte-preserving). The mission chunk layout changed, so both magics
+// advance.
+//
+// Datadir v15 adds `ShippingDatadir::locales`, carrying explicit,
+// canonicalized multi-locale payloads. Mission payloads remain at v8 because
+// locale data is confined to the boot datadir manifest.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA15";
+const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN08";
+pub const SHIPPING_DATADIR_VERSION: u32 = 15;
+pub const SHIPPING_MISSION_VERSION: u32 = 8;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {
@@ -2097,7 +2429,7 @@ mod tests {
         datadir.locales.insert("de-DE".into(), german);
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA14");
+        assert_eq!(&encoded[..8], b"RHDDNA15");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -2238,7 +2570,7 @@ mod tests {
             .audio_durations_ms
             .insert("sounds/arrow.opus".into(), 1_234);
         let encoded = encode_mission_native(&mission);
-        assert_eq!(&encoded[..8], b"RHMISN07");
+        assert_eq!(&encoded[..8], b"RHMISN08");
         let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
         let decoded = decode_mission_compressed(&compressed).unwrap();
         assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));
@@ -2255,6 +2587,7 @@ mod tests {
             height: 1,
             dictionary_index: 0,
             packed_data: Arc::new(vec![value]),
+            raster: None,
         };
         let bank = |sprites| ShippingSpriteBank {
             signature: 42,
@@ -2262,6 +2595,7 @@ mod tests {
             sprite_count: 2,
             sprites,
             vq_chunks: Vec::new(),
+            rle_jxl_chunks: Vec::new(),
         };
         let mut merged = ShippingMission {
             sprite_bank: Some(bank(Vec::new())),
@@ -2305,6 +2639,7 @@ mod tests {
             sprite_count: 4,
             sprites,
             vq_chunks,
+            rle_jxl_chunks: Vec::new(),
         }
     }
 
@@ -2314,6 +2649,7 @@ mod tests {
             height: VQ_DIMS.1,
             dictionary_index: 0,
             packed_data: Arc::new(packed),
+            raster: None,
         }
     }
 
@@ -2374,6 +2710,7 @@ mod tests {
                             height: 1,
                             dictionary_index: UNMAPPED_DICT,
                             packed_data: Arc::new(RLE_WORDS.to_vec()),
+                            raster: None,
                         },
                     ),
                 ],
@@ -2424,6 +2761,109 @@ mod tests {
                 }],
             )),
             ..ShippingMission::default()
+        }
+    }
+
+    /// Lossless 8x4 RGBA JXL atlas (`cjxl -d 0 --alpha_distance=0 -e 7`)
+    /// holding two RLE sprites: A (4x4) at (0,0) and B (4x2) at (4,0),
+    /// generated from the exact canvases of `RLE_A_WORDS` / `RLE_B_WORDS`
+    /// — opaque pixels expanded 565 -> 888, and every pixel's alpha set to
+    /// its class marker. Lossless + 565-representable colors means
+    /// materialization must reproduce the source words bit-for-bit.
+    const RLE_JXL_FIXTURE: &[u8] = &[
+        0xFF, 0x0A, 0x18, 0x70, 0xB0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x4B, 0x18, 0x93,
+        0x8E, 0x83, 0x83, 0x84, 0x13, 0xC4, 0x63, 0x8B, 0xCA, 0x5D, 0x40, 0x16, 0x00, 0x7C, 0x30,
+        0xE4, 0xEA, 0xA5, 0xF8, 0xDF, 0x8C, 0x8B, 0x31, 0x02, 0x46, 0xED, 0x77, 0x3F, 0xAA, 0xD1,
+        0xA2, 0x2F, 0x10, 0x60, 0x7A, 0x67, 0x49, 0x52, 0x7C, 0x91, 0x51, 0x6C, 0x16, 0x20, 0x7E,
+        0x31, 0x86, 0x20, 0x46, 0x21, 0x68, 0xAF, 0x6A, 0x5B, 0xBB, 0x5E, 0x77, 0xA3, 0xC3, 0x95,
+        0x72, 0xE0, 0xC6, 0x69, 0x1E, 0xBC, 0x01,
+    ];
+    const RLE_A_WORDS: [u16; 16] = [
+        0,
+        3,
+        0x1234,
+        0x5678,
+        0x9ABC,
+        0xDEF0,
+        0xFFFF,
+        0xFFFF,
+        1,
+        2,
+        crate::frame_holder::SHADOW_KEY,
+        crate::frame_holder::TRANSPARENT_COLOR_16,
+        2,
+        3,
+        0x0000,
+        0xFFFF,
+    ];
+    const RLE_B_WORDS: [u16; 7] = [0, 1, 0x8410, 0x4208, 3, 3, 0xF800];
+
+    #[test]
+    fn rle_jxl_chunks_materialize_exact_words_from_lossless_fixture() {
+        use crate::rle_jxl;
+        let sprite = |w: u16, h: u16| ShippingSprite {
+            width: w,
+            height: h,
+            dictionary_index: UNMAPPED_DICT,
+            packed_data: Arc::new(Vec::new()),
+            raster: None,
+        };
+        let mission = ShippingMission {
+            sprite_bank: Some(ShippingSpriteBank {
+                signature: 7,
+                dictionaries: Vec::new(),
+                sprite_count: 16,
+                sprites: vec![(5, sprite(4, 4)), (9, sprite(4, 2))],
+                vq_chunks: Vec::new(),
+                rle_jxl_chunks: vec![SpriteRleJxlChunk {
+                    rhs: "Animations/Day/test.rhs".into(),
+                    jxl_blobs: vec![RLE_JXL_FIXTURE.to_vec()],
+                    sprite_ids: vec![5, 9],
+                    placements: vec![
+                        RleJxlPlacement {
+                            blob: 0,
+                            x: 0,
+                            y: 0,
+                        },
+                        RleJxlPlacement {
+                            blob: 0,
+                            x: 4,
+                            y: 0,
+                        },
+                    ],
+                }],
+            }),
+            ..ShippingMission::default()
+        };
+        // Ship it the way the converter does, then materialize like a
+        // mission install.
+        let compressed = zstd_compress_with_window(&encode_mission_native(&mission), 30).unwrap();
+        let mut decoded = decode_mission_compressed(&compressed).unwrap();
+        let bank = decoded.sprite_bank.as_mut().unwrap();
+        bank.materialize_rle_jxl_chunks().unwrap();
+        assert!(bank.rle_jxl_chunks.is_empty());
+        // Both sprites now window into ONE shared atlas — nothing was
+        // copied out of it, and no RLE words were rebuilt.
+        let rasters: Vec<_> = [5u32, 9]
+            .iter()
+            .map(|id| bank.sprite_row(*id).unwrap().raster.clone().unwrap())
+            .collect();
+        assert!(bank.sprite_row(5).unwrap().packed_data.is_empty());
+        assert!(Arc::ptr_eq(&rasters[0].atlas, &rasters[1].atlas));
+        assert_eq!((rasters[0].stride, rasters[0].x), (8, 0));
+        assert_eq!(rasters[1].x, 4);
+        // The raster is exactly the canvas the packed words decompress to:
+        // lossless color plus the class-carrying alpha reproduces it.
+        for (raster, words, width, height) in [
+            (&rasters[0], &RLE_A_WORDS[..], 4usize, 4usize),
+            (&rasters[1], &RLE_B_WORDS[..], 4, 2),
+        ] {
+            let (expected, used) = rle_jxl::decode_rle_canvas(width, height, words).unwrap();
+            assert_eq!(used, words.len());
+            let actual: Vec<u16> = (0..height)
+                .flat_map(|y| raster.row(y, width).unwrap().iter().copied())
+                .collect();
+            assert_eq!(actual, expected);
         }
     }
 
@@ -2587,6 +3027,48 @@ mod tests {
         assert_eq!(
             datadir.active_audio_metadata(Path::new("Data/Sounds/Arrow.wav")),
             Some((321, 654))
+        );
+    }
+
+    #[test]
+    fn audio_warmup_membership_is_exact_for_boot_and_active_mission() {
+        let mut datadir = ShippingDatadir::default();
+        for key in [
+            "sounds/menu/click.opus",
+            "sounds/exclamations/robin/alert.opus",
+            "sounds/not-mounted.opus",
+        ] {
+            datadir.audio_assets.insert(
+                key.into(),
+                ShippingAudioAsset {
+                    file: format!("audio/assets/{key}"),
+                    encoded_size: 10,
+                    duration_ms: 100,
+                    bundle_offset: None,
+                },
+            );
+        }
+        datadir
+            .audio_durations_ms
+            .insert("sounds/menu/click.opus".into(), 100);
+        let mut mission = ShippingMission::default();
+        mission
+            .audio_durations_ms
+            .insert("sounds/exclamations/robin/alert.opus".into(), 100);
+        datadir
+            .loaded_missions
+            .write()
+            .unwrap()
+            .insert("MissionA".into(), Arc::new(mission));
+        *datadir.active_mission.write().unwrap() = Some("MissionA".into());
+
+        assert_eq!(
+            datadir.boot_audio_keys(),
+            vec!["sounds/menu/click.opus".to_owned()]
+        );
+        assert_eq!(
+            datadir.active_audio_keys(),
+            vec!["sounds/exclamations/robin/alert.opus".to_owned()]
         );
     }
 

@@ -441,20 +441,33 @@ impl ModalInputState {
                 self.virt_x = vx as f32;
                 self.virt_y = vy as f32;
                 if *btn == 1 {
+                    let matched_down = self.buttons.contains(MouseButtons::LEFT_DOWN);
                     self.buttons.remove(MouseButtons::LEFT_DOWN);
-                    self.buttons |= MouseButtons::LEFT_CLICK;
-                    if self.pending_double_click_left {
-                        self.buttons |= MouseButtons::LEFT_DOUBLE_CLICK;
-                        self.pending_double_click_left = false;
+                    if matched_down {
+                        self.buttons |= MouseButtons::LEFT_CLICK;
+                        if self.pending_double_click_left {
+                            self.buttons |= MouseButtons::LEFT_DOUBLE_CLICK;
+                        }
                     }
+                    self.pending_double_click_left = false;
                 } else if *btn == 3 {
+                    let matched_down = self.buttons.contains(MouseButtons::RIGHT_DOWN);
                     self.buttons.remove(MouseButtons::RIGHT_DOWN);
-                    self.buttons |= MouseButtons::RIGHT_CLICK;
-                    if self.pending_double_click_right {
-                        self.buttons |= MouseButtons::RIGHT_DOUBLE_CLICK;
-                        self.pending_double_click_right = false;
+                    if matched_down {
+                        self.buttons |= MouseButtons::RIGHT_CLICK;
+                        if self.pending_double_click_right {
+                            self.buttons |= MouseButtons::RIGHT_DOUBLE_CLICK;
+                        }
                     }
+                    self.pending_double_click_right = false;
                 }
+            }
+            GameEvent::PointerCancel => {
+                self.buttons.remove(MouseButtons::LEFT_DOWN);
+                self.buttons.remove(MouseButtons::LEFT_CLICK);
+                self.buttons.remove(MouseButtons::LEFT_DOUBLE_CLICK);
+                self.pending_double_click_left = false;
+                self.capture.clear();
             }
             GameEvent::TextInput { text } => {
                 self.text_input.push_str(text);
@@ -1184,5 +1197,28 @@ mod noisy_tracker_tests {
             .insert((1, WIDGET_NOISY_BUTTON), (UiState::Focused, true));
         tracker.clear();
         assert!(tracker.entries.is_empty());
+    }
+
+    #[test]
+    fn orphan_release_does_not_activate_a_new_modal() {
+        let mut input = ModalInputState::new();
+        input.update_from_event(
+            &GameEvent::MouseUp(20, 30, 1),
+            MenuTransform::centered(640, 480),
+        );
+
+        assert!(!input.buttons.contains(MouseButtons::LEFT_CLICK));
+        assert!(!input.buttons.contains(MouseButtons::LEFT_DOWN));
+    }
+
+    #[test]
+    fn matched_press_and_release_still_produces_click() {
+        let mut input = ModalInputState::new();
+        let transform = MenuTransform::centered(640, 480);
+        input.update_from_event(&GameEvent::MouseDown(20, 30, 1, 1), transform);
+        input.update_from_event(&GameEvent::MouseUp(20, 30, 1), transform);
+
+        assert!(input.buttons.contains(MouseButtons::LEFT_CLICK));
+        assert!(!input.buttons.contains(MouseButtons::LEFT_DOWN));
     }
 }

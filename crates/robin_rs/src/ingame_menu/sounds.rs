@@ -448,7 +448,7 @@ pub async fn show_sounds(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     // The `dirty` flag is set on every widget event — even a click on

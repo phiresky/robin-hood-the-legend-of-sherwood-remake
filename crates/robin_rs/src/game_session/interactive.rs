@@ -9,8 +9,7 @@ use super::modal_state::ActiveModal;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
-    LoadedInteractiveResources, MissionProcessResources, MissionSprites, load_mission_sprites,
-    setup_input_and_camera,
+    LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
 use super::tick::tick_audio;
 use crate::audio_backend::KiraAudioBackend;
@@ -34,6 +33,7 @@ use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker};
 use robin_assets::res_descr::LevelDescriptors;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates::ScreenBBox;
+use robin_engine::engine::{Engine, SpatialPresentationSnapshot};
 use robin_engine::engine_manager::EngineManager;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles::MissionLocation;
@@ -205,11 +205,197 @@ pub(super) struct MissionPresentation {
     pub(super) sprites: MissionSprites,
 }
 
+/// One fixed-tick-late, host-only presentation state. The working engine is
+/// always a clone of the current authoritative tick: animation/gameplay state
+/// remains at 25 Hz while only spatial transforms are sampled between the two
+/// adjacent snapshots. It is never serialized into saves or rollback state.
+pub(super) struct NativeRefreshInterpolation {
+    previous: Option<SpatialPresentationSnapshot>,
+    current: Option<SpatialPresentationSnapshot>,
+    working: Option<Engine>,
+    previous_camera: Option<CameraPresentationPose>,
+    current_camera: Option<CameraPresentationPose>,
+    latest_frame: Option<u32>,
+    segment_started_at_ms: u32,
+    segment_active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) struct CameraPresentationPose {
+    view_position: robin_engine::coordinates::MapPoint,
+    old_view_position: robin_engine::coordinates::MapPoint,
+    zoom_factor: f32,
+    old_zoom_factor: f32,
+}
+
+impl CameraPresentationPose {
+    pub(super) fn capture(host: &Host) -> Self {
+        Self {
+            view_position: host.viewport.view_position,
+            old_view_position: host.viewport.old_view_position,
+            zoom_factor: host.viewport.zoom_factor,
+            old_zoom_factor: host.viewport.old_zoom_factor,
+        }
+    }
+
+    pub(super) fn apply(self, host: &mut Host) {
+        host.viewport.view_position = self.view_position;
+        host.viewport.old_view_position = self.old_view_position;
+        host.viewport.zoom_factor = self.zoom_factor;
+        host.viewport.old_zoom_factor = self.old_zoom_factor;
+    }
+
+    fn interpolate(previous: Self, current: Self, alpha: f32) -> Self {
+        let finite = previous.view_position.x.is_finite()
+            && previous.view_position.y.is_finite()
+            && previous.zoom_factor.is_finite()
+            && current.view_position.x.is_finite()
+            && current.view_position.y.is_finite()
+            && current.zoom_factor.is_finite()
+            && previous.zoom_factor > 0.0
+            && current.zoom_factor > 0.0;
+        if !finite {
+            tracing::warn!(
+                ?previous,
+                ?current,
+                "invalid camera interpolation endpoint; snapping"
+            );
+            return current;
+        }
+        // Camera follows can inherit an entity teleport, while menu/script
+        // camera jumps do not carry an engine-side transition marker at all.
+        // Either kind must snap instead of sweeping across unrelated map
+        // space. Ordinary edge scroll and touch inertia remain far below this
+        // distance during one 40 ms fixed tick.
+        const MAX_CONTINUOUS_MAP_DISTANCE_PER_TICK: f32 = 128.0;
+        let camera_dx = current.view_position.x - previous.view_position.x;
+        let camera_dy = current.view_position.y - previous.view_position.y;
+        if camera_dx.abs().max(camera_dy.abs()) > MAX_CONTINUOUS_MAP_DISTANCE_PER_TICK {
+            return current;
+        }
+        let lerp = |a: f32, b: f32| a + (b - a) * alpha;
+        Self {
+            view_position: robin_engine::coordinates::MapPoint::new(
+                lerp(previous.view_position.x, current.view_position.x),
+                lerp(previous.view_position.y, current.view_position.y),
+            ),
+            old_view_position: robin_engine::coordinates::MapPoint::new(
+                lerp(previous.view_position.x, current.view_position.x),
+                lerp(previous.view_position.y, current.view_position.y),
+            ),
+            zoom_factor: lerp(previous.zoom_factor, current.zoom_factor),
+            old_zoom_factor: lerp(previous.zoom_factor, current.zoom_factor),
+        }
+    }
+}
+
+impl NativeRefreshInterpolation {
+    fn new() -> Self {
+        Self {
+            previous: None,
+            current: None,
+            working: None,
+            previous_camera: None,
+            current_camera: None,
+            latest_frame: None,
+            segment_started_at_ms: 0,
+            segment_active: false,
+        }
+    }
+
+    pub(super) fn prepare_fixed_tick(
+        &mut self,
+        authoritative: &Engine,
+        camera: CameraPresentationPose,
+        started_at_ms: u32,
+        enabled: bool,
+    ) {
+        if !enabled {
+            self.clear();
+            return;
+        }
+
+        let frame = authoritative.frame_counter();
+        if self.latest_frame == Some(frame) {
+            // Paused/locked simulation can retain one engine frame across
+            // several host frames while touch, keyboard, or scripted camera
+            // input still moves the host-only viewport. Start a camera-only
+            // segment without replaying the already completed world segment.
+            if self.current_camera != Some(camera) {
+                self.previous = self.current.clone();
+                self.previous_camera = self.current_camera.replace(camera);
+                self.working = Some(authoritative.clone());
+                self.segment_started_at_ms = started_at_ms;
+                self.segment_active = true;
+            }
+            return;
+        }
+        let current = authoritative.spatial_presentation_snapshot();
+        let sequential = self
+            .latest_frame
+            .is_some_and(|previous| previous.wrapping_add(1) == frame);
+        if sequential {
+            self.previous = self.current.replace(current);
+            self.previous_camera = self.current_camera.replace(camera);
+            self.working = Some(authoritative.clone());
+            self.segment_started_at_ms = started_at_ms;
+            self.segment_active = true;
+        } else {
+            self.previous = Some(current.clone());
+            self.current = Some(current);
+            self.previous_camera = Some(camera);
+            self.current_camera = Some(camera);
+            self.working = Some(authoritative.clone());
+            self.segment_started_at_ms = started_at_ms;
+            self.segment_active = false;
+        }
+        self.latest_frame = Some(frame);
+    }
+
+    pub(super) fn sample(&mut self, now_ms: u32) -> Option<CameraPresentationPose> {
+        let alpha = if self.segment_active {
+            now_ms.wrapping_sub(self.segment_started_at_ms) as f32
+                / robin_engine::engine::FRAME_TIME_MS as f32
+        } else {
+            1.0
+        }
+        .clamp(0.0, 1.0);
+        let previous = self.previous.as_ref()?;
+        let current = self.current.as_ref()?;
+        self.working
+            .as_mut()?
+            .apply_spatial_presentation(previous, current, alpha);
+        Some(CameraPresentationPose::interpolate(
+            self.previous_camera?,
+            self.current_camera?,
+            alpha,
+        ))
+    }
+
+    pub(super) fn engine(&self) -> Option<&Engine> {
+        self.working.as_ref()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.previous = None;
+        self.current = None;
+        self.working = None;
+        self.previous_camera = None;
+        self.current_camera = None;
+        self.latest_frame = None;
+        self.segment_active = false;
+    }
+}
+
 /// Renderer settings resolved before the loading screen is created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct MissionRendererConfig {
     pub(super) scale_mode: TextureScaleMode,
     pub(super) shader_preset: String,
+    pub(super) native_refresh_presentation: bool,
+    pub(super) texture_effect: robin_engine::graphic_config::TextureEffect,
+    pub(super) upscale_parameters: robin_engine::graphic_config::UpscaleParameters,
+    pub(super) texture_effect_parameters: robin_engine::graphic_config::TextureEffectParameters,
 }
 
 /// Renderer-only stage. This value can only be constructed after the loading
@@ -223,11 +409,19 @@ impl InteractiveRendererAssembly {
         window: &mut crate::window::GameWindow,
         config: MissionRendererConfig,
     ) -> Self {
+        window.set_native_refresh_presentation(config.native_refresh_presentation);
         let render_w = window.width as u16;
         let render_h = window.height as u16;
         window.set_logical_size(u32::from(render_w), u32::from(render_h));
         let mut renderer = Renderer::new(window, render_w, render_h, config.scale_mode);
-        renderer.set_shader_preset(config.shader_preset);
+        renderer.apply_upscale_config(&robin_engine::graphic_config::GraphicConfig {
+            scale_mode: config.scale_mode,
+            shader_preset: config.shader_preset,
+            texture_effect: config.texture_effect,
+            upscale_parameters: config.upscale_parameters,
+            texture_effect_parameters: config.texture_effect_parameters,
+            ..robin_engine::graphic_config::GraphicConfig::default()
+        });
         Self { renderer }
     }
 
@@ -265,6 +459,10 @@ impl InteractiveRendererAssembly {
     /// Consume pre-loop process resources into the complete frontend assembly
     /// needed by the lost-Sherwood gate. HUD trackers are intentionally added
     /// only after that gate and campaign-entry setup have succeeded.
+    ///
+    /// `cursor` and `menu_res` are the two `DEFAULT.RES` views produced by
+    /// [`MissionProcessResources::take_interface`] — ideally already eagerly
+    /// decoded on a worker while the level loaded.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn assemble_process_frontend(
         mut self,
@@ -273,18 +471,16 @@ impl InteractiveRendererAssembly {
         game: &Game,
         engine: &mut robin_engine::engine::Engine,
         assets: &robin_engine::engine::LevelAssets,
-        process: MissionProcessResources,
+        mut text: ResourceManager,
+        mut cursor: ResourceManager,
+        menu_res: ResourceManager,
+        audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
         decoded: LoadedInteractiveResources,
         short_briefing_strings: HashMap<u32, String>,
         args: &crate::main_entry::CliArgs,
         mission_idx: usize,
         location: MissionLocation,
     ) -> InteractiveFrontendAssembly {
-        let MissionProcessResources {
-            mut text,
-            mut cursor,
-            audio_backend,
-        } = process;
         let sprites = load_mission_sprites(
             engine,
             host,
@@ -310,7 +506,11 @@ impl InteractiveRendererAssembly {
         window.grab_mouse(true);
         timer.step("input + camera");
 
-        let menu = IngameMenuResources::new(&mut self.renderer, host.shipping.as_deref());
+        let menu = IngameMenuResources::from_manager(
+            &mut self.renderer,
+            host.shipping.as_deref(),
+            menu_res,
+        );
         if menu.is_none() {
             tracing::error!(
                 "In-game menu resources unavailable — pause actions require a successful reload"
@@ -410,6 +610,7 @@ impl InteractiveFrontendAssembly {
                 last_cursor_id: robin_engine::resource_ids::RHMOUSE_DEFAULT,
             },
             presentation: MissionPresentation { renderer, sprites },
+            native_refresh_interpolation: NativeRefreshInterpolation::new(),
         }
     }
 }
@@ -503,6 +704,7 @@ pub(super) struct InteractiveFrontend {
     pub(super) ui: MissionUi,
     pub(super) hud: MissionHud,
     pub(super) presentation: MissionPresentation,
+    pub(super) native_refresh_interpolation: NativeRefreshInterpolation,
 }
 
 /// Complete process owner returned by interactive mission bootstrap.
@@ -516,7 +718,7 @@ pub(super) struct InteractiveMission {
 
 #[cfg(test)]
 mod tests {
-    use super::{MissionUi, RenderViewState};
+    use super::{CameraPresentationPose, MissionUi, RenderViewState};
 
     #[test]
     fn mission_ui_starts_with_all_blocking_surfaces_closed() {
@@ -547,5 +749,50 @@ mod tests {
             serde_json::from_str(&json).expect("render view state should deserialize");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn camera_presentation_interpolates_position_and_zoom() {
+        let previous = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(100.0, 200.0),
+            old_view_position: robin_engine::coordinates::MapPoint::new(90.0, 190.0),
+            zoom_factor: 0.5,
+            old_zoom_factor: 1.0,
+        };
+        let current = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(140.0, 120.0),
+            old_view_position: robin_engine::coordinates::MapPoint::new(100.0, 200.0),
+            zoom_factor: 1.5,
+            old_zoom_factor: 0.5,
+        };
+
+        let sample = CameraPresentationPose::interpolate(previous, current, 0.25);
+
+        assert_eq!(
+            sample.view_position,
+            robin_engine::coordinates::MapPoint::new(110.0, 180.0)
+        );
+        assert_eq!(sample.zoom_factor, 0.75);
+    }
+
+    #[test]
+    fn camera_presentation_snaps_discontinuous_jumps() {
+        let previous = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(100.0, 200.0),
+            old_view_position: robin_engine::coordinates::MapPoint::new(100.0, 200.0),
+            zoom_factor: 1.0,
+            old_zoom_factor: 1.0,
+        };
+        let current = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(500.0, 200.0),
+            old_view_position: robin_engine::coordinates::MapPoint::new(100.0, 200.0),
+            zoom_factor: 2.0,
+            old_zoom_factor: 1.0,
+        };
+
+        assert_eq!(
+            CameraPresentationPose::interpolate(previous, current, 0.25),
+            current
+        );
     }
 }

@@ -170,7 +170,7 @@ pub(crate) async fn show_popup_scroll(
         if let Some(result) = result {
             return result;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

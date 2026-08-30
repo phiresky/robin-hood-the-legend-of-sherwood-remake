@@ -32,6 +32,16 @@ fn terminal_debriefing_action(
     }
 }
 
+fn mission_completion_clock() -> (Option<i64>, Option<u64>) {
+    let Ok(duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return (None, None);
+    };
+    (
+        i64::try_from(duration.as_secs()).ok(),
+        u64::try_from(duration.as_nanos()).ok(),
+    )
+}
+
 fn debriefing_text_table_id(won: bool, win_table_id: i32, lose_table_id: i32) -> i32 {
     if won { win_table_id } else { lose_table_id }
 }
@@ -66,12 +76,13 @@ pub(super) struct TerminalDebriefingContext<'a> {
 fn terminal_debriefing_page(
     context: &mut TerminalDebriefingContext<'_>,
     won: bool,
+    terminal_mission_id: u32,
 ) -> TerminalDebriefingPage {
     let index = context.manager.engine.mission().victory_defeat_id as usize;
     let kind = engine_player_command::ModalKind::FinalDebriefing {
         text_id: engine_player_command::DebriefingTextId::from_outcome(won, index),
     };
-    let body = if let Some(descriptors) = context.resources.level_descriptors.as_ref() {
+    let mut body = if let Some(descriptors) = context.resources.level_descriptors.as_ref() {
         let table_id = debriefing_text_table_id(
             won,
             descriptors.debriefing.win_text_table_id,
@@ -90,6 +101,13 @@ fn terminal_debriefing_page(
         tracing::warn!("Debriefing text lookup: level descriptors unavailable");
         "No dynamic resources for this level...".to_string()
     };
+    if won
+        && context.host.gameplay_config.show_achievement_debrief
+        && let Some(results) = context.manager.engine.mission_achievement_results()
+    {
+        body.push_str("\n\n");
+        body.push_str(&crate::achievement_hud::format_attempt_summary(*results));
+    }
     let mission_length = <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
         context.callbacks,
         context.manager.engine.campaign(),
@@ -97,17 +115,13 @@ fn terminal_debriefing_page(
     let quick_load_key = context.input.translator.get_binding(GameKey::QuickLoad1);
     let restart_snapshot_exists =
         context.ui.restart_allowed && context.callbacks.save_manager.has_restart_save();
-    let mission_id = current_mission_id(
-        context.manager.engine.campaign(),
-        &context.assets.profile_manager,
-    );
     TerminalDebriefingPage {
         kind,
         body,
         mission_length,
         quick_load_key,
         restart_snapshot_exists,
-        mission_id,
+        mission_id: terminal_mission_id,
         won,
     }
 }
@@ -283,6 +297,14 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         return false;
     };
     tracing::info!("Engine tick returned: {:?}", exit_code);
+    // A history replay restores campaign progression while applying terminal
+    // updates. Freeze the loaded mission identity first so the debriefing and
+    // load/restart actions continue to refer to the mission just played.
+    let terminal_mission_id = current_mission_id(
+        context.manager.engine.campaign(),
+        &context.assets.profile_manager,
+    );
+    let (completed_at_unix_seconds, campaign_run_nonce) = mission_completion_clock();
 
     // Campaign/stat updates precede both terminal graphical surfaces, matching
     // RHgame.cpp's mission-end operation handling.
@@ -295,8 +317,64 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
             difficulty,
+            completed_at_unix_seconds,
+            campaign_run_nonce,
         },
     );
+    if exit_code == GameCode::LevelSucceeded {
+        let run_context = robin_engine::achievement::AchievementRunContext {
+            kind: context.host.achievement_run_kind,
+            multiplayer: context.host.transport.net.is_some(),
+            replay_playback: context.host.achievement_replay_playback,
+            headless: context.host.achievement_headless,
+            // The engine ORs its authoritative cheat flag into this value.
+            cheat_used: false,
+        };
+        let update = context
+            .manager
+            .engine
+            .promote_mission_achievement_results(
+                robin_engine::achievement::AchievementUnlockPolicy::default(),
+                run_context,
+                &context.assets.profile_manager,
+            )
+            .unwrap_or_else(|error| panic!("achievement history promotion failed: {error}"));
+        if let Some(update) = update
+            && !update.blockers.is_empty()
+        {
+            tracing::info!(
+                ?run_context,
+                "achievement results calculated but unlock/history persistence was blocked"
+            );
+        }
+    }
+
+    // ApplyQuitMissionUpdates first appends the immutable raw attempt and the
+    // success path above attaches its exactly-once eligibility attestation.
+    // Only then promote that canonical campaign history into the profile, so
+    // failed/interrupted attempts and policy-blocked calculations remain
+    // losslessly auditable without becoming awarded badges.
+    let campaign = context.manager.engine.campaign().clone();
+    context
+        .host
+        .application_context
+        .with_player_profiles_mut(|profiles| {
+            let profile = profiles.get_active_mut().unwrap_or_else(|| {
+                panic!("campaign-history promotion has no active player profile")
+            });
+            profile
+                .promote_campaign_history(&campaign, &context.assets.profile_manager)
+                .unwrap_or_else(|error| panic!("campaign-history promotion failed: {error}"));
+            if let Err(error) = profiles.save() {
+                #[cfg(not(target_arch = "wasm32"))]
+                panic!("failed to persist campaign history: {error}");
+                #[cfg(target_arch = "wasm32")]
+                tracing::warn!(
+                    "Failed to persist campaign history in browser storage; keeping it in memory for this session: {error}"
+                );
+            }
+        })
+        .unwrap_or_else(|error| panic!("campaign profile synchronization failed: {error}"));
 
     let Some((popup_title, _)) = crate::ingame_menu::mission_state_text(exit_code) else {
         return false;
@@ -307,7 +385,7 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
 
     let won = exit_code == GameCode::LevelSucceeded;
     show_terminal_mission_state(&mut context, popup_title, won).await;
-    let page = terminal_debriefing_page(&mut context, won);
+    let page = terminal_debriefing_page(&mut context, won, terminal_mission_id);
     let outcome = render_terminal_debriefing_and_picker(&mut context, &page).await;
     context
         .frame

@@ -4,6 +4,52 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Per-mission achievements, debrief evidence, XP, and trackers.** Four
+  deterministic achievements are evaluated independently for each successful
+  attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
+  Stashed**. Tracking establishes a post-initialization baseline of living and
+  already-dead NPCs, then records exact death causality, hostile sighting pairs,
+  and exact building-sector membership. Clean Hands fails only for deaths
+  caused by player-controlled units by default; `NPC Kills Break Clean Hands`
+  can additionally count NPC-on-NPC deaths. Ghost cares only whether a living
+  hostile actually observed a player character, so it remains independent of
+  killing. Pile-o-Bones latches after any ten NPC bodies occupy one building;
+  All Enemies Stashed requires every encountered hostile to be out of order in
+  the same building.
+
+  Results and metrics are frozen into the canonical attempt, and an exactly-once
+  host attestation decides whether the badges may enter campaign and lifetime
+  history. Custom, cheated, headless, and replay-playback runs remain auditable
+  but do not award icons. A normal history replay is an eligible campaign
+  practice attempt, so a player can return to one mission and earn a missed
+  badge after the fact. Campaign badges, detailed debrief conditions, exact
+  selected-character sword/bow XP, the speedrun clock, and each of the four
+  top-left achievement trackers have separate settings. Fresh profiles show
+  campaign badges and debrief details but leave the HUD trackers and detailed
+  XP off; settings documents that predate these presentation fields leave all
+  of those presentations off without discarding calculated history. The authoritative rules live in
+  `crates/robin_engine/src/achievement.rs`; presentation lives in
+  `crates/robin_rs/src/achievement_hud.rs`.
+
+  Mission badges remain four independent pieces of evidence. Campaign and
+  lifetime badges apply a separate typed aggregation policy: **Clean Hands**
+  and **Ghost** require the badge on every successful canonical mission in one
+  completed campaign path, while **Pile-o-Bones** and **All Enemies Stashed**
+  unlock permanently after any one eligible mission. The required path is
+  frozen by campaign run ID and terminal sequence when the Original campaign
+  completion boundary is crossed. Lost, failed, and interrupted attempts stay
+  in full history but never expand that won-mission set. A later practice
+  replay may fill evidence for a mission already in the envelope, but cannot
+  add a mission or combine evidence from another campaign. Completed envelopes
+  live in the profile's lifetime archive and survive campaign reset.
+  Incomplete Original C++ imports are shown as unverifiable until real eligible
+  evidence exists; import never fabricates an award.
+
+  Deterministic tracker fields and the NPC-death gameplay rule are part of the
+  native state contract. This feature therefore advances native saves to v58,
+  replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
+  closed instead of being decoded as plausible achievement evidence.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -23,6 +69,16 @@ A list of which additional features we have added, which ones we might still wan
   portrait bars expose additional slots, fixed-width border art fills the
   complete width, and Android uses a cutout-safe immersive content area.
   Disabling Adaptive Widescreen restores fixed 4:3 parity presentation.
+
+- **Live Sherwood production forecast.** The Sherwood report now includes a
+  compact, toggleable item-production panel built from current map stock and
+  live production-zone membership. Once a mission is selected it shows exact
+  output for that mission's authored duration; before selection it reports an
+  exact one-hour rate rather than guessing a mission. Each item line exposes
+  current stock, five-per-production-point capacity, overflow, worker and
+  specialist inputs, authored speed, and the original game's explicit lack of
+  raw-material consumption. Forecasting and campaign production call the same
+  pure calculation, with boundary tests guarding truncation and saturation.
 
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
@@ -123,7 +179,13 @@ A list of which additional features we have added, which ones we might still wan
   the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
   fixing the Steam release — whose depot ships only the international
   TrueType (SimSun) font set and therefore renders every menu in a
-  Windows system font in the original build too. See
+  Windows system font in the original build too. It also carries 19 engine UI
+  PNGs, including the allied controls and villain portraits. Packaged native
+  targets validate the strictly sorted 32-file size/SHA-256 inventory in
+  `core-overlay-manifest.json`; desktop startup validates the exact physical
+  tree before mounting it, while Android packages it as a retail-content-free
+  asset root and validates every entry before UI startup. Browser builds
+  explicitly preload only their build-reachable font/UI subset. See
   `assets/core-datadir/README.md`.
 
 - **Runtime language switching.** Main-menu Options discovers and validates
@@ -134,7 +196,7 @@ A list of which additional features we have added, which ones we might still wan
   atomically replaces loose-datadir or shipping-bundle lookup, rebuilds eager
   menu presentation caches, and returns to Options. Text never silently falls
   through to a different language; only missing recorded speech and
-  cinematics may use an installed English pack. Shipping datadir format v14
+  cinematics may use an installed English pack. Shipping datadir format v15
   preserves complete per-locale overlays for native, Android, and browser
   packages; older manifests fail loudly and must be regenerated. Generated
   character names and persisted save labels remain frozen, multiplayer mission
@@ -243,10 +305,11 @@ A list of which additional features we have added, which ones we might still wan
   mission titles as filenames.
 
 - **Local script-RPC HTTP server** (`crates/robin_rs/src/http_server.rs`).
-  Loopback-only blocking-IO server (`tiny_http`) that exposes the script VM
+  Desktop-native-only loopback blocking-IO server (`tiny_http`) that exposes the script VM
   and engine internals to external tooling: debug shells, test harnesses, AI
   drivers. Default port **17640**, configurable via `--http-server <port>`,
-  `--http-server 0` to disable.
+  `--http-server 0` to disable. Android disables this transport; browser builds
+  expose the same queue through the in-process `rh_rpc` JavaScript bridge.
   - `GET /` — endpoint listing.
   - `GET /natives` — every NativeFn (index, name, return_type, params)
     with signature provenance from `original-code/RHScriptAPI.scs`.
@@ -273,19 +336,32 @@ A list of which additional features we have added, which ones we might still wan
     after `run_engine_tick`, so HTTP-driven side effects land on the
     same frame as normal script-native side effects.
 
-- **Upscaling**. Options -> Graphics -> Scaling is wired
-  through `crates/robin_rs/src/gpu_upscale.rs`, `shaders/*.wgsl`, and
-  `build.rs`. Currently shipped in the UI: Nearest, PixelArt, Linear
-  via wgpu, plus single-pass WGSL shaders: **Sharp-Bilinear**,
-  **Bicubic**, **Lanczos**, and **CUT3**, plus **RetroArch Shader** preset
-  selection.
-  - Multi-pass shader runner candidates:
-    **xBRZ**, **hqx**, **super-xbr**, **Anime4K v4**, **ScaleNX with artifact
-    removal**, and CRT shaders (as a separate `TextureEffect` enum).
-  - References:
-    - https://github.com/libretro/slang-shaders
-    - https://github.com/libretro/common-shaders
-    - https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms
+- **Upscaling and presentation effects**. Options -> Graphics -> Scaling now
+  ships a portable multi-pass wgpu runner. It includes Nearest, Linear,
+  Pixel Art/Sharp-Bilinear, Bicubic, Lanczos, CUT3, a published-corner-rule-
+  derived **ScaleNX** path with artifact removal, and clearly labelled clean-room
+  **HQx-style**, **xBRZ-style**, **Super-xBR-style**, and **Anime line A/B/C
+  (v4 layout)** profiles. The Anime profiles follow Anime4K v4's documented
+  restore/soft-restore/denoise pass ordering, but intentionally do not claim
+  to reproduce Anime4K's trained kernels.
+  - CRT is an independent, disableable `TextureEffect`: None,
+    **CRT Guest-class**, or **CRT Royale-class**. Both implementations are
+    original portable WGSL inspired by those shaders' documented controls;
+    no GPL shader code is embedded.
+  - Strength, edge threshold, artifact removal, scanlines, phosphor mask,
+    bloom, curvature, and presentation-rate temporal flicker are persisted
+    per profile. Temporal state advances only after a frame is submitted for
+    presentation, independently of deterministic simulation ticks.
+  - The world/video layer is scaled and effected first. Menus, HUD, cursors,
+    and modal overlays are then alpha-composited with sharp-bilinear sampling
+    so display effects do not blur text.
+  - Standard native builds can choose bundled `.slangp` presets or import and
+    compile an external preset from the Graphics screen. Preset
+    parse/compile/frame errors are reported; a failed preset never silently
+    falls back. Browser builds hide this unavailable choice while retaining
+    all portable WGSL profiles on WebGPU and WebGL2.
+  - Algorithm provenance, exactness, licensing, platform support, and shader
+    restrictions are documented in `docs/UPSCALERS.md`.
 
 - **Deterministic replay and rollback checking**. Sessions can be recorded to
   JSONL, replayed from disk or compact `rhrec-...` strings, and checked with
@@ -356,16 +432,16 @@ A list of which additional features we have added, which ones we might still wan
   full character corpus at 2.27x smaller than zstd-19. Integration design in
   `docs/COMPRESSION.md` (schema v7 section).
 
-## Todo
+- **Touch camera gestures and native-refresh presentation**. Touch input now
+  classifies taps, drags, double-taps, and two-finger transforms without
+  leaking cancelled pointer actions into gameplay. World gestures support
+  anchored pinch zoom, pan, bounded inertia, and UI/minimap exclusion, with an
+  independent Gameplay toggle. A separate Graphics toggle presents and
+  interpolates at the display's actual cadence while deterministic simulation
+  remains fixed at 25 Hz; 60/90/120/144/240 Hz are covered without a
+  hard-coded refresh-rate policy.
 
-- **Android touch polish**
-  - Complete two-finger pan and pinch-zoom support. The first Android pass maps
-    one-finger touch to left mouse and two-finger centroid drag to viewport pan;
-    follow up with proper gesture state, inertia/clamping, pinch zoom around the
-    gesture centroid, and interaction rules for UI/minimap/pause overlays.
-  - Render pacing should target 60 FPS or the device screen refresh rate instead
-    of the current fixed game-loop cadence. Keep simulation at the existing
-    fixed timestep, but present/interpolate at display cadence where possible.
+## Todo
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.
@@ -395,8 +471,13 @@ A list of which additional features we have added, which ones we might still wan
 - **Level selection tree**
   - Show campaign progress: completed missions, stats, and other information
     currently lost after the level-end screen.
-  - Could be implemented as a custom map where you can walk around and inspect
-    missions.
+  - Implemented as selectable Classic Map, prerequisite/progress tree, and a
+    modal Sherwood Hall of Deeds exhibit grid. Every Rust campaign always
+    retains immutable full-fidelity records for every attempt (including
+    losses and practice replays) and derives totals/bests from those records.
+    Only Original C++ saves are imported; their limited status/recent-mission
+    data remains explicitly incomplete. A freely walkable world-space Hall is
+    deferred. See `docs/CAMPAIGN_HISTORY.md`.
 
 - Track how many are dead at the start of a mission so we can tell if the
   player is actually responsible for killing anyone (Clean Hands achievement).
@@ -414,7 +495,6 @@ A list of which additional features we have added, which ones we might still wan
 - Add a method to unhorse horsed soldiers without killing them; no-kill runs
   are annoying with horses.
   - Add an option for Merry Men to knock people out instead of killing them.
-- Production in Sherwood: show how many items will be produced.
 - More combat gestures; only 9 different ones feels too low.
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
@@ -425,7 +505,21 @@ A list of which additional features we have added, which ones we might still wan
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
 - throw something skill that makes a noise somewhere else so guards run there
-- cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
+- Cloaking (implemented, optional): selected heroes whose sprite profile has
+  the shipped cape rows can put the cloak back on with a rebindable key. The
+  reversed original transition leads to a dedicated stationary Cloaked state;
+  unaware distant hostiles are deceived, while remembered targets, ordinary
+  line-of-sight after a reveal, and close scrutiny see through it. Acting or
+  taking damage reveals the hero. Fresh profiles enable this; migrated
+  profiles preserve original one-way cape behavior until enabled in Gameplay.
+  Original replay construction always forces the feature off. The shipped
+  human visibility routine has no character-specific detector and the unused
+  animal runtime has no shipped mission instances, so the explicit authored
+  detector seam remains disabled with a TODO for a future mod schema instead
+  of assigning invented special senses. `cloak_art_audit` validates both cape
+  rows for every declared PC profile: the full Linux data has 10/10 available
+  and eligible tracks; the Leicester demo has 5/5 available tracks eligible
+  (its CPF also declares five full-game profiles whose RHS files are absent).
 - timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be

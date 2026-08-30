@@ -394,6 +394,10 @@ impl MissionLoadingScreen {
         let renderer_config = MissionRendererConfig {
             scale_mode: profile.graphic_config.scale_mode,
             shader_preset: profile.graphic_config.shader_preset,
+            native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
+            texture_effect: profile.graphic_config.texture_effect,
+            upscale_parameters: profile.graphic_config.upscale_parameters,
+            texture_effect_parameters: profile.graphic_config.texture_effect_parameters,
         };
         let renderer = loading_pak.and_then(|path| {
             let datadir_kind = match detect_demo_mode_with_context(application_context)
@@ -442,14 +446,25 @@ impl MissionLoadingScreen {
         } else {
             progress.completed as f32 / progress.total as f32
         };
-        let target = 0.02 + 0.08 * fraction;
+        let (start, span, label) = match progress.phase {
+            crate::shipping_mission::MissionLoadPhase::Data => {
+                let span = if cfg!(all(target_arch = "wasm32", feature = "audio")) {
+                    0.06
+                } else {
+                    0.08
+                };
+                (0.02, span, "mission data")
+            }
+            crate::shipping_mission::MissionLoadPhase::Audio => (0.08, 0.02, "mission audio"),
+        };
+        let target = start + span * fraction;
         let text = match progress.file {
             Some(file) => format!(
-                "Loading mission data ({}/{}): {file}",
+                "Loading {label} ({}/{}): {file}",
                 progress.completed, progress.total
             ),
-            None if progress.completed == progress.total => "Mission data ready".to_owned(),
-            None => format!("Loading mission data (0/{})", progress.total),
+            None if progress.completed == progress.total => format!("{label} ready"),
+            None => format!("Loading {label} (0/{})", progress.total),
         };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_counted_status(text, target);
@@ -522,6 +537,14 @@ impl InteractiveLoadStage {
             window.width as f32,
             window.height as f32,
         );
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = false;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         if let Some(code) = multiplayer_setup_failure_policy.resolve(
             setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await,
@@ -560,6 +583,9 @@ impl InteractiveLoadStage {
         self.loading.status("Loading interface resources...", 0.12);
         let (ground_mark, titbit_rows, minimap_widget) =
             self.process.engine_setup_resources(&mut self.host);
+        // Pre-engine metadata extraction is done with the interface archive;
+        // send it off to get its JXL pictures decoded while the level loads.
+        self.process.start_interface_decode();
         let screen_width = window.width as f32;
         let screen_height = window.height as f32;
         let loaded = load_level_and_sprite_bank(
@@ -578,6 +604,7 @@ impl InteractiveLoadStage {
             minimap_widget,
             rng_seed,
             sim_config,
+            true,
         )?;
         Ok(LoadedInteractiveStage {
             bootstrap: MissionBootstrap::new(
@@ -620,12 +647,12 @@ impl LoadedInteractiveStage {
         );
     }
 
-    fn assemble_frontend(
+    async fn assemble_frontend(
         &mut self,
         window: &mut GameWindow,
         profiles: &ProfileManager,
         args: &crate::main_entry::CliArgs,
-    ) -> InteractiveFrontendAssembly {
+    ) -> Result<InteractiveFrontendAssembly, String> {
         let loading = self
             .loading
             .as_mut()
@@ -646,8 +673,6 @@ impl LoadedInteractiveStage {
             .as_mut()
             .expect("interactive process resources must exist until frontend assembly")
             .resolve_short_briefings(level_descriptors.as_ref());
-        let background = self.bootstrap.loaded.pre_decoded_background.take();
-        let minimap = self.bootstrap.loaded.pre_decoded_minimap.take();
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
         let renderer_config = self
@@ -658,6 +683,30 @@ impl LoadedInteractiveStage {
         let mut renderer =
             InteractiveRendererAssembly::new_after_loading_screen(window, renderer_config);
         timer.step("game renderer construction");
+
+        // Deferred-terrain join: this is the first point that needs the
+        // decoded pixels, so the decode overlapped everything since the
+        // mission header was read. A decode failure aborts the mission
+        // launch here (the engine's campaign is recovered by the caller).
+        let (background, minimap) = match self.bootstrap.loaded.pending_terrain.take() {
+            Some(pending) => {
+                let decoded = pending.join().await;
+                let background = decoded.background?;
+                if let Some(bg) = background.as_ref() {
+                    assert_eq!(
+                        (bg.width as f32, bg.height as f32),
+                        self.bootstrap.loaded.bg_pixel_dims,
+                        "background map header dimensions diverge from decoded bitmap"
+                    );
+                }
+                timer.step("terrain decode join");
+                (background, decoded.minimap)
+            }
+            None => (
+                self.bootstrap.loaded.pre_decoded_background.take(),
+                self.bootstrap.loaded.pre_decoded_minimap.take(),
+            ),
+        };
         renderer.upload_maps(
             &self.bootstrap.loaded.engine,
             &mut self.bootstrap.host,
@@ -666,15 +715,30 @@ impl LoadedInteractiveStage {
         );
         timer.step("map upload");
 
-        renderer.assemble_process_frontend(
+        // Interface pre-decode join: `load_mission_sprites` and the in-game
+        // menus consume these managers next.
+        let (cursor, menu_res) = self
+            .process
+            .as_mut()
+            .expect("interactive process resources must exist until frontend assembly")
+            .take_interface()
+            .await;
+        timer.step("interface decode join");
+
+        let process = self
+            .process
+            .take()
+            .expect("interactive process resources must move into the frontend once");
+        Ok(renderer.assemble_process_frontend(
             window,
             &mut self.bootstrap.host,
             &self.bootstrap.game,
             &mut self.bootstrap.loaded.engine,
             &self.bootstrap.loaded.assets,
-            self.process
-                .take()
-                .expect("interactive process resources must move into the frontend once"),
+            process.text,
+            cursor,
+            menu_res,
+            process.audio_backend,
             LoadedInteractiveResources {
                 level_descriptors,
                 hud_fonts,
@@ -683,7 +747,7 @@ impl LoadedInteractiveStage {
             args,
             self.bootstrap.spec.mission_idx,
             self.bootstrap.spec.location,
-        )
+        ))
     }
 }
 
@@ -738,6 +802,14 @@ impl HeadlessLoadStage {
         sim_config: engine_api::SimConfig,
     ) -> Result<HeadlessLoadStage, String> {
         let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = true;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
             setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await,
@@ -784,6 +856,9 @@ impl HeadlessLoadStage {
             minimap_widget,
             rng_seed,
             sim_config,
+            // True-headless has no frontend-assembly join point; collect the
+            // decoded terrain synchronously right after engine construction.
+            false,
         )?;
         Ok(MissionBootstrap::new(
             MissionSpec::headless(mission_idx, location),
@@ -1047,7 +1122,18 @@ impl InteractiveMissionBuilder {
         timer.step("spellforge startup");
         stage.prepare_audio(profiles);
         timer.step("audio prepare");
-        let mut frontend = stage.assemble_frontend(window, profiles, args);
+        let mut frontend = match stage.assemble_frontend(window, profiles, args).await {
+            Ok(frontend) => frontend,
+            Err(error) => {
+                let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
+                return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                    campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error),
+                ));
+            }
+        };
         timer.step("frontend assembly");
 
         if let Some(code) = run_lost_sherwood_gate(

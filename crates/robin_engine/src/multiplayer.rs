@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 23;
+pub const NET_PROTOCOL_VERSION: u32 = 25;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -359,12 +359,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_chunked_facade_snapshot_contract() {
-        // Version 22 combines the facade-owned chunked engine snapshot with
-        // the resolved-route and point-Seek provenance contract. Older peers
-        // fail during the handshake before attempting to decode incompatible
-        // snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 23);
+    fn protocol_version_includes_achievement_tracker_state_and_rule_command() {
+        // Version 25 carries deterministic achievement tracker state and its
+        // gameplay-rule command in addition to full-fidelity campaign history.
+        // Older peers fail before decoding incompatible snapshot/input bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 25);
     }
 
     #[test]
@@ -445,6 +444,8 @@ mod tests {
             command: PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: crate::game_operation::GameCode::LevelSucceeded,
                 difficulty: crate::player_profile::DifficultyLevel::Hard,
+                completed_at_unix_seconds: None,
+                campaign_run_nonce: Some(1),
             },
         };
 
@@ -456,6 +457,8 @@ mod tests {
                 command: PlayerCommand::ApplyQuitMissionUpdates {
                     exit_code: crate::game_operation::GameCode::LevelSucceeded,
                     difficulty: crate::player_profile::DifficultyLevel::Hard,
+                    completed_at_unix_seconds: None,
+                    campaign_run_nonce: Some(1),
                 },
             }
         ));

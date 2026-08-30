@@ -178,6 +178,9 @@ impl EngineInner {
     ) {
         for (index, inp) in commands.iter().enumerate() {
             let seat = self.ensure_seat(inp.player_id);
+            if !self.reusable_cloak_command_is_authorized(inp, seat) {
+                continue;
+            }
             let recorded_nested_selection_action = mode
                 == SelectionCommandBatchMode::InferNestedSelection
                 && matches!(
@@ -713,6 +716,10 @@ impl EngineInner {
                     // QA recording stores this ability instead of applying it
                     // to the live PC.
                     self.stop_recording_macro();
+                    return;
+                }
+                if *command == Command::EnterCloak {
+                    self.try_enter_reusable_cloak(assets, *actor);
                     return;
                 }
                 let elem = SequenceElement::new(1, *command, Some(*actor));
@@ -1265,8 +1272,17 @@ impl EngineInner {
             ApplyQuitMissionUpdates {
                 exit_code,
                 difficulty,
+                completed_at_unix_seconds,
+                campaign_run_nonce,
             } => {
-                self.apply_quit_mission_updates(sim, assets, *exit_code, *difficulty);
+                self.apply_quit_mission_updates(
+                    sim,
+                    assets,
+                    *exit_code,
+                    *difficulty,
+                    *completed_at_unix_seconds,
+                    *campaign_run_nonce,
+                );
             }
             QuitMissionRequested => {
                 // The flag to set depends on whether the mission is
@@ -1431,6 +1447,16 @@ impl EngineInner {
             }
             SetUnbindingEnabled { enabled } => {
                 self.control.sim_config.enable_unbinding = *enabled;
+            }
+            SetCleanHandsNpcKillsInvalidate { enabled } => {
+                self.control.sim_config.clean_hands_npc_kills_invalidate = *enabled;
+                self.mission_domain
+                    .achievements
+                    .refresh_clean_hands_rule(*enabled)
+                    .expect("achievement results changed after mission finalization");
+            }
+            SetReusableCloaks { enabled } => {
+                self.set_reusable_cloaks_enabled(*enabled);
             }
 
             HeroSpeak { pc_id, expression } => {
@@ -2873,6 +2899,7 @@ impl EngineInner {
                                 self.launch_sequence(sequence);
                             }
                             crate::element::Posture::Spy
+                            | crate::element::Posture::Cloaked
                             | crate::element::Posture::AnonymousArcher => {
                                 let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc));
                                 let mut sequence = Sequence::new();
@@ -5394,7 +5421,9 @@ impl EngineInner {
                     sequence.append_element(elem);
                     self.launch_sequence(sequence);
                 }
-                crate::element::Posture::Spy | crate::element::Posture::AnonymousArcher => {
+                crate::element::Posture::Spy
+                | crate::element::Posture::Cloaked
+                | crate::element::Posture::AnonymousArcher => {
                     let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc_id));
                     let mut sequence = Sequence::new();
                     sequence.append_element(elem);

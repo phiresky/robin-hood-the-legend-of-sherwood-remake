@@ -19,6 +19,7 @@ mod render;
 mod replay_init;
 mod runtime;
 mod setup;
+pub(crate) use setup::PhaseTimer;
 pub(crate) use setup::initial_sim_config;
 pub use setup::{load_fixed_vip_name_map, load_peasant_name_pool};
 mod terminal_debriefing;
@@ -58,7 +59,9 @@ use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
 use frame_simulate::{FrameSimulationFlags, FrameSimulationOutcome, InteractiveFrameSimulation};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
-use interactive::{InteractiveFrontend, InteractiveMission, RenderViewState};
+use interactive::{
+    CameraPresentationPose, InteractiveFrontend, InteractiveMission, RenderViewState,
+};
 pub(crate) use modal_state::ModalContext;
 use modal_state::{
     ActiveModal, ActiveModalOutcome, drain_pending_console_display, drain_pending_debriefings,
@@ -75,7 +78,7 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
+    RenderCadence, capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
     drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
@@ -95,7 +98,7 @@ use runtime::{
 };
 use tick::{
     dismiss_pending_modals, drain_steps, modal_state_pending, post_render_engine_cleanup,
-    pre_render_engine_setup,
+    pre_render_engine_setup, sync_render_camera,
 };
 
 use crate::app_effect::{AppEffect, SoundMode};
@@ -153,6 +156,9 @@ pub(crate) fn prepare_replay_mission(
         .map_err(|error| format!("invalid replay: {error}"))?;
     let campaign: Campaign = bitcode::decode(&data.header.campaign)
         .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
+    campaign
+        .validate_history_schema()
+        .map_err(|error| format!("invalid replay campaign history: {error}"))?;
     let mission_id = data.header.mission_id.clone();
     let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
         format!("replay campaign has no current mission for header mission `{mission_id}`")
@@ -455,6 +461,7 @@ fn simulation_config_for_level_restart(
     if !replay_restart {
         checkpoint.amount_of_speaking = outcome.amount_of_speaking;
         checkpoint.enable_unbinding = outcome.enable_unbinding;
+        checkpoint.reusable_cloaks = outcome.reusable_cloaks;
     }
     checkpoint
 }
@@ -1017,6 +1024,7 @@ where
         campaign,
         profiles,
         has_decoded_saved_world,
+        args.global_options.sound_enabled,
         progress,
     )
     .await

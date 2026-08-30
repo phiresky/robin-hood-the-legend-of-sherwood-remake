@@ -67,7 +67,7 @@ pub async fn show_yesno(
         if let Some(result) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
             return result;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

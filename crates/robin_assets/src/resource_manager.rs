@@ -552,6 +552,93 @@ impl ResourceManager {
         Ok(())
     }
 
+    /// Decode every still-encoded (JXL) picture into its runtime [`Picture`]
+    /// form, spreading the per-resource decodes across the rayon pool when
+    /// one is available (always on native; on wasm only under the
+    /// `wasm-threads` feature with an initialized pool, and then only when
+    /// called from a rayon worker — never the browser main thread).
+    ///
+    /// A resource whose decode fails is logged and left encoded, so the lazy
+    /// [`Self::ensure_pictures_loaded`] path reports the error at first use
+    /// exactly as it would have without this warm-up. Returns the number of
+    /// resources decoded.
+    pub fn decode_all_encoded_pictures(&mut self) -> usize {
+        let todo: Vec<(ResourceId, Vec<Option<EncodedPicture>>)> = self
+            .encoded_pictures
+            .iter()
+            .filter(|(id, _)| !self.pictures.contains_key(id))
+            .map(|(id, slots)| (*id, slots.clone()))
+            .collect();
+        let decode_one = |(id, slots): (ResourceId, Vec<Option<EncodedPicture>>)| {
+            let mut decoded = Vec::with_capacity(slots.len());
+            for (sub_id, slot) in slots.into_iter().enumerate() {
+                match slot {
+                    Some(pic) => match pic.decode() {
+                        Ok(picture) => decoded.push(Some(picture)),
+                        Err(error) => {
+                            tracing::warn!(
+                                "resource {id}/{sub_id}: eager JXL decode failed \
+                                 (left for the lazy path): {error:#}"
+                            );
+                            return None;
+                        }
+                    },
+                    None => decoded.push(None),
+                }
+            }
+            Some((id, decoded))
+        };
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+        let use_pool = {
+            #[cfg(target_arch = "wasm32")]
+            {
+                crate::wasm_threads::pool_threads() > 0
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                true
+            }
+        };
+        #[cfg(not(any(not(target_arch = "wasm32"), feature = "wasm-threads")))]
+        let use_pool = false;
+        let decoded: Vec<Option<(ResourceId, Vec<Option<Picture>>)>> = if use_pool {
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+            {
+                use rayon::prelude::*;
+                todo.into_par_iter().map(decode_one).collect()
+            }
+            #[cfg(not(any(not(target_arch = "wasm32"), feature = "wasm-threads")))]
+            unreachable!("use_pool is statically false without a rayon dependency")
+        } else {
+            todo.into_iter().map(decode_one).collect()
+        };
+        let mut count = 0;
+        for (id, pictures) in decoded.into_iter().flatten() {
+            self.pictures.insert(id, pictures);
+            count += 1;
+        }
+        count
+    }
+
+    /// True when no resources of any type are attached — e.g. every attach
+    /// failed and callers should treat the archive as unavailable.
+    pub fn is_empty(&self) -> bool {
+        self.pictures.is_empty()
+            && self.encoded_pictures.is_empty()
+            && self.strings.is_empty()
+            && self.waves.is_empty()
+            && self.mouse_entries.is_empty()
+    }
+
+    /// Deep-copy this manager. Used to hand an identical (ideally already
+    /// eagerly-decoded) view of a shared archive like `DEFAULT.RES` to a
+    /// second owner without re-attaching and re-decoding it.
+    pub fn duplicate(&self) -> Self {
+        let mut copy = Self::new();
+        copy.extend_from(self);
+        copy
+    }
+
     /// Ensure a string resource is loaded (recover if missing).
     fn ensure_strings_loaded(&mut self, id: ResourceId) -> Result<()> {
         if !self.strings.contains_key(&id) {

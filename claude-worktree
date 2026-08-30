@@ -6,7 +6,7 @@ if [ -z "$name" ]; then
     echo "Reads agent prompt from stdin."
     exit 1
 fi
-dir=".claude/worktrees/$name"
+dir=".worktrees/$name"
 branch="worktree-$name"
 base="main"
 

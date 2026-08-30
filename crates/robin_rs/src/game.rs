@@ -658,6 +658,8 @@ impl Game {
                     engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
                         exit_code: self.operation.get_current(),
                         difficulty: self.global_options.sim_config().difficulty,
+                        completed_at_unix_seconds: None,
+                        campaign_run_nonce: Some(1),
                     },
                 )])
                 .with_hourglass(false),

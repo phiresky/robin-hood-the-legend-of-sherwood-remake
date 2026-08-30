@@ -2427,6 +2427,7 @@ impl EngineInner {
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
         let code = self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed);
+        self.refresh_achievement_progress();
         self.advance_auto_quick_action_queues(sim, display, assets);
         self.control.arrow_refresh_pending = true;
 
@@ -7771,7 +7772,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         };
         matches!(
             entity.element_data().posture,
-            Posture::Spy | Posture::Tree | Posture::AnonymousArcher
+            Posture::Spy | Posture::Cloaked | Posture::Tree | Posture::AnonymousArcher
         )
     }
 

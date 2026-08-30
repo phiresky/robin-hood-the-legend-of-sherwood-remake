@@ -97,6 +97,37 @@ struct Args {
     /// compress ~5% smaller under zstd (docs/COMPRESSION.md, 2026-08-28).
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     rank_dictionaries: bool,
+
+    /// Shipping: how to encode the RLE patch/ambient-animation sprite bucket
+    /// (`Data/Animations/**` plus the ACCESSORIES_/BONUS_/RELIC_/TG_
+    /// character files). `exact` keeps the byte-preserving packed RLE words
+    /// (required for native/parity builds); `jxl-q70` ships them as lossy
+    /// JXL per-animation atlases whose alpha channel carries the pixel
+    /// class losslessly — transparent and shadow pixels stay bit-exact,
+    /// only visible RGB is lossy (docs/COMPRESSION.md, 2026-08-30 RLE
+    /// alpha-atlas section). WEB ONLY: it breaks framebuffer parity.
+    #[arg(long, value_enum, default_value_t = RleSpriteFormat::Exact)]
+    rle_sprite_format: RleSpriteFormat,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum RleSpriteFormat {
+    /// Keep exact packed RLE words (byte-preserving).
+    Exact,
+    /// Lossy JXL atlases at quality 70 + lossless class masks (web recipe).
+    JxlQ70,
+    /// Lossy JXL atlases at quality 80 + lossless class masks.
+    JxlQ80,
+}
+
+impl RleSpriteFormat {
+    fn jxl_quality(self) -> Option<u8> {
+        match self {
+            Self::Exact => None,
+            Self::JxlQ70 => Some(70),
+            Self::JxlQ80 => Some(80),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -212,6 +243,7 @@ fn main() -> Result<()> {
                 zstd_window_log: args.zstd_window_log,
                 resume: args.resume,
                 rank_dictionaries: args.rank_dictionaries,
+                rle_sprite_format: args.rle_sprite_format,
             },
         ),
     }
@@ -225,6 +257,7 @@ struct ShippingOpts {
     zstd_window_log: u32,
     resume: bool,
     rank_dictionaries: bool,
+    rle_sprite_format: RleSpriteFormat,
 }
 
 /// Locate the game data directory inside the input folder.
@@ -1005,13 +1038,13 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
+        AudioFormat, AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
         animation_rhs_rel_existing, detect_locale_data_dirs, exclamation_dat_filename,
-        insert_standalone_audio, lcid_to_iso, level_asset_rel_existing,
-        normalize_robin_profile_index, positional_pair_map, prepare_shipping_payload,
-        transcode_audio_to_opus,
+        insert_shipping_audio, insert_standalone_audio, is_common_audio_member, lcid_to_iso,
+        level_asset_rel_existing, normalize_robin_profile_index, positional_pair_map,
+        prepare_shipping_payload, transcode_audio_to_opus, write_shipping_dependency,
     };
-    use robin_assets::shipping_datadir::ShippingMission;
+    use robin_assets::shipping_datadir::{ShippingAudioAsset, ShippingMission};
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
     use std::fs;
 
@@ -1202,6 +1235,91 @@ mod tests {
                 .windows(opus.len())
                 .any(|window| window == opus)
         );
+    }
+
+    #[test]
+    fn common_audio_excludes_menu_exclamations_and_mission_dialogue() {
+        let dialogue = std::collections::BTreeSet::from(["sounds/dialog/line.wav".into()]);
+        assert!(is_common_audio_member("arrow_hit.wav", &dialogue));
+        assert!(!is_common_audio_member("snd_001.wav", &dialogue));
+        assert!(!is_common_audio_member("menu/click.wav", &dialogue));
+        assert!(!is_common_audio_member(
+            "exclamations/robin/alert.wav",
+            &dialogue
+        ));
+        assert!(!is_common_audio_member("dialog/line.wav", &dialogue));
+    }
+
+    #[test]
+    fn opus_payload_retains_exact_catalog_membership_without_encoded_bytes() {
+        let sample_rate = 8_000u32;
+        let sample_count = 800u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + sample_count * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(sample_count * 2).to_le_bytes());
+        wav.resize(wav.len() + (sample_count * 2) as usize, 0);
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("arrow.wav");
+        std::fs::write(&source, wav).unwrap();
+        let mut payload = ShippingMission::default();
+        let mut catalog = std::collections::BTreeMap::from([(
+            "sounds/arrow.opus".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/existing.opus".into(),
+                encoded_size: 42,
+                duration_ms: 100,
+                bundle_offset: None,
+            },
+        )]);
+
+        insert_shipping_audio(
+            &mut payload,
+            &mut catalog,
+            &temp.path().join("audio/assets"),
+            "common",
+            "Sounds/Arrow.wav",
+            &source,
+            AudioKind::Effect,
+            AudioFormat::Opus,
+        )
+        .unwrap();
+
+        assert!(payload.raw.is_empty());
+        assert_eq!(payload.audio_durations_ms["sounds/arrow.opus"], 100);
+    }
+
+    #[test]
+    fn opus_membership_only_dependency_is_written_and_decodes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut payload = ShippingMission::default();
+        payload
+            .audio_durations_ms
+            .insert("sounds/arrow.opus".into(), 100);
+
+        let relative =
+            write_shipping_dependency(temp.path(), "metadata-only-audio", &payload, 30, false)
+                .unwrap()
+                .expect("Opus membership metadata is a real dependency");
+        let filename = std::path::Path::new(&relative)
+            .file_name()
+            .expect("dependency path has a file name");
+        let compressed = std::fs::read(temp.path().join(filename)).unwrap();
+        let decoded = robin_assets::shipping_datadir::decode_mission_compressed(&compressed)
+            .expect("decode metadata-only dependency");
+
+        assert!(decoded.raw.is_empty());
+        assert_eq!(decoded.audio_durations_ms["sounds/arrow.opus"], 100);
     }
 
     #[test]
@@ -1575,8 +1693,8 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 use robin_assets::shipping_datadir::{
-    RhsData, ShippingAudioAsset, ShippingDatadir, ShippingLocale, ShippingMission,
-    ShippingMissionRef, ShippingSprite, ShippingSpriteBank, SpriteVqChunk,
+    RhsData, RleJxlPlacement, ShippingAudioAsset, ShippingDatadir, ShippingLocale, ShippingMission,
+    ShippingMissionRef, ShippingSprite, ShippingSpriteBank, SpriteRleJxlChunk, SpriteVqChunk,
     canonical_shipping_asset_key,
 };
 use robin_engine::level_data::LoadedLevel;
@@ -1588,6 +1706,7 @@ struct ShippingMissionBuild {
     required_exclamation_ids: BTreeSet<u32>,
     music_names: BTreeSet<String>,
     dialogue_samples: BTreeSet<String>,
+    sound_wave_ids: BTreeSet<u32>,
     map_names: BTreeSet<String>,
     level_asset_keys: BTreeSet<String>,
     proto_filename: String,
@@ -1664,6 +1783,493 @@ fn remapped_packed(
     }))
 }
 
+/// The RLE-bucket files eligible for `--rle-sprite-format jxl-*`: the
+/// content class where lossy JXL was measured to WIN (docs/COMPRESSION.md,
+/// 2026-08-29 "the RLE/patch bucket"). RLE sprites in other RHS chunks
+/// (e.g. stray RLE frames inside character banks) keep exact words — they
+/// were not part of the measured/visually-vetted corpus.
+fn is_rle_jxl_bucket_rel(rel: &str) -> bool {
+    let lower = rel.replace('\\', "/").to_ascii_lowercase();
+    if lower.starts_with("animations/") {
+        return true;
+    }
+    lower.strip_prefix("characters/").is_some_and(|name| {
+        ["accessories_", "bonus_", "relic_", "tg_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    })
+}
+
+/// Sprites below this dimension keep exact RLE: the per-image JXL header
+/// tax dominates and the worst visual outliers live here (the probe's
+/// `--min-dim` selection).
+const RLE_JXL_MIN_DIM: u16 = 20;
+/// Animation groups with at least this many eligible frames get packed
+/// into grid atlases (cjxl's patch/context machinery recovers ~20% over
+/// per-sprite encodes on the measured corpus).
+const RLE_JXL_MIN_ATLAS_FRAMES: usize = 4;
+/// Cap on a single atlas image, splitting big groups into sub-atlases so
+/// one worker's transient RGBA decode buffer stays bounded on wasm.
+const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
+/// Conversion-time per-sprite quality floor. A sprite whose opaque-pixel
+/// PSNR (scored over the exact requantized RGB565 values materialization
+/// ships) falls below this keeps its exact RLE words instead — the worst
+/// q70 outliers are tiny dithered pickup/effect sprites that contribute
+/// almost no bytes (docs/COMPRESSION.md). Keeping every sprite at or above
+/// this floor also guarantees the per-chunk aggregate floor that
+/// `sprite_compression_probe --verify-shipping` enforces.
+const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RleJxlChunkStats {
+    atlased: usize,
+    individual: usize,
+    kept_smaller: usize,
+    kept_small_dim: usize,
+    kept_shared: usize,
+    kept_irregular: usize,
+    kept_low_psnr: usize,
+    jxl_bytes: u64,
+    raw_words_replaced: u64,
+    /// Pixels of the decoded atlases these chunks keep resident (2 B each),
+    /// gutters included.
+    atlas_pixels: u64,
+    /// Pixels the sprites themselves occupy — the difference from
+    /// `atlas_pixels` is atlas gutter waste.
+    sprite_canvas_pixels: u64,
+}
+
+impl RleJxlChunkStats {
+    fn add(&mut self, other: &RleJxlChunkStats) {
+        self.atlased += other.atlased;
+        self.individual += other.individual;
+        self.kept_smaller += other.kept_smaller;
+        self.kept_small_dim += other.kept_small_dim;
+        self.kept_shared += other.kept_shared;
+        self.kept_irregular += other.kept_irregular;
+        self.kept_low_psnr += other.kept_low_psnr;
+        self.jxl_bytes += other.jxl_bytes;
+        self.raw_words_replaced += other.raw_words_replaced;
+        self.atlas_pixels += other.atlas_pixels;
+        self.sprite_canvas_pixels += other.sprite_canvas_pixels;
+    }
+    fn lossy(&self) -> usize {
+        self.atlased + self.individual
+    }
+}
+
+/// Check one encoded member region against its source canvas: the CLASS of
+/// every pixel must survive exactly (that is the whole contract the alpha
+/// channel carries — a single reclassified edge pixel is a visible
+/// artifact), and the visible pixels are scored for PSNR over the exact
+/// RGB565 values materialization will ship. Errors, rather than a low
+/// score, on any class mismatch.
+fn member_quality(
+    candidate: &RleJxlCandidate,
+    rgba: &[u8],
+    rgba_width: usize,
+    x0: usize,
+    y0: usize,
+) -> Result<f64> {
+    use robin_assets::rle_jxl::{self, CL_OPAQUE};
+    let (mut sse, mut opaque) = (0.0f64, 0u64);
+    for y in 0..candidate.height as usize {
+        for x in 0..candidate.width as usize {
+            let i = y * candidate.width as usize + x;
+            let source = candidate.pixels[i];
+            let offset = ((y0 + y) * rgba_width + x0 + x) * 4;
+            let class = rle_jxl::alpha_to_class(rgba[offset + 3])
+                .with_context(|| format!("sprite {} pixel ({x},{y})", candidate.id))?;
+            if class != rle_jxl::class_of(source) {
+                bail!(
+                    "sprite {} pixel ({x},{y}) came back in class {class} instead of {} — \
+                     cjxl did not code the alpha channel losslessly",
+                    candidate.id,
+                    rle_jxl::class_of(source),
+                );
+            }
+            if class != CL_OPAQUE {
+                continue;
+            }
+            let shipped = rle_jxl::dodge_keys(rle_jxl::quant565(
+                rgba[offset],
+                rgba[offset + 1],
+                rgba[offset + 2],
+            ));
+            let a = rle_jxl::expand565(source);
+            let b = rle_jxl::expand565(shipped);
+            for channel in 0..3 {
+                let d = a[channel] as f64 - b[channel] as f64;
+                sse += d * d;
+            }
+            opaque += 1;
+        }
+    }
+    if opaque == 0 || sse == 0.0 {
+        return Ok(f64::INFINITY);
+    }
+    let mse = sse / (opaque as f64 * 3.0);
+    Ok(10.0 * (255.0f64 * 255.0 / mse).log10())
+}
+
+/// One eligible RLE sprite expanded for the JXL path.
+struct RleJxlCandidate {
+    id: u32,
+    width: u16,
+    height: u16,
+    /// Decoded canvas (RGB565 with the key values in place) — exactly what
+    /// materialization must reproduce.
+    pixels: Vec<u16>,
+    /// Exact packed words (for the keep-exact size comparison).
+    raw_words: usize,
+}
+
+impl RleJxlCandidate {
+    /// Encoder input for this sprite alone: class-carrying alpha plus
+    /// edge-extended color.
+    fn smeared_rgba(&self) -> Result<Vec<u8>> {
+        use robin_assets::rle_jxl;
+        let mut rgba = rle_jxl::canvas_to_rgba(&self.pixels)?;
+        rle_jxl::smear_invisible_rgb(&mut rgba, self.width as usize, self.height as usize);
+        Ok(rgba)
+    }
+
+    fn raw_le_bytes(&self, sprites: &[(u32, ShippingSprite)]) -> Vec<u8> {
+        let position = sprites
+            .binary_search_by_key(&self.id, |(id, _)| *id)
+            .expect("candidate came from these rows");
+        sprites[position]
+            .1
+            .packed_data
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect()
+    }
+}
+
+/// An accepted lossy sprite waiting for chunk assembly.
+struct RleJxlAccepted {
+    id: u32,
+    blob: u32,
+    x: u16,
+    y: u16,
+    atlased: bool,
+    raw_words: usize,
+    /// Pixels this sprite occupies in its atlas (resident-cost accounting).
+    canvas_pixels: u64,
+}
+
+/// Compressed-size estimate for the keep-exact side of the per-sprite
+/// decision: the raw words as they would sit in the outer chunk zstd.
+fn zstd19_len(bytes: &[u8]) -> Result<usize> {
+    Ok(zstd::stream::encode_all(bytes, 19)
+        .context("zstd19 size estimate")?
+        .len())
+}
+
+/// Build the lossy-JXL payload for one RHS chunk's eligible RLE sprites and
+/// blank the rows it covers. See `--rle-sprite-format` and the schema v13
+/// comment in `shipping_datadir.rs`.
+fn build_rle_jxl_chunk(
+    rel: &str,
+    prep: &RhsChunkPrep,
+    sprites: &mut [(u32, ShippingSprite)],
+    quality: u8,
+    multi_chunk_ids: &std::collections::HashSet<u32>,
+) -> Result<(Option<SpriteRleJxlChunk>, RleJxlChunkStats)> {
+    use robin_assets::rle_jxl;
+
+    let mut stats = RleJxlChunkStats::default();
+    let Some(rhs_data) = &prep.rhs_data else {
+        return Ok((None, stats));
+    };
+    // Expand every eligible candidate.
+    let mut candidates: Vec<RleJxlCandidate> = Vec::new();
+    for (id, sprite) in sprites.iter() {
+        if sprite.dictionary_index != UNMAPPED_DICT
+            || sprite.packed_data.is_empty()
+            || sprite.width == 0
+            || sprite.height == 0
+        {
+            continue;
+        }
+        if multi_chunk_ids.contains(id) {
+            // Two chunks may not lossy-code one bank slot independently
+            // (their decodes would conflict at mission merge), so shared
+            // sprites keep the exact words in every chunk that ships them.
+            stats.kept_shared += 1;
+            continue;
+        }
+        let (pixels, used) = match rle_jxl::decode_rle_canvas(
+            sprite.width as usize,
+            sprite.height as usize,
+            &sprite.packed_data,
+        ) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                tracing::warn!(rhs = rel, sprite = id, %error, "RLE sprite does not walk; keeping exact words");
+                stats.kept_irregular += 1;
+                continue;
+            }
+        };
+        if used != sprite.packed_data.len() {
+            // Trailing words beyond the row walk cannot round-trip through
+            // a canvas (none measured in the bucket, but never guess).
+            stats.kept_irregular += 1;
+            continue;
+        }
+        if sprite.width < RLE_JXL_MIN_DIM || sprite.height < RLE_JXL_MIN_DIM {
+            stats.kept_small_dim += 1;
+            continue;
+        }
+        candidates.push(RleJxlCandidate {
+            id: *id,
+            width: sprite.width,
+            height: sprite.height,
+            pixels,
+            raw_words: sprite.packed_data.len(),
+        });
+    }
+    if candidates.is_empty() {
+        return Ok((None, stats));
+    }
+    let by_id: std::collections::HashMap<u32, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.id, index))
+        .collect();
+
+    // First-claim (profile, action) animation groups over the shipped
+    // scripts — the probe's grouping rule.
+    let mut claimed = std::collections::HashSet::<u32>::new();
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    for (_name, info) in &rhs_data.profiles {
+        let mut by_action = std::collections::BTreeMap::<u16, Vec<u32>>::new();
+        for script in info.scripts.iter() {
+            let entry = by_action.entry(script.action_id).or_default();
+            for &frame_id in &script.frame_ids {
+                if by_id.contains_key(&frame_id) && claimed.insert(frame_id) {
+                    entry.push(frame_id);
+                }
+            }
+        }
+        groups.extend(by_action.into_values().filter(|ids| !ids.is_empty()));
+    }
+    // Script-order claiming covers every candidate (chunk rows come from
+    // script frame ids), but stay defensive about synthesized extras.
+    let mut ungrouped: Vec<u32> = candidates
+        .iter()
+        .map(|candidate| candidate.id)
+        .filter(|id| !claimed.contains(id))
+        .collect();
+
+    let mut blobs: Vec<Vec<u8>> = Vec::new();
+    let mut accepted: Vec<RleJxlAccepted> = Vec::new();
+    for group in &groups {
+        if group.len() < RLE_JXL_MIN_ATLAS_FRAMES {
+            ungrouped.extend_from_slice(group);
+            continue;
+        }
+        // Quality-gated atlas encode: members scoring below the PSNR floor
+        // are ejected and the remainder re-packed, so one bad dithered
+        // frame cannot drag a whole chunk under the verification floor.
+        // Ejected members retry individually below (a dedicated encode may
+        // still clear the floor); each round removes at least one member.
+        let mut members: Vec<u32> = group.clone();
+        let accepted_group = loop {
+            if members.len() < RLE_JXL_MIN_ATLAS_FRAMES {
+                break None;
+            }
+            // Split into sub-atlases under the pixel cap. Cell dims are
+            // the sub-atlas max, so splitting also tightens cells when a
+            // group mixes frame sizes.
+            let mut sub_atlases: Vec<&[u32]> = Vec::new();
+            let mut start = 0usize;
+            while start < members.len() {
+                let mut end = start;
+                let (mut cell_w, mut cell_h) = (0usize, 0usize);
+                while end < members.len() {
+                    let candidate = &candidates[by_id[&members[end]]];
+                    let w = cell_w.max(candidate.width as usize);
+                    let h = cell_h.max(candidate.height as usize);
+                    let count = end - start + 1;
+                    let cols = (count as f64).sqrt().ceil() as usize;
+                    let rows = count.div_ceil(cols);
+                    if end > start && cols * w * rows * h > RLE_JXL_MAX_ATLAS_PIXELS {
+                        break;
+                    }
+                    (cell_w, cell_h) = (w, h);
+                    end += 1;
+                }
+                sub_atlases.push(&members[start..end]);
+                start = end;
+            }
+            let mut group_jxl: Vec<(Vec<u8>, Vec<(u32, u16, u16)>)> = Vec::new();
+            let mut group_jxl_bytes = 0usize;
+            let mut low_psnr: Vec<u32> = Vec::new();
+            for sub in &sub_atlases {
+                let frames: Vec<&RleJxlCandidate> =
+                    sub.iter().map(|id| &candidates[by_id[id]]).collect();
+                let cell_w = frames.iter().map(|f| f.width as usize).max().unwrap();
+                let cell_h = frames.iter().map(|f| f.height as usize).max().unwrap();
+                let cols = (frames.len() as f64).sqrt().ceil() as usize;
+                let rows = frames.len().div_ceil(cols);
+                let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
+                // Gutters start fully transparent, so the edge extension
+                // below flows sprite color across cell boundaries too.
+                let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
+                let mut placements = Vec::with_capacity(frames.len());
+                for (k, frame) in frames.iter().enumerate() {
+                    let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
+                    let src = rle_jxl::canvas_to_rgba(&frame.pixels)?;
+                    for y in 0..frame.height as usize {
+                        let dst = ((y0 + y) * atlas_w + x0) * 4;
+                        let n = frame.width as usize * 4;
+                        rgba[dst..dst + n].copy_from_slice(&src[y * n..(y + 1) * n]);
+                    }
+                    placements.push((frame.id, x0 as u16, y0 as u16));
+                }
+                rle_jxl::smear_invisible_rgb(&mut rgba, atlas_w, atlas_h);
+                let jxl = encode_pixels_to_jxl(
+                    atlas_w as u32,
+                    atlas_h as u32,
+                    &rgba,
+                    png::ColorType::Rgba,
+                    Some(quality),
+                    7,
+                )
+                .with_context(|| format!("cjxl atlas for {rel}"))?;
+                let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+                    .with_context(|| format!("decode encoded atlas for {rel}"))?;
+                for &(id, x0, y0) in &placements {
+                    let candidate = &candidates[by_id[&id]];
+                    // Class mismatches error out of the whole conversion —
+                    // only the quality score demotes a member.
+                    if member_quality(candidate, &decoded, dec_w, x0 as usize, y0 as usize)?
+                        < RLE_JXL_MIN_SPRITE_PSNR_DB
+                    {
+                        low_psnr.push(id);
+                    }
+                }
+                group_jxl_bytes += jxl.len();
+                group_jxl.push((jxl, placements));
+            }
+            if !low_psnr.is_empty() {
+                members.retain(|id| !low_psnr.contains(id));
+                ungrouped.extend(low_psnr);
+                continue;
+            }
+            // Size gate: the atlas must beat the outer-zstd cost of the
+            // exact words (tiny/flat groups lose; per-sprite decides then).
+            let mut raw_le = Vec::new();
+            for id in &members {
+                raw_le.extend(candidates[by_id[id]].raw_le_bytes(sprites));
+            }
+            if group_jxl_bytes >= zstd19_len(&raw_le)? {
+                break None;
+            }
+            break Some(group_jxl);
+        };
+        match accepted_group {
+            Some(group_jxl) => {
+                for (jxl, placements) in group_jxl {
+                    let blob = blobs.len() as u32;
+                    blobs.push(jxl);
+                    for (id, x, y) in placements {
+                        let candidate = &candidates[by_id[&id]];
+                        accepted.push(RleJxlAccepted {
+                            id,
+                            blob,
+                            x,
+                            y,
+                            atlased: true,
+                            raw_words: candidate.raw_words,
+                            canvas_pixels: candidate.pixels.len() as u64,
+                        });
+                    }
+                }
+            }
+            None => ungrouped.extend(members),
+        }
+    }
+    // Ungrouped / demoted sprites: individual JXL, kept only when it clears
+    // the PSNR floor and beats the outer-zstd cost of the exact words.
+    for id in ungrouped {
+        let candidate = &candidates[by_id[&id]];
+        let jxl = encode_pixels_to_jxl(
+            candidate.width as u32,
+            candidate.height as u32,
+            &candidate.smeared_rgba()?,
+            png::ColorType::Rgba,
+            Some(quality),
+            7,
+        )
+        .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
+        let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+            .with_context(|| format!("decode encoded sprite {id} of {rel}"))?;
+        if member_quality(candidate, &decoded, dec_w, 0, 0)? < RLE_JXL_MIN_SPRITE_PSNR_DB {
+            stats.kept_low_psnr += 1;
+            continue;
+        }
+        if jxl.len() >= zstd19_len(&candidate.raw_le_bytes(sprites))? {
+            stats.kept_smaller += 1;
+            continue;
+        }
+        let blob = blobs.len() as u32;
+        blobs.push(jxl);
+        accepted.push(RleJxlAccepted {
+            id,
+            blob,
+            x: 0,
+            y: 0,
+            atlased: false,
+            raw_words: candidate.raw_words,
+            canvas_pixels: candidate.pixels.len() as u64,
+        });
+    }
+    if accepted.is_empty() {
+        return Ok((None, stats));
+    }
+    accepted.sort_by_key(|entry| entry.id);
+    let mut chunk = SpriteRleJxlChunk {
+        rhs: rel.to_owned(),
+        jxl_blobs: blobs,
+        sprite_ids: Vec::with_capacity(accepted.len()),
+        placements: Vec::with_capacity(accepted.len()),
+    };
+    for entry in &accepted {
+        chunk.sprite_ids.push(entry.id);
+        chunk.placements.push(RleJxlPlacement {
+            blob: entry.blob,
+            x: entry.x,
+            y: entry.y,
+        });
+        if entry.atlased {
+            stats.atlased += 1;
+        } else {
+            stats.individual += 1;
+        }
+        stats.raw_words_replaced += entry.raw_words as u64;
+        stats.sprite_canvas_pixels += entry.canvas_pixels;
+        // Blank the row: at mission install the JXL decodes to a shared
+        // raster and the row points into it, exactly like VQ grids come
+        // out of their blob.
+        let position = sprites
+            .binary_search_by_key(&entry.id, |(id, _)| *id)
+            .expect("accepted sprite came from these rows");
+        sprites[position].1.packed_data = Arc::new(Vec::new());
+    }
+    stats.jxl_bytes = chunk.jxl_blobs.iter().map(|blob| blob.len() as u64).sum();
+    // Resident cost of this chunk once decoded: the whole atlas raster at
+    // 2 B/px, gutters included (see the memory note in the ledger).
+    for blob in &chunk.jxl_blobs {
+        let (width, height, _rgba) = rle_jxl::decode_jxl_rgba8(blob)
+            .with_context(|| format!("measure decoded atlas of {rel}"))?;
+        stats.atlas_pixels += (width * height) as u64;
+    }
+    Ok((Some(chunk), stats))
+}
+
 /// Assemble one shared RHS chunk: sprite rows for every reachable bank slot,
 /// with all well-formed VQ grids coded into a single `sprite_codec` blob
 /// (cross-variant against `prep.base_ids` where present) and RLE/ragged
@@ -1673,7 +2279,9 @@ fn build_rhs_chunk_payload(
     dict_remaps: Option<&[Vec<u16>]>,
     rel: &str,
     prep: &RhsChunkPrep,
-) -> Result<ShippingMission> {
+    rle_format: RleSpriteFormat,
+    multi_chunk_ids: &std::collections::HashSet<u32>,
+) -> Result<(ShippingMission, RleJxlChunkStats)> {
     let mut payload = ShippingMission::default();
     if let Some(rhs_data) = &prep.rhs_data {
         payload.rhs_files.insert(rel.to_owned(), rhs_data.clone());
@@ -1773,9 +2381,19 @@ fn build_rhs_chunk_payload(
                 height: sprite.height,
                 dictionary_index: sprite.dictionary_index,
                 packed_data: Arc::new(row_packed),
+                raster: None,
             },
         ));
     }
+    // Web recipe: swap eligible RLE bucket sprites to lossy JXL atlases,
+    // blanking the rows the chunk covers.
+    let (rle_jxl_chunk, rle_stats) = match rle_format.jxl_quality() {
+        Some(quality) if is_rle_jxl_bucket_rel(rel) => {
+            build_rle_jxl_chunk(rel, prep, &mut sprites, quality, multi_chunk_ids)?
+        }
+        _ => (None, RleJxlChunkStats::default()),
+    };
+
     let coded_sprites = blob_ids.len();
     let mut vq_chunks = Vec::new();
     let mut blob_bytes = 0usize;
@@ -1845,6 +2463,7 @@ fn build_rhs_chunk_payload(
         sprite_count: holder.sprites().len() as u32,
         sprites,
         vq_chunks,
+        rle_jxl_chunks: rle_jxl_chunk.into_iter().collect(),
     });
     tracing::info!(
         rhs = rel,
@@ -1854,9 +2473,11 @@ fn build_rhs_chunk_payload(
         vq_blob_bytes = blob_bytes,
         base = prep.base_rel.as_deref().unwrap_or(""),
         base2 = prep.base2_rel.as_deref().unwrap_or(""),
+        rle_jxl_sprites = rle_stats.lossy(),
+        rle_jxl_bytes = rle_stats.jxl_bytes,
         "built shared RHS sprite payload"
     );
-    Ok(payload)
+    Ok((payload, rle_stats))
 }
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
@@ -2146,6 +2767,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .filter(|name| !name.is_empty())
                 .cloned(),
         );
+        build.sound_wave_ids.extend(
+            proto
+                .sound_sources
+                .iter()
+                .filter(|source| source.id >= 0)
+                .map(|source| source.id as u32),
+        );
         let red_filename = res_descr::red_filename(mp.id);
         if let Some(descriptors) = dd.red_files.get(&red_filename) {
             for (dialogue_index, dialogue) in descriptors.dialogues.iter().enumerate() {
@@ -2409,6 +3037,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         sprite_count: holder.sprites().len() as u32,
         sprites: Vec::new(),
         vq_chunks: Vec::new(),
+        rle_jxl_chunks: Vec::new(),
     });
     let mut rhs_requirements = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     for build in mission_builds.values() {
@@ -2943,23 +3572,62 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
     }
 
+    // Sprites referenced by more than one chunk must keep exact RLE words
+    // in each (independent lossy encodes of one bank slot would conflict at
+    // mission merge, where duplicate rows are required to be identical).
+    let multi_chunk_ids: std::collections::HashSet<u32> = {
+        let mut seen = std::collections::HashSet::<u32>::new();
+        let mut multi = std::collections::HashSet::<u32>::new();
+        for prep in rhs_preps.values() {
+            for &id in &prep.used_sprite_ids {
+                if !seen.insert(id) {
+                    multi.insert(id);
+                }
+            }
+        }
+        multi
+    };
+
     // Phase C: assemble the chunk payloads. `encode_grids` dominates this
     // stage, so it runs on the bounded worker pool.
     let built_payloads = compression_pool.install(|| {
         rhs_preps
             .par_iter()
             .map(|(rel, prep)| {
-                Ok((
-                    rel.clone(),
-                    build_rhs_chunk_payload(&holder, dict_remaps.as_deref(), rel, prep)?,
-                ))
+                let (payload, rle_stats) = build_rhs_chunk_payload(
+                    &holder,
+                    dict_remaps.as_deref(),
+                    rel,
+                    prep,
+                    opts.rle_sprite_format,
+                    &multi_chunk_ids,
+                )?;
+                Ok((rel.clone(), payload, rle_stats))
             })
-            .collect::<Vec<Result<(String, ShippingMission)>>>()
+            .collect::<Vec<Result<(String, ShippingMission, RleJxlChunkStats)>>>()
     });
     let mut rhs_payloads = std::collections::BTreeMap::<String, ShippingMission>::new();
+    let mut rle_totals = RleJxlChunkStats::default();
     for built in built_payloads {
-        let (rel, payload) = built?;
+        let (rel, payload, rle_stats) = built?;
+        rle_totals.add(&rle_stats);
         rhs_payloads.insert(rel, payload);
+    }
+    if opts.rle_sprite_format.jxl_quality().is_some() {
+        tracing::info!(
+            atlased = rle_totals.atlased,
+            individual = rle_totals.individual,
+            kept_smaller = rle_totals.kept_smaller,
+            kept_small_dim = rle_totals.kept_small_dim,
+            kept_shared = rle_totals.kept_shared,
+            kept_irregular = rle_totals.kept_irregular,
+            kept_low_psnr = rle_totals.kept_low_psnr,
+            jxl_bytes = rle_totals.jxl_bytes,
+            raw_bytes_replaced = 2 * rle_totals.raw_words_replaced,
+            resident_atlas_bytes = 2 * rle_totals.atlas_pixels,
+            resident_sprite_bytes = 2 * rle_totals.sprite_canvas_pixels,
+            "RLE sprite bucket encoded as lossy JXL (web recipe)"
+        );
     }
 
     // Resolve only the terrain and loading art the original runtime can open
@@ -3203,6 +3871,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // these payloads then retain only small blocking metadata such as FXG and
     // exclamation DAT files.
     let mut common_audio = ShippingMission::default();
+    // Dialogue and `snd_NNN` source waves receive exact per-mission metadata
+    // below. Keeping either in this shared payload would make active warmup
+    // falsely treat every campaign mission's speech/ambience as required.
+    let mission_dialogue_keys: BTreeSet<String> = mission_builds
+        .values()
+        .flat_map(|build| build.dialogue_samples.iter())
+        .map(|path| robin_util::asset_fs::bundle_key(Path::new(path)))
+        .collect();
     let sounds_root = data_in.join("Sounds");
     if sounds_root.is_dir() {
         let mut files = Vec::new();
@@ -3215,7 +3891,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .to_string_lossy()
                 .replace('\\', "/")
                 .to_ascii_lowercase();
-            if relative.starts_with("menu/") || relative.starts_with("exclamations/") {
+            if !is_common_audio_member(&relative, &mission_dialogue_keys) {
                 continue;
             }
             insert_shipping_audio(
@@ -3440,6 +4116,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    sound_wave_ids,
                     level_asset_keys,
                     forest_level,
                     ..
@@ -3461,6 +4138,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    sound_wave_ids,
                     level_asset_keys,
                     forest_level,
                 ))
@@ -3476,6 +4154,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             required_exclamation_ids,
             music_names,
             dialogue_samples,
+            sound_wave_ids,
             level_asset_keys,
             forest_level,
         ) = encoded?;
@@ -3526,6 +4205,40 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             &audio_dir,
             "mission-dialogue",
             &dialogue_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
+        }
+        let mut source_audio = ShippingMission::default();
+        for id in sound_wave_ids {
+            let resolved = ["wav", "ogg"].into_iter().find_map(|extension| {
+                let relative = format!("Sounds/snd_{id:03}.{extension}");
+                in_path(&relative).map(|path| (relative, path))
+            });
+            let Some((relative, path)) = resolved else {
+                tracing::warn!(
+                    mission = mission_name,
+                    id,
+                    "mission sound source has no sample"
+                );
+                continue;
+            };
+            insert_shipping_audio(
+                &mut source_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                &format!("ambience-{}", shipping_file_stem(&mission_name)),
+                &relative,
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-ambience",
+            &source_audio,
             opts.zstd_window_log,
             opts.resume,
         )? {
@@ -3732,6 +4445,23 @@ fn insert_shipping_raw(payload: &mut ShippingMission, relative: &str, path: &Pat
     Ok(())
 }
 
+fn is_common_audio_member(relative: &str, mission_dialogue_keys: &BTreeSet<String>) -> bool {
+    !relative.starts_with("menu/")
+        && !relative.starts_with("exclamations/")
+        && !is_sound_source_audio(relative)
+        && !mission_dialogue_keys.contains(&format!("sounds/{relative}"))
+}
+
+fn is_sound_source_audio(relative: &str) -> bool {
+    let Some(name) = relative.strip_prefix("snd_").and_then(|name| {
+        name.strip_suffix(".wav")
+            .or_else(|| name.strip_suffix(".ogg"))
+    }) else {
+        return false;
+    };
+    name.len() >= 3 && name.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum AudioKind {
     Voice,
@@ -3815,19 +4545,23 @@ fn insert_shipping_audio(
                         existing.duration_ms
                     );
                 }
-                return Ok(());
-            }
-            // Music encodes from the lossless remaster drop when one exists;
-            // the catalog duration above stays derived from the GAME source,
-            // so timing-deterministic tables are unaffected by small length
-            // differences in the masters.
-            let encode_source = if matches!(kind, AudioKind::Music) {
-                music_lossless_source(path)
             } else {
-                None
-            };
-            let bytes = transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
-            insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)
+                // Music encodes from the lossless remaster drop when one
+                // exists; the catalog duration above stays derived from the
+                // GAME source, so deterministic timing tables are unchanged.
+                let encode_source = if matches!(kind, AudioKind::Music) {
+                    music_lossless_source(path)
+                } else {
+                    None
+                };
+                let bytes =
+                    transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
+                insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)?;
+            }
+            // Opus bytes live only in the standalone catalog, but each boot
+            // or mission payload retains this tiny exact-membership index.
+            // Runtime warmup uses it to avoid decoding the whole catalog.
+            insert_audio_duration(&mut payload.audio_durations_ms, logical, duration_ms)
         }
     }
 }
@@ -4202,7 +4936,10 @@ fn write_shipping_dependency(
     window_log: u32,
     resume: bool,
 ) -> Result<Option<String>> {
-    if payload.raw.is_empty() {
+    // Opus payloads deliberately keep their bytes in the browser-owned
+    // catalog, so their exact boot/mission membership consists solely of
+    // duration keys. Treat that metadata as real dependency content.
+    if payload.raw.is_empty() && payload.audio_durations_ms.is_empty() {
         return Ok(None);
     }
     let (filename, compressed) =
@@ -4220,6 +4957,7 @@ fn write_shipping_dependency(
     tracing::info!(
         label,
         files = payload.raw.len(),
+        audio_members = payload.audio_durations_ms.len(),
         bytes = compressed_len,
         "wrote shipping audio dependency"
     );
@@ -4309,11 +5047,100 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
 
 /// RGBA with the sprite transparency key mapped to alpha; effort 9 because
 /// interface art is small and encoded once.
+///
+/// `to_rgba8888` writes flat black `(0,0,0,0)` for keyed pixels, which drags
+/// edge pixels dark under lossy DCT (the same bleeding the RLE sprite path
+/// avoids). At a lossy quality the invisible RGB is free to be anything, so
+/// edge-extend it instead; at `-d 0` the keyed pixels are coded exactly as
+/// given, so leave the existing bytes alone.
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_assets::picture::PixelFormat;
 
-    let rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
+    // RGB16 interface art carries BOTH key colors as literal pixel values:
+    // transparent (bright green) and SHADOW_KEY (pure blue). Neither may be
+    // coded as color — VarDCT ringing bleeds them into visible neighbours,
+    // and a lossy round trip breaks the exact `== SHADOW_KEY` comparisons
+    // the cursor and UI paths run, which renders shadows as raw blue. Carry
+    // both classes in the alpha channel instead (the scheme the RLE sprite
+    // atlases already use, with alpha coded losslessly) and edge-extend the
+    // color underneath.
+    if pic.pixel_format == PixelFormat::Rgb16 && quality.is_some() {
+        let canvas = picture_rgb16_canvas(pic)?;
+        let mut rgba = robin_assets::rle_jxl::canvas_to_rgba(&canvas)?;
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+        let encoded = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)?;
+        verify_keyed_picture_classes(&encoded, &canvas)?;
+        return Ok(encoded);
+    }
+
+    let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
+    if quality.is_some() {
+        // `to_rgba8888` emits alpha 255 for every visible pixel, which is
+        // exactly the "opaque" marker the smear treats as a color source.
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+    }
     transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)
+}
+
+/// Decode a just-encoded keyed picture and fail the conversion if any pixel
+/// changed CLASS. Color is lossy by design, but transparent and shadow are
+/// exact comparisons at runtime (`px == SHADOW_KEY` in the cursor and UI
+/// paths), so a class that shifts is silent corruption — a blue cursor
+/// shadow, or a hole where art should be. Cheap next to the encode.
+fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Result<()> {
+    use robin_assets::rle_jxl::class_of;
+
+    let decoded =
+        Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
+    let round_trip = picture_rgb16_canvas(&decoded)?;
+    if round_trip.len() != source.len() {
+        bail!(
+            "keyed interface picture round-tripped {} pixels, expected {}",
+            round_trip.len(),
+            source.len()
+        );
+    }
+    for (index, (&want, &got)) in source.iter().zip(round_trip.iter()).enumerate() {
+        if class_of(want) != class_of(got) {
+            bail!(
+                "keyed interface picture pixel {index} changed class: source {want:#06x} \
+                 decoded {got:#06x} — the alpha channel is not surviving the encode"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Row-major RGB565 words of an `Rgb16` picture, dropping any pitch padding.
+fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
+    let width = pic.width as usize;
+    let height = pic.height as usize;
+    let pitch = if pic.pitch == 0 {
+        width * 2
+    } else {
+        pic.pitch as usize
+    };
+    let mut canvas = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let row = pic
+            .data
+            .get(y * pitch..y * pitch + width * 2)
+            .ok_or_else(|| anyhow!("picture row {y} is short of {width} RGB565 pixels"))?;
+        canvas.extend(
+            row.chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]])),
+        );
+    }
+    Ok(canvas)
 }
 
 /// Opaque RGB (maps); effort 7 — effort 9 did not produce a meaningful size
@@ -4336,22 +5163,55 @@ fn transcode_pixels_to_jxl(
     quality: Option<u8>,
     effort: u8,
 ) -> Result<Vec<u8>> {
+    encode_pixels_to_jxl(
+        pic.width as u32,
+        pic.height as u32,
+        &pixels,
+        color,
+        quality,
+        effort,
+    )
+}
+
+/// Dimension-explicit form of [`transcode_pixels_to_jxl`]; the RLE sprite
+/// atlas path has no `Picture` to borrow dims from.
+fn encode_pixels_to_jxl(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    color: png::ColorType,
+    quality: Option<u8>,
+    effort: u8,
+) -> Result<Vec<u8>> {
     use std::io::Write as _;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let mut png_bytes: Vec<u8> = Vec::new();
     {
-        let mut enc = png::Encoder::new(&mut png_bytes, pic.width as u32, pic.height as u32);
+        let mut enc = png::Encoder::new(&mut png_bytes, width, height);
         enc.set_color(color);
         enc.set_depth(png::BitDepth::Eight);
         let mut w = enc.write_header().context("png header")?;
-        w.write_image_data(&pixels).context("png data")?;
+        w.write_image_data(pixels).context("png data")?;
     }
 
     let mut cmd = Command::new("cjxl");
     let effort = effort.to_string();
     if let Some(q) = quality {
-        cmd.args(["-q", &q.to_string(), "-e", &effort, "-", "-"]);
+        // `--alpha_distance=0` keeps the extra channel mathematically
+        // lossless while the color channels stay lossy. cjxl 0.12 defaults
+        // it to 0 already; passing it explicitly means a future default
+        // change cannot silently corrupt the sprite class channel (which
+        // `member_quality` would then catch as a hard error anyway).
+        cmd.args([
+            "-q",
+            &q.to_string(),
+            "--alpha_distance=0",
+            "-e",
+            &effort,
+            "-",
+            "-",
+        ]);
     } else {
         cmd.args(["-d", "0", "--modular=1", "-e", &effort, "-", "-"]);
     }

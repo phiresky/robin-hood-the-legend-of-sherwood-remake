@@ -3,25 +3,53 @@
 use crate::gfx_types::Rect;
 use crate::gpu_upscale::GpuUpscale;
 use crate::window::{GpuContext, PresentationRect, SharedSurface};
+use robin_engine::graphic_config::{TextureEffect, TextureScaleMode};
 
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
 use super::{
-    QuadVertex, QueuedDraw, ScreenUniform, TextureRef, log_fps, make_alpha_source, make_tex_bg,
-    present_time_record, upload_counter,
+    QuadVertex, QueuedDraw, ScreenUniform, TextureRef, bind_counter, log_fps, make_alpha_source,
+    make_tex_bg, present_time_record, upload_counter,
 };
+
+fn presentation_profile(
+    ui_only_frame: bool,
+    configured_mode: TextureScaleMode,
+    configured_effect: TextureEffect,
+) -> (TextureScaleMode, TextureEffect) {
+    if ui_only_frame {
+        // Match the sharp-bilinear UI composite. This is still valid at
+        // fractional window scales, unlike forcing raw nearest-neighbour.
+        (TextureScaleMode::PixelArt, TextureEffect::None)
+    } else {
+        (configured_mode, configured_effect)
+    }
+}
 
 pub(super) struct FrameState {
     pub(super) width: u16,
     pub(super) height: u16,
     gpu_phase_active: bool,
-    shader_frame_count: Option<usize>,
+    /// Counts frames that actually reach the presentation queue. Temporal
+    /// display effects deliberately advance here rather than on simulation
+    /// ticks, so 90/120/144 Hz presentation remains smooth while paused.
+    presentation_frame_count: usize,
+    /// Top-level screens such as the main menu have no separate world
+    /// layer, but still need to remain outside the configured gameplay
+    /// upscaler/effect chain. They render into the ordinary logical target
+    /// (so modal freezing keeps working) and request the same sharp
+    /// presentation profile used by the split UI layer.
+    ui_only_frame: bool,
     surface: SharedSurface,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     pub(super) render_target_texture: wgpu::Texture,
     render_target_view: wgpu::TextureView,
+    ui_target_texture: wgpu::Texture,
+    ui_target_view: wgpu::TextureView,
     _sprite_stencil_texture: wgpu::Texture,
     sprite_stencil_view: wgpu::TextureView,
+    _ui_stencil_texture: wgpu::Texture,
+    ui_stencil_view: wgpu::TextureView,
     render_target_bg: wgpu::BindGroup,
     alpha_source_texture: wgpu::Texture,
     alpha_source_view: wgpu::TextureView,
@@ -33,9 +61,28 @@ pub(super) struct FrameState {
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: u64,
     pub(super) queued: Vec<QueuedDraw>,
+    ui_layer_start: Option<usize>,
     pub(super) frame_texture_bgs: Vec<wgpu::BindGroup>,
+    /// Atlas layer → its index in `frame_texture_bgs` for this frame.
+    /// Small and dense (a mission uses a handful of layers), so a Vec
+    /// of `(layer, idx)` beats a hash map.
+    atlas_bg_slots: Vec<(u32, u32)>,
     blit_vbo: Option<wgpu::Buffer>,
+    cached_present_vbo: Option<wgpu::Buffer>,
+    cached_present: Option<CachedPresentation>,
+    native_refresh_presentation: bool,
     pub(super) frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+}
+
+/// Fully postprocessed frame retained between fixed simulation ticks. This is
+/// deliberately downstream of RetroArch feedback/history passes: display-rate
+/// repeats sample this immutable texture and cannot advance shader history.
+struct CachedPresentation {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
 }
 
 impl FrameState {
@@ -45,10 +92,39 @@ impl FrameState {
         pipelines: &mut PipelineStore,
         resources: &GpuResources,
     ) {
+        let _ = self.present_impl(gpu, pipelines, resources, true);
+    }
+
+    /// Present the already-composited logical render target again without
+    /// executing game rendering or consuming any queued draw/state. This is
+    /// the side-effect-free presentation primitive used between 25 Hz ticks.
+    pub(super) fn present_cached(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &mut PipelineStore,
+        resources: &GpuResources,
+    ) -> bool {
+        self.present_impl(gpu, pipelines, resources, false)
+    }
+
+    fn present_impl(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &mut PipelineStore,
+        resources: &GpuResources,
+        compose_logical_frame: bool,
+    ) -> bool {
         let present_start = web_time::Instant::now();
-        let shader_frame_count = self.shader_frame_count.take();
-        self.push_implicit_base_quad();
-        self.upload_queue_geometry(gpu);
+        if !compose_logical_frame
+            && (!self.native_refresh_presentation || self.cached_present.is_none())
+        {
+            return false;
+        }
+        let presentation_frame_count = self.presentation_frame_count;
+        if compose_logical_frame {
+            self.push_implicit_base_quad();
+            self.upload_queue_geometry(gpu);
+        }
 
         // Acquire swapchain frame. A suboptimal frame is still presented
         // this cycle; the reconfigure must wait until the acquired texture
@@ -63,13 +139,17 @@ impl FrameState {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.reconfigure_surface(gpu);
-                self.clear_recording();
-                return;
+                if compose_logical_frame {
+                    self.clear_recording();
+                }
+                return false;
             }
             status => {
                 tracing::warn!("get_current_texture: {status:?}");
-                self.clear_recording();
-                return;
+                if compose_logical_frame {
+                    self.clear_recording();
+                }
+                return false;
             }
         };
         let swap_view = frame
@@ -77,13 +157,32 @@ impl FrameState {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let swap_w = frame.texture.width();
         let swap_h = frame.texture.height();
+        if compose_logical_frame && self.native_refresh_presentation {
+            self.ensure_cached_presentation(gpu, resources, swap_w, swap_h);
+        }
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("present"),
             });
 
-        self.encode_pass1_to_rt(&mut encoder, pipelines, resources);
+        if compose_logical_frame {
+            self.encode_scene_to_rt(&mut encoder, pipelines, resources);
+            if let Some(ui_start) = self.ui_layer_start
+                && ui_start < self.queued.len()
+            {
+                self.encode_pass_range_to_target(
+                    &mut encoder,
+                    pipelines,
+                    resources,
+                    ui_start,
+                    self.queued.len(),
+                    &self.ui_target_view,
+                    &self.ui_stencil_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
+            }
+        }
 
         // ── Pass 2: blit RT into swapchain with letterbox ──
         // Compute the largest aspect-correct dst rect that fits in the
@@ -164,70 +263,93 @@ impl FrameState {
             bytemuck::bytes_of(&screen_swap),
         );
 
-        let multipass_upscale = GpuUpscale::is_multipass_mode(pipelines.scale_mode);
-        let multipass_rendered = multipass_upscale
-            && pipelines
+        let presentation_target = if self.native_refresh_presentation {
+            &self
+                .cached_present
+                .as_ref()
+                .expect("native-refresh presentation cache was not created")
+                .view
+        } else {
+            &swap_view
+        };
+        let (scale_mode, texture_effect) = presentation_profile(
+            self.ui_only_frame,
+            pipelines.scale_mode,
+            pipelines.texture_effect,
+        );
+        let multipass_upscale = GpuUpscale::is_multipass_mode(scale_mode, texture_effect);
+        let multipass_rendered = if compose_logical_frame && multipass_upscale {
+            pipelines
                 .gpu_upscale
                 .render_multipass(
-                    pipelines.scale_mode,
+                    scale_mode,
                     &mut encoder,
                     &self.render_target_texture,
-                    &swap_view,
+                    presentation_target,
                     [swap_w, swap_h],
                     [dx, dy, dst_w, dst_h],
-                    shader_frame_count,
+                    Some(presentation_frame_count),
                     Some(pipelines.shader_preset.as_str()),
+                    texture_effect,
+                    pipelines.upscale_parameters,
+                    pipelines.texture_effect_parameters,
                 )
-                .is_some();
-        if !multipass_rendered {
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "selected upscaler/effect failed instead of silently falling back: {error}"
+                    )
+                })
+        } else {
+            false
+        };
+        if compose_logical_frame && !multipass_rendered {
             // Shader-based upscalers (sharp-bilinear, bicubic, lanczos,
             // CUT3, scale2x/3x, xBR) want their own pipeline + uniforms.
             // Build the per-frame source bind group + uniform write here
             // so the borrow on `gpu_upscale` doesn't outlive the pass.
-            let upscale_state = if pipelines.scale_mode.needs_shader() && !multipass_upscale {
-                pipelines
+            let upscale_state = if scale_mode.needs_shader() && !multipass_upscale {
+                let selected_mode = scale_mode;
+                let up = pipelines
                     .gpu_upscale
-                    .pipeline_for(pipelines.scale_mode)
-                    .map(|up| {
-                        let uniforms = crate::gpu_upscale::FrameUniforms {
-                            src: [
-                                self.width as f32,
-                                self.height as f32,
-                                1.0 / self.width as f32,
-                                1.0 / self.height as f32,
-                            ],
-                            dst: [dst_w, dst_h, 1.0 / dst_w, 1.0 / dst_h],
-                        };
-                        gpu.queue.write_buffer(
-                            &up.uniform_buffer,
-                            0,
-                            bytemuck::bytes_of(&uniforms),
-                        );
-                        let tex_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("upscale src bg"),
-                            layout: &up.bind_group_layout_tex,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(
-                                        &self.render_target_view,
-                                    ),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&up.sampler),
-                                },
-                            ],
-                        });
-                        (up, tex_bg)
-                    })
+                    .pipeline_for(selected_mode)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "selected shader mode {selected_mode:?} has no pipeline; refusing fallback"
+                        )
+                    });
+                let uniforms = crate::gpu_upscale::FrameUniforms {
+                    src: [
+                        self.width as f32,
+                        self.height as f32,
+                        1.0 / self.width as f32,
+                        1.0 / self.height as f32,
+                    ],
+                    dst: [dst_w, dst_h, 1.0 / dst_w, 1.0 / dst_h],
+                };
+                gpu.queue
+                    .write_buffer(&up.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                let tex_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("upscale src bg"),
+                    layout: &up.bind_group_layout_tex,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&self.render_target_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&up.sampler),
+                        },
+                    ],
+                });
+                Some((up, tex_bg))
             } else {
                 None
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("blit RT → swapchain"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &swap_view,
+                    view: presentation_target,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -263,22 +385,178 @@ impl FrameState {
             }
         }
 
+        if compose_logical_frame
+            && self
+                .ui_layer_start
+                .is_some_and(|start| start < self.queued.len())
+        {
+            pipelines.gpu_upscale.render_ui_overlay(
+                &mut encoder,
+                &self.ui_target_texture,
+                presentation_target,
+                [dx as f32, dy as f32, dst_w, dst_h],
+            );
+        }
+        if self.native_refresh_presentation {
+            self.encode_cached_present_to_swapchain(
+                gpu,
+                pipelines,
+                &mut encoder,
+                &swap_view,
+                swap_w,
+                swap_h,
+            );
+        }
+
         gpu.queue.submit(Some(encoder.finish()));
         gpu.queue.present(frame);
+        self.presentation_frame_count = self.presentation_frame_count.wrapping_add(1);
         if reconfigure_after_present {
             self.reconfigure_surface(gpu);
         }
 
-        // Frame stats captured before the per-frame clears below.
-        let draws_this_frame = self.queued.len();
-        let uploads_this_frame = upload_counter::take_count();
-        let present_us = present_start.elapsed().as_micros() as u64;
-        present_time_record(present_us);
-
         // Frame done — clear queues and reset GPU phase for next frame.
-        self.clear_recording();
+        if compose_logical_frame {
+            let draws_this_frame = self.queued.len();
+            let uploads_this_frame = upload_counter::take_count();
+            let present_us = present_start.elapsed().as_micros() as u64;
+            present_time_record(present_us);
+            self.clear_recording();
+            log_fps(
+                draws_this_frame,
+                uploads_this_frame,
+                bind_counter::take_count(),
+                bind_counter::take_draw_calls(),
+                resources.sprite_atlas.stats(),
+            );
+        }
+        true
+    }
 
-        log_fps(draws_this_frame, uploads_this_frame);
+    fn ensure_cached_presentation(
+        &mut self,
+        gpu: &GpuContext,
+        resources: &GpuResources,
+        width: u32,
+        height: u32,
+    ) {
+        if self
+            .cached_present
+            .as_ref()
+            .is_some_and(|cached| cached.width == width && cached.height == height)
+        {
+            return;
+        }
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fully postprocessed presentation cache"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: gpu.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = make_tex_bg(
+            &gpu.device,
+            &resources.bgl_tex,
+            &view,
+            &resources.sampler,
+            "fully postprocessed presentation cache bg",
+        );
+        self.cached_present = Some(CachedPresentation {
+            _texture: texture,
+            view,
+            bind_group,
+            width,
+            height,
+        });
+    }
+
+    fn encode_cached_present_to_swapchain(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &PipelineStore,
+        encoder: &mut wgpu::CommandEncoder,
+        swap_view: &wgpu::TextureView,
+        swap_w: u32,
+        swap_h: u32,
+    ) {
+        let verts = [
+            QuadVertex {
+                pos: [0.0, 0.0],
+                uv: [0.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, 0.0],
+                uv: [1.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [0.0, swap_h as f32],
+                uv: [0.0, 1.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [0.0, swap_h as f32],
+                uv: [0.0, 1.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, 0.0],
+                uv: [1.0, 0.0],
+                tint: [1.0; 4],
+            },
+            QuadVertex {
+                pos: [swap_w as f32, swap_h as f32],
+                uv: [1.0, 1.0],
+                tint: [1.0; 4],
+            },
+        ];
+        if self.cached_present_vbo.is_none() {
+            self.cached_present_vbo = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cached presentation vbo"),
+                size: std::mem::size_of_val(&verts) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let vbo = self
+            .cached_present_vbo
+            .as_ref()
+            .expect("cached presentation vbo was not created");
+        gpu.queue.write_buffer(vbo, 0, bytemuck::cast_slice(&verts));
+        let cached = self
+            .cached_present
+            .as_ref()
+            .expect("cached presentation requested before a completed frame");
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("cached presentation → swapchain"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: swap_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&pipelines.blit_pipeline);
+        pass.set_bind_group(0, &self.swap_screen_bg, &[]);
+        pass.set_bind_group(1, &cached.bind_group, &[]);
+        pass.set_vertex_buffer(0, vbo.slice(..));
+        pass.draw(0..6, 0..1);
     }
 
     pub(super) fn dimensions(&self) -> (u16, u16) {
@@ -291,6 +569,16 @@ impl FrameState {
 
     pub(super) fn enter_gpu_phase(&mut self) {
         self.gpu_phase_active = true;
+    }
+
+    pub(super) fn begin_ui_layer(&mut self) {
+        if self.ui_layer_start.is_none() {
+            self.ui_layer_start = Some(self.queued.len());
+        }
+    }
+
+    pub(super) fn begin_ui_only_frame(&mut self) {
+        self.ui_only_frame = true;
     }
 
     pub(super) fn freeze_scene(&mut self, gpu: &GpuContext, resources: &GpuResources) {
@@ -352,10 +640,6 @@ impl FrameState {
         self.frozen_scene = None;
     }
 
-    pub(super) fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
-        self.shader_frame_count = frame_count;
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         gpu: &GpuContext,
@@ -372,7 +656,11 @@ impl FrameState {
         let render_target_texture = create_render_target(&gpu.device, width, height);
         let render_target_view =
             render_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_target_texture = create_render_target(&gpu.device, width, height);
+        let ui_target_view = ui_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (sprite_stencil_texture, sprite_stencil_view) =
+            make_sprite_stencil_texture(&gpu.device, width, height);
+        let (ui_stencil_texture, ui_stencil_view) =
             make_sprite_stencil_texture(&gpu.device, width, height);
         let render_target_bg = make_tex_bg(
             &gpu.device,
@@ -388,18 +676,26 @@ impl FrameState {
             width,
             height,
         );
+        let native_refresh_presentation = surface_config
+            .as_ref()
+            .is_some_and(|config| config.present_mode == wgpu::PresentMode::Fifo);
 
         Self {
             width,
             height,
             gpu_phase_active: false,
-            shader_frame_count: None,
+            presentation_frame_count: 0,
+            ui_only_frame: false,
             surface,
             surface_config,
             render_target_texture,
             render_target_view,
+            ui_target_texture,
+            ui_target_view,
             _sprite_stencil_texture: sprite_stencil_texture,
             sprite_stencil_view,
+            _ui_stencil_texture: ui_stencil_texture,
+            ui_stencil_view,
             render_target_bg,
             alpha_source_texture,
             alpha_source_view,
@@ -411,8 +707,13 @@ impl FrameState {
             vertex_buffer: None,
             vertex_capacity: 0,
             queued: Vec::new(),
+            ui_layer_start: None,
             frame_texture_bgs: Vec::new(),
+            atlas_bg_slots: Vec::new(),
             blit_vbo: None,
+            cached_present_vbo: None,
+            cached_present: None,
+            native_refresh_presentation,
             frozen_scene: None,
         }
     }
@@ -435,6 +736,9 @@ impl FrameState {
                     blend: crate::gfx_types::BlendMode::None,
                 },
             );
+            if let Some(start) = &mut self.ui_layer_start {
+                *start += 1;
+            }
         }
     }
 
@@ -502,6 +806,19 @@ impl FrameState {
         index
     }
 
+    /// This frame's `frame_texture_bgs` index for an atlas layer, if it
+    /// has already been queued.
+    pub(super) fn atlas_bg_slot(&self, layer: u32) -> Option<u32> {
+        self.atlas_bg_slots
+            .iter()
+            .find(|&&(l, _)| l == layer)
+            .map(|&(_, idx)| idx)
+    }
+
+    pub(super) fn remember_atlas_bg_slot(&mut self, layer: u32, index: u32) {
+        self.atlas_bg_slots.push((layer, index));
+    }
+
     pub(super) fn queue_frame_texture(
         &mut self,
         gpu: &GpuContext,
@@ -521,7 +838,10 @@ impl FrameState {
     pub(super) fn clear_recording(&mut self) {
         self.queued.clear();
         self.frame_texture_bgs.clear();
+        self.atlas_bg_slots.clear();
         self.gpu_phase_active = false;
+        self.ui_layer_start = None;
+        self.ui_only_frame = false;
     }
 
     fn reconfigure_surface(&self, gpu: &GpuContext) {
@@ -543,6 +863,32 @@ impl FrameState {
         }
     }
 
+    pub(super) fn configure_present_mode(
+        &mut self,
+        gpu: &GpuContext,
+        enabled: bool,
+        surface_width: u32,
+        surface_height: u32,
+    ) {
+        self.native_refresh_presentation = enabled;
+        if !enabled {
+            self.cached_present = None;
+        }
+        if let Some(config) = &mut self.surface_config {
+            // GameWindow owns resize events. Synchronize its authoritative
+            // physical dimensions before reconfiguring so changing present
+            // mode cannot restore this renderer's older config clone.
+            config.width = surface_width.max(1);
+            config.height = surface_height.max(1);
+            config.present_mode = if enabled {
+                wgpu::PresentMode::Fifo
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            };
+            self.reconfigure_surface(gpu);
+        }
+    }
+
     pub(super) fn resize(
         &mut self,
         gpu: &GpuContext,
@@ -559,10 +905,18 @@ impl FrameState {
         self.render_target_view = self
             .render_target_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.ui_target_texture = create_render_target(&gpu.device, width, height);
+        self.ui_target_view = self
+            .ui_target_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let (stencil_texture, stencil_view) =
             make_sprite_stencil_texture(&gpu.device, width, height);
         self._sprite_stencil_texture = stencil_texture;
         self.sprite_stencil_view = stencil_view;
+        let (ui_stencil_texture, ui_stencil_view) =
+            make_sprite_stencil_texture(&gpu.device, width, height);
+        self._ui_stencil_texture = ui_stencil_texture;
+        self.ui_stencil_view = ui_stencil_view;
         self.render_target_bg = make_tex_bg(
             &gpu.device,
             &resources.bgl_tex,
@@ -585,6 +939,27 @@ impl FrameState {
         // logical target, avoiding a black backdrop until gameplay resumes
         // and redraws at the new dimensions. The gameplay path explicitly
         // clears the snapshot on its next frame.
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn ui_only_frames_bypass_gameplay_scaling_and_effects() {
+        assert_eq!(
+            presentation_profile(true, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::PixelArt, TextureEffect::None)
+        );
+    }
+
+    #[test]
+    fn gameplay_frames_keep_the_configured_profile() {
+        assert_eq!(
+            presentation_profile(false, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale)
+        );
     }
 }
 
@@ -668,43 +1043,101 @@ impl FrameState {
             .iter()
             .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
         let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
-            self.encode_pass1_range_to_rt(
+            self.encode_pass_range_to_target(
                 encoder,
                 pipelines,
                 resources,
                 0,
                 self.queued.len(),
+                &self.render_target_view,
+                &self.sprite_stencil_view,
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK),
             );
             return;
         };
 
-        self.encode_pass1_range_to_rt(
+        self.encode_pass_range_to_target(
             encoder,
             pipelines,
             resources,
             0,
             first_framebuffer_alpha,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
             wgpu::LoadOp::Clear(wgpu::Color::BLACK),
         );
         self.copy_rt_to_alpha_source(encoder);
-        self.encode_pass1_range_to_rt(
+        self.encode_pass_range_to_target(
             encoder,
             pipelines,
             resources,
             first_framebuffer_alpha,
             self.queued.len(),
+            &self.render_target_view,
+            &self.sprite_stencil_view,
             wgpu::LoadOp::Load,
         );
     }
 
-    fn encode_pass1_range_to_rt(
+    /// Encode only the world/video layer for presentation effects. Readback
+    /// continues to use `encode_pass1_to_rt` so screenshots retain HUD/UI.
+    fn encode_scene_to_rt(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipelines: &PipelineStore,
+        resources: &GpuResources,
+    ) {
+        let end = self.ui_layer_start.unwrap_or(self.queued.len());
+        let first_framebuffer_alpha = self
+            .queued
+            .iter()
+            .take(end)
+            .position(|draw| matches!(draw.tex, TextureRef::FramebufferAlpha));
+        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
+            self.encode_pass_range_to_target(
+                encoder,
+                pipelines,
+                resources,
+                0,
+                end,
+                &self.render_target_view,
+                &self.sprite_stencil_view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            );
+            return;
+        };
+        self.encode_pass_range_to_target(
+            encoder,
+            pipelines,
+            resources,
+            0,
+            first_framebuffer_alpha,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+        self.copy_rt_to_alpha_source(encoder);
+        self.encode_pass_range_to_target(
+            encoder,
+            pipelines,
+            resources,
+            first_framebuffer_alpha,
+            end,
+            &self.render_target_view,
+            &self.sprite_stencil_view,
+            wgpu::LoadOp::Load,
+        );
+    }
+
+    fn encode_pass_range_to_target(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pipelines: &PipelineStore,
         resources: &GpuResources,
         start: usize,
         end: usize,
+        target_view: &wgpu::TextureView,
+        stencil_view: &wgpu::TextureView,
         load: wgpu::LoadOp<wgpu::Color>,
     ) {
         if start >= end && !matches!(load, wgpu::LoadOp::Clear(_)) {
@@ -713,7 +1146,7 @@ impl FrameState {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("present quads → RT"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.render_target_view,
+                view: target_view,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
@@ -722,7 +1155,7 @@ impl FrameState {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.sprite_stencil_view,
+                view: stencil_view,
                 depth_ops: None,
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
@@ -766,10 +1199,33 @@ impl FrameState {
         let mut last_blend: Option<usize> = None;
         let mut last_tex: Option<BoundTex> = None;
         let mut last_frame_idx: Option<u32> = None;
+
+        // Consecutive draws that need no state change are recorded as
+        // one `draw` over a contiguous vertex range instead of one call
+        // per quad. Quads are laid out in queue order (6 vertices at
+        // `i * 6`), so a run is always contiguous. This is what the
+        // atlas buys: sprites sharing a layer no longer rebind, so they
+        // coalesce.
+        //
+        // `pending` is `(first_vertex, vertex_count)`. It MUST be
+        // flushed before any pipeline/bind-group/stencil change and
+        // before any `continue`, or those draws would be recorded
+        // against the wrong state.
+        let mut pending: Option<(u32, u32)> = None;
+        macro_rules! flush_run {
+            () => {
+                if let Some((first, count)) = pending.take() {
+                    bind_counter::inc_draw_call();
+                    pass.draw(first..first + count, 0..1);
+                }
+            };
+        }
+
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
                 TextureRef::ColorizeFromFrozen => {
                     if last_pipeline != Some(BoundPipeline::Colorize) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.colorize_pipeline);
                         last_pipeline = Some(BoundPipeline::Colorize);
                         last_blend = None;
@@ -777,6 +1233,7 @@ impl FrameState {
                 }
                 TextureRef::FramebufferAlpha => {
                     if last_pipeline != Some(BoundPipeline::BgAlpha) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.bg_alpha_pipeline);
                         last_pipeline = Some(BoundPipeline::BgAlpha);
                         last_blend = None;
@@ -784,6 +1241,7 @@ impl FrameState {
                 }
                 TextureRef::ViewConeGradient => {
                     if last_pipeline != Some(BoundPipeline::ViewCone) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.view_cone_pipeline);
                         last_pipeline = Some(BoundPipeline::ViewCone);
                         last_blend = None;
@@ -791,10 +1249,14 @@ impl FrameState {
                 }
                 TextureRef::MaskAlpha(_) | TextureRef::StencilClear => {
                     if last_pipeline != Some(BoundPipeline::MaskStencil) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.mask_stencil_pipeline);
                         last_pipeline = Some(BoundPipeline::MaskStencil);
                         last_blend = None;
                     }
+                    // Unconditional, so stencil draws never coalesce —
+                    // they are rare and each carries its own reference.
+                    flush_run!();
                     pass.set_stencil_reference(if matches!(d.tex, TextureRef::MaskAlpha(_)) {
                         1
                     } else {
@@ -805,6 +1267,7 @@ impl FrameState {
                     let bidx = blend_index(d.blend);
                     if last_pipeline != Some(BoundPipeline::MaskedQuad) || last_blend != Some(bidx)
                     {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.masked_pipelines[bidx]);
                         pass.set_stencil_reference(0);
                         last_pipeline = Some(BoundPipeline::MaskedQuad);
@@ -813,6 +1276,7 @@ impl FrameState {
                 }
                 TextureRef::LoadingDissolveFrame(_) => {
                     if last_pipeline != Some(BoundPipeline::LoadingDissolve) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.loading_dissolve_pipeline);
                         last_pipeline = Some(BoundPipeline::LoadingDissolve);
                         last_blend = None;
@@ -821,6 +1285,7 @@ impl FrameState {
                 _ => {
                     let bidx = blend_index(d.blend);
                     if last_pipeline != Some(BoundPipeline::Quad) || last_blend != Some(bidx) {
+                        flush_run!();
                         pass.set_pipeline(&pipelines.pipelines[bidx]);
                         last_pipeline = Some(BoundPipeline::Quad);
                         last_blend = Some(bidx);
@@ -845,6 +1310,12 @@ impl FrameState {
                 }
             };
             if need_rebind_tex {
+                // Covers both the `set_bind_group` calls below and the
+                // `continue` arms that skip a draw entirely — either
+                // way the pending run must not extend across this
+                // point.
+                flush_run!();
+                bind_counter::inc();
                 match d.tex {
                     TextureRef::White => {
                         pass.set_bind_group(1, &resources.white_bg, &[]);
@@ -904,7 +1375,19 @@ impl FrameState {
                 }
             }
             let v0 = (i * 6) as u32;
-            pass.draw(v0..v0 + 6, 0..1);
+            // `Option<(u32, u32)>` is `Copy`, so match by value — no
+            // borrow of `pending` is held while it is reassigned.
+            pending = match pending {
+                // Contiguous with the run in progress: extend it.
+                Some((first, count)) if first + count == v0 => Some((first, count + 6)),
+                // A gap means a draw was skipped without flushing,
+                // which the flush points above exist to prevent.
+                Some((first, count)) => unreachable!(
+                    "non-contiguous draw run: pending {first}+{count}, next quad at {v0}"
+                ),
+                None => Some((v0, 6)),
+            };
         }
+        flush_run!();
     }
 }

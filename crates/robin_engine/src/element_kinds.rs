@@ -300,6 +300,9 @@ pub enum Posture {
     Tree,
     AnonymousArcher,
     Leisure,
+    /// Player-donned reusable cape. Unlike mission-authored [`Self::Spy`],
+    /// this is a hostile deception with explicit perception exceptions.
+    Cloaked,
 }
 
 impl Posture {
@@ -313,7 +316,10 @@ impl Posture {
         )
     }
     pub fn is_hidden(self) -> bool {
-        matches!(self, Self::Spy | Self::Tree | Self::AnonymousArcher)
+        matches!(
+            self,
+            Self::Spy | Self::Tree | Self::AnonymousArcher | Self::Cloaked
+        )
     }
 
     pub fn triggers_enemy_near(self) -> bool {
@@ -324,6 +330,7 @@ impl Posture {
                 | Self::CarryingCorpse
                 | Self::HelpingToClimb
                 | Self::CarryingOnShoulders
+                | Self::Cloaked
         )
     }
     pub fn is_hurtable_by_arrow(self) -> bool {
@@ -1627,6 +1634,9 @@ pub enum Command {
     LeaveSpy,
     /// Rust-only command for leaving a tree disguise.
     LeaveTree,
+    /// Rust-only reusable-cloak entry. Plays cape exit animation 135 in
+    /// reverse and settles in [`Posture::Cloaked`].
+    EnterCloak,
 }
 
 /// Payload of the sequence `SendMessage` command.
@@ -1909,6 +1919,7 @@ mod tests {
         assert_eq!(Command::Jump as i32, 179);
         assert_eq!(Command::LeaveSpy as i32, 180);
         assert_eq!(Command::LeaveTree as i32, 181);
+        assert_eq!(Command::EnterCloak as i32, 182);
     }
 
     /// Branch-for-branch verification of `set_moving`.

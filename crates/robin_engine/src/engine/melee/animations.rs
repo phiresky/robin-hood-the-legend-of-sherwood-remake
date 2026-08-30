@@ -34,6 +34,7 @@ pub(super) fn select_combat_animations(
         Posture::Upright
         | Posture::Undefined
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::LeaningOut
         | Posture::Leisure
         | Posture::Siesta
@@ -110,6 +111,7 @@ pub(super) fn select_push_damage_animations(
         Posture::Upright
         | Posture::Undefined
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::LeaningOut
         | Posture::Leisure
         | Posture::Siesta
@@ -186,6 +188,7 @@ pub(in crate::engine) fn select_hit_fall_animation(
         Posture::Upright
         | Posture::Undefined
         | Posture::Spy
+        | Posture::Cloaked
         | Posture::LeaningOut
         | Posture::Leisure
         | Posture::Siesta

@@ -153,6 +153,9 @@ pub struct PlayerProfile {
     pub preserved_lives: u32,
     pub play_time: u32,
     pub progression: u32,
+    /// Lossless all-time history, independent from replaceable campaign save
+    /// slots. Campaign attempts are promoted idempotently at synchronization.
+    pub campaign_history: crate::campaign_history::ProfileCampaignHistory,
     pub minimap_x: f32,
     pub minimap_y: f32,
     pub graphic_config: GraphicConfig,
@@ -179,6 +182,7 @@ impl PlayerProfile {
             preserved_lives: 0,
             play_time: 0,
             progression: 0,
+            campaign_history: crate::campaign_history::ProfileCampaignHistory::default(),
             minimap_x: 65536.0,
             minimap_y: 65536.0,
             graphic_config: GraphicConfig::default(),
@@ -186,6 +190,26 @@ impl PlayerProfile {
             sound_config: SoundConfig::default(),
             active: false,
         }
+    }
+
+    pub fn earned_achievements(&self) -> crate::achievement::AchievementSet {
+        self.achievement_aggregation().earned()
+    }
+
+    pub fn achievement_aggregation(&self) -> crate::achievement::AchievementAggregationSummary {
+        self.campaign_history.achievement_aggregation()
+    }
+
+    pub fn promote_campaign_history(
+        &mut self,
+        campaign: &crate::campaign::Campaign,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Result<usize, crate::campaign_history::ProfileHistoryPromotionError> {
+        self.campaign_history.promote_campaign(campaign, profiles)
+    }
+
+    pub fn lifetime_campaign_totals(&self) -> crate::campaign_history::CampaignHistoryTotals {
+        self.campaign_history.totals()
     }
 }
 
@@ -239,6 +263,16 @@ impl PlayerProfileManager {
             let data = fs::read_to_string(&path)?;
             let mut mgr: PlayerProfileManager = serde_json::from_str(&data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            for (index, profile) in mgr.profiles.iter().enumerate() {
+                profile.campaign_history.validate_schema().map_err(|version| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "player profile {index} has invalid or unsupported campaign-history schema {version}"
+                        ),
+                    )
+                })?;
+            }
             mgr.save_directory = directory.to_owned();
             Ok(mgr)
         } else {
@@ -453,6 +487,9 @@ pub fn synchronize_with_campaign(
     profile.ransom = campaign.get_value(CampaignValue::Ransom) as u32;
     profile.progression = campaign.get_progression(profiles);
     profile.play_time += mission_play_time_secs;
+    profile
+        .promote_campaign_history(campaign, profiles)
+        .unwrap_or_else(|error| panic!("cannot promote campaign history into profile: {error}"));
 
     let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
     let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
@@ -595,6 +632,81 @@ mod tests {
     }
 
     #[test]
+    fn profile_json_without_campaign_history_is_rejected() {
+        let mut mgr = PlayerProfileManager::new("/tmp/test_profiles".into());
+        mgr.create_profile("Robin".into(), DifficultyLevel::Medium);
+        let mut json = serde_json::to_value(&mgr).unwrap();
+        json["profiles"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("campaign_history");
+
+        assert!(serde_json::from_value::<PlayerProfileManager>(json).is_err());
+    }
+
+    #[test]
+    fn profile_unlock_union_is_derived_from_attested_lifetime_attempts() {
+        let mut profile = PlayerProfile::new(0, "Robin".into(), DifficultyLevel::Medium);
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 42,
+            mission_name: "The Rescue".into(),
+            ..Default::default()
+        });
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..crate::mission::Mission::new()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
+        tracker
+            .record_evaluation(
+                crate::achievement::AchievementId::PileOBones,
+                crate::achievement::AchievementEvaluation::Earned,
+            )
+            .unwrap();
+        let results = *tracker.finalize_success();
+        campaign.record_mission_attempt(
+            0,
+            crate::campaign_history::MissionAttemptOutcome::Won,
+            Some(100),
+            Some(0xbeef),
+            60,
+            crate::engine::SimConfig::default(),
+            &crate::mission_stat::MissionStat::default(),
+            Some(results),
+        );
+        campaign
+            .attest_mission_achievement_attempt(
+                campaign.latest_mission_attempt_key().unwrap(),
+                crate::achievement::AchievementUnlockPolicy::default(),
+                crate::achievement::AchievementRunContext::default(),
+                &profiles,
+            )
+            .unwrap();
+
+        assert_eq!(
+            profile
+                .promote_campaign_history(&campaign, &profiles)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            profile
+                .promote_campaign_history(&campaign, &profiles)
+                .unwrap(),
+            0
+        );
+        assert_eq!(profile.earned_achievements().len(), 1);
+        assert!(
+            profile
+                .earned_achievements()
+                .contains(crate::achievement::AchievementId::PileOBones)
+        );
+    }
+
+    #[test]
     fn load_creates_default_when_missing() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = PlayerProfileManager::load(dir.path().to_str().unwrap()).unwrap();
@@ -627,6 +739,31 @@ mod tests {
         assert_eq!(mgr.profiles[0].name, "Alice");
         assert_eq!(mgr.profiles[0].difficulty, DifficultyLevel::Hard);
         assert_eq!(mgr.active_index, Some(0));
+        assert!(mgr.profiles[0].campaign_history.attempts().is_empty());
+    }
+
+    #[test]
+    fn load_rejects_aggregate_only_rust_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = dir.path().to_str().unwrap();
+        let mut mgr = PlayerProfileManager::new(dir_str.into());
+        let idx = mgr.create_profile("Legacy Robin".into(), DifficultyLevel::Medium);
+        mgr.profiles[idx].score = 42;
+        mgr.profiles[idx].play_time = 99;
+        let mut document = serde_json::to_value(&mgr).unwrap();
+        document["profiles"][idx]
+            .as_object_mut()
+            .unwrap()
+            .remove("campaign_history");
+        fs::create_dir_all(dir_str).unwrap();
+        fs::write(
+            PlayerProfileManager::profiles_path(dir_str),
+            serde_json::to_vec_pretty(&document).unwrap(),
+        )
+        .unwrap();
+
+        let error = PlayerProfileManager::load(dir_str).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

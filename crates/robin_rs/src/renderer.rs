@@ -28,11 +28,13 @@ use crate::ui::AlphaMask;
 use crate::window::{GpuContext, SharedSurface};
 use crate::zoom_hud::ZoomTooltipTracker;
 
+mod atlas;
 mod frame;
 mod pipelines;
 mod readback;
 mod resources;
 
+use atlas::AtlasSlot;
 use frame::FrameState;
 use pipelines::PipelineStore;
 use resources::GpuResources;
@@ -73,21 +75,26 @@ struct SpriteCacheKey {
     shadow_alpha: u8,
 }
 
-struct CachedSprite {
-    /// Held alive for the bind group's lifetime; the renderer only
-    /// touches the bind group on draws.
-    _texture: wgpu::Texture,
-    _view: wgpu::TextureView,
-    /// Cached `(texture, sampler)` bind group so per-frame draws of
-    /// this sprite don't rebuild it.
-    bind_group: wgpu::BindGroup,
-    width: u16,
-    height: u16,
+/// One decoded sprite frame's GPU residency: a sub-rect of a shared
+/// [`atlas`] layer.
+///
+/// This was briefly an enum with a `Legacy` one-texture-per-sprite arm
+/// behind `ROBIN_SPRITE_ATLAS=0`, so a single binary could render both
+/// halves of an A/B comparison with data, build, driver and scene held
+/// fixed. That comparison is done — eight full-map captures across three
+/// missions and two datadirs came back byte-identical — so the arm and
+/// its flag are gone.
+struct SpriteResidency(AtlasSlot);
+
+impl SpriteResidency {
+    fn dimensions(&self) -> (u16, u16) {
+        (self.0.width, self.0.height)
+    }
 }
 
 #[derive(Default)]
 struct SpriteTextureCache {
-    entries: HashMap<SpriteCacheKey, CachedSprite>,
+    entries: HashMap<SpriteCacheKey, SpriteResidency>,
 }
 
 #[inline]
@@ -526,8 +533,18 @@ impl Renderer {
         self.pipelines.set_shader_preset(preset);
     }
 
-    pub fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
-        self.frame.set_shader_frame_count(frame_count);
+    /// Apply the complete persisted upscaler/effect configuration atomically.
+    /// This avoids one-frame combinations of old parameters with a new mode
+    /// while the Graphics screen is being accepted.
+    pub fn apply_upscale_config(&mut self, config: &robin_engine::graphic_config::GraphicConfig) {
+        self.pipelines.apply_upscale_config(config);
+    }
+
+    pub fn validate_retroarch_preset(
+        &mut self,
+        preset: &str,
+    ) -> Result<(), crate::gpu_upscale::UpscaleError> {
+        self.pipelines.validate_retroarch_preset(preset)
     }
 
     pub(crate) fn update_zoom_presentation(
@@ -880,6 +897,21 @@ impl Renderer {
         self.frame.enter_gpu_phase();
     }
 
+    /// Mark subsequent draws as screen-space UI. Presentation effects are
+    /// applied to the preceding world/video layer; this layer is composited
+    /// afterwards through a sharp fractional-scale filter.
+    pub fn begin_ui_layer(&mut self) {
+        self.frame.begin_ui_layer();
+    }
+
+    /// Present this whole logical frame with the sharp UI scaler, bypassing
+    /// gameplay upscalers and post-effects. Top-level menus use this instead
+    /// of splitting a transparent UI layer so their rendered frame remains
+    /// available to the modal-freeze path.
+    pub fn begin_ui_only_frame(&mut self) {
+        self.frame.begin_ui_only_frame();
+    }
+
     /// Snapshot the offscreen render target into a held texture so a
     /// modal menu can overlay dim/tint + widgets on top of the previous
     /// gameplay frame. Idempotent — subsequent calls while a freeze is
@@ -910,6 +942,14 @@ impl Renderer {
             .present(&self.gpu, &mut self.pipelines, &self.resources);
     }
 
+    /// Re-present the last completed logical frame. Unlike [`Self::present`],
+    /// this performs no pass-1 composition and therefore cannot repeat game,
+    /// UI, tooltip, fade, cursor, or post-render side effects.
+    pub fn present_cached(&mut self) -> bool {
+        self.frame
+            .present_cached(&self.gpu, &mut self.pipelines, &self.resources)
+    }
+
     pub fn configure_surface_size(&mut self, width: u32, height: u32) {
         self.frame.configure_surface_size(&self.gpu, width, height);
     }
@@ -933,6 +973,16 @@ impl Renderer {
             self.resize(logical_width, logical_height);
         }
         changed
+    }
+
+    pub fn configure_native_refresh_presentation(
+        &mut self,
+        enabled: bool,
+        surface_width: u32,
+        surface_height: u32,
+    ) {
+        self.frame
+            .configure_present_mode(&self.gpu, enabled, surface_width, surface_height);
     }
 
     /// Cross the flush boundary and present in one shot. Loading/menu screens
@@ -1557,15 +1607,13 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [1.0, 1.0, 1.0, 1.0],
             tex: TextureRef::Frame(tex_idx),
             blend: BlendMode::Blend,
@@ -1590,15 +1638,13 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [1.0, 1.0, 1.0, alpha as f32 / 255.0],
             tex: TextureRef::Frame(tex_idx),
             blend: BlendMode::Blend,
@@ -1619,15 +1665,13 @@ impl Renderer {
         alpha: u8,
     ) -> bool {
         let key = outline_cache_key(bank_id, variant, shadow_color);
-        let bg = match self.resources.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
+        let Some((tex_idx, uv)) = self.queue_sprite_texture(&key) else {
+            return false;
         };
-        let tex_idx = self.queue_cached_bg(bg);
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
+            uv,
             tint: [
                 rgb.0 as f32 / 255.0,
                 rgb.1 as f32 / 255.0,
@@ -2050,6 +2094,34 @@ impl Renderer {
     fn queue_cached_bg(&mut self, bg: wgpu::BindGroup) -> u32 {
         self.frame.queue_cached_bg(bg)
     }
+
+    /// Resolve a cached sprite to `(per-frame bind-group index, uv)`,
+    /// or `None` when it was never cached: the layer's shared bind group
+    /// and the sprite's sub-rect within it.
+    fn queue_sprite_texture(&mut self, key: &SpriteCacheKey) -> Option<(u32, [f32; 4])> {
+        // Copy the slot out first so the immutable borrow of
+        // `self.resources` ends before the `&mut self` queue call.
+        let slot = self.resources.sprite_cache.entries.get(key)?.0;
+        Some((self.queue_atlas_layer(slot.layer), slot.uv))
+    }
+
+    /// Resolve an atlas layer to a per-frame bind-group index,
+    /// memoized for the frame.
+    ///
+    /// The memo is what turns the atlas into actual batching: the
+    /// draw encoder elides `set_bind_group` when consecutive draws
+    /// carry the same `TextureRef::Frame(idx)`, so every sprite from a
+    /// layer has to resolve to *one* index rather than a fresh one per
+    /// draw.
+    fn queue_atlas_layer(&mut self, layer: u32) -> u32 {
+        if let Some(idx) = self.frame.atlas_bg_slot(layer) {
+            return idx;
+        }
+        let bg = self.resources.sprite_atlas.bind_group(layer).clone();
+        let idx = self.frame.queue_cached_bg(bg);
+        self.frame.remember_atlas_bg_slot(layer, idx);
+        idx
+    }
 }
 
 /// Shadow opacity for `FrameHolder::global_shadow()` = 40, gamma-compensated
@@ -2372,13 +2444,21 @@ fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
 /// Per-second FPS counter + per-frame draw / upload counts logged at
 /// info level. Cheap — one mutex take per `present`. Run with
 /// `RUST_LOG=fps=info`.
-fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
+fn log_fps(
+    draws_this_frame: usize,
+    uploads_this_frame: usize,
+    binds_this_frame: usize,
+    draw_calls_this_frame: usize,
+    atlas: atlas::AtlasStats,
+) {
     use std::sync::OnceLock;
     static STATE: OnceLock<std::sync::Mutex<FpsState>> = OnceLock::new();
     struct FpsState {
         frames: u32,
         draws_total: usize,
         uploads_total: usize,
+        binds_total: usize,
+        draw_calls_total: usize,
         last: web_time::Instant,
     }
     let m = STATE.get_or_init(|| {
@@ -2386,6 +2466,8 @@ fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
             frames: 0,
             draws_total: 0,
             uploads_total: 0,
+            binds_total: 0,
+            draw_calls_total: 0,
             last: web_time::Instant::now(),
         })
     });
@@ -2393,21 +2475,32 @@ fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
     g.frames += 1;
     g.draws_total += draws_this_frame;
     g.uploads_total += uploads_this_frame;
+    g.binds_total += binds_this_frame;
+    g.draw_calls_total += draw_calls_this_frame;
     if g.last.elapsed().as_secs() >= 1 {
         let avg_draws = g.draws_total / g.frames as usize;
         let avg_uploads = g.uploads_total / g.frames as usize;
+        let avg_binds = g.binds_total / g.frames as usize;
+        let avg_draw_calls = g.draw_calls_total / g.frames as usize;
         let (present_avg_us, _) = present_time::take_avg();
         let upload_labels = upload_counter::take_labels();
         tracing::debug!(
             target: "fps",
-            "{} fps  draws/f={}  uploads/f={}  present={:.2}ms  upload_labels={}",
-            g.frames, avg_draws, avg_uploads,
+            "{} fps  quads/f={}  drawcalls/f={}  binds/f={}  uploads/f={}  \
+             present={:.2}ms  atlas={}L/{:.0}MiB/{:.0}%occ/{}spr  upload_labels={}",
+            g.frames, avg_draws, avg_draw_calls, avg_binds, avg_uploads,
             present_avg_us as f32 / 1000.0,
+            atlas.layers,
+            atlas.bytes() as f32 / (1024.0 * 1024.0),
+            atlas.occupancy() * 100.0,
+            atlas.sprites,
             upload_labels,
         );
         g.frames = 0;
         g.draws_total = 0;
         g.uploads_total = 0;
+        g.binds_total = 0;
+        g.draw_calls_total = 0;
         g.last = web_time::Instant::now();
     }
 }
@@ -2473,6 +2566,39 @@ mod upload_counter {
             .map(|(label, count)| format!("{label}:{count}"))
             .collect::<Vec<_>>()
             .join(",")
+    }
+}
+
+/// Counts `set_bind_group(1, …)` calls issued while encoding the scene
+/// pass.
+///
+/// This is the number the sprite atlas is meant to move: before it,
+/// every sprite owned a texture and so forced its own texture bind, and
+/// `binds/f` tracked `draws/f` almost exactly. Packed into shared
+/// layers, a run of sprites from one layer costs a single bind.
+/// …and the `draw` calls actually recorded, which is not the same as
+/// the number of queued quads once consecutive same-state draws are
+/// coalesced into one contiguous vertex range.
+mod bind_counter {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static BINDS: AtomicUsize = AtomicUsize::new(0);
+    static DRAW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    pub fn inc() {
+        BINDS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_draw_call() {
+        DRAW_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn take_count() -> usize {
+        BINDS.swap(0, Ordering::Relaxed)
+    }
+
+    pub fn take_draw_calls() -> usize {
+        DRAW_CALLS.swap(0, Ordering::Relaxed)
     }
 }
 

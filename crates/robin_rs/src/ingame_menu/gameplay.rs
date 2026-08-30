@@ -17,7 +17,7 @@ use robin_engine::gameplay_config::GameplayConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -31,6 +31,19 @@ const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
+    "Sherwood Production Forecast",
+    "Reusable Cloaks",
+    "Campaign Presentation",
+    "NPC Kills Break Clean Hands",
+    "Detailed Sword/Bow XP",
+    "Speedrun Clock",
+    "Clean Hands Tracker",
+    "Ghost Tracker",
+    "Pile-o-Bones Tracker",
+    "All Enemies Stashed Tracker",
+    "Campaign Achievement Badges",
+    "Achievement Debrief Details",
+    "Touch Camera Gestures",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -58,19 +71,21 @@ pub async fn show_gameplay(
 
     // ── Option toggle buttons stacked from (30,100) ───────────────
     let (field_w, field_h) = resources.input_field_dimensions();
-    let mut opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
+    let rows_per_column = OPTION_LABELS.len().div_ceil(2);
+    let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
         .iter()
         .enumerate()
         .map(|(i, label)| super::layout::MenuButton {
             label: label.to_string(),
             enabled: true,
-            x: 30,
-            y: if i == 0 { 100 } else { 0 },
+            x: if i < rows_per_column { 30 } else { 320 },
+            y: 100
+                + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
+                    * (field_h + 2),
             w: field_w,
             h: field_h,
         })
         .collect();
-    align_on_first_widget(&mut opt_layout, 2);
 
     let mut frame = FrameWnd::default();
     frame.enabled = true;
@@ -180,6 +195,16 @@ pub async fn show_gameplay(
                 );
             }
         }
+        if let Some(font) = resources.label_font() {
+            render_text_virt(
+                renderer,
+                font,
+                transform,
+                working.campaign_presentation.label(),
+                30,
+                335,
+            );
+        }
 
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
@@ -193,7 +218,7 @@ pub async fn show_gameplay(
         }
 
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {
@@ -209,6 +234,22 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
         2 => config.enable_unbinding = !config.enable_unbinding,
+        3 => config.show_production_forecast = !config.show_production_forecast,
+        4 => config.reusable_cloaks = !config.reusable_cloaks,
+        5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp = !config.show_detailed_xp,
+        8 => config.show_speedrun_tracker = !config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker = !config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker = !config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker,
+        12 => {
+            config.show_all_enemies_one_building_tracker =
+                !config.show_all_enemies_one_building_tracker
+        }
+        13 => config.show_achievement_badges = !config.show_achievement_badges,
+        14 => config.show_achievement_debrief = !config.show_achievement_debrief,
+        15 => config.touch_camera_gestures = !config.touch_camera_gestures,
         _ => {}
     }
 }
@@ -218,6 +259,120 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
         2 => config.enable_unbinding,
+        3 => config.show_production_forecast,
+        4 => config.reusable_cloaks,
+        5 => {
+            config.campaign_presentation
+                != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
+        }
+        6 => config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp,
+        8 => config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker,
+        12 => config.show_all_enemies_one_building_tracker,
+        13 => config.show_achievement_badges,
+        14 => config.show_achievement_debrief,
+        15 => config.touch_camera_gestures,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gameplay_rows_preserve_independent_setting_mappings() {
+        assert_eq!(
+            OPTION_LABELS,
+            [
+                "Fix Hard Reaction Times",
+                "Control Tactical Units",
+                "Allow Untying NPCs",
+                "Sherwood Production Forecast",
+                "Reusable Cloaks",
+                "Campaign Presentation",
+                "NPC Kills Break Clean Hands",
+                "Detailed Sword/Bow XP",
+                "Speedrun Clock",
+                "Clean Hands Tracker",
+                "Ghost Tracker",
+                "Pile-o-Bones Tracker",
+                "All Enemies Stashed Tracker",
+                "Campaign Achievement Badges",
+                "Achievement Debrief Details",
+                "Touch Camera Gestures",
+            ]
+        );
+
+        let mut config = GameplayConfig::default();
+        assert!(!is_option_selected(&config, 1));
+        assert!(is_option_selected(&config, 2));
+        assert!(is_option_selected(&config, 3));
+        assert!(is_option_selected(&config, 4));
+        assert!(is_option_selected(&config, 5));
+        assert!(!is_option_selected(&config, 6));
+        assert!(is_option_selected(&config, 13));
+        assert!(is_option_selected(&config, 14));
+        assert!(is_option_selected(&config, 15));
+
+        apply_option_toggle(&mut config, 1);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 3);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 4);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+
+        apply_option_toggle(&mut config, 5);
+        assert_eq!(
+            config.campaign_presentation,
+            robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
+        );
+
+        let achievement_settings = (
+            config.clean_hands_npc_kills_invalidate,
+            config.show_detailed_xp,
+            config.show_speedrun_tracker,
+            config.show_clean_hands_tracker,
+            config.show_ghost_tracker,
+            config.show_pile_o_bones_tracker,
+            config.show_all_enemies_one_building_tracker,
+            config.show_achievement_badges,
+            config.show_achievement_debrief,
+        );
+        apply_option_toggle(&mut config, 15);
+        assert!(!config.touch_camera_gestures);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+        assert_eq!(
+            achievement_settings,
+            (
+                config.clean_hands_npc_kills_invalidate,
+                config.show_detailed_xp,
+                config.show_speedrun_tracker,
+                config.show_clean_hands_tracker,
+                config.show_ghost_tracker,
+                config.show_pile_o_bones_tracker,
+                config.show_all_enemies_one_building_tracker,
+                config.show_achievement_badges,
+                config.show_achievement_debrief,
+            )
+        );
+        assert!(!is_option_selected(&config, 15));
     }
 }

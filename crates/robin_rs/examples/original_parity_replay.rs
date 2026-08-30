@@ -257,6 +257,10 @@ impl TraceSimConfig {
             fix_hard_reaction_times: false,
             // Untying is a post-port extension and stays off in Original traces.
             enable_unbinding: false,
+            clean_hands_npc_kills_invalidate: false,
+            // Reusable cloaks are an opt-in extension and must never alter
+            // original-parity traces.
+            reusable_cloaks: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -7775,9 +7779,14 @@ fn restore_campaign(
                 profile_idx: Some(source.profile_index),
                 ares_state_override: (source.ares_state_succeeded != profile.ares_state_succeeded)
                     .then_some(source.ares_state_succeeded),
+                attempt_history: Default::default(),
             }
         })
         .collect();
+    // The Original trace retains mission status but not replay-grade attempt
+    // evidence. Reconstruct the same honest incomplete history used by C++
+    // save import instead of leaving won missions with fabricated emptiness.
+    campaign.reconstruct_original_save_history(&[]);
     let mission_count = campaign.missions.len();
     let validate_mission_index = |index: usize| {
         assert!(
@@ -7802,12 +7811,13 @@ fn restore_campaign(
     campaign.current_mission_idx = trace.current_mission_index.map(validate_mission_index);
     campaign.next_mission_idx = trace.next_mission_index.map(validate_mission_index);
     campaign.blazon_mission_idx = trace.blazon_mission_index.map(validate_mission_index);
-    campaign.last_played_mission_indices = trace
+    let recent_launches: Vec<usize> = trace
         .last_played_mission_indices
         .iter()
         .copied()
         .map(validate_mission_index)
         .collect();
+    campaign.reconstruct_original_save_history(&recent_launches);
     campaign.last_pseudo_mission_status = match trace.last_pseudo_mission_status {
         0 => MissionStatus::Available,
         1 => MissionStatus::Won,
