@@ -417,6 +417,7 @@ impl TerminalDebriefingState {
                             context.window,
                             &context.presentation.renderer,
                             &mut context.callbacks.save_manager,
+                            context.host.transport.net.is_some(),
                         ),
                         body: body_remaining,
                         was_on_stat,

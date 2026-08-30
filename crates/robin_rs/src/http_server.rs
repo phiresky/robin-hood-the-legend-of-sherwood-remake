@@ -118,6 +118,9 @@ pub struct StepModalPolicy {
     #[serde(default = "default_true")]
     pub auto_dismiss: bool,
     pub dismissals: Vec<HttpModalDismissal>,
+    /// Required for timeline movement in a live multiplayer session. Only the
+    /// host accepts it and reconnects every peer from the resulting snapshot.
+    pub synchronized_multiplayer: bool,
 }
 
 impl Default for StepModalPolicy {
@@ -125,6 +128,7 @@ impl Default for StepModalPolicy {
         Self {
             auto_dismiss: true,
             dismissals: Vec::new(),
+            synchronized_multiplayer: false,
         }
     }
 }
@@ -743,7 +747,7 @@ fn info_json() -> serde_json::Value {
             {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
             {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
             {"method": "GET",  "path": "/screenshot",         "desc": "PNG at the requested frame. Query: frame (absolute sim frame), full_map, w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
-            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N, auto_dismiss: bool, dismissals: [{kind, result}]}; auto_dismiss defaults true. With false, an unmatched modal returns `blocked by modal`. The reply reports typed accepted dismissals."},
+            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N, auto_dismiss: bool, dismissals: [{kind, result}], synchronized_multiplayer: bool}; live multiplayer requires explicit synchronized_multiplayer=true on the host and reconnects peers from the result."},
             {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N, auto_dismiss, dismissals}; the modal policy matches step-forward. Fails if target frame is older than the oldest retained snapshot."},
             {"method": "POST", "path": "/go-to-frame",        "desc": "Seek to an absolute frame. Body {frame: N, auto_dismiss, dismissals}; forward seeks tick and backward seeks restore canonical timeline history."},
         ],
@@ -2185,6 +2189,17 @@ mod tests {
         assert_eq!(request, StepRequest::default());
         assert_eq!(request.n, 1);
         assert!(request.modal_policy.auto_dismiss);
+        assert!(!request.modal_policy.synchronized_multiplayer);
+    }
+
+    #[test]
+    fn step_request_requires_explicit_multiplayer_synchronization() {
+        let request: StepRequest = serde_json::from_value(serde_json::json!({
+            "n": 2,
+            "synchronized_multiplayer": true,
+        }))
+        .expect("explicit multiplayer step policy");
+        assert!(request.modal_policy.synchronized_multiplayer);
     }
 
     #[test]
@@ -2431,7 +2446,7 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
 pub mod wasm_rpc {
     use super::{
         GLOBAL, HttpPayload, HttpRequest, NativeCall, PlayerCommand, Reply, ReplyBody, Responder,
-        ScreenshotRequest,
+        ScreenshotRequest, StepModalPolicy, StepRequest,
     };
     use wasm_bindgen::JsValue;
 

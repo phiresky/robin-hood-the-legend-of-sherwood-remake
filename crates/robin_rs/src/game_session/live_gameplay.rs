@@ -189,6 +189,14 @@ fn dispatch_gameplay_action(
             }
         }
         GameAction::QuickLoad => {
+            if !host.transport.authoritative_transition_actions_enabled() {
+                game.display_message(
+                    "Quick Load is available only to the multiplayer host after synchronization finishes."
+                        .to_string(),
+                    100,
+                );
+                return;
+            }
             if !manager.engine.is_zoom_possible(&host.engine_display) {
                 game.quick_load_after_zoom = true;
             } else {

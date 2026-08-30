@@ -73,6 +73,18 @@ pub(crate) struct RustCallbacks {
     /// leave the current mission with `LevelRestart` so the outer session
     /// restores its authoritative campaign/RNG/SimConfig checkpoint.
     pub pending_level_restart: bool,
+    /// The next decoded Load was already committed by the multiplayer
+    /// transition barrier and must be applied, not proposed as a new one.
+    pub applying_multiplayer_transition: bool,
+    /// Host Sherwood launch deferred until its delayed authoritative campaign
+    /// commands have applied and can be captured into one exact snapshot.
+    pub pending_multiplayer_campaign_exit: Option<PendingMultiplayerCampaignExit>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingMultiplayerCampaignExit {
+    pub not_before_frame: u32,
+    pub mission_id: u32,
 }
 
 /// Save-slot bookkeeping passed from an in-mission "load" click through
@@ -207,6 +219,8 @@ impl RustCallbacks {
             post_load_sync: None,
             pending_level_load: None,
             pending_level_restart: false,
+            applying_multiplayer_transition: false,
+            pending_multiplayer_campaign_exit: None,
             pending_save_banner: None,
             pending_reset_input: false,
         }
@@ -568,6 +582,46 @@ fn replay_loaded_identity(
     }
 }
 
+fn begin_multiplayer_snapshot_transition(
+    host: &mut crate::host::Host,
+    slot: usize,
+    save: crate::save_file::GameSaveFile,
+) -> Result<bool, String> {
+    let Some(net) = host.transport.net.as_ref() else {
+        return Ok(false);
+    };
+    if host.transport.local_seat != robin_engine::player_command::PlayerId::HOST {
+        return Err(
+            "only the multiplayer host can load, restart, or quick-load the session".to_string(),
+        );
+    }
+    if host.transport.reconnecting || host.transport.snapshot_transition.is_some() {
+        return Err("a multiplayer snapshot transition is already in progress".to_string());
+    }
+    if save.header.multiplayer_diagnostic {
+        return Err("multiplayer diagnostic saves cannot be loaded while connected".to_string());
+    }
+    let mission_id = save.header.mission_id;
+    let save_bytes = serde_json::to_vec(&save)
+        .map_err(|error| format!("encode multiplayer snapshot transition: {error}"))?;
+    let id = net.begin_snapshot_transition(mission_id, save_bytes)?;
+    host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
+        id,
+        payload: crate::host::PendingSnapshotTransitionPayload::Save {
+            slot: Some(slot),
+            save: Box::new(save),
+        },
+        committed: false,
+    });
+    host.transport.reconnecting = true;
+    tracing::info!(
+        ?id,
+        mission_id,
+        "multiplayer: waiting for every peer to validate the authoritative transition"
+    );
+    Ok(true)
+}
+
 pub(crate) fn perform_pending_save_load(
     host: &mut crate::host::Host,
     game: &mut crate::game::Game,
@@ -584,6 +638,44 @@ pub(crate) fn perform_pending_save_load(
     let mut event = None;
     match request {
         SaveLoadRequest::Save { slot, mission_id } => {
+            if host.transport.net.is_some() {
+                let idx = slot.unwrap_or_else(|| {
+                    callbacks
+                        .save_manager
+                        .create("Multiplayer diagnostic".to_string(), mission_id)
+                });
+                let result = callbacks
+                    .save_manager
+                    .write_multiplayer_diagnostic_from_engine(
+                        host,
+                        game,
+                        idx,
+                        engine,
+                        mission_id,
+                        Some(profiles),
+                        thumb_ref,
+                    )
+                    .and_then(|()| {
+                        callbacks
+                            .save_manager
+                            .save_index()
+                            .map_err(anyhow::Error::msg)
+                    });
+                match result {
+                    Ok(()) => {
+                        callbacks.pending_save_banner = Some(SaveBannerKind::Saved);
+                        tracing::info!(
+                            slot = idx,
+                            mission_id,
+                            "multiplayer diagnostic save written locally"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::error!("Multiplayer diagnostic save failed: {error:#}")
+                    }
+                }
+                return SaveLoadFlushResult::NO_EVENT;
+            }
             // `slot = None` ⇒ auto Continue-save.
             // `slot = Some(idx)` ⇒ player-chosen slot.
             let (result, explicit_slot) = match slot {
@@ -662,6 +754,8 @@ pub(crate) fn perform_pending_save_load(
             mission_id: _,
             save,
         } => {
+            let applying_multiplayer_transition =
+                std::mem::take(&mut callbacks.applying_multiplayer_transition);
             // If the save targets a different mission than the one currently
             // running, stash a `PendingLevelLoad` and let the session loop
             // switch missions before re-applying. This replaces the previous
@@ -677,6 +771,16 @@ pub(crate) fn perform_pending_save_load(
             };
             match resolved {
                 Some((idx, save)) => {
+                    if host.transport.net.is_some() && !applying_multiplayer_transition {
+                        match begin_multiplayer_snapshot_transition(host, idx, save) {
+                            Ok(true) => return SaveLoadFlushResult::NO_EVENT,
+                            Ok(false) => unreachable!("multiplayer transition guard checked net"),
+                            Err(error) => {
+                                tracing::error!("Load rejected: {error}");
+                                return SaveLoadFlushResult::NO_EVENT;
+                            }
+                        }
+                    }
                     let active_mission_id = current_mission_id(engine.campaign(), profiles);
                     let reload_target =
                         match validated_save_reload_target(&save, profiles, active_mission_id) {
@@ -777,6 +881,22 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::LoadRestart => {
+            if host.transport.net.is_some() {
+                match callbacks.save_manager.preflight_restart_save() {
+                    Ok(Some((idx, save))) => {
+                        if let Err(error) = begin_multiplayer_snapshot_transition(host, idx, save) {
+                            tracing::error!("Multiplayer restart rejected: {error}");
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::error!("Multiplayer restart rejected: no restart snapshot exists")
+                    }
+                    Err(error) => {
+                        tracing::error!("Multiplayer restart snapshot preflight failed: {error:#}")
+                    }
+                }
+                return SaveLoadFlushResult::NO_EVENT;
+            }
             let restore_result = (|| -> anyhow::Result<_> {
                 let (_idx, save) = callbacks
                     .save_manager
@@ -829,6 +949,42 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::QuickSave { mission_id } => {
+            if host.transport.net.is_some() {
+                let idx = callbacks
+                    .save_manager
+                    .create("Multiplayer quick diagnostic".to_string(), mission_id);
+                let result = callbacks
+                    .save_manager
+                    .write_multiplayer_diagnostic_from_engine(
+                        host,
+                        game,
+                        idx,
+                        engine,
+                        mission_id,
+                        Some(profiles),
+                        thumb_ref,
+                    )
+                    .and_then(|()| {
+                        callbacks
+                            .save_manager
+                            .save_index()
+                            .map_err(anyhow::Error::msg)
+                    });
+                match result {
+                    Ok(()) => {
+                        callbacks.pending_save_banner = Some(SaveBannerKind::Saved);
+                        tracing::info!(
+                            slot = idx,
+                            mission_id,
+                            "multiplayer quick-save captured as a local diagnostic"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}")
+                    }
+                }
+                return SaveLoadFlushResult::NO_EVENT;
+            }
             match callbacks.save_manager.write_quick_save(
                 host,
                 game,
@@ -880,6 +1036,21 @@ pub(crate) fn perform_pending_save_load(
                             );
                         }
                         Ok(Some((decoded_idx, save))) => {
+                            if host.transport.net.is_some() {
+                                match begin_multiplayer_snapshot_transition(host, decoded_idx, save)
+                                {
+                                    Ok(true) => return SaveLoadFlushResult::NO_EVENT,
+                                    Ok(false) => {
+                                        unreachable!("multiplayer transition guard checked net")
+                                    }
+                                    Err(error) => {
+                                        tracing::error!(
+                                            "Quick load ({slot_name}) rejected: {error}"
+                                        );
+                                        return SaveLoadFlushResult::NO_EVENT;
+                                    }
+                                }
+                            }
                             let active_mission_id = current_mission_id(engine.campaign(), profiles);
                             let reload_target = match validated_save_reload_target(
                                 &save,

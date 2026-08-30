@@ -64,6 +64,10 @@ pub struct SaveGame {
     /// Current amulet value at time of save.
     #[serde(default)]
     pub amulets: Option<i32>,
+    /// Mirrors the payload header so connected load pickers can hide local
+    /// multiplayer diagnostics without reading every save file.
+    #[serde(default)]
+    pub multiplayer_diagnostic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +111,7 @@ impl SaveGame {
             ransom: None,
             blazons: None,
             amulets: None,
+            multiplayer_diagnostic: false,
         }
     }
 
@@ -632,8 +637,45 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
+        self.write_save_from_engine_with_diagnostic(
+            host, game, index, engine, mission_id, profiles, thumbnail, false,
+        )
+    }
+
+    /// Write a local multiplayer diagnostic. It is deliberately tagged in
+    /// both the payload and slot index and is never suitable as session state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_multiplayer_diagnostic_from_engine(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write_save_from_engine_with_diagnostic(
+            host, game, index, engine, mission_id, profiles, thumbnail, true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_save_from_engine_with_diagnostic(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+        multiplayer_diagnostic: bool,
+    ) -> Result<()> {
         let display_text = self.saves[index].text.clone();
-        let save = GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
+        let mut save =
+            GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
+        save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let path = self.save_path(index);
         save.write_to(&path)?;
 
@@ -671,6 +713,7 @@ impl SaveGameManager {
         slot.mission_id = header.mission_id;
         slot.version = header.version;
         slot.timestamp = header.timestamp_unix.to_string();
+        slot.multiplayer_diagnostic = header.multiplayer_diagnostic;
     }
 
     fn sync_slot_campaign_metadata(
@@ -910,6 +953,42 @@ mod tests {
         mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
+    }
+
+    #[test]
+    fn multiplayer_diagnostic_tag_is_written_to_payload_and_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
+        let (engine, _assets) = fresh_engine();
+        let mut host = Host::scratch(800.0, 600.0);
+        let game = Game::default();
+        let slot = manager.create("Network diagnostic".into(), 17);
+
+        manager
+            .write_multiplayer_diagnostic_from_engine(
+                &mut host, &game, slot, &engine, 17, None, None,
+            )
+            .unwrap();
+        assert!(manager.get(slot).unwrap().multiplayer_diagnostic);
+        assert!(
+            manager
+                .preflight_exact_slot(slot)
+                .unwrap()
+                .header
+                .multiplayer_diagnostic
+        );
+
+        manager
+            .write_save_from_engine(&mut host, &game, slot, &engine, 17, None, None)
+            .unwrap();
+        assert!(!manager.get(slot).unwrap().multiplayer_diagnostic);
+        assert!(
+            !manager
+                .preflight_exact_slot(slot)
+                .unwrap()
+                .header
+                .multiplayer_diagnostic
+        );
     }
 
     #[test]

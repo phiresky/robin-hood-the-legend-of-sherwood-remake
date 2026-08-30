@@ -908,6 +908,7 @@ pub(super) struct SaveLoadTaskState {
     buttons: FrameWnd,
     confirmation: Option<(SaveConfirmation, YesNoModalState)>,
     text_input_active: bool,
+    multiplayer_connected: bool,
 }
 
 impl SaveLoadTaskState {
@@ -918,9 +919,10 @@ impl SaveLoadTaskState {
         save_manager: &mut SaveGameManager,
         mission_id: u32,
         mode: SaveLoadMode,
+        multiplayer_connected: bool,
     ) -> Self {
         save_manager.sort_by_time();
-        let visible = visible_save_filenames(save_manager, mode);
+        let visible = visible_save_filenames(save_manager, mode, multiplayer_connected);
         let selected = (mode == SaveLoadMode::Save).then_some(SaveRow::New);
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
@@ -945,6 +947,7 @@ impl SaveLoadTaskState {
             buttons,
             confirmation: None,
             text_input_active,
+            multiplayer_connected,
         }
     }
 
@@ -1018,7 +1021,11 @@ impl SaveLoadTaskState {
                                 .expect("confirmed delete slot disappeared");
                             save_manager.remove(slot);
                             save_manager.sort_by_time();
-                            self.visible = visible_save_filenames(save_manager, self.mode);
+                            self.visible = visible_save_filenames(
+                                save_manager,
+                                self.mode,
+                                self.multiplayer_connected,
+                            );
                             self.selected =
                                 (self.mode == SaveLoadMode::Save).then_some(SaveRow::New);
                             self.name.clear();
@@ -1356,13 +1363,21 @@ fn save_buttons(
     frame
 }
 
-fn visible_save_filenames(save_manager: &SaveGameManager, mode: SaveLoadMode) -> Vec<String> {
+fn visible_save_filenames(
+    save_manager: &SaveGameManager,
+    mode: SaveLoadMode,
+    multiplayer_connected: bool,
+) -> Vec<String> {
     save_manager
         .saves
         .iter()
         .filter(|save| match mode {
             SaveLoadMode::Save => !save.is_special(),
-            SaveLoadMode::Load => !save.is_continue() && !save.is_restart(),
+            SaveLoadMode::Load => {
+                !save.is_continue()
+                    && !save.is_restart()
+                    && !(multiplayer_connected && save.multiplayer_diagnostic)
+            }
         })
         .map(|save| save.filename.clone())
         .collect()
@@ -1540,12 +1555,18 @@ mod tests {
         manager.create_with_filename("QuickSave".into(), "Quick".into(), 1);
         manager.create_with_filename("Manual".into(), "Manual".into(), 1);
         assert_eq!(
-            visible_save_filenames(&manager, SaveLoadMode::Save),
+            visible_save_filenames(&manager, SaveLoadMode::Save, false),
             ["Manual"]
         );
         assert_eq!(
-            visible_save_filenames(&manager, SaveLoadMode::Load),
+            visible_save_filenames(&manager, SaveLoadMode::Load, false),
             ["QuickSave", "Manual"]
+        );
+        let manual = manager.find_by_filename("Manual").unwrap();
+        manager.get_mut(manual).unwrap().multiplayer_diagnostic = true;
+        assert_eq!(
+            visible_save_filenames(&manager, SaveLoadMode::Load, true),
+            ["QuickSave"]
         );
     }
 
@@ -1593,6 +1614,7 @@ mod tests {
         let strict = crate::http_server::StepModalPolicy {
             auto_dismiss: false,
             dismissals: Vec::new(),
+            synchronized_multiplayer: false,
         };
         for kind in [
             UiTaskKind::Options,

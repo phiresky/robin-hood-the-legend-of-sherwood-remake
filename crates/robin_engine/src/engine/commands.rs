@@ -177,6 +177,24 @@ impl EngineInner {
         mode: SelectionCommandBatchMode,
     ) {
         for (index, inp) in commands.iter().enumerate() {
+            if inp.player_id != crate::player_command::PlayerId::HOST
+                && matches!(
+                    inp.command,
+                    PlayerCommand::SetMenToBlazonConversionMode { .. }
+                        | PlayerCommand::CampaignSelectNextMission { .. }
+                        | PlayerCommand::CampaignSwapPendingToAccessibleMissions
+                        | PlayerCommand::CampaignHarvestProductionSectorState
+                        | PlayerCommand::CampaignConvertSelectedPeasantsToBlazons
+                        | PlayerCommand::ApplyQuitMissionUpdates { .. }
+                )
+            {
+                tracing::warn!(
+                    player_id = ?inp.player_id,
+                    command = ?inp.command,
+                    "non-host seat cannot mutate host-authoritative campaign state"
+                );
+                continue;
+            }
             let seat = self.ensure_seat(inp.player_id);
             if !self.reusable_cloak_command_is_authorized(inp, seat) {
                 continue;
@@ -5965,6 +5983,38 @@ mod tests {
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
     use crate::sprite::Sprite;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
+
+    #[test]
+    fn campaign_mutations_are_host_authoritative() {
+        let (mut engine, assets, _pc) = setup_pc_engine(&[]);
+        let sim = crate::sim_rng::test_context();
+        assert!(!engine.is_men_to_blazon_conversion_mode());
+
+        engine.apply_frame_commands_with_mode(
+            &sim,
+            &assets,
+            &[PlayerInput::new(
+                crate::player_command::PlayerId(1),
+                PlayerCommand::SetMenToBlazonConversionMode { on: true },
+            )],
+            SelectionCommandBatchMode::InferNestedSelection,
+        );
+        assert!(
+            !engine.is_men_to_blazon_conversion_mode(),
+            "a client seat must not mutate campaign UI state"
+        );
+
+        engine.apply_frame_commands_with_mode(
+            &sim,
+            &assets,
+            &[PlayerInput::new(
+                crate::player_command::PlayerId::HOST,
+                PlayerCommand::SetMenToBlazonConversionMode { on: true },
+            )],
+            SelectionCommandBatchMode::InferNestedSelection,
+        );
+        assert!(engine.is_men_to_blazon_conversion_mode());
+    }
 
     #[test]
     fn recorded_failed_group_move_does_not_emit_accept_bark() {

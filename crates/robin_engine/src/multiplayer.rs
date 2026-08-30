@@ -15,7 +15,7 @@
 use crate::engine::Engine;
 use crate::player_command::{DialogResult, ModalKind, PlayerCommand, PlayerId, PlayerInput};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -30,8 +30,11 @@ use std::sync::{Arc, Mutex};
 /// per inbound input frame.
 pub type FrameCursor = Arc<AtomicU32>;
 
-/// Shared initial-state snapshot offered by the host to joining peers.
-pub type InitialSnapshot = Arc<Mutex<Option<(u32, Engine)>>>;
+/// Shared encoded initial-state snapshot offered by the host to joining peers.
+///
+/// Encoding once at publication time guarantees that every peer admitted at
+/// this boundary receives byte-identical authoritative state.
+pub type InitialSnapshot = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
 /// Make a new [`FrameCursor`] starting at frame 0.
 pub fn new_frame_cursor() -> FrameCursor {
@@ -48,7 +51,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 26;
+pub const NET_PROTOCOL_VERSION: u32 = 27;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -67,6 +70,29 @@ pub const STATE_HASH_INTERVAL: u32 = 25;
     Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
 )]
 pub struct MultiplayerSessionId(pub [u8; 16]);
+
+/// Stable identity for a host-authored outer-mission transition.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
+pub struct SnapshotTransitionId {
+    pub session_id: MultiplayerSessionId,
+    pub sequence: u64,
+}
+
+/// Exact authoritative state retained by every participant before a
+/// host-authored outer-mission transition is committed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub enum SnapshotTransitionPayload {
+    Save {
+        mission_id: u32,
+        save_bytes: Vec<u8>,
+    },
+    CampaignExit {
+        exit_code: crate::game_operation::GameCode,
+        engine_bytes: Vec<u8>,
+    },
+}
 
 /// Stable identity for one occurrence of a multiplayer modal.
 ///
@@ -188,6 +214,17 @@ pub enum NetMsg {
     /// complete transport handshake. The next session starts from the host's
     /// latest authoritative full snapshot.
     ReconnectRequired { reason: String },
+    /// Server → clients: validate and retain these exact serialized save bytes
+    /// before acknowledging a host-authored mission transition.
+    PrepareSnapshotTransition {
+        id: SnapshotTransitionId,
+        payload: SnapshotTransitionPayload,
+    },
+    /// Client → server: the exact transition bytes decoded and validated.
+    SnapshotTransitionReady { id: SnapshotTransitionId },
+    /// Server → clients: every connected peer retained the same bytes; all
+    /// participants may now leave the mission and re-handshake.
+    CommitSnapshotTransition { id: SnapshotTransitionId },
 }
 
 /// One incoming wire event ready for the game loop.
@@ -227,9 +264,15 @@ pub enum NetEvent {
     /// Unrecoverable transport/session compatibility failure.
     Fatal(String),
     /// Authoritative initial-state snapshot from the host.
-    InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
+    InitialSnapshot {
+        frame: u32,
+        engine_bytes: Vec<u8>,
+    },
     /// The server released the multiplayer start barrier.
-    BeginSim { frame: u32, start_epoch_ms: u64 },
+    BeginSim {
+        frame: u32,
+        start_epoch_ms: u64,
+    },
     /// A client asked the host to choose a modal result. Presentation may show
     /// this request, but only a host decision can close the modal.
     ModalProposal {
@@ -245,6 +288,13 @@ pub enum NetEvent {
         kind: ModalKind,
         result: DialogResult,
         decision_frame: u32,
+    },
+    PrepareSnapshotTransition {
+        id: SnapshotTransitionId,
+        payload: SnapshotTransitionPayload,
+    },
+    CommitSnapshotTransition {
+        id: SnapshotTransitionId,
     },
 }
 
@@ -293,6 +343,13 @@ pub enum NetOutbound {
     ReconnectAllForSnapshot {
         reason: String,
     },
+    BeginSnapshotTransition {
+        id: SnapshotTransitionId,
+        payload: SnapshotTransitionPayload,
+    },
+    SnapshotTransitionReady {
+        id: SnapshotTransitionId,
+    },
 }
 
 /// Channel pair + frame cursor held by the [`crate::engine_manager::EngineManager`].
@@ -308,6 +365,7 @@ pub struct NetChannels {
     /// immediately after `Welcome`.
     pub initial_snapshot: InitialSnapshot,
     modal_sync: Mutex<ModalSyncState>,
+    next_transition_sequence: AtomicU64,
 }
 
 impl NetChannels {
@@ -334,6 +392,7 @@ impl NetChannels {
                 frame_cursor: Arc::clone(&cursor),
                 initial_snapshot: Arc::clone(&snapshot),
                 modal_sync: Mutex::new(ModalSyncState::default()),
+                next_transition_sequence: AtomicU64::new(0),
             },
             in_tx,
             out_rx,
@@ -346,7 +405,7 @@ impl NetChannels {
     /// new peer that handshakes.
     pub fn set_initial_snapshot(&self, frame: u32, engine: &Engine) {
         if let Ok(mut slot) = self.initial_snapshot.lock() {
-            *slot = Some((frame, engine.clone()));
+            *slot = Some((frame, engine.encode_native_snapshot()));
         }
     }
 
@@ -559,6 +618,14 @@ impl NetChannels {
         Ok(matched)
     }
 
+    pub fn take_all_visible_modal_requests(&self) -> Result<Vec<VisibleModalRequest>, String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
+        Ok(sync.visible_requests.drain(..).collect())
+    }
+
     /// Push a locally-produced [`PlayerCommand`] onto the wire.
     pub fn send_input(&self, cmd: PlayerCommand) {
         let origin_frame = self.frame_cursor.load(Ordering::Relaxed);
@@ -638,6 +705,68 @@ impl NetChannels {
             .send(NetOutbound::ReconnectAllForSnapshot { reason })
             .map_err(|_| "multiplayer snapshot reconnect channel is closed".to_string())
     }
+
+    /// Begin a host-authoritative save/load transition. The payload is encoded
+    /// by the caller exactly once and cloned unchanged to every peer.
+    pub fn begin_snapshot_transition(
+        &self,
+        mission_id: u32,
+        save_bytes: Vec<u8>,
+    ) -> Result<SnapshotTransitionId, String> {
+        let session_id = self.session_id()?;
+        let sequence = self
+            .next_transition_sequence
+            .fetch_add(1, Ordering::Relaxed)
+            .checked_add(1)
+            .ok_or_else(|| "multiplayer snapshot transition counter overflowed".to_string())?;
+        let id = SnapshotTransitionId {
+            session_id,
+            sequence,
+        };
+        self.outgoing
+            .send(NetOutbound::BeginSnapshotTransition {
+                id,
+                payload: SnapshotTransitionPayload::Save {
+                    mission_id,
+                    save_bytes,
+                },
+            })
+            .map_err(|_| "multiplayer snapshot transition channel is closed".to_string())?;
+        Ok(id)
+    }
+
+    pub fn begin_campaign_exit_transition(
+        &self,
+        exit_code: crate::game_operation::GameCode,
+        engine_bytes: Vec<u8>,
+    ) -> Result<SnapshotTransitionId, String> {
+        let session_id = self.session_id()?;
+        let sequence = self
+            .next_transition_sequence
+            .fetch_add(1, Ordering::Relaxed)
+            .checked_add(1)
+            .ok_or_else(|| "multiplayer snapshot transition counter overflowed".to_string())?;
+        let id = SnapshotTransitionId {
+            session_id,
+            sequence,
+        };
+        self.outgoing
+            .send(NetOutbound::BeginSnapshotTransition {
+                id,
+                payload: SnapshotTransitionPayload::CampaignExit {
+                    exit_code,
+                    engine_bytes,
+                },
+            })
+            .map_err(|_| "multiplayer campaign transition channel is closed".to_string())?;
+        Ok(id)
+    }
+
+    pub fn acknowledge_snapshot_transition(&self, id: SnapshotTransitionId) -> Result<(), String> {
+        self.outgoing
+            .send(NetOutbound::SnapshotTransitionReady { id })
+            .map_err(|_| "multiplayer snapshot transition channel is closed".to_string())
+    }
 }
 
 /// Encode a [`NetMsg`] as a binary WebSocket payload.
@@ -655,10 +784,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_identified_host_modal_decisions() {
-        // Version 26 adds identified host-only modal decisions and explicit
-        // full-snapshot reconnect directives.
-        assert_eq!(NET_PROTOCOL_VERSION, 26);
+    fn protocol_version_includes_snapshot_transition_barrier() {
+        // Version 27 adds the exact-byte prepare/ready/commit transition.
+        assert_eq!(NET_PROTOCOL_VERSION, 27);
     }
 
     #[test]
@@ -811,6 +939,83 @@ mod tests {
         assert!(matches!(
             reconnect,
             NetMsg::ReconnectRequired { reason } if reason == "rollback horizon"
+        ));
+    }
+
+    #[test]
+    fn snapshot_transition_roundtrips_exact_bytes() {
+        let id = SnapshotTransitionId {
+            session_id: MultiplayerSessionId([8; 16]),
+            sequence: 3,
+        };
+        let bytes = vec![0, 1, 2, 3, 254, 255];
+        let decoded = decode_msg(&encode_msg(&NetMsg::PrepareSnapshotTransition {
+            id,
+            payload: SnapshotTransitionPayload::Save {
+                mission_id: 42,
+                save_bytes: bytes.clone(),
+            },
+        }))
+        .expect("decode snapshot transition");
+        assert!(matches!(
+            decoded,
+            NetMsg::PrepareSnapshotTransition {
+                id: decoded_id,
+                payload: SnapshotTransitionPayload::Save {
+                    mission_id: 42,
+                    save_bytes,
+                },
+            } if decoded_id == id && save_bytes == bytes
+        ));
+        assert!(matches!(
+            decode_msg(&encode_msg(&NetMsg::SnapshotTransitionReady { id })).unwrap(),
+            NetMsg::SnapshotTransitionReady { id: decoded_id } if decoded_id == id
+        ));
+        assert!(matches!(
+            decode_msg(&encode_msg(&NetMsg::CommitSnapshotTransition { id })).unwrap(),
+            NetMsg::CommitSnapshotTransition { id: decoded_id } if decoded_id == id
+        ));
+    }
+
+    #[test]
+    fn host_transition_api_queues_exact_save_and_campaign_bytes() {
+        let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
+        let session_id = MultiplayerSessionId([11; 16]);
+        channels.install_session_id(session_id).unwrap();
+
+        let save_bytes = vec![9, 8, 7, 6];
+        let save_id = channels
+            .begin_snapshot_transition(41, save_bytes.clone())
+            .unwrap();
+        assert_eq!(save_id.sequence, 1);
+        assert!(matches!(
+            outgoing.recv().unwrap(),
+            NetOutbound::BeginSnapshotTransition {
+                id,
+                payload: SnapshotTransitionPayload::Save {
+                    mission_id: 41,
+                    save_bytes: actual,
+                },
+            } if id == save_id && actual == save_bytes
+        ));
+
+        let engine_bytes = vec![1, 3, 3, 7];
+        let exit_id = channels
+            .begin_campaign_exit_transition(
+                crate::game_operation::GameCode::LevelInterrupted,
+                engine_bytes.clone(),
+            )
+            .unwrap();
+        assert_eq!(exit_id.sequence, 2);
+        assert!(matches!(
+            outgoing.recv().unwrap(),
+            NetOutbound::BeginSnapshotTransition {
+                id,
+                payload: SnapshotTransitionPayload::CampaignExit {
+                    exit_code: crate::game_operation::GameCode::LevelInterrupted,
+                    engine_bytes: actual,
+                },
+            } if id == exit_id && actual == engine_bytes
         ));
     }
 

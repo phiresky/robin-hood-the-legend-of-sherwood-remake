@@ -220,6 +220,28 @@ pub(super) fn drain_steps(
             crate::http_server::StepKind::SetPaused { .. } => None,
         };
         if let Some(policy) = modal_policy.as_ref()
+            && host.transport.net.is_some()
+        {
+            if host.transport.local_seat != PlayerId::HOST {
+                step.respond_err(
+                    "manual stepping is disabled for multiplayer clients; only explicit synchronized host automation is allowed",
+                );
+                continue;
+            }
+            if !policy.synchronized_multiplayer {
+                step.respond_err(
+                    "manual stepping is disabled in multiplayer; retry on the host with synchronized_multiplayer=true",
+                );
+                continue;
+            }
+            if host.transport.reconnecting {
+                step.respond_err(
+                    "multiplayer snapshot synchronization is still in progress; wait for the ready barrier",
+                );
+                continue;
+            }
+        }
+        if let Some(policy) = modal_policy.as_ref()
             && let Err(error) = resolve_local_ui(policy)
         {
             step.respond_err(error);
@@ -303,6 +325,14 @@ pub(super) fn drain_steps(
                 match result {
                     Ok((advanced, dismissed_during)) => {
                         accepted_dismissals.extend(dismissed_during);
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
                         step.respond_ok(serde_json::json!({
                             "direction": "forward",
                             "from_frame": start,
@@ -325,14 +355,24 @@ pub(super) fn drain_steps(
                     continue;
                 };
                 match rewind_to_frame(manager, host, assets, timeline, target) {
-                    Ok(from) => step.respond_ok(serde_json::json!({
-                        "direction": "back",
-                        "from_frame": from,
-                        "frame": target,
-                        "rewound": from - target,
-                        "modals_dismissed": accepted_dismissals.len(),
-                        "modal_dismissals": accepted_dismissals,
-                    })),
+                    Ok(from) => {
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
+                        step.respond_ok(serde_json::json!({
+                            "direction": "back",
+                            "from_frame": from,
+                            "frame": target,
+                            "rewound": from - target,
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
+                        }))
+                    }
                     Err(e) => step.respond_err(e),
                 }
             }
@@ -384,14 +424,24 @@ pub(super) fn drain_steps(
                     Err(_) => {}
                 }
                 match result {
-                    Ok(kind) => step.respond_ok(serde_json::json!({
-                        "direction": "go-to-frame",
-                        "from_frame": from,
-                        "frame": timeline.frame_number(),
-                        "applied": kind,
-                        "modals_dismissed": accepted_dismissals.len(),
-                        "modal_dismissals": accepted_dismissals,
-                    })),
+                    Ok(kind) => {
+                        if let Err(error) = begin_synchronized_step_resync(
+                            host,
+                            timeline.frame_number(),
+                            &manager.engine,
+                        ) {
+                            step.respond_err(error);
+                            continue;
+                        }
+                        step.respond_ok(serde_json::json!({
+                            "direction": "go-to-frame",
+                            "from_frame": from,
+                            "frame": timeline.frame_number(),
+                            "applied": kind,
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
+                        }))
+                    }
                     Err(e) => step.respond_err(e),
                 }
             }
@@ -404,6 +454,26 @@ pub(super) fn drain_steps(
             }
         }
     }
+}
+
+fn begin_synchronized_step_resync(
+    host: &mut Host,
+    frame: u32,
+    engine: &engine_api::Engine,
+) -> Result<(), String> {
+    let Some(net) = host.transport.net.as_ref() else {
+        return Ok(());
+    };
+    if host.transport.local_seat != PlayerId::HOST {
+        return Err("only the multiplayer host can synchronize manual stepping".to_string());
+    }
+    net.set_initial_snapshot(frame, engine);
+    net.reconnect_all_for_snapshot(format!(
+        "host synchronized automation adopted timeline frame {frame}"
+    ))?;
+    net.send_ready_to_sim(frame);
+    host.transport.reconnecting = true;
+    Ok(())
 }
 
 /// Run up to `n` forward ticks, applying the next recorded commands
@@ -882,11 +952,11 @@ mod tests {
         assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 1);
         {
             let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
-            let (frame, engine) = snapshot.as_ref().expect("forward-step snapshot");
+            let (frame, engine_bytes) = snapshot.as_ref().expect("forward-step snapshot");
             assert_eq!(*frame, 1);
             assert_eq!(
-                engine.encode_native_snapshot(),
-                manager.engine.encode_native_snapshot()
+                engine_bytes.as_slice(),
+                manager.engine.encode_native_snapshot().as_slice()
             );
         }
 
@@ -895,11 +965,11 @@ mod tests {
 
         assert_eq!(frame_cursor.load(std::sync::atomic::Ordering::Relaxed), 0);
         let snapshot = initial_snapshot.lock().expect("initial snapshot lock");
-        let (frame, engine) = snapshot.as_ref().expect("rewind snapshot");
+        let (frame, engine_bytes) = snapshot.as_ref().expect("rewind snapshot");
         assert_eq!(*frame, 0);
         assert_eq!(
-            engine.encode_native_snapshot(),
-            manager.engine.encode_native_snapshot()
+            engine_bytes.as_slice(),
+            manager.engine.encode_native_snapshot().as_slice()
         );
     }
 
@@ -910,6 +980,7 @@ mod tests {
         let mut policy = crate::http_server::StepModalPolicy {
             auto_dismiss: false,
             dismissals: Vec::new(),
+            synchronized_multiplayer: false,
         };
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("unanswered modal must block");
@@ -931,6 +1002,7 @@ mod tests {
         let mut policy = crate::http_server::StepModalPolicy {
             auto_dismiss: false,
             dismissals: vec![expected.clone()],
+            synchronized_multiplayer: false,
         };
         let accepted = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect("matching typed dismissal");
@@ -1011,6 +1083,7 @@ mod tests {
                 kind: ModalKind::PopupText { text_id: 9 },
                 result: DialogResult::Restart,
             }],
+            synchronized_multiplayer: false,
         };
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("single-button popup cannot restart a mission");

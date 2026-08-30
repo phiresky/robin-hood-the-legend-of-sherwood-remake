@@ -213,7 +213,6 @@ pub(crate) fn drain_net_inputs(
                         Ok(snapshot) => {
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
-                                host.transport.reconnecting = false;
                                 admission_events.push(
                                     MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
                                 );
@@ -236,7 +235,6 @@ pub(crate) fn drain_net_inputs(
                                 match Engine::adopt_authoritative_snapshot(snapshot, assets) {
                                     Ok(adopted) => {
                                         manager.engine = adopted;
-                                        host.transport.reconnecting = false;
                                         admission_events.push(
                                             MultiplayerAdmissionEvent::InitialSnapshotAdopted {
                                                 frame,
@@ -286,7 +284,6 @@ pub(crate) fn drain_net_inputs(
                     Ok(snapshot) => match Engine::adopt_authoritative_snapshot(snapshot, assets) {
                         Ok(adopted_engine) => {
                             manager.engine = adopted_engine;
-                            host.transport.reconnecting = false;
                             admission_events
                                 .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
                             let adopted_hash = robin_engine::replay::state_hash(&manager.engine);
@@ -341,6 +338,7 @@ pub(crate) fn drain_net_inputs(
                 frame,
                 start_epoch_ms,
             } => {
+                host.transport.reconnecting = false;
                 tracing::info!(
                     frame,
                     start_epoch_ms,
@@ -358,6 +356,115 @@ pub(crate) fn drain_net_inputs(
                     frame,
                     start_epoch_ms,
                 });
+            }
+            NetEvent::PrepareSnapshotTransition { id, payload } => {
+                assert_ne!(
+                    host.transport.local_seat,
+                    robin_engine::player_command::PlayerId::HOST,
+                    "authoritative host received its own snapshot transition prepare"
+                );
+                assert_eq!(
+                    id.session_id,
+                    net.session_id().unwrap_or_else(|error| {
+                        panic!("snapshot transition is missing session identity: {error}")
+                    }),
+                    "snapshot transition prepare belongs to another session"
+                );
+                assert!(
+                    host.transport.snapshot_transition.is_none(),
+                    "received a second snapshot transition while one is pending"
+                );
+                let payload = match payload {
+                    robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                        mission_id,
+                        save_bytes,
+                    } => {
+                        let save: crate::save_file::GameSaveFile =
+                            serde_json::from_slice(&save_bytes).unwrap_or_else(|error| {
+                                panic!(
+                                    "multiplayer snapshot transition payload is invalid: {error}"
+                                )
+                            });
+                        save.header.validate().unwrap_or_else(|error| {
+                            panic!("multiplayer snapshot transition header is invalid: {error:#}")
+                        });
+                        assert_eq!(
+                            save.header.mission_id, mission_id,
+                            "snapshot transition wire mission differs from its exact payload"
+                        );
+                        crate::main_entry::validate_save_mission(&save, &assets.profile_manager)
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "multiplayer snapshot transition mission is invalid: {error}"
+                                )
+                            });
+                        let reencoded = serde_json::to_vec(&save).unwrap_or_else(|error| {
+                            panic!(
+                                "multiplayer snapshot transition could not be re-encoded: {error}"
+                            )
+                        });
+                        assert_eq!(
+                            reencoded, save_bytes,
+                            "snapshot transition bytes changed during validation"
+                        );
+                        crate::host::PendingSnapshotTransitionPayload::Save {
+                            slot: None,
+                            save: Box::new(save),
+                        }
+                    }
+                    robin_engine::multiplayer::SnapshotTransitionPayload::CampaignExit {
+                        exit_code,
+                        engine_bytes,
+                    } => {
+                        assert_eq!(
+                            exit_code,
+                            robin_engine::game_operation::GameCode::LevelInterrupted,
+                            "campaign transition may only launch the selected mission"
+                        );
+                        let decoded =
+                            Engine::decode_native_snapshot(&engine_bytes).unwrap_or_else(|error| {
+                                panic!("multiplayer campaign snapshot is invalid: {error}")
+                            });
+                        let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
+                            .unwrap_or_else(|error| {
+                                panic!("multiplayer campaign snapshot cannot be adopted: {error}")
+                            });
+                        assert_eq!(
+                            adopted.encode_native_snapshot(),
+                            engine_bytes,
+                            "campaign transition bytes changed during validation"
+                        );
+                        crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                            exit_code,
+                            engine: Some(Box::new(adopted)),
+                        }
+                    }
+                };
+                host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
+                    id,
+                    payload,
+                    committed: false,
+                });
+                host.transport.reconnecting = true;
+                net.acknowledge_snapshot_transition(id)
+                    .unwrap_or_else(|error| {
+                        panic!("failed to acknowledge multiplayer snapshot transition: {error}")
+                    });
+            }
+            NetEvent::CommitSnapshotTransition { id } => {
+                let transition = host
+                    .transport
+                    .snapshot_transition
+                    .as_mut()
+                    .unwrap_or_else(|| {
+                        panic!("snapshot transition commit has no prepared payload")
+                    });
+                assert_eq!(
+                    transition.id, id,
+                    "snapshot transition commit does not match prepared payload"
+                );
+                transition.committed = true;
+                host.transport.reconnecting = true;
             }
             event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
                 net.defer_modal_event(event).unwrap_or_else(|error| {
@@ -1058,7 +1165,10 @@ mod tests {
 
         assert_eq!(drain.adopted_frame, Some(30));
         assert!(drain.rewrote_sim_state);
-        assert!(!host.transport.reconnecting);
+        assert!(
+            host.transport.reconnecting,
+            "controls stay disabled until the ready barrier releases"
+        );
         assert!(
             pending.is_empty(),
             "old predicted inputs must not cross sessions"
@@ -1072,6 +1182,22 @@ mod tests {
                 .expect("ReadyToSim after reconnect adoption"),
             NetOutbound::ReadyToSim { frame: 30 }
         ));
+        incoming
+            .send(NetEvent::BeginSim {
+                frame: 30,
+                start_epoch_ms: 123,
+            })
+            .unwrap();
+        let _ = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            30,
+            &mut pending,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+        );
+        assert!(!host.transport.reconnecting);
     }
 
     #[test]

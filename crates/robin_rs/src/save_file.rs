@@ -482,6 +482,10 @@ pub struct SaveHeader {
     pub timestamp_unix: u64,
     /// Human-readable label chosen by the player (empty for auto saves).
     pub display_text: String,
+    /// Local state capture made during multiplayer for diagnostics only.
+    /// These bytes are never an authoritative session transition source.
+    #[serde(default)]
+    pub multiplayer_diagnostic: bool,
 }
 
 impl SaveHeader {
@@ -496,6 +500,7 @@ impl SaveHeader {
             mission_id,
             timestamp_unix,
             display_text,
+            multiplayer_diagnostic: false,
         }
     }
 

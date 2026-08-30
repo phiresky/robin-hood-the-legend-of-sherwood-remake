@@ -845,6 +845,50 @@ pub struct HostTransport {
     pub mission_sim_config: Option<engine_api::SimConfig>,
     pub mission_id: Option<String>,
     pub reconnecting: bool,
+    pub snapshot_transition: Option<PendingSnapshotTransition>,
+}
+
+pub struct PendingSnapshotTransition {
+    pub id: robin_engine::multiplayer::SnapshotTransitionId,
+    pub payload: PendingSnapshotTransitionPayload,
+    pub committed: bool,
+}
+
+pub enum PendingSnapshotTransitionPayload {
+    Save {
+        /// Host-local slot identity. Peers receive the exact save payload but do
+        /// not resolve it through their unrelated local slot index.
+        slot: Option<usize>,
+        save: Box<crate::save_file::GameSaveFile>,
+    },
+    CampaignExit {
+        exit_code: robin_engine::game_operation::GameCode,
+        /// Clients retain the exact decoded host engine so their campaign is
+        /// identical before all participants enter the next mission. The
+        /// host already owns that engine and therefore stores `None`.
+        engine: Option<Box<robin_engine::engine::Engine>>,
+    },
+}
+
+impl HostTransport {
+    pub fn authoritative_transition_actions_enabled(&self) -> bool {
+        !self.reconnecting
+            && self.snapshot_transition.is_none()
+            && (self.net.is_none()
+                || self.local_seat == robin_engine::player_command::PlayerId::HOST)
+    }
+
+    pub fn take_committed_snapshot_transition(&mut self) -> Option<PendingSnapshotTransition> {
+        if self
+            .snapshot_transition
+            .as_ref()
+            .is_some_and(|transition| transition.committed)
+        {
+            self.snapshot_transition.take()
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -11,7 +11,7 @@ use super::runtime::FrameContractStage;
 use super::terminal_debriefing::{
     TerminalDebriefingContext, TerminalDebriefingProgress, drive_tick_exit_modals,
 };
-use super::ui_task_state::UiTaskOutcome;
+use super::ui_task_state::{ActiveUiTask, UiTaskOutcome};
 use super::*;
 use crate::game::Game;
 use crate::host::HostSignal;
@@ -403,9 +403,17 @@ fn drain_deferred_save_load_after_zoom(
         callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
     }
     if std::mem::take(&mut game.quick_load_after_zoom) {
-        callbacks.pending = Some(SaveLoadRequest::QuickLoad {
-            use_backup: shift_held,
-        });
+        if host.transport.authoritative_transition_actions_enabled() {
+            callbacks.pending = Some(SaveLoadRequest::QuickLoad {
+                use_backup: shift_held,
+            });
+        } else {
+            game.display_message(
+                "Quick Load is available only to the multiplayer host after synchronization finishes."
+                    .to_string(),
+                100,
+            );
+        }
     }
 }
 
@@ -1308,7 +1316,12 @@ impl InteractiveFrameSimulation {
                 .active_modal
                 .as_ref()
                 .is_some_and(|modal| !modal.is_empty());
-        if step_forward_pressed && !modal_state_pending(&host) && !mission_ui_modal_pending {
+        let keyboard_stepping_allowed = host.transport.net.is_none();
+        if step_forward_pressed
+            && keyboard_stepping_allowed
+            && !modal_state_pending(&host)
+            && !mission_ui_modal_pending
+        {
             // Stepping into a save-marker / load-back frame must pin or
             // swap state exactly like the normal playback admission path.
             runtime
@@ -1394,7 +1407,11 @@ impl InteractiveFrameSimulation {
                     "step-forward: frame lies inside recorded history but its commands are missing"
                 );
             }
-        } else if step_back_pressed && !modal_state_pending(&host) && !mission_ui_modal_pending {
+        } else if step_back_pressed
+            && keyboard_stepping_allowed
+            && !modal_state_pending(&host)
+            && !mission_ui_modal_pending
+        {
             if let Some(target) = runtime.current_frame().previous()
                 && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
                 && target.number() >= oldest

@@ -377,7 +377,22 @@ A list of which additional features we have added, which ones we might still wan
   multiplayer and does not stop the shared simulation. HTTP timeline stepping
   accepts typed modal outcomes, defaults to automation-friendly auto-dismiss,
   validates each result against its modal kind, and reports or blocks unresolved
-  UI explicitly.
+  UI explicitly. Ordinary keyboard/HTTP timeline movement is disabled during
+  multiplayer; explicit host automation must opt into synchronized stepping,
+  after which every peer reconnects from the resulting authoritative snapshot.
+
+- **Host-authoritative multiplayer session transitions.** Load, Restart,
+  QuickLoad, and Sherwood campaign launch use a prepare/ready/commit barrier.
+  The host encodes authoritative save or campaign state once, every connected
+  peer validates and retains those identical bytes, and only then do all
+  participants tear down the old mission transport and enter the next ready
+  barrier. Load/Restart controls remain disabled for clients and throughout a
+  transition. Multiplayer Save and QuickSave create tagged local diagnostic
+  captures: connected load pickers hide them and the central transition path
+  rejects them even if UI filtering is bypassed. Sherwood campaign UI remains
+  non-pausing, but only host-authored campaign commands can mutate simulation
+  state. Client modal choices remain visible host proposals; only the host can
+  publish the decision that closes a shared modal.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its

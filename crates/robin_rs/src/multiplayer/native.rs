@@ -24,7 +24,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 // lock of the shared peer state into a second panic.
 use parking_lot::Mutex;
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -191,6 +191,13 @@ struct ServerPeers {
     host_ready_frame: Option<u32>,
     ready_seats: HashMap<u8, u32>,
     begin_sent: Option<(u32, u64)>,
+    snapshot_transition: Option<PendingSnapshotTransition>,
+}
+
+struct PendingSnapshotTransition {
+    id: robin_engine::multiplayer::SnapshotTransitionId,
+    payload: robin_engine::multiplayer::SnapshotTransitionPayload,
+    awaiting: HashSet<u8>,
 }
 
 impl ServerPeers {
@@ -204,8 +211,64 @@ impl ServerPeers {
             host_ready_frame: None,
             ready_seats: HashMap::new(),
             begin_sent: None,
+            snapshot_transition: None,
         }
     }
+}
+
+fn take_committed_snapshot_transition(
+    peers: &mut ServerPeers,
+) -> Option<(
+    robin_engine::multiplayer::SnapshotTransitionId,
+    Vec<UnboundedSender<NetMsg>>,
+)> {
+    let transition = peers.snapshot_transition.as_ref()?;
+    if !transition.awaiting.is_empty() {
+        return None;
+    }
+    let id = peers
+        .snapshot_transition
+        .take()
+        .expect("checked transition exists")
+        .id;
+    let senders = std::mem::take(&mut peers.senders).into_values().collect();
+    Some((id, senders))
+}
+
+fn retain_transition_peer_for_reconnect(peers: &mut ServerPeers, seat: u8) {
+    if let Some(transition) = peers.snapshot_transition.as_mut() {
+        // A participant which loses its stream must validate again on the
+        // replacement stream, even if its prior acknowledgement raced the
+        // disconnect. Never shrink the barrier because of connectivity.
+        transition.awaiting.insert(seat);
+    }
+}
+
+fn commit_snapshot_transition(
+    context: &ServerContext,
+    committed: Option<(
+        robin_engine::multiplayer::SnapshotTransitionId,
+        Vec<UnboundedSender<NetMsg>>,
+    )>,
+) {
+    let Some((id, senders)) = committed else {
+        return;
+    };
+    for sender in &senders {
+        sender
+            .send(NetMsg::CommitSnapshotTransition { id })
+            .unwrap_or_else(|_| {
+                panic!("snapshot transition commit queue closed before peer delivery")
+            });
+    }
+    context
+        .incoming_tx
+        .send(NetEvent::CommitSnapshotTransition { id })
+        .unwrap_or_else(|_| panic!("snapshot transition host event channel is closed"));
+    // Dropping the last queue handles closes every old mission stream after
+    // the commit frame has drained. All participants rebuild the transport
+    // against the replacement mission and re-enter through its ready barrier.
+    drop(senders);
 }
 
 fn maybe_begin_sim_locked(
@@ -554,7 +617,13 @@ async fn run_server_outgoing_pump(
                 }
             }
             NetOutbound::ReconnectAllForSnapshot { reason } => {
-                let senders = std::mem::take(&mut context.peers.lock().senders);
+                let senders = {
+                    let mut peers = context.peers.lock();
+                    peers.host_ready_frame = None;
+                    peers.ready_seats.clear();
+                    peers.begin_sent = None;
+                    std::mem::take(&mut peers.senders)
+                };
                 tracing::warn!(
                     peers = senders.len(),
                     %reason,
@@ -566,6 +635,41 @@ async fn run_server_outgoing_pump(
                     });
                 }
                 drop(senders);
+            }
+            NetOutbound::BeginSnapshotTransition { id, payload } => {
+                assert_eq!(
+                    id.session_id, context.session_id,
+                    "host snapshot transition belongs to another multiplayer session"
+                );
+                let committed = {
+                    let mut peers = context.peers.lock();
+                    assert!(
+                        peers.snapshot_transition.is_none(),
+                        "another multiplayer snapshot transition is already pending"
+                    );
+                    let awaiting = peers.senders.keys().copied().collect::<HashSet<_>>();
+                    peers.snapshot_transition = Some(PendingSnapshotTransition {
+                        id,
+                        payload: payload.clone(),
+                        awaiting,
+                    });
+                    let prepare = NetMsg::PrepareSnapshotTransition { id, payload };
+                    // Keep the peer-state lock until every current writer has
+                    // queued Prepare. Otherwise its reader could disconnect,
+                    // empty the readiness set, and queue Commit first.
+                    for sender in peers.senders.values() {
+                        sender.send(prepare.clone()).unwrap_or_else(|_| {
+                            panic!("snapshot transition prepare queue closed before peer delivery")
+                        });
+                    }
+                    take_committed_snapshot_transition(&mut peers)
+                };
+                commit_snapshot_transition(&context, committed);
+            }
+            NetOutbound::SnapshotTransitionReady { .. } => {
+                tracing::error!(
+                    "multiplayer host attempted to acknowledge its own snapshot transition"
+                );
             }
         }
     }
@@ -715,6 +819,14 @@ async fn handle_incoming_peer(
     // is a returning peer.  Otherwise allocate the next fresh seat.
     let (assigned_seat_u8, mut write_rx) = {
         let mut p = context.peers.lock();
+        let returning_seat = p.disconnected_seats.get(&nickname).copied();
+        if let Some(transition) = p.snapshot_transition.as_ref()
+            && !returning_seat.is_some_and(|seat| transition.awaiting.contains(&seat))
+        {
+            return Err(
+                "host is changing missions; only pending participants may reconnect".to_string(),
+            );
+        }
         let seat = if let Some(prior) = p.disconnected_seats.remove(&nickname) {
             tracing::info!(
                 nickname = %nickname,
@@ -756,19 +868,16 @@ async fn handle_incoming_peer(
             // game loop; the snapshot value is only ever replaced
             // wholesale, so recover it if a prior holder panicked
             // instead of silently skipping the snapshot send.
-            let snapshot_frame = if let Some((frame, engine)) = context
+            let snapshot_frame = if let Some((frame, bytes)) = context
                 .initial_snapshot
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
             {
-                let encode_start = web_time::Instant::now();
-                let bytes = engine.encode_native_snapshot();
                 tracing::info!(
                     seat = assigned_seat_u8,
                     frame,
                     bytes = bytes.len(),
-                    encode_us = encode_start.elapsed().as_micros(),
                     "sending initial snapshot to peer"
                 );
                 let _ = sender.send(NetMsg::InitialSnapshot {
@@ -791,6 +900,14 @@ async fn handle_incoming_peer(
                     frame: begin_frame,
                     start_epoch_ms: begin_start_epoch_ms,
                 });
+            }
+            if let Some(transition) = p.snapshot_transition.as_ref() {
+                sender
+                    .send(NetMsg::PrepareSnapshotTransition {
+                        id: transition.id,
+                        payload: transition.payload.clone(),
+                    })
+                    .map_err(|_| "writer queue closed before transition Prepare")?;
             }
         }
     }
@@ -846,6 +963,7 @@ async fn handle_incoming_peer(
         let mut p = context.peers.lock();
         p.senders.remove(&assigned_seat_u8);
         p.ready_seats.remove(&assigned_seat_u8);
+        retain_transition_peer_for_reconnect(&mut p, assigned_seat_u8);
         if let Some(nick) = p.nicknames.remove(&assigned_seat_u8) {
             p.disconnected_seats.insert(nick, assigned_seat_u8);
         }
@@ -919,6 +1037,39 @@ async fn run_server_peer_reader(
                     maybe_begin_sim_locked(&mut p)
                 };
                 announce_begin_sim(context, begin);
+            }
+            Some(NetMsg::SnapshotTransitionReady { id }) => {
+                if id.session_id != context.session_id {
+                    return Err(format!(
+                        "peer {seat:?} acknowledged a snapshot transition for another session"
+                    ));
+                }
+                let committed = {
+                    let mut peers = context.peers.lock();
+                    let transition = peers.snapshot_transition.as_mut().ok_or_else(|| {
+                        format!("peer {seat:?} acknowledged no active snapshot transition")
+                    })?;
+                    if transition.id != id {
+                        return Err(format!(
+                            "peer {seat:?} acknowledged snapshot transition {id:?}, active is {:?}",
+                            transition.id
+                        ));
+                    }
+                    if !transition.awaiting.remove(&seat.0) {
+                        return Err(format!(
+                            "peer {seat:?} duplicated or was not expected for snapshot transition {id:?}"
+                        ));
+                    }
+                    take_committed_snapshot_transition(&mut peers)
+                };
+                commit_snapshot_transition(context, committed);
+            }
+            Some(
+                NetMsg::PrepareSnapshotTransition { .. } | NetMsg::CommitSnapshotTransition { .. },
+            ) => {
+                return Err(format!(
+                    "peer {seat:?} attempted a host-only snapshot transition message"
+                ));
             }
             Some(other) => {
                 tracing::debug!(?seat, ?other, "ignoring inbound message from peer");
@@ -1560,6 +1711,19 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) -> Result
         NetMsg::ReconnectRequired { reason } => {
             return Err(format!("host requires a full-snapshot reconnect: {reason}"));
         }
+        NetMsg::PrepareSnapshotTransition { id, payload } => {
+            incoming_tx
+                .send(NetEvent::PrepareSnapshotTransition { id, payload })
+                .map_err(|_| "client snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::CommitSnapshotTransition { id } => {
+            incoming_tx
+                .send(NetEvent::CommitSnapshotTransition { id })
+                .map_err(|_| "client snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::SnapshotTransitionReady { .. } => {
+            return Err("server sent a client-only snapshot transition acknowledgement".into());
+        }
         other => {
             tracing::debug!(?other, "ignoring unexpected wire message");
         }
@@ -1621,13 +1785,95 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
                 "full-snapshot resynchronization requested: {reason}"
             ));
         }
+        NetOutbound::BeginSnapshotTransition { .. } => {
+            return Err("client attempted an authoritative snapshot transition".to_string());
+        }
+        NetOutbound::SnapshotTransitionReady { id } => {
+            write_frame(send, &NetMsg::SnapshotTransitionReady { id }).await?;
+        }
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{discard_session_outbound, handle_client_wire_msg, validate_reconnect_state};
+    use super::{
+        PendingSnapshotTransition, ServerPeers, discard_session_outbound, handle_client_wire_msg,
+        retain_transition_peer_for_reconnect, take_committed_snapshot_transition,
+        validate_reconnect_state,
+    };
+    use std::collections::HashSet;
+
+    #[test]
+    fn snapshot_transition_waits_for_every_current_peer() {
+        let session_id = robin_engine::multiplayer::MultiplayerSessionId([4; 16]);
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id,
+            sequence: 2,
+        };
+        let mut peers = ServerPeers::new(0);
+        for seat in [1, 2] {
+            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+            peers.senders.insert(seat, sender);
+        }
+        peers.snapshot_transition = Some(PendingSnapshotTransition {
+            id,
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 7,
+                save_bytes: vec![1, 2, 3],
+            },
+            awaiting: HashSet::from([1, 2]),
+        });
+
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+        peers
+            .snapshot_transition
+            .as_mut()
+            .unwrap()
+            .awaiting
+            .remove(&1);
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+        peers
+            .snapshot_transition
+            .as_mut()
+            .unwrap()
+            .awaiting
+            .remove(&2);
+        let (committed_id, senders) =
+            take_committed_snapshot_transition(&mut peers).expect("all peers acknowledged");
+        assert_eq!(committed_id, id);
+        assert_eq!(senders.len(), 2);
+        assert!(peers.senders.is_empty());
+        assert!(peers.snapshot_transition.is_none());
+    }
+
+    #[test]
+    fn disconnected_transition_peer_must_ack_again_after_reconnect() {
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([6; 16]),
+            sequence: 1,
+        };
+        let mut peers = ServerPeers::new(1);
+        peers.snapshot_transition = Some(PendingSnapshotTransition {
+            id,
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 3,
+                save_bytes: vec![4, 5],
+            },
+            awaiting: HashSet::new(),
+        });
+
+        retain_transition_peer_for_reconnect(&mut peers, 1);
+        assert!(
+            peers
+                .snapshot_transition
+                .as_ref()
+                .unwrap()
+                .awaiting
+                .contains(&1)
+        );
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+    }
 
     #[test]
     fn reconnect_rejects_wrong_mission_or_config() {
@@ -1671,5 +1917,47 @@ mod tests {
 
         assert_eq!(discard_session_outbound(&mut receiver), 2);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn client_transition_events_preserve_exact_prepare_bytes_and_commit_id() {
+        let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([5; 16]),
+            sequence: 9,
+        };
+        let save_bytes = vec![0, 17, 34, 255];
+        handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::PrepareSnapshotTransition {
+                id,
+                payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                    mission_id: 71,
+                    save_bytes: save_bytes.clone(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            incoming_rx.recv().unwrap(),
+            robin_engine::multiplayer::NetEvent::PrepareSnapshotTransition {
+                id: decoded_id,
+                payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                    mission_id: 71,
+                    save_bytes: decoded_bytes,
+                },
+            } if decoded_id == id && decoded_bytes == save_bytes
+        ));
+
+        handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::CommitSnapshotTransition { id },
+        )
+        .unwrap();
+        assert!(matches!(
+            incoming_rx.recv().unwrap(),
+            robin_engine::multiplayer::NetEvent::CommitSnapshotTransition { id: decoded_id }
+                if decoded_id == id
+        ));
     }
 }

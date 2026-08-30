@@ -1407,6 +1407,9 @@ pub(super) fn handle_pause_menu_events(
     // and react to its outcome.
     let mut pause_outcome: Option<PauseMenuOutcome> = None;
     if let Some(menu) = pause_menu.as_mut() {
+        let authoritative_transition_enabled =
+            host.transport.authoritative_transition_actions_enabled();
+        menu.set_authoritative_transition_actions_enabled(authoritative_transition_enabled);
         let screen_w = renderer.screen_width() as i32;
         let screen_h = renderer.screen_height() as i32;
         for event in events {
@@ -1486,11 +1489,26 @@ pub(super) fn handle_pause_menu_events(
                     &mut callbacks.save_manager,
                     mission_id,
                     mode,
+                    host.transport.net.is_some(),
                 )));
             }
             PauseMenuOutcome::Restart => {
-                // Reload the same mission.
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                if host.transport.net.is_some() {
+                    assert_eq!(
+                        host.transport.local_seat,
+                        robin_engine::player_command::PlayerId::HOST,
+                        "multiplayer client activated disabled Restart button"
+                    );
+                    callbacks.pending = Some(SaveLoadRequest::LoadRestart);
+                    *pause_menu = None;
+                    *pause_closed_this_frame = true;
+                    renderer.clear_frozen_scene();
+                    threaded_input.reset_input_state();
+                    input_translator.reset_state();
+                    return HandlerAction::Proceed;
+                }
+                // Single-player reloads the same mission directly.
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
             PauseMenuOutcome::Quit => {
@@ -1606,6 +1624,34 @@ pub(super) fn choose_recording_place(
     0
 }
 
+fn defer_multiplayer_campaign_exit(
+    host: &Host,
+    callbacks: &mut RustCallbacks,
+    mission_id: u32,
+) -> bool {
+    let Some(net) = host.transport.net.as_ref() else {
+        return false;
+    };
+    assert_eq!(
+        host.transport.local_seat,
+        robin_engine::player_command::PlayerId::HOST,
+        "only the multiplayer host can launch the selected campaign mission"
+    );
+    assert!(
+        callbacks.pending_multiplayer_campaign_exit.is_none(),
+        "a Sherwood campaign transition is already deferred"
+    );
+    let origin_frame = net.frame_cursor.load(std::sync::atomic::Ordering::Relaxed);
+    callbacks.pending_multiplayer_campaign_exit =
+        Some(crate::main_entry::PendingMultiplayerCampaignExit {
+            not_before_frame: origin_frame
+                .saturating_add(robin_engine::multiplayer::INPUT_DELAY_FRAMES)
+                .saturating_add(1),
+            mission_id,
+        });
+    true
+}
+
 /// Handle the Sherwood-only HUD buttons
 /// (DisplayCampaignMap / GoToExit / StartMission / QuitMission).
 ///
@@ -1630,6 +1676,13 @@ pub(super) fn handle_sherwood_hud_buttons(
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
+    if host.transport.net.is_some()
+        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    {
+        // Sherwood campaign state is host-authored. Clients keep simulating
+        // and receive the eventual authoritative mission transition.
+        return HandlerAction::Proceed;
+    }
     let engine = &mut manager.engine;
     // ── Sherwood HUD buttons ──
     //
@@ -1821,6 +1874,9 @@ pub(super) fn handle_sherwood_hud_buttons(
                         assets,
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
+                    if defer_multiplayer_campaign_exit(host, callbacks, mission_id) {
+                        return HandlerAction::Proceed;
+                    }
                     callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
                     return HandlerAction::Exit(GameCode::LevelInterrupted);
                 }
@@ -1875,6 +1931,20 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
+    if host.transport.net.is_some()
+        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+        && (game.persistent.campaign_map_active || sherwood_flow.is_some())
+    {
+        // Mission-description ticks can spend blazons through synchronous
+        // external actions, so clients must not even advance their local
+        // campaign modal state. They keep simulating until the host publishes
+        // the exact campaign-exit snapshot.
+        game.display_message(
+            "The multiplayer host is choosing the next campaign action.".to_string(),
+            100,
+        );
+        return Ok(HandlerAction::Proceed);
+    }
     if let Some(active_flow) = sherwood_flow.take() {
         match active_flow {
             SherwoodCampaignFlow::Map(state) => {
@@ -2049,6 +2119,9 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                             assets,
                             &PlayerCommand::CampaignHarvestProductionSectorState,
                         );
+                        if defer_multiplayer_campaign_exit(host, callbacks, mission_id) {
+                            return Ok(HandlerAction::Proceed);
+                        }
                         callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
                         return Ok(HandlerAction::Exit(GameCode::LevelInterrupted));
                     }

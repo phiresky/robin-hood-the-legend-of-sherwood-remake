@@ -84,6 +84,7 @@ pub struct PauseMenu {
     noisy_tracker: widget_bridge::NoisyTracker,
     keyboard_selection: u32,
     outcome: PauseMenuOutcome,
+    restart_allowed: bool,
 }
 
 impl PauseMenu {
@@ -128,6 +129,29 @@ impl PauseMenu {
             noisy_tracker: widget_bridge::NoisyTracker::new(),
             keyboard_selection: PAUSE_BTN_CONTINUE,
             outcome: PauseMenuOutcome::Pending,
+            restart_allowed,
+        }
+    }
+
+    /// Enable host-authored load/restart actions only while no authoritative
+    /// multiplayer transition is waiting for peer validation.
+    pub fn set_authoritative_transition_actions_enabled(&mut self, enabled: bool) {
+        self.frame
+            .widget_mut(PAUSE_BTN_LOAD)
+            .expect("pause Load button exists")
+            .base_mut()
+            .enabled = enabled;
+        self.frame
+            .widget_mut(PAUSE_BTN_RESTART)
+            .expect("pause Restart button exists")
+            .base_mut()
+            .enabled = enabled && self.restart_allowed;
+        if self
+            .frame
+            .widget(self.keyboard_selection)
+            .is_some_and(|widget| !widget.base().enabled)
+        {
+            self.keyboard_selection = PAUSE_BTN_CONTINUE;
         }
     }
 
@@ -377,6 +401,22 @@ mod tests {
         let resources = stub_resources();
         let menu = PauseMenu::new(&resources, false);
         assert!(!menu.button_enabled(PAUSE_BTN_RESTART as usize));
+    }
+
+    #[test]
+    fn authoritative_transition_disables_load_and_restart_until_reenabled() {
+        let resources = stub_resources();
+        let mut menu = PauseMenu::new(&resources, true);
+        menu.keyboard_selection = PAUSE_BTN_LOAD;
+
+        menu.set_authoritative_transition_actions_enabled(false);
+        assert!(!menu.button_enabled(PAUSE_BTN_LOAD as usize));
+        assert!(!menu.button_enabled(PAUSE_BTN_RESTART as usize));
+        assert_eq!(menu.keyboard_selection, PAUSE_BTN_CONTINUE);
+
+        menu.set_authoritative_transition_actions_enabled(true);
+        assert!(menu.button_enabled(PAUSE_BTN_LOAD as usize));
+        assert!(menu.button_enabled(PAUSE_BTN_RESTART as usize));
     }
 
     #[test]

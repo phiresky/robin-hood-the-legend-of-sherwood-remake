@@ -73,6 +73,7 @@ pub struct LoadPickerModalState {
     thumb_cache: Option<ThumbnailCache>,
     input_state: ModalInputState,
     delete_confirmation: Option<(usize, YesNoModalState)>,
+    multiplayer_connected: bool,
 }
 
 impl LoadPickerModalState {
@@ -80,9 +81,19 @@ impl LoadPickerModalState {
         event_pump: &crate::window::GameWindow,
         renderer: &Renderer,
         save_manager: &mut SaveGameManager,
+        multiplayer_connected: bool,
     ) -> Self {
         save_manager.sort_by_time();
-        let visible = collect_visible_slots(save_manager, SaveLoadMode::Load);
+        let visible = collect_visible_slots(save_manager, SaveLoadMode::Load)
+            .into_iter()
+            .filter(|&slot| {
+                !multiplayer_connected
+                    || !save_manager
+                        .get(slot)
+                        .expect("visible load slot exists")
+                        .multiplayer_diagnostic
+            })
+            .collect();
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
@@ -98,6 +109,7 @@ impl LoadPickerModalState {
             thumb_cache: None,
             input_state,
             delete_confirmation: None,
+            multiplayer_connected,
         }
     }
 
@@ -123,7 +135,16 @@ impl LoadPickerModalState {
             if confirmed {
                 save_manager.remove(slot);
                 save_manager.sort_by_time();
-                self.visible = collect_visible_slots(save_manager, SaveLoadMode::Load);
+                self.visible = collect_visible_slots(save_manager, SaveLoadMode::Load)
+                    .into_iter()
+                    .filter(|&slot| {
+                        !self.multiplayer_connected
+                            || !save_manager
+                                .get(slot)
+                                .expect("visible load slot exists")
+                                .multiplayer_diagnostic
+                    })
+                    .collect();
                 self.selected = None;
                 self.scroll_offset = 0;
                 if let Some(old) = self.thumb_cache.take() {
