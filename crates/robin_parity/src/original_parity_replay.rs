@@ -362,6 +362,11 @@ impl TraceSimConfig {
             // Royalist/Lacklandist NPC combat.
             diplomacy: false,
             npc_faction_wars: true,
+            // Advanced gesture recognition and quality-scaled damage are
+            // post-port extensions. Original parity traces must retain the
+            // shipped combat input and damage rules.
+            more_combat_gestures: false,
+            gesture_quality_damage: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -14028,6 +14033,8 @@ mod tests {
         assert!(config.synchronous_pathfinding);
         assert!(!config.diplomacy);
         assert!(config.npc_faction_wars);
+        assert!(!config.more_combat_gestures);
+        assert!(!config.gesture_quality_damage);
     }
 
     fn minimal_frame_json() -> serde_json::Value {
